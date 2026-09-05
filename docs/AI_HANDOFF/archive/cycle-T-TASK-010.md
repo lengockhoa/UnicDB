@@ -89,7 +89,7 @@ estimateTableRowsBatch(
 D3 is a two-line change with a large blast radius: users with several saved connections currently
 pay a connection attempt (and any password prompt / TLS handshake / timeout) for every database at
 activation. Verify manually that a collapsed connection still switches the active connection on
-click — `schemaTree.ts:216-219` attaches `vsdb.selectConnectionFromTree` to the node itself, so it
+click — `schemaTree.ts:216-219` attaches `UnicDB.selectConnectionFromTree` to the node itself, so it
 should be unaffected, but a regression there would be user-visible immediately.
 
 If `estimateTableRowsBatch` turns out to be slow for a very large schema, keep it non-blocking
@@ -182,7 +182,7 @@ assertions, which is where the actual defect lives):
 
 ```
 $ npm run typecheck
-> vsdb@1.6.3 typecheck
+> UnicDB@1.6.3 typecheck
 > tsc --noEmit
 (clean, no output)
 

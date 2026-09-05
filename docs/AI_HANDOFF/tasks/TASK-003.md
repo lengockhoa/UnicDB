@@ -12,29 +12,29 @@ CSS contract additions for the image attach + paste feature. New classes (define
 
 ```css
 /* Attach button (icon button in composer row, left of send) */
-.vsdb-chat-attach-btn {
+.UnicDB-chat-attach-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 28px;
   padding: 0;
-  border: 1px solid var(--vsdb-input-border);
+  border: 1px solid var(--UnicDB-input-border);
   border-radius: 6px;
-  background: var(--vsdb-input-bg);
-  color: var(--vsdb-fg);
+  background: var(--UnicDB-input-bg);
+  color: var(--UnicDB-fg);
   cursor: pointer;
 }
-.vsdb-chat-attach-btn:hover:not(:disabled) {
-  background: var(--vsdb-input-hover-bg);
+.UnicDB-chat-attach-btn:hover:not(:disabled) {
+  background: var(--UnicDB-input-hover-bg);
 }
-.vsdb-chat-attach-btn:disabled {
+.UnicDB-chat-attach-btn:disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
 
 /* Attachments strip — horizontal scroll row above the textarea */
-.vsdb-chat-attachments {
+.UnicDB-chat-attachments {
   display: flex;
   flex-direction: row;
   gap: 8px;
@@ -42,24 +42,24 @@ CSS contract additions for the image attach + paste feature. New classes (define
   max-height: 80px;
   overflow-x: auto;
   overflow-y: hidden;
-  border-bottom: 1px solid var(--vsdb-input-border);
+  border-bottom: 1px solid var(--UnicDB-input-border);
 }
-.vsdb-chat-thumb {
+.UnicDB-chat-thumb {
   position: relative;
   flex: 0 0 auto;
   width: 56px;
   height: 56px;
   border-radius: 6px;
   overflow: hidden;
-  border: 1px solid var(--vsdb-input-border);
+  border: 1px solid var(--UnicDB-input-border);
 }
-.vsdb-chat-thumb img {
+.UnicDB-chat-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
-.vsdb-chat-thumb-remove {
+.UnicDB-chat-thumb-remove {
   position: absolute;
   top: 2px;
   right: 2px;
@@ -68,21 +68,21 @@ CSS contract additions for the image attach + paste feature. New classes (define
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: var(--vsdb-overlay-bg);
-  color: var(--vsdb-fg);
+  background: var(--UnicDB-overlay-bg);
+  color: var(--UnicDB-fg);
   cursor: pointer;
   font-size: 10px;
   line-height: 1;
 }
-.vsdb-chat-thumb-remove:hover {
-  background: var(--vsdb-error-bg);
+.UnicDB-chat-thumb-remove:hover {
+  background: var(--UnicDB-error-bg);
 }
 
 /* Warning bubble for attach rejections */
-.vsdb-chat-attach-warning {
-  background: var(--vsdb-warning-bg);
-  color: var(--vsdb-warning-fg);
-  border-left: 3px solid var(--vsdb-warning-border);
+.UnicDB-chat-attach-warning {
+  background: var(--UnicDB-warning-bg);
+  color: var(--UnicDB-warning-fg);
+  border-left: 3px solid var(--UnicDB-warning-border);
   padding: 6px 10px;
   margin: 4px 0;
   border-radius: 4px;
@@ -96,7 +96,7 @@ The warning + overlay tokens may already exist; if not, add them. CSS contract t
 
 ### Regression pin
 
-The cycle-AA `body.vsdb-chat-body { height: 100vh; }` rule (height chain fix from cycle-AA round 1b) MUST stay present. The new attachments strip lives inside `.vsdb-chat-input` (composer column) — it MUST NOT alter the panel flex chain.
+The cycle-AA `body.UnicDB-chat-body { height: 100vh; }` rule (height chain fix from cycle-AA round 1b) MUST stay present. The new attachments strip lives inside `.UnicDB-chat-input` (composer column) — it MUST NOT alter the panel flex chain.
 
 ## §Verification Commands
 
@@ -114,18 +114,18 @@ T3 (wave 1) consumes T2's (wave 2) class names. Mechanically OK only because T3'
 
 1. **Happy**: all required declarations present in `webview/styles.css` (regex check, one assertion per declaration).
 2. **Happy (theme)**: theme tokens used (no hardcoded colors).
-3. **Happy (thumb)**: `.vsdb-chat-thumb img { object-fit: cover }` ensures 56×56 thumbnails don't distort.
-4. **Regression (cycle AA)**: body height chain still present (regression pin: `.vsdb-chat-body { height: 100vh }`).
+3. **Happy (thumb)**: `.UnicDB-chat-thumb img { object-fit: cover }` ensures 56×56 thumbnails don't distort.
+4. **Regression (cycle AA)**: body height chain still present (regression pin: `.UnicDB-chat-body { height: 100vh }`).
 5. **Edge (overflow)**: with >4 thumbnails the strip scrolls horizontally (`overflow-x: auto`), no layout overflow breaks the composer column.
-6. **Edge (theme fallback)**: the warning rule references `var(--vsdb-warning-bg)` (or an existing token) — never a hardcoded color string.
-7. **Edge (focus)**: `.vsdb-chat-attach-btn:focus-visible` (or equivalent) declares a visible focus ring via theme token.
+6. **Edge (theme fallback)**: the warning rule references `var(--UnicDB-warning-bg)` (or an existing token) — never a hardcoded color string.
+7. **Edge (focus)**: `.UnicDB-chat-attach-btn:focus-visible` (or equivalent) declares a visible focus ring via theme token.
 8. **Edge (dark theme)**: the `[data-theme="dark"]` block declares dark variants of the new tokens (no light-only fallback that breaks dark mode).
 
 
 1. All required declarations present in `webview/styles.css` (regex check, one assertion per declaration).
 2. Theme tokens used (no hardcoded colors).
-3. `.vsdb-chat-thumb img { object-fit: cover }` ensures 56×56 thumbnails don't distort.
-4. Cycle-AA body height chain still present (regression pin: `.vsdb-chat-body { height: 100vh }`).
+3. `.UnicDB-chat-thumb img { object-fit: cover }` ensures 56×56 thumbnails don't distort.
+4. Cycle-AA body height chain still present (regression pin: `.UnicDB-chat-body { height: 100vh }`).
 5. CSS contract test exists in `src/ui/__tests__/chatLayoutCss.test.ts` (or a new task-003 file) and asserts the above.
 
 ## §Out of scope
@@ -135,9 +135,9 @@ T3 (wave 1) consumes T2's (wave 2) class names. Mechanically OK only because T3'
 ## Reviewer Verdict — R2 [TASK-003] (unic-smart)
 - TASK: TASK-003
 - VERDICT: APPROVED-WITH-MINOR
-- VERIFICATION_RERUN: npx vitest run src/ui/__tests__/chatLayoutCss.test.ts → 25/25 pass (1 file); npm run typecheck → exit 0. All 8 acceptance rows confirmed in webview/styles.css (attach-btn 1453, strip 1481, thumb 1489, img cover 1499, remove overlay 1507, warning token 1529, focus ring 1473, dark block 1436) + cycle-AA pin body.vsdb-chat-body{height:100vh} intact at 1302 (guarded by test h). No hardcoded color values in new rules — hex appears only as var() fallbacks per file-wide convention.
+- VERIFICATION_RERUN: npx vitest run src/ui/__tests__/chatLayoutCss.test.ts → 25/25 pass (1 file); npm run typecheck → exit 0. All 8 acceptance rows confirmed in webview/styles.css (attach-btn 1453, strip 1481, thumb 1489, img cover 1499, remove overlay 1507, warning token 1529, focus ring 1473, dark block 1436) + cycle-AA pin body.UnicDB-chat-body{height:100vh} intact at 1302 (guarded by test h). No hardcoded color values in new rules — hex appears only as var() fallbacks per file-wide convention.
 - BLOCKING: none
-- NOTES: Minor (non-blocking): (1) styles.css:1452 comment says "24×24 hit target" but the rule is 28×28 — fix the comment; (2) styles.css:1436-1448 dark-block overrides for warning/error tokens are byte-identical to :root (only --vsdb-overlay-bg alpha 0.4→0.6 differs), so the "sharpen contrast" comment overstates — harmless since --vscode-* vars track theme; (3) chatLayoutCss.test.ts:469-493 test g only requires ≥1 dark token, could pin all 6. Model isolation OK: executor unic-code ≠ reviewer unic-smart. RED baseline evidence (8 fail / 17 pass → 25/25) is in commit da29b04 message, not appended to this task file.
+- NOTES: Minor (non-blocking): (1) styles.css:1452 comment says "24×24 hit target" but the rule is 28×28 — fix the comment; (2) styles.css:1436-1448 dark-block overrides for warning/error tokens are byte-identical to :root (only --UnicDB-overlay-bg alpha 0.4→0.6 differs), so the "sharpen contrast" comment overstates — harmless since --vscode-* vars track theme; (3) chatLayoutCss.test.ts:469-493 test g only requires ≥1 dark token, could pin all 6. Model isolation OK: executor unic-code ≠ reviewer unic-smart. RED baseline evidence (8 fail / 17 pass → 25/25) is in commit da29b04 message, not appended to this task file.
 
 
 ## Executor Metadata (cycle AB)
@@ -160,16 +160,16 @@ VERIFICATION_RERUN:
   result: 23/23 pass (5 new + AA 7 + AB 11); typecheck exit 0 (tree = main @ 5934983, contains the commit)
 FINDINGS:
   important:
-    - package.json — vsdb.ai.useWithOmp + vsdb.ai.refreshDbContext are registered in extension.ts:410/421 but ABSENT from contributes.commands AND activationEvents; no webview button or menu exists either (git grep: only PLAN_AD.md + extension.ts). Commands are invisible in the Command Palette, so the user has NO invocation path — §9/§10 feature unreachable as shipped. Correct: add both to contributes.commands (category VSDB) + activationEvents onCommand entries.
+    - package.json — UnicDB.ai.useWithOmp + UnicDB.ai.refreshDbContext are registered in extension.ts:410/421 but ABSENT from contributes.commands AND activationEvents; no webview button or menu exists either (git grep: only PLAN_AD.md + extension.ts). Commands are invisible in the Command Palette, so the user has NO invocation path — §9/§10 feature unreachable as shipped. Correct: add both to contributes.commands (category UnicDB) + activationEvents onCommand entries.
   minor:
     - src/extensionConfigExport.ts:117-119 — ompCommandLine double-quotes configPath/contextPath/model without shell-escaping; `$`, backtick, or `"` in folder names breaks the copy-pasteable line. `-p` prompt is a fixed literal (no user input) — safe.
     - src/extension.ts:1095+ — multi-root workspace: always writes to workspaceFolders[0], not the root of the active connection.
-    - src/extensionConfigExport.ts:186-217 — emitVsdbAiConfigRaw + renderYamlPublic + renderCommandLinePublic are needless wrappers; "Re-export the internal helpers" comment is false. Call renderYaml/renderCommandLine directly.
+    - src/extensionConfigExport.ts:186-217 — emitUnicDBAiConfigRaw + renderYamlPublic + renderCommandLinePublic are needless wrappers; "Re-export the internal helpers" comment is false. Call renderYaml/renderCommandLine directly.
     - src/__tests__/extensionConfigExport.test.ts:87-97 — byte-equality pin only exercises the null-adapter (empty-context) branch; DDL-path bytes unpinned by this test (indirectly covered by AA privacy suite; direct source diff confirms core body byte-identical to pre-refactor).
     - src/extensionConfigExport.ts:166-172 — comment claims createDirectory throws "already exists"; vscode.workspace.fs.createDirectory is idempotent — comment misleading, catch is dead.
 ACCEPTANCE_8_9_10_11: §8 PASS (extracted core byte-identical; buildMessages + exporter both call formatSystemPrompt; privacy invariant preserved, AA 7/7) · §9 PASS in code (AiSettings structurally cannot carry apiKey; YAML emits `# apiKey: $OPENAI_API_KEY` hint only; sentinel pin green; UTF-8 no-BOM, LF newlines) · §10 PARTIAL (line format has all 4 flags but command unreachable → important finding) · §11 PASS (AA 7/7 + AB 11/11 green).
 SUGGESTED_FIXES:
-  1. package.json: declare vsdb.ai.useWithOmp ("VSDB: Use with OMP") + vsdb.ai.refreshDbContext ("VSDB: Refresh DB Context") under contributes.commands and add onCommand activation entries; re-run build + palette smoke.
+  1. package.json: declare UnicDB.ai.useWithOmp ("UnicDB: Use with OMP") + UnicDB.ai.refreshDbContext ("UnicDB: Refresh DB Context") under contributes.commands and add onCommand activation entries; re-run build + palette smoke.
   2. (Optional, non-blocking) shell-escape paths in renderCommandLine; drop the Public/Raw wrapper trio.
 NOTES: Model isolation OK — executor unic-code ≠ reviewer unic-smart. Core refactor is a clean, verified byte-preserving extraction; the only blocker is the missing package.json declaration that leaves the feature undiscoverable.
 
@@ -179,7 +179,7 @@ NOTES: Model isolation OK — executor unic-code ≠ reviewer unic-smart. Core r
 - **FILES_CHANGED**: `src/ui/aiChatPanel.ts`, `src/extensionConfigExport.ts`, `src/extension.ts`, `src/__tests__/extensionConfigExport.test.ts`.
 - **RED_OUTPUT**: `extensionConfigExport.test.ts` failed to load before implementation: missing exporter module and `formatSystemPrompt` export.
 - **GREEN_CONFIRMED**: exporter suite 5/5; privacy 7/7; attachments 11/11; `npm run typecheck`: exit 0.
-- **FIX ROUND**: `package.json` now declares and activates `vsdb.ai.useWithOmp` and `vsdb.ai.refreshDbContext`, making both commands discoverable. JSON parse and full test suite pass.
+- **FIX ROUND**: `package.json` now declares and activates `UnicDB.ai.useWithOmp` and `UnicDB.ai.refreshDbContext`, making both commands discoverable. JSON parse and full test suite pass.
 - **COMMIT**: `de6c6482` (task) + `247471e` (shared review fixes).
 
 
@@ -196,28 +196,28 @@ VERIFICATION_RERUN:
 FINDINGS:
   critical: none
   important:
-    - package.json:186-192 — commit 247471e REPLACED the vsdb.aiChat contributes.commands block instead of inserting alongside (pre-state 247471e^:186 had title "VSDB: AI Chat" + icon; both deleted). extension.ts:389 still registers vsdb.aiChat and view/title menus (package.json:367-371) still reference it, so the schema-tree toolbar AI-chat item now points at an undeclared command (VS Code drops it) and "VSDB: AI Chat" vanished from the Command Palette. No test pins contributes.commands membership, so the suite stays green while the feature loses its invocation surface. Fix: re-insert the vsdb.aiChat command block.
+    - package.json:186-192 — commit 247471e REPLACED the UnicDB.aiChat contributes.commands block instead of inserting alongside (pre-state 247471e^:186 had title "UnicDB: AI Chat" + icon; both deleted). extension.ts:389 still registers UnicDB.aiChat and view/title menus (package.json:367-371) still reference it, so the schema-tree toolbar AI-chat item now points at an undeclared command (VS Code drops it) and "UnicDB: AI Chat" vanished from the Command Palette. No test pins contributes.commands membership, so the suite stays green while the feature loses its invocation surface. Fix: re-insert the UnicDB.aiChat command block.
   minor:
-    - package.json:59 — trailing whitespace after "onCommand:vsdb.browseTableData", introduced by 247471e.
+    - package.json:59 — trailing whitespace after "onCommand:UnicDB.browseTableData", introduced by 247471e.
     - src/extensionConfigExport.ts:207-217 — R1 minor still open (renderYamlPublic/renderCommandLinePublic wrappers); unchanged, non-blocking.
 R1_FIX_VERIFIED:
-  - vsdb.ai.useWithOmp: declared package.json:188-192 (category VSDB, $(terminal)) + activation :57; ID matches registration extension.ts:410.
-  - vsdb.ai.refreshDbContext: declared package.json:194-198 ($(refresh)) + activation :58; ID matches registration extension.ts:421.
+  - UnicDB.ai.useWithOmp: declared package.json:188-192 (category UnicDB, $(terminal)) + activation :57; ID matches registration extension.ts:410.
+  - UnicDB.ai.refreshDbContext: declared package.json:194-198 ($(refresh)) + activation :58; ID matches registration extension.ts:421.
   - Exporter behavior valid: 247471e did not touch extensionConfigExport.ts/extension.ts; exporter suite 5/5; §9 apiKey-never-on-disk and byte-identical-core invariants carry over.
 SUGGESTED_FIXES:
-  1. package.json: re-insert {"command":"vsdb.aiChat","title":"VSDB: AI Chat","category":"VSDB","icon":"$(comment-discussion)"} before the vsdb.ai.useWithOmp block; strip trailing space on :59; re-run build + palette smoke.
-NOTES: Model isolation OK. Machine cross-check: 28 declared commands; activationEvents referencing undeclared commands = ["vsdb.aiChat"]. INDEX.md has no cycle AD rows (its TASK-003 row is the cycle-AA CSS task) — index left untouched.
+  1. package.json: re-insert {"command":"UnicDB.aiChat","title":"UnicDB: AI Chat","category":"UnicDB","icon":"$(comment-discussion)"} before the UnicDB.ai.useWithOmp block; strip trailing space on :59; re-run build + palette smoke.
+NOTES: Model isolation OK. Machine cross-check: 28 declared commands; activationEvents referencing undeclared commands = ["UnicDB.aiChat"]. INDEX.md has no cycle AD rows (its TASK-003 row is the cycle-AA CSS task) — index left untouched.
 
 ## Reviewer Verdict — cycle AD R3 [TASK-003]
 
 VERDICT: APPROVED-WITH-MINOR
 REVIEWER_MODEL: unic-smart (matches .ukit/storage/config.json handoff.reviewer.model)
 EXECUTOR_MODEL: unic-code
-COMMIT_SHA: 247471e + uncommitted package.json correction (restores vsdb.aiChat block, strips trailing whitespace at :59)
+COMMIT_SHA: 247471e + uncommitted package.json correction (restores UnicDB.aiChat block, strips trailing whitespace at :59)
 VERIFICATION_RERUN:
   command: npx vitest run src/__tests__/extensionConfigExport.test.ts src/ui/__tests__/chatLayoutCss.test.ts src/ui/__tests__/aiChatPanelPrivacy.test.ts src/ui/__tests__/aiChatPanelAttachments.test.ts src/scaffold.test.ts src/ui/__tests__/tableCommands.test.ts && npm run typecheck
   result: 90/90 pass (6 files: exporter 5, CSS 25, privacy 7, attachments 11, scaffold 20, tableCommands 22); typecheck exit 0; package.json JSON.parse OK
-TEST_PLAN_COVERAGE: all-followed — R2 blocker fixed: vsdb.aiChat contributes.commands block restored (package.json, title "VSDB: AI Chat", category VSDB, icon $(comment-discussion)); R2 minor fixed: trailing whitespace after onCommand:vsdb.browseTableData stripped. Machine cross-check: 29 declared commands, 0 activationEvents referencing undeclared commands, 0 declared commands missing activation events (vsdb.filterSchemaTree/clearSchemaTreeFilter/postmanPayload are programmatic-only by design — declared commands MAY omit onCommand events since VS Code auto-generates them from contributes). All three task commands verified end-to-end: vsdb.aiChat declared (package.json contributes) + activated (activationEvents :59) + registered (extension.ts:389); vsdb.ai.useWithOmp declared + activated (:60) + registered (extension.ts:410); vsdb.ai.refreshDbContext declared + activated (:61) + registered (extension.ts:421). §8 byte-equality, §9 apiKey-never-on-disk, §10 command-line flags invariants all green in extensionConfigExport.test.ts.
+TEST_PLAN_COVERAGE: all-followed — R2 blocker fixed: UnicDB.aiChat contributes.commands block restored (package.json, title "UnicDB: AI Chat", category UnicDB, icon $(comment-discussion)); R2 minor fixed: trailing whitespace after onCommand:UnicDB.browseTableData stripped. Machine cross-check: 29 declared commands, 0 activationEvents referencing undeclared commands, 0 declared commands missing activation events (UnicDB.filterSchemaTree/clearSchemaTreeFilter/postmanPayload are programmatic-only by design — declared commands MAY omit onCommand events since VS Code auto-generates them from contributes). All three task commands verified end-to-end: UnicDB.aiChat declared (package.json contributes) + activated (activationEvents :59) + registered (extension.ts:389); UnicDB.ai.useWithOmp declared + activated (:60) + registered (extension.ts:410); UnicDB.ai.refreshDbContext declared + activated (:61) + registered (extension.ts:421). §8 byte-equality, §9 apiKey-never-on-disk, §10 command-line flags invariants all green in extensionConfigExport.test.ts.
 FINDINGS:
   critical: none
   important: none
@@ -226,7 +226,7 @@ FINDINGS:
     - src/extensionConfigExport.ts:207-217 — R1/R2 minor still open: renderYamlPublic/renderCommandLinePublic wrappers; unchanged, non-blocking.
     - src/__tests__/extensionConfigExport.test.ts:103-106 — ompCommandLine flag assertions check substring presence, not exact ordering; acceptable for a shape contract, noted for a future pin.
 NEXT_STATUS_FOR_INDEX: approved_minor
-NOTES: Model isolation OK — executor unic-code ≠ reviewer unic-smart. R2's critical path (vsdb.aiChat schema-tree toolbar entry + palette item pointing at an undeclared command) is fully resolved; no genuine blocker remains. INDEX.md TASK-003 row describes the cycle-AA CSS task, not this cycle-AD work — index left untouched as in R2.
+NOTES: Model isolation OK — executor unic-code ≠ reviewer unic-smart. R2's critical path (UnicDB.aiChat schema-tree toolbar entry + palette item pointing at an undeclared command) is fully resolved; no genuine blocker remains. INDEX.md TASK-003 row describes the cycle-AA CSS task, not this cycle-AD work — index left untouched as in R2.
 
 ## Reviewer Verdict — cycle AE R1 [TASK-003]
 
@@ -236,10 +236,10 @@ NOTES: Model isolation OK — executor unic-code ≠ reviewer unic-smart. R2's c
 - VERIFICATION_RERUN: `npx vitest run src/ui/__tests__/aiChatPanelEngine.test.ts` — 5 passed, 0 failed.
 - VERDICT: CRITICAL
 - FINDINGS:
-  - critical — `src/extension.ts:558-581` ignores `vsdb.ai.engine`: `commandOpenAiChat` always calls `resolveEngine()`, whose policy selects OMP whenever it is installed, then supplies only raw `acp` deps. It never constructs/passes `ompChatEngine`; therefore the new `src/ui/aiChatPanel.ts:1241` route is unreachable in production and selecting `builtin` still runs OMP. Wire the selected setting through panel construction and create/pass `createOmpChatEngine(...)` only for selected, detected OMP.
+  - critical — `src/extension.ts:558-581` ignores `UnicDB.ai.engine`: `commandOpenAiChat` always calls `resolveEngine()`, whose policy selects OMP whenever it is installed, then supplies only raw `acp` deps. It never constructs/passes `ompChatEngine`; therefore the new `src/ui/aiChatPanel.ts:1241` route is unreachable in production and selecting `builtin` still runs OMP. Wire the selected setting through panel construction and create/pass `createOmpChatEngine(...)` only for selected, detected OMP.
   - important — `src/ai/config.ts:41-45` validates old stored settings with the new required `engine` field; `src/ai/settings.ts:114-116` rejects every pre-AE persisted setting lacking it. Existing configured builtin users are treated as unconfigured. Normalize a missing persisted engine to `"builtin"` before validation and add a migration regression test.
-  - important — `src/ui/__tests__/aiChatPanelEngine.test.ts:261-265, 324-344` simulates `engine="omp"` by supplying `acp`, not by setting/reading `vsdb.ai.engine`; it cannot catch either production defect and has no activation/detection test. Test actual configuration-driven wiring for builtin, OMP, and detection failure.
-- SUGGESTED_FIXES: Make `vsdb.ai.engine` the single engine-selection source at activation/open; await or share its detection result for a deterministic fallback notice/config flip; migrate legacy stored settings; replace acp-presence fixtures with configuration-backed integration tests.
+  - important — `src/ui/__tests__/aiChatPanelEngine.test.ts:261-265, 324-344` simulates `engine="omp"` by supplying `acp`, not by setting/reading `UnicDB.ai.engine`; it cannot catch either production defect and has no activation/detection test. Test actual configuration-driven wiring for builtin, OMP, and detection failure.
+- SUGGESTED_FIXES: Make `UnicDB.ai.engine` the single engine-selection source at activation/open; await or share its detection result for a deterministic fallback notice/config flip; migrate legacy stored settings; replace acp-presence fixtures with configuration-backed integration tests.
 
 ## Reviewer Verdict — cycle AE R2 [TASK-003]
 
@@ -253,12 +253,12 @@ VERIFICATION_RERUN:
 TEST_PLAN_COVERAGE: partial — legacy-migration regression test present and real (config.test.ts:200-221); extension tests now config-driven via state.aiEngine (extension.test.ts:131,1141,1208); MISSING: no test asserts opts.ompChatEngine or exercises the threaded engine's usability, so the suite stays green while the shipped omp path is dead (critical below).
 FINDINGS:
   critical:
-    - src/extension.ts:396-400,569-579,621-633 — activation builds ompChatEngineRef around makeActivationAcpShim(), whose sessionNew/sessionPrompt/sessionLoad throw unconditionally; commandOpenAiChat branch 1 threads this doomed engine into every panel opened with engine="omp". First turn: runOmpEngineTurn → engine.send → acp.sessionNew throws (ompChatEngine.ts:259-264) → onError → one error bubble "session/new failed: AcpSession shim: not wired at activation" + vsdb.ai.engine silently flipped to "builtin" (aiChatPanel.ts:1488-1493). All later turns run builtin. Net: with omp installed and "omp" selected, the omp engine NEVER completes a turn — while the banner advertises "oh-my-pi (omp) v18.0.1 — streaming" (engineVersion threaded at extension.ts:628). PLAN_AE §Approach step 2 (spawn omp acp) is implemented nowhere; the activation hostMcp is never start()ed either. R1's "route unreachable" became "route reachable but self-destructs on first use". Fix direction: at panel open, construct a usable engine (await hostMcp.start() + AcpProcess-backed AcpSession → createOmpChatEngine), or drop branch 1's ompChatEngine threading entirely and let the already-working open-time fallback (fresh detectOmp + acp deps, extension.ts:636-663, raw runAcpTurn) serve engine="omp". Add an extension-level test that the threaded engine completes a turn.
+    - src/extension.ts:396-400,569-579,621-633 — activation builds ompChatEngineRef around makeActivationAcpShim(), whose sessionNew/sessionPrompt/sessionLoad throw unconditionally; commandOpenAiChat branch 1 threads this doomed engine into every panel opened with engine="omp". First turn: runOmpEngineTurn → engine.send → acp.sessionNew throws (ompChatEngine.ts:259-264) → onError → one error bubble "session/new failed: AcpSession shim: not wired at activation" + UnicDB.ai.engine silently flipped to "builtin" (aiChatPanel.ts:1488-1493). All later turns run builtin. Net: with omp installed and "omp" selected, the omp engine NEVER completes a turn — while the banner advertises "oh-my-pi (omp) v18.0.1 — streaming" (engineVersion threaded at extension.ts:628). PLAN_AE §Approach step 2 (spawn omp acp) is implemented nowhere; the activation hostMcp is never start()ed either. R1's "route unreachable" became "route reachable but self-destructs on first use". Fix direction: at panel open, construct a usable engine (await hostMcp.start() + AcpProcess-backed AcpSession → createOmpChatEngine), or drop branch 1's ompChatEngine threading entirely and let the already-working open-time fallback (fresh detectOmp + acp deps, extension.ts:636-663, raw runAcpTurn) serve engine="omp". Add an extension-level test that the threaded engine completes a turn.
   important:
     - src/extension.test.ts:1140-1174 — "Happy" test cannot distinguish branch 1 (shim engine) from the open-time fallback: both yield engineVersion="18.0.1" and acp defined; opts.ompChatEngine is never asserted. This is why the critical shipped green.
     - src/extension.ts:370-374 — activation detect is still a fire-and-forget IIFE, not awaited (R2 anchor: "detect awaited not IIFE"); the consumer-side fallback (ref null → fresh detect) closes the race in effect, but the steady state it deterministically produces is the broken branch-1 engine above.
   minor:
     - docs/AI_HANDOFF/tasks/TASK-003.md — cycle-AE Executor Report block (FILES_CHANGED/RED_OUTPUT for 7f22df1..de0706f) absent; model self-report lives only in the commit message.
-R1_FIX_STATUS: legacy migration FIXED (config.ts:45-49 normalizes missing engine → "builtin" pre-validation + test); vsdb.ai.engine source of truth FIXED mechanically (extension.ts:618-621 reads the setting; detect-fail → flip to builtin at extension.ts:377-386); activation race closed at the consumer — but R1-critical's core demand ("create/pass createOmpChatEngine for selected, detected OMP") was satisfied with an engine that cannot run a turn, so the R1 CRITICAL is NOT green.
+R1_FIX_STATUS: legacy migration FIXED (config.ts:45-49 normalizes missing engine → "builtin" pre-validation + test); UnicDB.ai.engine source of truth FIXED mechanically (extension.ts:618-621 reads the setting; detect-fail → flip to builtin at extension.ts:377-386); activation race closed at the consumer — but R1-critical's core demand ("create/pass createOmpChatEngine for selected, detected OMP") was satisfied with an engine that cannot run a turn, so the R1 CRITICAL is NOT green.
 NEXT_STATUS_FOR_INDEX: critical_block
 NOTES: All R1 findings were addressed at the mechanism level and the full suite passes (1963 pass/2 skip per orchestrator), yet the production omp path is guaranteed-fail-by-construction — the same suite-green/production-dead gap R1 flagged, one layer deeper. Blocking until the threaded engine is a usable, turn-completing session with a test proving it.

@@ -9,7 +9,7 @@
 //   - Sub-categories: Roles, Sessions, Locks. Grants hiển thị như sub của Role
 //     (lazy; expand Role → listRoleGrants).
 //   - Probe fail → `admin_error` node mang PG error code (vd 42501) cho user.
-//   - Cache: 60s TTL, key theo (connId, adminKind). Refresh qua `vsdb.admin.refresh`.
+//   - Cache: 60s TTL, key theo (connId, adminKind). Refresh qua `UnicDB.admin.refresh`.
 //
 // Node `meta.adminKind` discriminator cho phép getChildren dispatch an toàn.
 import * as vscode from "vscode";
@@ -104,7 +104,7 @@ export class AdminTreeProvider implements vscode.TreeDataProvider<AdminNode> {
     );
   }
 
-  /** Public API cho extension.ts gọi khi user bấm `vsdb.admin.refresh`. */
+  /** Public API cho extension.ts gọi khi user bấm `UnicDB.admin.refresh`. */
   refresh(): void {
     this.cache.clear();
     this._onDidChangeTreeData.fire(undefined);

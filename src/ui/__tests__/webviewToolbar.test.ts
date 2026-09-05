@@ -5,10 +5,10 @@
 // Loads dist/webview.js (built via `npm run compile`) into jsdom, stubs
 // acquireVsCodeApi + ResizeObserver + matchMedia, then dispatches a state
 // message and asserts:
-//   1. Every toolbar `.vsdb-btn` renders an inline SVG icon with
+//   1. Every toolbar `.UnicDB-btn` renders an inline SVG icon with
 //      `stroke="currentColor"`, an empty text body, a non-empty `title`,
 //      and a non-empty `aria-label` (presentation only — handlers intact).
-//   2. The toolbar's children are flat (2 `.vsdb-toolbar-sep` dividers),
+//   2. The toolbar's children are flat (2 `.UnicDB-toolbar-sep` dividers),
 //      the search input is the last child, and group order is
 //      query│edit│export.
 //   3. styles.css pins `flex-wrap: nowrap` so wrapping is impossible by
@@ -77,11 +77,11 @@ const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
 const stylesPath = resolve(process.cwd(), "webview", "styles.css");
 const stylesSrc = existsSync(stylesPath) ? readFileSync(stylesPath, "utf8") : null;
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
-interface VsdbDebugSurface {
+interface UnicDBDebugSurface {
   simulateCellEdit?: (
     rowId: number,
     colField: string,
@@ -90,9 +90,9 @@ interface VsdbDebugSurface {
   ) => void;
 }
 
-function vsdbSimulateCellEdit(): VsdbDebugSurface["simulateCellEdit"] | undefined {
+function UnicDBSimulateCellEdit(): UnicDBDebugSurface["simulateCellEdit"] | undefined {
   if (typeof window === "undefined") return undefined;
-  const g = (window as unknown as { __vsdb?: VsdbDebugSurface }).__vsdb;
+  const g = (window as unknown as { __UnicDB?: UnicDBDebugSurface }).__UnicDB;
   return g?.simulateCellEdit;
 }
 
@@ -106,16 +106,16 @@ function loadBundle(): {
     );
   }
 
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-webview"></div>';
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
   (0, eval)(bundleSrc);
@@ -159,7 +159,7 @@ function button(
   cls: string,
 ): HTMLButtonElement {
   const el = root.querySelector(
-    `.vsdb-toolbar .${cls}`,
+    `.UnicDB-toolbar .${cls}`,
   ) as HTMLButtonElement | null;
   if (!el) {
     throw new Error(`toolbar button .${cls} not found`);
@@ -181,21 +181,21 @@ function clickButton(b: HTMLButtonElement): void {
 // Toolbar flat children we expect to find in order. Used to assert
 // query│edit│export grouping.
 const EXPECTED_ORDER = [
-  "vsdb-btn-danger", // Cancel (query group)
-  "vsdb-btn", // Refresh (query)
-  "vsdb-toolbar-sep", // query│edit divider
-  "vsdb-btn", // Add Row
-  "vsdb-btn", // Delete Row
-  "vsdb-btn", // Undo
-  "vsdb-btn", // Redo
-  "vsdb-commit", // Commit
-  "vsdb-btn", // CSV toggle
-  "vsdb-toolbar-sep", // edit│export divider
-  "vsdb-export-format",
-  "vsdb-export-header",
-  "vsdb-export-copy",
-  "vsdb-export-file",
-  "vsdb-search-input",
+  "UnicDB-btn-danger", // Cancel (query group)
+  "UnicDB-btn", // Refresh (query)
+  "UnicDB-toolbar-sep", // query│edit divider
+  "UnicDB-btn", // Add Row
+  "UnicDB-btn", // Delete Row
+  "UnicDB-btn", // Undo
+  "UnicDB-btn", // Redo
+  "UnicDB-commit", // Commit
+  "UnicDB-btn", // CSV toggle
+  "UnicDB-toolbar-sep", // edit│export divider
+  "UnicDB-export-format",
+  "UnicDB-export-header",
+  "UnicDB-export-copy",
+  "UnicDB-export-file",
+  "UnicDB-search-input",
 ];
 
 // ---- tests ----------------------------------------------------------------
@@ -205,12 +205,12 @@ const describeIfBundle = describe.runIf(bundleSrc !== null);
 
 describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", () => {
   itIfBundle(
-    "1. every toolbar .vsdb-btn has an inline svg icon, currentColor stroke, non-empty title + aria-label, empty text",
+    "1. every toolbar .UnicDB-btn has an inline svg icon, currentColor stroke, non-empty title + aria-label, empty text",
     () => {
       const { root } = loadBundle();
       dispatchState(threeRowsState());
       const btns = Array.from(
-        root.querySelectorAll(".vsdb-toolbar .vsdb-btn"),
+        root.querySelectorAll(".UnicDB-toolbar .UnicDB-btn"),
       ).filter(
         (el): el is HTMLButtonElement => el.tagName === "BUTTON",
       ) as HTMLButtonElement[];
@@ -250,13 +250,13 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
       await new Promise<void>((r) => setTimeout(r, 0));
 
       // Cancel — should post {type:'cancel'}.
-      clickButton(button(root, "vsdb-btn-danger"));
+      clickButton(button(root, "UnicDB-btn-danger"));
       expect(received.some((m) => m.type === "cancel")).toBe(true);
       received.length = 0;
 
       // CSV toggle — flips the formatter locally (no message posted).
       const allBtns = Array.from(
-        root.querySelectorAll(".vsdb-toolbar .vsdb-btn"),
+        root.querySelectorAll(".UnicDB-toolbar .UnicDB-btn"),
       ).filter((el): el is HTMLButtonElement => el.tagName === "BUTTON");
       const csv = allBtns.find((b) =>
         (b.title || b.getAttribute("aria-label") || "").toLowerCase().includes("csv"),
@@ -272,21 +272,21 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
       // Commit — no dirty edits → no-op. With one dirty edit it posts a
       // saveEdits batch. We use the bundle's exposed simulateCellEdit
       // hook (same surface as webviewSaveEdits.test.ts).
-      const sim = vsdbSimulateCellEdit();
+      const sim = UnicDBSimulateCellEdit();
       expect(sim).toBeTruthy();
       sim!(0, "name", "x", "alpha");
       await new Promise<void>((r) => setTimeout(r, 0));
-      clickButton(button(root, "vsdb-commit"));
+      clickButton(button(root, "UnicDB-commit"));
       await new Promise<void>((r) => setTimeout(r, 0));
       const saveMsgs = received.filter((m) => m.type === "saveEdits");
       expect(saveMsgs.length, "commit icon did not post saveEdits").toBe(1);
       received.length = 0;
 
-      clickButton(button(root, "vsdb-export-copy"));
+      clickButton(button(root, "UnicDB-export-copy"));
 
       const copyMsgs = received.filter((m) => m.type === "copy");
       expect(copyMsgs.length, "copy icon did not post copy").toBe(1);
-      clickButton(button(root, "vsdb-export-file"));
+      clickButton(button(root, "UnicDB-export-file"));
 
       // Export to file.
 
@@ -301,7 +301,7 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
       const { root } = loadBundle();
       dispatchState(threeRowsState());
 
-      const toolbar = root.querySelector(".vsdb-toolbar") as HTMLDivElement;
+      const toolbar = root.querySelector(".UnicDB-toolbar") as HTMLDivElement;
       expect(toolbar).toBeTruthy();
 
       const children = Array.from(toolbar.children) as HTMLElement[];
@@ -311,29 +311,29 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
       // assert the actual DOM contract: flat children, 2 separators,
       // search last, and a stable order.
       const seps = children.filter(
-        (c) => c.classList.contains("vsdb-toolbar-sep"),
+        (c) => c.classList.contains("UnicDB-toolbar-sep"),
       );
-      expect(seps.length, "expected exactly 2 .vsdb-toolbar-sep dividers").toBe(2);
+      expect(seps.length, "expected exactly 2 .UnicDB-toolbar-sep dividers").toBe(2);
 
       const last = children[children.length - 1];
       expect(
-        last.classList.contains("vsdb-search-input"),
+        last.classList.contains("UnicDB-search-input"),
         "search input must be the last toolbar child",
       ).toBe(true);
 
       // Order: walk the children and assert the sequence of class
-      // predicates. Buttons that share .vsdb-btn are matched in the
+      // predicates. Buttons that share .UnicDB-btn are matched in the
       // expected position; the seq uses the predicate string.
       const got: string[] = children.map((c) => {
-        if (c.classList.contains("vsdb-btn-danger")) return "vsdb-btn-danger";
-        if (c.classList.contains("vsdb-commit")) return "vsdb-commit";
-        if (c.classList.contains("vsdb-export-format")) return "vsdb-export-format";
-        if (c.classList.contains("vsdb-export-header")) return "vsdb-export-header";
-        if (c.classList.contains("vsdb-export-copy")) return "vsdb-export-copy";
-        if (c.classList.contains("vsdb-export-file")) return "vsdb-export-file";
-        if (c.classList.contains("vsdb-search-input")) return "vsdb-search-input";
-        if (c.classList.contains("vsdb-toolbar-sep")) return "vsdb-toolbar-sep";
-        if (c.classList.contains("vsdb-btn")) return "vsdb-btn";
+        if (c.classList.contains("UnicDB-btn-danger")) return "UnicDB-btn-danger";
+        if (c.classList.contains("UnicDB-commit")) return "UnicDB-commit";
+        if (c.classList.contains("UnicDB-export-format")) return "UnicDB-export-format";
+        if (c.classList.contains("UnicDB-export-header")) return "UnicDB-export-header";
+        if (c.classList.contains("UnicDB-export-copy")) return "UnicDB-export-copy";
+        if (c.classList.contains("UnicDB-export-file")) return "UnicDB-export-file";
+        if (c.classList.contains("UnicDB-search-input")) return "UnicDB-search-input";
+        if (c.classList.contains("UnicDB-toolbar-sep")) return "UnicDB-toolbar-sep";
+        if (c.classList.contains("UnicDB-btn")) return "UnicDB-btn";
         return c.className;
       });
       expect(got).toEqual(EXPECTED_ORDER);
@@ -341,20 +341,20 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
   );
 
   itIfBundle(
-    "4. styles.css pins .vsdb-toolbar to flex-wrap: nowrap (no wrap at any width)",
+    "4. styles.css pins .UnicDB-toolbar to flex-wrap: nowrap (no wrap at any width)",
     () => {
       if (!stylesSrc) {
         throw new Error("webview/styles.css missing");
       }
       // The rule MUST match. Wrapping would require removing this.
-      const re = /\.vsdb-toolbar\s*\{[^}]*flex-wrap:\s*nowrap/;
-      expect(re.test(stylesSrc), "styles.css must pin .vsdb-toolbar flex-wrap: nowrap").toBe(
+      const re = /\.UnicDB-toolbar\s*\{[^}]*flex-wrap:\s*nowrap/;
+      expect(re.test(stylesSrc), "styles.css must pin .UnicDB-toolbar flex-wrap: nowrap").toBe(
         true,
       );
       // Buttons must size SVGs at 16×16 to keep the compact 24–26px height.
       expect(
-        /\.vsdb-btn[^}]*\.vsdb-btn\s+svg|\.vsdb-btn\s+svg/.test(stylesSrc),
-        "styles.css must define a .vsdb-btn svg sizing rule",
+        /\.UnicDB-btn[^}]*\.UnicDB-btn\s+svg|\.UnicDB-btn\s+svg/.test(stylesSrc),
+        "styles.css must define a .UnicDB-btn svg sizing rule",
       ).toBe(true);
     },
   );
@@ -366,10 +366,10 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
       dispatchState(threeRowsState());
 
       const runBtn = root.querySelector(
-        ".vsdb-requery-run",
+        ".UnicDB-requery-run",
       ) as HTMLButtonElement | null;
       const clearBtn = root.querySelector(
-        ".vsdb-requery-clear",
+        ".UnicDB-requery-clear",
       ) as HTMLButtonElement | null;
       expect(runBtn).toBeTruthy();
       expect(clearBtn).toBeTruthy();
@@ -384,10 +384,10 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
 
       // Re-Run with values.
       const whereInput = root.querySelector(
-        ".vsdb-requery-where",
+        ".UnicDB-requery-where",
       ) as HTMLInputElement | null;
       const orderInput = root.querySelector(
-        ".vsdb-requery-order",
+        ".UnicDB-requery-order",
       ) as HTMLInputElement | null;
       expect(whereInput).toBeTruthy();
       expect(orderInput).toBeTruthy();

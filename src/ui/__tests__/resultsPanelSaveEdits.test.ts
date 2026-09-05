@@ -915,7 +915,7 @@ describe("ResultsPanel — no-PK DELETE marker goes through resolver (TASK-002 c
         {
           rowId: 1,
           colIndex: 0,
-          value: { __vsdb_deleted__: true, __rowId: 1 },
+          value: { __UnicDB_deleted__: true, __rowId: 1 },
         },
       ],
     });
@@ -941,7 +941,7 @@ describe("ResultsPanel — no-PK DELETE marker goes through resolver (TASK-002 c
 });
 
 describe("ResultsPanel — insert-only PG no-PK skips resolver (TASK-002 case 3)", () => {
-  it("PG no-PK + ONLY a __vsdb_new_row__ marker → NO ctid lookup SQL; INSERT issued; ack ok", async () => {
+  it("PG no-PK + ONLY a __UnicDB_new_row__ marker → NO ctid lookup SQL; INSERT issued; ack ok", async () => {
     const saveCtx: SaveContext = {
       getDriver: () => "postgres",
       listPkColumns: async () => [],
@@ -984,7 +984,7 @@ describe("ResultsPanel — insert-only PG no-PK skips resolver (TASK-002 case 3)
           rowId: 0,
           colIndex: 0,
           value: {
-            __vsdb_new_row__: true,
+            __UnicDB_new_row__: true,
             __rowId: 0,
             values: ["x"],
           },
@@ -1771,9 +1771,9 @@ describe("ResultsPanel — Add Row on no-PK postgres never triggers a ctid looku
           rowId: 0,
           colIndex: -1,
           value: {
-            __vsdb_new_row__: true,
+            __UnicDB_new_row__: true,
             __rowId: 0,
-            values: [{ __vsdb_default__: true }],
+            values: [{ __UnicDB_default__: true }],
           },
         },
         // Ordinary cell edit on the SAME (brand-new, no server row yet)

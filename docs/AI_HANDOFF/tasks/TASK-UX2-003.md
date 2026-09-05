@@ -26,7 +26,7 @@ test mocks — see Acceptance Criteria for the migration list.
 - `src/ui/statusBar.ts` — change `createStatusBar` to return a wrapper object
   `{ item: vscode.StatusBarItem; setErrorBadge(reason: string | null): void;
   dispose(): void }` instead of a bare `StatusBarItem`. Add `setErrorBadge`
-  method that flips text to red `$(error) <name>` with `vsdb: error: <reason>`
+  method that flips text to red `$(error) <name>` with `UnicDB: error: <reason>`
   tooltip; clears on `null`.
 - `src/ui/__tests__/statusBar.test.ts` — extend with the 2 new wrapper-shape
   cases from PLAN §4.
@@ -79,7 +79,7 @@ npm test src/ui/__tests__/statusBar.test.ts
   - `src/extension.test.ts:97` mock updated to the wrapper shape.
   - All three call sites pass `npm test` and `npm run typecheck`.
 - [ ] `setErrorBadge` flips the active connection chip to red `$(error) <name>`
-      with `vsdb: error: <reason>` tooltip; `.setErrorBadge(null)` clears.
+      with `UnicDB: error: <reason>` tooltip; `.setErrorBadge(null)` clears.
 - [ ] No regression in `statusBar.test.ts` or `scaffold.test.ts` or
       `extension.test.ts`.
 
@@ -156,7 +156,7 @@ AssertionError: expected undefined not to be undefined
 ### GREEN output (post-implementation)
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-003
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/UX2-003
 
  ✓ src/ui/__tests__/statusBar.test.ts  (7 tests) 20ms
  ✓ src/core/__tests__/queryRunner.test.ts  (75 tests) 248ms
@@ -175,11 +175,11 @@ AssertionError: expected undefined not to be undefined
 
 ### Files changed
 
-- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-003/src/core/queryRunner.ts` — exported `RunnerBusy` error class; added `lastOnUpdate` field; cached `onUpdate` on `run()` entry; added public `runFailed(reason: string): void` method that throws `RunnerBusy` while a real run is in flight, otherwise appends `{index, sql:"(connection)", status:"error", error:reason, durationMs:0}` and fires the cached onUpdate.
-- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-003/src/ui/statusBar.ts` — exported `StatusBarWrapper` interface; `createStatusBar` now returns `{item, setErrorBadge, dispose}` instead of a bare `vscode.StatusBarItem`; `setErrorBadge(reason)` flips the chip to red `$(error) <name> [driver]` with tooltip `vsdb: error: <reason>`, `setErrorBadge(null)` restores via shared render.
-- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-003/src/extension.ts` — imported `StatusBarWrapper`; updated interface field type at line 254 (`statusBar: StatusBarWrapper`); `context.subscriptions.push(statusBar)` at line 421 still works because the wrapper has `.dispose()` (Disposable-compatible).
-- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-003/src/core/__tests__/queryRunner.test.ts` — added `RunnerBusy` import; added `describe("QueryRunner — runFailed (TASK-UX2-003)")` block with 5 cases (cases 1-5).
-- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-003/src/ui/__tests__/statusBar.test.ts` — updated existing tests to access the wrapper via `.item` (5 tests use `item.item.text`/`.command`/`.hide`/`.show`); added cases 6 and 7 for `setErrorBadge` and wrapper shape.
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/UX2-003/src/core/queryRunner.ts` — exported `RunnerBusy` error class; added `lastOnUpdate` field; cached `onUpdate` on `run()` entry; added public `runFailed(reason: string): void` method that throws `RunnerBusy` while a real run is in flight, otherwise appends `{index, sql:"(connection)", status:"error", error:reason, durationMs:0}` and fires the cached onUpdate.
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/UX2-003/src/ui/statusBar.ts` — exported `StatusBarWrapper` interface; `createStatusBar` now returns `{item, setErrorBadge, dispose}` instead of a bare `vscode.StatusBarItem`; `setErrorBadge(reason)` flips the chip to red `$(error) <name> [driver]` with tooltip `UnicDB: error: <reason>`, `setErrorBadge(null)` restores via shared render.
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/UX2-003/src/extension.ts` — imported `StatusBarWrapper`; updated interface field type at line 254 (`statusBar: StatusBarWrapper`); `context.subscriptions.push(statusBar)` at line 421 still works because the wrapper has `.dispose()` (Disposable-compatible).
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/UX2-003/src/core/__tests__/queryRunner.test.ts` — added `RunnerBusy` import; added `describe("QueryRunner — runFailed (TASK-UX2-003)")` block with 5 cases (cases 1-5).
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/UX2-003/src/ui/__tests__/statusBar.test.ts` — updated existing tests to access the wrapper via `.item` (5 tests use `item.item.text`/`.command`/`.hide`/`.show`); added cases 6 and 7 for `setErrorBadge` and wrapper shape.
 
 ### Notes
 

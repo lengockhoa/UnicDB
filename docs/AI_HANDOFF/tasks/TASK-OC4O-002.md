@@ -7,22 +7,22 @@
 
 ## Goal
 
-Add a "VSDB Help" entry under the webview panel's `...` (more actions) menu on
-the VSDB Results / Console / Schema panels that opens a dedicated help webview
+Add a "UnicDB Help" entry under the webview panel's `...` (more actions) menu on
+the UnicDB Results / Console / Schema panels that opens a dedicated help webview
 laid out as a **grid of cards**. Each card = one feature area (Console, Results
 grid, Schema tree, Connection manager, BigQuery, AI chat, Settings, etc.) with
 a short description + the matching command id + a "Try it" action that runs
 `vscode.commands.executeCommand(...)` for that feature.
 
-Success: from any VSDB webview, the user clicks the `...` title menu → "VSDB
+Success: from any UnicDB webview, the user clicks the `...` title menu → "UnicDB
 Help" → a new webview panel opens showing a responsive grid where every card
 summarizes one feature and offers a one-click way to launch its command.
 
 ## Target Files
 
-- `package.json` — new command `vsdb.openHelpGrid` (`category: VSDB`, icon
+- `package.json` — new command `UnicDB.openHelpGrid` (`category: UnicDB`, icon
   `$(book)`); new menu entries under `webview/context` (or panel title menu
-  via `webview/.../title` if available) targeting the VSDB webview ids.
+  via `webview/.../title` if available) targeting the UnicDB webview ids.
 - `src/ui/helpGrid.ts` (new) — pure help-card registry (id, title, blurb,
   command-id, icon) + a tiny renderer that posts the grid payload to the
   webview; no vscode dep beyond the postMessage bridge.
@@ -33,7 +33,7 @@ summarizes one feature and offers a one-click way to launch its command.
   webview bundle entry. CSP-clean. Cards rendered with `display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr))` so the
   layout is responsive in narrow + wide panels.
-- `src/extension.ts` — register `vsdb.openHelpGrid` + thread the new panel
+- `src/extension.ts` — register `UnicDB.openHelpGrid` + thread the new panel
   into the same singleton wiring.
 - `src/extension.test.ts` — unit tests for the help-card registry (every
   card has a command id that is actually registered; the grid panel can be
@@ -46,7 +46,7 @@ summarizes one feature and offers a one-click way to launch its command.
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|-----------|----------|---------------------|
 | 1 | unit | `helpCardRegistry chứa >=8 card, mỗi card có command id đã đăng ký` | registry returns ≥8 cards; for each card, `state.registeredCommands.has(card.commandId) === true` | fresh `activate(ctx)` |
-| 2 | unit | `handler vsdb.openHelpGrid tạo webview panel + postMessage { type: 'init', cards }` | first webview created, `webview.postMessage` receives `{ type: 'init', cards: [...] }` with non-empty cards list | fresh `activate(ctx)` |
+| 2 | unit | `handler UnicDB.openHelpGrid tạo webview panel + postMessage { type: 'init', cards }` | first webview created, `webview.postMessage` receives `{ type: 'init', cards: [...] }` with non-empty cards list | fresh `activate(ctx)` |
 | 3 | happy path | `singleton: gọi 2 lần → chỉ 1 webview panel, lần 2 reveal` | after 2 calls, `state.createdWebviewPanels.length === 1`, second call hits `reveal()` on the existing panel | fresh `activate(ctx)` |
 | 4 | edge | `card không chứa command id hợp lệ → fail-closed ở registry` | registry filters out cards whose `commandId` is not a non-empty string; test pins that the registered set has zero such entries | fresh registry list |
 | 5 | regression | `BQ-04 frozen-surface guard vẫn pass sau khi thêm command + menu` | `bq04SurfaceGuard` test 4/4 pass (filter widened in TASK-OC4O-001 already covers contributes changes) | post-implementation |
@@ -54,7 +54,7 @@ summarizes one feature and offers a one-click way to launch its command.
 ## Test Files
 
 - `src/ui/__tests__/helpGrid.test.ts` (new) — registry + card-shape tests.
-- `src/extension.test.ts` (extend) — add the `vsdb.openHelpGrid` block alongside the existing TASK-OC4O-001 block; reuse `activateFresh` pattern.
+- `src/extension.test.ts` (extend) — add the `UnicDB.openHelpGrid` block alongside the existing TASK-OC4O-001 block; reuse `activateFresh` pattern.
 
 ## Verification Commands
 
@@ -81,7 +81,7 @@ npm run build:webview
 - [ ] `npm test` still 3407+ passed | 2 skipped (additions only, no regressions).
 - [ ] `npm run typecheck` exit 0.
 - [ ] Webview bundle includes the new `helpGridMain` entry (`dist/helpGrid.js` present).
-- [ ] From any VSDB webview (`VSDB: Results`, `VSDB: Open Console`, etc.), the `...` menu shows `VSDB Help`; the resulting panel shows ≥8 feature cards in a responsive grid; clicking a card's "Try it" runs the matching command.
+- [ ] From any UnicDB webview (`UnicDB: Results`, `UnicDB: Open Console`, etc.), the `...` menu shows `UnicDB Help`; the resulting panel shows ≥8 feature cards in a responsive grid; clicking a card's "Try it" runs the matching command.
 - [ ] No regression in BQ-04 frozen surfaces (BQ-00 / BQ-01 / `formatBigQueryCell` / `@google-cloud/bigquery@9.0.3` all byte-identical).
 - [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
@@ -93,7 +93,7 @@ npm run build:webview
 
 - Consumes: `(none)` — independent from TASK-OC4O-001.
 - Produces:
-  - Command id: `vsdb.openHelpGrid` (registered in `commands` + `webview/context` menu bindings; category `VSDB`; icon `$(book)`).
+  - Command id: `UnicDB.openHelpGrid` (registered in `commands` + `webview/context` menu bindings; category `UnicDB`; icon `$(book)`).
   - Public type: `HelpCard { id: string; title: string; blurb: string; icon: string; commandId: string }`.
   - Pure helper: `helpCardRegistry(): readonly HelpCard[]` — returns the registered cards.
   - Host class: `HelpGridPanel` with `show(): void`, mirrors `ConsolePanel.show()`.
@@ -108,9 +108,9 @@ User request: "Mấy cái hướng dẫn sử dụng này nên làm cho tôi m�
 
 Mapped to the standard VS Code surface: the `...` ("more actions") menu on a
 webview title is exposed via `contributes.menus` entries with `webview/<id>`
-context keys. VSDB's webviews are scoped under the `vsdb` namespace
+context keys. UnicDB's webviews are scoped under the `UnicDB` namespace
 (Results / Console / Schema panels). The new entry shows up at the TOP of
-the `...` menu across all VSDB webviews.
+the `...` menu across all UnicDB webviews.
 
 Grid layout: webview-native CSS grid, no extra deps. Cards laid out
 `auto-fill` so the same component shrinks gracefully in narrow panels.

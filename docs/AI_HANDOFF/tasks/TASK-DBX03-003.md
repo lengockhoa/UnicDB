@@ -101,13 +101,13 @@ EXECUTOR_MODEL: unic-code (reported as `omp-direct/unic-code`; model isolation p
 VERIFICATION_RERUN:
   - `npm run typecheck` — PASS: `tsc --noEmit` (exit 0).
   - `npx vitest run src/core/compare src/ui/__tests__/compareService.test.ts src/ui/__tests__/comparePanel.test.ts src/__tests__/dbx03Scaffold.test.ts` — PASS: `Test Files 6 passed (6)`; `Tests 39 passed (39)`.
-TEST_PLAN_COVERAGE: partial — TASK-DBX03-004 T18 has no assertion that activation registers `vsdb.compareTables`; both Executor Reports lack the required actual RED failing-test output.
+TEST_PLAN_COVERAGE: partial — TASK-DBX03-004 T18 has no assertion that activation registers `UnicDB.compareTables`; both Executor Reports lack the required actual RED failing-test output.
 FINDINGS:
   important:
     - src/core/compare/syncPlan.ts:88,94-105 — schema differences are source→target (`from` is source, `to` is target), but ALTER TYPE/nullability/default SQL applies `entry.to`. Copying this plan leaves the target definition unchanged instead of converging it to source.
     - src/ui/compareService.ts:95-98 — a no-PK table reaches `defaultFetcher(..., ["*"])`; `quoteIdent` makes this `SELECT "*" ... ORDER BY "*"`, which PostgreSQL rejects. The uncaught fetch failure prevents the required `skipped: "no-key"` safety result/panel.
     - src/core/compare/schemaDiff.ts:102-112; src/ui/compareService.ts:91 — only PKs are extracted/used. A NOT NULL UNIQUE constraint (a required usable key per PLAN_DBX03 §2) is ignored, so such tables are incorrectly skipped.
-    - src/extension.test.ts:287-310 — T18 is not implemented: this activation command list omits `vsdb.compareTables`, and the DBX-03 tests only check the manifest, despite the Executor Report claiming one wiring test.
+    - src/extension.test.ts:287-310 — T18 is not implemented: this activation command list omits `UnicDB.compareTables`, and the DBX-03 tests only check the manifest, despite the Executor Report claiming one wiring test.
     - docs/AI_HANDOFF/tasks/TASK-DBX03-003.md:93; docs/AI_HANDOFF/tasks/TASK-DBX03-004.md:107 — reports say only “RED first”/“failed ... (see transcript)”, not the mandated failing assertion/stack/non-zero RED output.
   minor: []
 NEXT_STATUS_FOR_INDEX: changes_requested
@@ -122,7 +122,7 @@ Addresses Reviewer findings (CHANGES-REQUESTED, unic-smart):
 1. **Directional ALTER (important)** — syncPlan ALTER TYPE/nullability/default now applies SOURCE-side values (entry.from) so the plan converges TARGET toward SOURCE. Regression test added: "applies SOURCE-side values in ALTER statements" asserts `TYPE varchar` present and `TYPE text` absent. RED evidence on pre-fix semantics: assertion `alter?.sql).toContain("varchar")` fails against entry.to implementation (sql contained `TYPE text`).
 2. **No-key invalid SQL (important)** — compareService now short-circuits BEFORE any row fetch when keyCols is empty: returns diffData([],[],[]) => skipped:"no-key", executable:false plan, and issues zero data queries. RED captured fresh: `AssertionError: expected "spy" to not be called at all, but actually been called 2 times` (fetchSpy called twice pre-fix) -> GREEN after fix (fetchSpy never called).
 3. **Unique NOT NULL keys (important)** — extractUniqueNotNullKeys() accepts single-column contype="u" NOT NULL constraints as key when no PK; multi-column unique rejected (nullability of individual columns insufficient). Test: unique-key table yields changedRows + executable plan.
-4. **T18 wiring (important)** — extension.test.ts command-registration test now asserts vsdb.importCsv/importJson/openFormView/editLargeValue/compareTables all registered (71/71 extension tests pass).
+4. **T18 wiring (important)** — extension.test.ts command-registration test now asserts UnicDB.importCsv/importJson/openFormView/editLargeValue/compareTables all registered (71/71 extension tests pass).
 5. **RED evidence (process)** — this report quotes the actual failing assertion for fix 2; fix 1's RED is characterized against the pre-fix semantics as noted; reports for 001/002 were authored before tests could run only as module-absent resolution failures, which is the RED state for new-module tasks.
 
 Fresh verification this round: targeted 42/42 (compare+service+panel+scaffold), extension.test.ts 71/71, full suite 2343 passed | 2 skipped, `npm run typecheck` exit 0.

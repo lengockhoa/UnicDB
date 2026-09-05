@@ -1,7 +1,7 @@
 // webview/comparePanelMain.ts
 // TASK-DBX03-004 — compare panel webview. CSP-clean: textContent-only
 // rendering only (no raw-HTML injection APIs). Receives one
-// `vsdb-compare` message; Copy SQL posts back to the host.
+// `UnicDB-compare` message; Copy SQL posts back to the host.
 
 interface VsCodeApi {
   postMessage(msg: unknown): void;
@@ -33,7 +33,7 @@ declare global {
 }
 
 const vscode = acquireVsCodeApi();
-const root = document.getElementById("vsdb-root") as HTMLDivElement | null;
+const root = document.getElementById("UnicDB-root") as HTMLDivElement | null;
 
 function el(tag: string, className?: string, text?: string): HTMLElement {
   const node = document.createElement(tag);
@@ -45,37 +45,37 @@ function el(tag: string, className?: string, text?: string): HTMLElement {
 function render(result: ResultView): void {
   if (!root) return;
   root.textContent = "";
-  root.appendChild(el("h2", "vsdb-compare-title", "Schema & Data Compare (preview only)"));
+  root.appendChild(el("h2", "UnicDB-compare-title", "Schema & Data Compare (preview only)"));
 
   if (!result.ok) {
-    root.appendChild(el("p", "vsdb-compare-error", result.error ?? "Compare failed."));
+    root.appendChild(el("p", "UnicDB-compare-error", result.error ?? "Compare failed."));
     return;
   }
 
   if (result.truncated) {
     root.appendChild(
-      el("p", "vsdb-compare-warn", `Row fetch exceeded the compare limit — only the first ${10000} rows per side were diffed.`),
+      el("p", "UnicDB-compare-warn", `Row fetch exceeded the compare limit — only the first ${10000} rows per side were diffed.`),
     );
   }
 
   // Section: schema diff
   const schema = result.shapeDiff;
-  const schemaBox = el("section", "vsdb-compare-section");
+  const schemaBox = el("section", "UnicDB-compare-section");
   schemaBox.appendChild(el("h3", "", `Schema (${schema && schema.identical ? "identical" : "differs"})`));
   if (schema) {
     for (const entry of schema.entries) {
-      schemaBox.appendChild(el("div", "vsdb-compare-row", describeEntry(entry)));
+      schemaBox.appendChild(el("div", "UnicDB-compare-row", describeEntry(entry)));
     }
     if (schema.entries.length === 0) schemaBox.appendChild(el("div", "", "No schema differences."));
     if (!schema.compatible) {
-      schemaBox.appendChild(el("p", "vsdb-compare-warn", "Shapes are incompatible — data sync is disabled."));
+      schemaBox.appendChild(el("p", "UnicDB-compare-warn", "Shapes are incompatible — data sync is disabled."));
     }
   }
   root.appendChild(schemaBox);
 
   // Section: data diff
   const data = result.dataDiff;
-  const dataBox = el("section", "vsdb-compare-section");
+  const dataBox = el("section", "UnicDB-compare-section");
   if (data && data.skipped) {
     dataBox.appendChild(el("h3", "", "Data (skipped)"));
     dataBox.appendChild(el("p", "", "No primary key — safe row-level diff is not possible."));
@@ -86,7 +86,7 @@ function render(result: ResultView): void {
     dataBox.appendChild(el("h3", "", `Data (${added} to insert, ${changed} to update, ${removed} to delete)`));
     for (const change of data.changedRows ?? []) {
       for (const cell of change.cellDiffs) {
-        dataBox.appendChild(el("div", "vsdb-compare-row", `Row ${JSON.stringify(change.key)} · ${cell.column}: ${fmt(cell.from)} → ${fmt(cell.to)}`));
+        dataBox.appendChild(el("div", "UnicDB-compare-row", `Row ${JSON.stringify(change.key)} · ${cell.column}: ${fmt(cell.from)} → ${fmt(cell.to)}`));
       }
     }
     if (added + removed + changed === 0) dataBox.appendChild(el("div", "", "No data differences."));
@@ -95,21 +95,21 @@ function render(result: ResultView): void {
 
   // Section: sync plan
   const plan = result.plan;
-  const planBox = el("section", "vsdb-compare-section");
+  const planBox = el("section", "UnicDB-compare-section");
   if (plan) {
     planBox.appendChild(
       el("h3", "", plan.executable ? `Sync plan (${plan.totals.ddl} DDL, ${plan.totals.data} data statements)` : "Sync plan (not executable)"),
     );
-    for (const reason of plan.reasons) planBox.appendChild(el("p", "vsdb-compare-warn", reason));
+    for (const reason of plan.reasons) planBox.appendChild(el("p", "UnicDB-compare-warn", reason));
     for (const group of plan.groups) {
       for (const stmt of group.statements) {
-        const line = el("div", stmt.dangerous ? "vsdb-compare-row vsdb-compare-dangerous" : "vsdb-compare-row", "");
+        const line = el("div", stmt.dangerous ? "UnicDB-compare-row UnicDB-compare-dangerous" : "UnicDB-compare-row", "");
         line.appendChild(el("code", "", stmt.sql));
-        line.appendChild(el("span", "vsdb-compare-summary", ` — ${stmt.summary}${stmt.dangerous ? " (dangerous)" : ""}`));
+        line.appendChild(el("span", "UnicDB-compare-summary", ` — ${stmt.summary}${stmt.dangerous ? " (dangerous)" : ""}`));
         planBox.appendChild(line);
       }
     }
-    const copy = el("button", "vsdb-compare-copy", "Copy sync SQL");
+    const copy = el("button", "UnicDB-compare-copy", "Copy sync SQL");
     copy.addEventListener("click", () => {
       const sql = plan.groups.map((g) => g.statements.map((s) => s.sql).join("\n")).join("\n");
       vscode.postMessage({ type: "copySql", sql });
@@ -132,7 +132,7 @@ function fmt(v: unknown): string {
 
 window.addEventListener("message", (event: MessageEvent) => {
   const msg = event.data as { type?: string; result?: ResultView };
-  if (msg?.type === "vsdb-compare" && msg.result) {
+  if (msg?.type === "UnicDB-compare" && msg.result) {
     window.compareData = { result: msg.result };
     render(msg.result);
   }

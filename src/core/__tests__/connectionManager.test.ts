@@ -154,8 +154,8 @@ function makeCfg(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
     driver: overrides.driver ?? "postgres",
     host: overrides.host ?? "127.0.0.1",
     port: overrides.port ?? 5432,
-    user: overrides.user ?? "vsdb",
-    database: overrides.database ?? "vsdb",
+    user: overrides.user ?? "UnicDB",
+    database: overrides.database ?? "UnicDB",
     ...overrides,
   };
 }
@@ -214,16 +214,16 @@ describe("ConnectionManager — CRUD + persistence", () => {
     const h = setupHarness({ withWorkspace: true });
     await h.mgr.addConnection(makeCfg({ id: "pg1", name: "Local PG" }), "secret123");
 
-    // Metadata: workspaceState có key vsdb.connections.
-    const list = h.workspace.get<ConnectionConfig[]>("vsdb.connections");
+    // Metadata: workspaceState có key UnicDB.connections.
+    const list = h.workspace.get<ConnectionConfig[]>("UnicDB.connections");
     expect(list).toBeDefined();
     expect(list!).toHaveLength(1);
     expect(list![0].id).toBe("pg1");
     expect(list![0].name).toBe("Local PG");
     expect((list![0] as unknown as { password?: string }).password).toBeUndefined();
 
-    // Password: SecretStorage có key vsdb.pass.pg1.
-    const pass = await h.secret.get("vsdb.pass.pg1");
+    // Password: SecretStorage có key UnicDB.pass.pg1.
+    const pass = await h.secret.get("UnicDB.pass.pg1");
     expect(pass).toBe("secret123");
 
     // Test-connect: adapter.testConnection được gọi 1 lần.
@@ -238,8 +238,8 @@ describe("ConnectionManager — CRUD + persistence", () => {
       h.mgr.addConnection(makeCfg({ id: "bad" }), "any"),
     ).rejects.toThrow();
 
-    expect(h.workspace.get("vsdb.connections")).toBeUndefined();
-    expect(await h.secret.get("vsdb.pass.bad")).toBeUndefined();
+    expect(h.workspace.get("UnicDB.connections")).toBeUndefined();
+    expect(await h.secret.get("UnicDB.pass.bad")).toBeUndefined();
   });
 
   it("Test #3 — deleteConnection đang active: close adapter, clear active, xoá secret", async () => {
@@ -263,12 +263,12 @@ describe("ConnectionManager — CRUD + persistence", () => {
     // close được gọi thêm lần nữa khi xoá.
     expect(h.adapter.close.mock.calls.length).toBeGreaterThan(closeBefore);
 
-    const list = h.workspace.get<ConnectionConfig[]>("vsdb.connections")!;
+    const list = h.workspace.get<ConnectionConfig[]>("UnicDB.connections")!;
     expect(list.map((c) => c.id)).not.toContain("a");
 
-    expect(await h.secret.get("vsdb.pass.a")).toBeUndefined();
+    expect(await h.secret.get("UnicDB.pass.a")).toBeUndefined();
     expect(h.mgr.getActive()).toBeNull();
-    expect(h.workspace.get("vsdb.activeConnection")).toBeUndefined();
+    expect(h.workspace.get("UnicDB.activeConnection")).toBeUndefined();
   });
 
   it("Test #4 — editConnection đổi password: secret key bị ghi đè", async () => {
@@ -281,8 +281,8 @@ describe("ConnectionManager — CRUD + persistence", () => {
       "newpass",
     );
 
-    expect(await h.secret.get("vsdb.pass.x")).toBe("newpass");
-    const list = h.workspace.get<ConnectionConfig[]>("vsdb.connections")!;
+    expect(await h.secret.get("UnicDB.pass.x")).toBe("newpass");
+    const list = h.workspace.get<ConnectionConfig[]>("UnicDB.connections")!;
     const updated = list.find((c) => c.id === "x")!;
     expect(updated.name).toBe("New");
     expect(updated.host).toBe("h2");
@@ -294,7 +294,7 @@ describe("ConnectionManager — CRUD + persistence", () => {
     await h.mgr.addConnection(makeCfg({ id: "2" }), "p2");
 
     await h.mgr.setActive("2");
-    expect(h.workspace.get("vsdb.activeConnection")).toBe("2");
+    expect(h.workspace.get("UnicDB.activeConnection")).toBe("2");
 
     const active = h.mgr.getActive();
     expect(active).not.toBeNull();
@@ -309,7 +309,7 @@ describe("ConnectionManager — CRUD + persistence", () => {
     await h.mgr.setActive("1");
     expect(h.adapter.close.mock.calls.length).toBeGreaterThan(adapterCloseBefore);
 
-    expect(h.workspace.get("vsdb.activeConnection")).toBe("1");
+    expect(h.workspace.get("UnicDB.activeConnection")).toBe("1");
     expect(h.mgr.getActive()!.id).toBe("1");
   });
 
@@ -319,7 +319,7 @@ describe("ConnectionManager — CRUD + persistence", () => {
     await h.mgr.setActive("z");
 
     // Giả lập secret mất password.
-    await h.secret.delete("vsdb.pass.z");
+    await h.secret.delete("UnicDB.pass.z");
 
     await expect(h.mgr.getAdapter()).rejects.toThrow(/nhập lại|password/i);
 
@@ -369,8 +369,8 @@ describe("ConnectionManager — design §8 fallbacks", () => {
     await h.mgr.addConnection(makeCfg({ id: "g" }), "pw");
 
     // Phải ghi vào globalState, KHÔNG ghi workspaceState.
-    expect(h.global.get<ConnectionConfig[]>("vsdb.connections")).toBeDefined();
-    expect(h.workspace.get("vsdb.connections")).toBeUndefined();
+    expect(h.global.get<ConnectionConfig[]>("UnicDB.connections")).toBeDefined();
+    expect(h.workspace.get("UnicDB.connections")).toBeUndefined();
   });
 });
 
@@ -526,9 +526,9 @@ describe("ConnectionManager DBX-05 read-only + tunnel", () => {
     // seed both workspace + global.
     const seed = [{ id: "cE", name: "e", driver: "postgres", host: "db", port: 5432, user: "u", database: "d", tunnel: { host: "bastion", port: 22 } }];
     (STUB_CTX as any).workspaceState.get = (key: string) =>
-      key === "vsdb.connections" ? seed : undefined;
+      key === "UnicDB.connections" ? seed : undefined;
     (STUB_CTX as any).globalState.get = (key: string) =>
-      key === "vsdb.connections" ? seed : undefined;
+      key === "UnicDB.connections" ? seed : undefined;
     const fakeTunnels = {
       start: async (tcfg: unknown, key: string) => {
         startedKeys.push(key);
@@ -628,9 +628,9 @@ describe("ConnectionManager — RLX-03 TASK-RLX03-002 recovery", () => {
       .mockImplementationOnce(() => oldAdapter)
       .mockImplementationOnce(() => newAdapter);
     const ctx = { secrets: secret, workspaceState: ws, globalState: g };
-    ws.update("vsdb.connections", [cfg]);
-    ws.update("vsdb.activeConnection", "c1");
-    await secret.store("vsdb.pass.c1", "pw");
+    ws.update("UnicDB.connections", [cfg]);
+    ws.update("UnicDB.activeConnection", "c1");
+    await secret.store("UnicDB.pass.c1", "pw");
     const sleep = vi.fn(async () => {});
     const mgr = new ConnectionManager(
       ctx as never,
@@ -690,9 +690,9 @@ describe("ConnectionManager — RLX-03 TASK-RLX03-002 recovery", () => {
       .mockImplementationOnce(() => failA1)
       .mockImplementationOnce(() => failA2);
     const ctx = { secrets: secret, workspaceState: ws, globalState: g };
-    ws.update("vsdb.connections", [cfg]);
-    ws.update("vsdb.activeConnection", "c2");
-    await secret.store("vsdb.pass.c2", "pw");
+    ws.update("UnicDB.connections", [cfg]);
+    ws.update("UnicDB.activeConnection", "c2");
+    await secret.store("UnicDB.pass.c2", "pw");
     const sleep = vi.fn(async () => {});
     const mgr = new ConnectionManager(
       ctx as never,
@@ -741,9 +741,9 @@ describe("ConnectionManager — RLX-03 TASK-RLX03-002 recovery", () => {
       .mockImplementationOnce(() => oldA)
       .mockImplementationOnce(() => failA);
     const ctx = { secrets: secret, workspaceState: ws, globalState: g };
-    ws.update("vsdb.connections", [cfg]);
-    ws.update("vsdb.activeConnection", "c3");
-    await secret.store("vsdb.pass.c3", "pw");
+    ws.update("UnicDB.connections", [cfg]);
+    ws.update("UnicDB.activeConnection", "c3");
+    await secret.store("UnicDB.pass.c3", "pw");
     const sleepDeferred = makeDeferred<void>();
     const sleep = vi.fn(() => sleepDeferred.promise);
     const mgr = new ConnectionManager(
@@ -801,10 +801,10 @@ describe("ConnectionManager — RLX-03 TASK-RLX03-002 recovery", () => {
       .mockImplementationOnce(() => oldA)
       .mockImplementationOnce(() => newA);
     const ctx = { secrets: secret, workspaceState: ws, globalState: g };
-    ws.update("vsdb.connections", [c1, c2]);
-    ws.update("vsdb.activeConnection", "c1");
-    await secret.store("vsdb.pass.c1", "pwA");
-    await secret.store("vsdb.pass.c2", "pwB");
+    ws.update("UnicDB.connections", [c1, c2]);
+    ws.update("UnicDB.activeConnection", "c1");
+    await secret.store("UnicDB.pass.c1", "pwA");
+    await secret.store("UnicDB.pass.c2", "pwB");
     const sleep = vi.fn(async () => {});
     const mgr = new ConnectionManager(
       ctx as never,
@@ -861,10 +861,10 @@ describe("ConnectionManager — RLX-03 TASK-RLX03-002 recovery", () => {
       .mockImplementationOnce(() => oldA)
       .mockImplementationOnce(() => newA);
     const ctx = { secrets: secret, workspaceState: ws, globalState: g };
-    ws.update("vsdb.connections", [c1, c2]);
-    ws.update("vsdb.activeConnection", "c1");
-    await secret.store("vsdb.pass.c1", "pwA");
-    await secret.store("vsdb.pass.c2", "pwB");
+    ws.update("UnicDB.connections", [c1, c2]);
+    ws.update("UnicDB.activeConnection", "c1");
+    await secret.store("UnicDB.pass.c1", "pwA");
+    await secret.store("UnicDB.pass.c2", "pwB");
     const sleep = vi.fn(async () => {});
     const mgr = new ConnectionManager(
       ctx as never,
@@ -926,9 +926,9 @@ describe("ConnectionManager — RLX-03 TASK-RLX03-002 recovery", () => {
       .mockImplementationOnce(() => oldA)
       .mockImplementationOnce(() => newA);
     const ctx = { secrets: secret, workspaceState: ws, globalState: g };
-    ws.update("vsdb.connections", [cfg]);
-    ws.update("vsdb.activeConnection", "cX");
-    await secret.store("vsdb.pass.cX", "pw");
+    ws.update("UnicDB.connections", [cfg]);
+    ws.update("UnicDB.activeConnection", "cX");
+    await secret.store("UnicDB.pass.cX", "pw");
     const sleep = vi.fn(async () => {});
     const mgr = new ConnectionManager(
       ctx as never,
@@ -980,9 +980,9 @@ describe("ConnectionManager — RLX-03 TASK-RLX03-002 recovery", () => {
       .mockImplementationOnce(() => oldA)
       .mockImplementationOnce(() => failA);
     const ctx = { secrets: secret, workspaceState: ws, globalState: g };
-    ws.update("vsdb.connections", [cfg]);
-    ws.update("vsdb.activeConnection", "cD");
-    await secret.store("vsdb.pass.cD", "pw");
+    ws.update("UnicDB.connections", [cfg]);
+    ws.update("UnicDB.activeConnection", "cD");
+    await secret.store("UnicDB.pass.cD", "pw");
     const mgr = new ConnectionManager(
       ctx as never,
       factory as never,
@@ -1150,7 +1150,7 @@ describe("ConnectionManager ARP-01 transaction guard", () => {
 // never installed/reused. Fixture: a factory whose FIRST adapter has a
 // DEFERRED testConnection (gate-releasable) so the race is deterministic.
 //
-// Secrets stub note: `get` always resolves "pw" for vsdb.pass.* even after
+// Secrets stub note: `get` always resolves "pw" for UnicDB.pass.* even after
 // deleteConnection deletes the secret — deliberate, so the post-delete
 // "later request" can reach the factory instead of failing on password.
 describe("ConnectionManager ARP-02.3 passive provenance", () => {
@@ -1174,7 +1174,7 @@ describe("ConnectionManager ARP-02.3 passive provenance", () => {
     const ctx = {
       secrets: {
         get: async (k: string) =>
-          k.startsWith("vsdb.pass.") ? "pw" : undefined,
+          k.startsWith("UnicDB.pass.") ? "pw" : undefined,
         store: async () => undefined,
         delete: async () => undefined,
       },
@@ -1182,8 +1182,8 @@ describe("ConnectionManager ARP-02.3 passive provenance", () => {
       globalState: g,
     };
     // Seed BEFORE constructing the manager — loadState runs in the ctor.
-    ws.update("vsdb.connections", seed);
-    if (opts.active) ws.update("vsdb.activeConnection", opts.active);
+    ws.update("UnicDB.connections", seed);
+    if (opts.active) ws.update("UnicDB.activeConnection", opts.active);
     return { ctx, ws, g };
   }
 
@@ -1416,9 +1416,9 @@ describe("ConnectionManager ARP-04.3 intended-key stop + loopback routing", () =
     });
     const ctx = { secrets: secret, workspaceState: ws, globalState: g };
     // Seed BEFORE constructing the manager — loadState runs in the ctor.
-    ws.update("vsdb.connections", seed);
-    if (opts.active) ws.update("vsdb.activeConnection", opts.active);
-    for (const c of seed) void secret.store(`vsdb.pass.${c.id}`, `pw-${c.id}`);
+    ws.update("UnicDB.connections", seed);
+    if (opts.active) ws.update("UnicDB.activeConnection", opts.active);
+    for (const c of seed) void secret.store(`UnicDB.pass.${c.id}`, `pw-${c.id}`);
     const mgr = new ConnectionManager(
       ctx as never,
       factory as never,
@@ -1472,7 +1472,7 @@ describe("ConnectionManager ARP-04.3 intended-key stop + loopback routing", () =
     const inState = h.mgr.listConnections()[0];
     expect(inState.host).toBe("db.internal");
     expect(inState.port).toBe(5432);
-    const persisted = h.ws.get<ConnectionConfig[]>("vsdb.connections")![0];
+    const persisted = h.ws.get<ConnectionConfig[]>("UnicDB.connections")![0];
     expect(persisted.host).toBe("db.internal");
     expect(persisted.port).toBe(5432);
     expect(persisted.tunnel).toEqual({ host: "bastion", port: 22 });
@@ -1603,7 +1603,7 @@ describe("ConnectionManager ARP-04.3 intended-key stop + loopback routing", () =
 
 // ---- TASK-BQ01-003 — bigquery admission through ConnectionManager ----------
 // BigQuery is password-less: the manager must NEVER touch SecretStorage for a
-// bigquery connection's `vsdb.pass.<id>` key, and post-dispose adapter
+// bigquery connection's `UnicDB.pass.<id>` key, and post-dispose adapter
 // construction must fail fast (no client rebuild). Double-dispose is a
 // no-op (idempotent).
 describe("ConnectionManager — TASK-BQ01-003 bigquery admission", () => {
@@ -1639,7 +1639,7 @@ describe("ConnectionManager — TASK-BQ01-003 bigquery admission", () => {
     const ws = new FakeMemento();
     const g = new FakeMemento();
     // Wrap SecretStorage methods with spies so we can assert they were NOT
-    // called for `vsdb.pass.bq1`.
+    // called for `UnicDB.pass.bq1`.
     const secret = new FakeSecretStorage();
     const getSpy = vi.spyOn(secret, "get");
     const storeSpy = vi.spyOn(secret, "store");
@@ -1653,7 +1653,7 @@ describe("ConnectionManager — TASK-BQ01-003 bigquery admission", () => {
     await mgr.addConnection(bqCfg({}), "");
 
     // Metadata persisted.
-    const list = ws.get<ConnectionConfig[]>("vsdb.connections");
+    const list = ws.get<ConnectionConfig[]>("UnicDB.connections");
     expect(list).toBeDefined();
     expect(list!).toHaveLength(1);
     expect(list![0].driver).toBe("bigquery");
@@ -1662,9 +1662,9 @@ describe("ConnectionManager — TASK-BQ01-003 bigquery admission", () => {
     const getCalls = getSpy.mock.calls.map((c) => c[0]);
     const storeCalls = storeSpy.mock.calls.map((c) => c[0]);
     const deleteCalls = deleteSpy.mock.calls.map((c) => c[0]);
-    expect(getCalls).not.toContain("vsdb.pass.bq1");
-    expect(storeCalls).not.toContain("vsdb.pass.bq1");
-    expect(deleteCalls).not.toContain("vsdb.pass.bq1");
+    expect(getCalls).not.toContain("UnicDB.pass.bq1");
+    expect(storeCalls).not.toContain("UnicDB.pass.bq1");
+    expect(deleteCalls).not.toContain("UnicDB.pass.bq1");
 
     // Factory probe happened at least once (test-connect).
     expect(factory).toHaveBeenCalled();
@@ -1757,10 +1757,10 @@ describe("ConnectionManager — TASK-BQ01-003 bigquery admission", () => {
     const getBefore = getSpy.mock.calls.length;
     await mgr.getAdapter();
     const newGets = getSpy.mock.calls.slice(getBefore).map((c) => c[0]);
-    expect(newGets).not.toContain("vsdb.pass.bq1");
+    expect(newGets).not.toContain("UnicDB.pass.bq1");
 
     // Metadata now reflects the new billing project.
-    const list = ws.get<ConnectionConfig[]>("vsdb.connections")!;
+    const list = ws.get<ConnectionConfig[]>("UnicDB.connections")!;
     expect(list[0].bigquery?.billingProject).toBe("p2");
 
     await mgr.dispose();

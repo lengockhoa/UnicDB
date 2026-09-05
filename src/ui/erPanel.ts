@@ -7,7 +7,7 @@ import * as vscode from "vscode";
 import type { ErResult } from "./erService";
 import { buildErHtml } from "./erPanelHtml";
 
-export const ER_PANEL_VIEW_TYPE = "vsdbErPanel";
+export const ER_PANEL_VIEW_TYPE = "UnicDBErPanel";
 
 export const ZOOM_MIN = 0.25;
 export const ZOOM_MAX = 4;
@@ -99,7 +99,7 @@ export class ErPanel {
     if (msg.type === "er_export_svg") {
       const schema = msg.schema.replace(/[^\w.-]+/g, "_") || "schema";
       const target = await vscode.window.showSaveDialog({
-        defaultUri: vscode.Uri.file(`vsdb-er-${schema}.svg`),
+        defaultUri: vscode.Uri.file(`UnicDB-er-${schema}.svg`),
         filters: { "SVG diagram": ["svg"] },
       });
       if (!target) return;

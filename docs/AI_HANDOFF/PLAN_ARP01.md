@@ -1,6 +1,6 @@
 # PLAN_ARP01 — Read-only enforcement completeness (transaction execution boundary)
 
-Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-01 (P0, no deps).
+Source: `docs/plans/2026-09-01-UnicDB-additive-roadmap.md` §ARP-01 (P0, no deps).
 Base: `main @ a948b3f` (v1.36.0). Executor: `unic-code`. Reviewer: `unic-smart`.
 Full-suite baseline: **2952 passed | 2 skipped** (from `npm test`).
 

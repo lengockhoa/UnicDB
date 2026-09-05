@@ -1,4 +1,4 @@
-# TASK-004 — vsdb.exportAllStructures: copy the whole-DB DDL to the clipboard
+# TASK-004 — UnicDB.exportAllStructures: copy the whole-DB DDL to the clipboard
 
 - Status: `ready`
 - Owner: `-`
@@ -7,25 +7,25 @@
 
 ## Goal
 
-Command `vsdb.exportAllStructures` (context menu on connection/schema node + command palette): introspect the whole DB (user schemas, tables, views) → `buildDatabaseStructure` → clipboard. This is the UI surface of "Export Structure to reference the whole context" — the user copies the whole-DB DDL to share with any external AI / workflow.
+Command `UnicDB.exportAllStructures` (context menu on connection/schema node + command palette): introspect the whole DB (user schemas, tables, views) → `buildDatabaseStructure` → clipboard. This is the UI surface of "Export Structure to reference the whole context" — the user copies the whole-DB DDL to share with any external AI / workflow.
 
 ## Target Files
 
-- `src/ui/tableCommands.ts` — add the `vsdb.exportAllStructures` command registration (same pattern as `vsdb.exportStructure` lines 540-581 + guardPostgres).
+- `src/ui/tableCommands.ts` — add the `UnicDB.exportAllStructures` command registration (same pattern as `UnicDB.exportStructure` lines 540-581 + guardPostgres).
 - `package.json` — contributed command + menus (schema tree view/context, palette).
 - `src/extension.test.ts` — assert the command is registered (using the existing smoke-test pattern).
-- `src/ui/__tests__/tableCommands.test.ts` — append describe "vsdb.exportAllStructures" (#1, #2, #3).
+- `src/ui/__tests__/tableCommands.test.ts` — append describe "UnicDB.exportAllStructures" (#1, #2, #3).
 
 ## Spec
 
 ```ts
-// src/ui/tableCommands.ts — ADD (after the vsdb.exportStructure block, before the closing `}` of registerTableCommands):
+// src/ui/tableCommands.ts — ADD (after the UnicDB.exportStructure block, before the closing `}` of registerTableCommands):
 context.subscriptions.push(
   vscode.commands.registerCommand(
-    "vsdb.exportAllStructures",
+    "UnicDB.exportAllStructures",
     async (arg?: unknown) => {
       // Node: a connection or a schema node (resolveConnectionNode pattern is
-      // already in this file for vsdb.analyzeTable/copyQualifiedName — reuse it;
+      // already in this file for UnicDB.analyzeTable/copyQualifiedName — reuse it;
       // palette invocation with no arg → fall back to mgr.getActive().
       // guardPostgres mirrors exportStructure (PG-only DDL).
       const guarded = /* connection | schema node resolve */;
@@ -40,7 +40,7 @@ context.subscriptions.push(
         const text = buildDatabaseStructure({ schemas, tables, views, columns });
         await vscode.env.clipboard.writeText(text);
         void vscode.window.setStatusBarMessage(
-          `VSDB: database structure copied (${tables.length + views.length} objects)`,
+          `UnicDB: database structure copied (${tables.length + views.length} objects)`,
           2000,
         );
       } catch (err) {
@@ -54,7 +54,7 @@ context.subscriptions.push(
 );
 
 // package.json contributes.commands + menus:
-//   { "command": "vsdb.exportAllStructures", "title": "VSDB: Export All Structures (Copy DDL)", "category": "VSDB" }
+//   { "command": "UnicDB.exportAllStructures", "title": "UnicDB: Export All Structures (Copy DDL)", "category": "UnicDB" }
 //   menus.view/item: schema tree — when the node is connection/schema (matches the
 //   same condition the exportStructure/analyzeTable commands already use).
 //   Do NOT add a keybinding (palette + context menu are enough).
@@ -69,7 +69,7 @@ Note: the introspection collection inside this command is a parallel implementat
 | 1 | happy | PG connection node → clipboard contains full DDL | clipboard text starts with `-- Database structure (1 schemas, 2 tables, 0 views)`, contains `CREATE TABLE public.users`; statusbar message `database structure copied (2 objects)` | mock vscode env + existing adapter pattern in tableCommands.test.ts (guardPostgres passes; listSchemas/listTables/listViews/listColumns mocked) |
 | 2 | edge | non-PG (mysql) connection node | guardPostgres blocks: an error message is shown (matches the existing guard-message pattern), clipboard is NOT written | node driver mysql |
 | 3 | edge | empty DB (0 user schemas → 0 objects) | clipboard = the one-line header `(0 schemas, 0 tables, 0 views)`; status `copied (0 objects)`; no throw | listSchemas → [] |
-| 4 | regression | command is registered in activate | extension.test.ts asserts that `vsdb.exportAllStructures` is in registeredCommands | existing smoke-test pattern |
+| 4 | regression | command is registered in activate | extension.test.ts asserts that `UnicDB.exportAllStructures` is in registeredCommands | existing smoke-test pattern |
 | 5 | edge | 1 object listColumns throws → skipped, remaining copied | clipboard contains the remaining table; NO error message (silent skip, mirroring the exportStructure per-object path — or the statusbar correctly counts the actual objects) | listColumns rejects one table |
 | 6 | edge | no active connection (mgr.getActive() null / adapter factory throws) (review #5) | showErrorMessage `Export All Structures failed: ...` (or an info message instructing the user to connect — whichever path the actual code takes), NO crash / unhandled rejection, clipboard NOT written | active=null or factory rejects |
 
@@ -98,7 +98,7 @@ npx tsc --noEmit
 ## Interfaces
 
 - Consumes: `buildDatabaseStructure(db: DatabaseStructureInput): string`, `DatabaseStructureInput` (TASK-001 produces); `guardPostgres`, the node resolver + `RegisterDeps`/`mgr` pattern already in tableCommands.ts; DbAdapter `listSchemas(false)/listTables(schema)/listViews(schema)/listColumns(table,schema)`.
-- Produces: VS Code command `vsdb.exportAllStructures(arg?: connection-or-schema node)` — the registered id MUST match package.json contributes (locked by extension.test.ts).
+- Produces: VS Code command `UnicDB.exportAllStructures(arg?: connection-or-schema node)` — the registered id MUST match package.json contributes (locked by extension.test.ts).
 
 ---
 
@@ -120,13 +120,13 @@ STATUS: DONE
 EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic-code
 EXECUTOR_SUBAGENT: Exec-T4
-SUMMARY: Implemented `vsdb.exportAllStructures` — connection/schema node or palette (no arg → `mgr.getActive()`), PG-only with mysql/mssql info guard, introspects all user schemas (or single schema if schema node) → `buildDatabaseStructure` → clipboard. Per-object `listColumns` throw → silent skip. Status bar reports successfully-rendered objects. Tests added in `src/ui/__tests__/tableCommands.test.ts` (#1, #2, #3, #5, #6, #6b, #7) + `src/extension.test.ts` (#4 wiring smoke).
+SUMMARY: Implemented `UnicDB.exportAllStructures` — connection/schema node or palette (no arg → `mgr.getActive()`), PG-only with mysql/mssql info guard, introspects all user schemas (or single schema if schema node) → `buildDatabaseStructure` → clipboard. Per-object `listColumns` throw → silent skip. Status bar reports successfully-rendered objects. Tests added in `src/ui/__tests__/tableCommands.test.ts` (#1, #2, #3, #5, #6, #6b, #7) + `src/extension.test.ts` (#4 wiring smoke).
 TEST_PLAN_FOLLOWED: task §Test Cases (TDD inline plan)
 FILES_CHANGED:
-  - package.json: contributed command `vsdb.exportAllStructures` (title "VSDB: Export All Structures (Copy DDL)", icon $(output)), `onCommand:vsdb.exportAllStructures` activationEvent, view/item/context menu entry covering `viewItem == connection || viewItem == schema`.
-  - src/ui/tableCommands.ts: imported `buildDatabaseStructure` + `ExportColumn` from `./exportStructure`; added `vsdb.exportAllStructures` registration inside `registerTableCommands` (after `vsdb.exportStructure` block, before closing `}`).
-  - src/ui/__tests__/tableCommands.test.ts: appended `describe("tableCommands — TASK-004 vsdb.exportAllStructures", …)` with 7 cases (#1, #2, #3, #5, #6, #6b, #7).
-  - src/extension.test.ts: appended `describe("TASK-004 — vsdb.exportAllStructures wiring", …)` with 4 cases (registration, contributes.commands, activationEvents, view/item/context menu).
+  - package.json: contributed command `UnicDB.exportAllStructures` (title "UnicDB: Export All Structures (Copy DDL)", icon $(output)), `onCommand:UnicDB.exportAllStructures` activationEvent, view/item/context menu entry covering `viewItem == connection || viewItem == schema`.
+  - src/ui/tableCommands.ts: imported `buildDatabaseStructure` + `ExportColumn` from `./exportStructure`; added `UnicDB.exportAllStructures` registration inside `registerTableCommands` (after `UnicDB.exportStructure` block, before closing `}`).
+  - src/ui/__tests__/tableCommands.test.ts: appended `describe("tableCommands — TASK-004 UnicDB.exportAllStructures", …)` with 7 cases (#1, #2, #3, #5, #6, #6b, #7).
+  - src/extension.test.ts: appended `describe("TASK-004 — UnicDB.exportAllStructures wiring", …)` with 4 cases (registration, contributes.commands, activationEvents, view/item/context menu).
 TESTS_ADDED:
   - src/ui/__tests__/tableCommands.test.ts: #1 happy 2-table PG node → clipboard starts "-- Database structure (1 schemas, 2 tables, 0 views)" + statusbar "database structure copied (2 objects)"; #2 mysql node → "Export All Structures: PostgreSQL connections only" info + no clipboard write; #3 empty DB (listSchemas → []) → header line only + 0 objects + no error; #5 listColumns throw on one table → that object skipped, surviving table rendered, no error message (header counts rendered objects); #6 mgr.getActive() null (palette invoke) → error message, no clipboard write, no unhandled rejection; #6b getAdapterFor rejects → "Export All Structures failed: …" error, no clipboard write, no unhandled rejection; #7 wiring smoke → registeredCommands has the id + package.json menu entry covers connection + schema.
   - src/extension.test.ts: #4 wiring smoke (4 cases) — activate() registers the command, contributes.commands declares it, activationEvents has onCommand entry, view/item/context menu entry has connection + schema viewItem.
@@ -135,8 +135,8 @@ VERIFICATION:
   result: 87 passed | 1 failed | 88 total (1 fail is pre-existing TASK-003 dist/schemaForm.js bundle presence check; reproduced on baseline `git stash` without my changes — not caused by TASK-004)
   output_excerpt: |
     ✓ src/ui/__tests__/tableCommands.test.ts  (35 tests) 11ms
-    ✓ src/extension.test.ts  (53 tests | 49 skipped) when filtered to "TASK-004 — vsdb.exportAllStructures wiring" — 4 passed
-    ✗ src/extension.test.ts > TASK-003 — vsdb.createSchema extension wiring > npm run compile emits dist/schemaForm.js
+    ✓ src/extension.test.ts  (53 tests | 49 skipped) when filtered to "TASK-004 — UnicDB.exportAllStructures wiring" — 4 passed
+    ✗ src/extension.test.ts > TASK-003 — UnicDB.createSchema extension wiring > npm run compile emits dist/schemaForm.js
       (pre-existing, unrelated to TASK-004; dist/ not built in worktree)
   command: npx tsc --noEmit
   result: clean (no output, exit 0)

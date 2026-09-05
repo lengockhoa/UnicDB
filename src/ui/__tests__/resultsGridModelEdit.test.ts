@@ -231,16 +231,16 @@ describe("EditState — clearExceptRowIds (TASK-007)", () => {
 });
 
 describe("EditState — row markers (TASK-007)", () => {
-  it("isRowNew true only when an entry's value carries __vsdb_new_row__", () => {
+  it("isRowNew true only when an entry's value carries __UnicDB_new_row__", () => {
     const s = new EditState();
-    s.markDirty(7, 0, { __vsdb_new_row__: true, __rowId: 7 }, undefined);
+    s.markDirty(7, 0, { __UnicDB_new_row__: true, __rowId: 7 }, undefined);
     expect(s.isRowNew(7)).toBe(true);
     expect(s.isRowNew(0)).toBe(false);
   });
 
-  it("isRowDeleted true only when an entry's value carries __vsdb_deleted__", () => {
+  it("isRowDeleted true only when an entry's value carries __UnicDB_deleted__", () => {
     const s = new EditState();
-    s.markDirty(3, 0, { __vsdb_deleted__: true, __rowId: 3 }, undefined);
+    s.markDirty(3, 0, { __UnicDB_deleted__: true, __rowId: 3 }, undefined);
     expect(s.isRowDeleted(3)).toBe(true);
     expect(s.isRowDeleted(7)).toBe(false);
   });

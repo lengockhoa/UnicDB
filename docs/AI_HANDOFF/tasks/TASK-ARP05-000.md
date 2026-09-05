@@ -147,7 +147,7 @@ Content checklist — verified present in `docs/decisions/0002-cross-driver-resi
 - [x] **Rejected alternatives** (all 5, each with reason) — §6 (unmeasured value changes; shared base-adapter breaking lazy-per-dialect factory `factory.ts:14-26` + DBX-08 capability matrix `postgres.ts:282-287` / `mysql.ts:137-142`; blanket MySQL `connectionLimit` raise; circuit breakers — roadmap §ARP-05 Out line 248; automatic replay — roadmap Out + acceptance line 271)
 - [x] Trailing `## Measured probe evidence (appended by wave-1 tasks)` placeholder — §7, stable merge point. Reviewer note: the placeholder deliberately does NOT contain the literal strings `## Probe: PostgreSQL` / `## Probe: MySQL` / `## Probe: MSSQL`, because TASK-ARP05-001/002/003 each gate with `grep -qi "## Probe: <driver>"` — spelling them in wave 0 would make those RED gates pass before any append. Verified all three greps currently exit 1.
 
-Verification Output (task §Verification Commands, run in worktree `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp05-000`):
+Verification Output (task §Verification Commands, run in worktree `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-arp05-000`):
 
 ```
 $ test -f docs/decisions/0002-cross-driver-resilience-contract.md; echo "cmd1 exit=$?"

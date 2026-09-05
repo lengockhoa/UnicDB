@@ -79,7 +79,7 @@ EXECUTOR_SUBAGENT: feature-implementer
 RED_OUTPUT (fresh run of `npx vitest run src/ai/__tests__/trace.test.ts src/ai/__tests__/auditExport.test.ts` before implementation):
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-aix07-002
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-aix07-002
 
  ❯ src/ai/__tests__/auditExport.test.ts  (0 test)
  ❯ src/ai/__tests__/trace.test.ts  (32 tests | 5 failed) 8ms
@@ -142,7 +142,7 @@ Files changed:
   and all AIX-06 behavior untouched.
 - src/ai/auditExport.ts — new PURE module (imports only `redact`/`TraceDump` from
   `./trace`; no vscode/fs/net/child_process). Exports `AUDIT_EXPORT_SCHEMA`
-  ("vsdb.ai.audit-export"), `AUDIT_EXPORT_VERSION` (1), `buildAuditEnvelope()`
+  ("UnicDB.ai.audit-export"), `AUDIT_EXPORT_VERSION` (1), `buildAuditEnvelope()`
   (copies dumps; no credential field in the envelope frame), and
   `serializeAuditExport()` which applies `redact()` as the FINAL pass immediately
   before `JSON.stringify`.
@@ -190,8 +190,8 @@ RED_OUTPUT (fresh run of `npx vitest run src/ai/__tests__/auditExport.test.ts sr
 
 ```
  FAIL  src/ai/__tests__/auditExport.test.ts > audit export envelope (TASK-AIX07-002) > serialized export cannot leak secrets through a payload toJSON hook
-AssertionError: expected '{"schema":"vsdb.ai.audit-export","ver…' not to contain 'sk-live-sentinel-payload-key'
-+ {"schema":"vsdb.ai.audit-export","version":1,"exportedAt":"2026-08-31T19:03:22.614Z","turns":[{"turnId":"turn-a","events":[{"turnId":"turn-a","seq":1,"kind":"prompt","ts":1788203002614,"payload":{"apiKey":"sk-live-sentinel-payload-key"}}],"truncated":false}]}
+AssertionError: expected '{"schema":"UnicDB.ai.audit-export","ver…' not to contain 'sk-live-sentinel-payload-key'
++ {"schema":"UnicDB.ai.audit-export","version":1,"exportedAt":"2026-08-31T19:03:22.614Z","turns":[{"turnId":"turn-a","events":[{"turnId":"turn-a","seq":1,"kind":"prompt","ts":1788203002614,"payload":{"apiKey":"sk-live-sentinel-payload-key"}}],"truncated":false}]}
  Test Files  1 failed | 1 passed (2)
       Tests  1 failed | 36 passed (37)
 ```

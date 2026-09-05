@@ -1,6 +1,6 @@
 // src/ui/helpGrid.ts
 //
-// TASK-OC4O-002 — VSDB Help Grid: a pure registry of feature cards that the
+// TASK-OC4O-002 — UnicDB Help Grid: a pure registry of feature cards that the
 // help-grid webview renders as a responsive grid. Every card carries the
 // command id the user can trigger via "Try it"; the registry filters out
 // cards whose command id is missing/empty so a future-cycle command that
@@ -37,56 +37,56 @@ const CARDS: readonly HelpCard[] = [
     title: "SQL Console",
     blurb: "Multi-tab scratchpad to type and run SQL against the active connection.",
     icon: "$(window)",
-    commandId: "vsdb.openConsole",
+    commandId: "UnicDB.openConsole",
   },
   {
     id: "open-console-for-object",
     title: "Console for Object",
     blurb: "Right-click a table/view → open the Console with a pre-filled SELECT snippet.",
     icon: "$(window)",
-    commandId: "vsdb.openConsoleForObject",
+    commandId: "UnicDB.openConsoleForObject",
   },
   {
     id: "run-query",
     title: "Run Query",
     blurb: "Run the active SQL statement (Cmd/Ctrl+Enter from a .sql editor).",
     icon: "$(play)",
-    commandId: "vsdb.runQuery",
+    commandId: "UnicDB.runQuery",
   },
   {
     id: "refresh-schema",
     title: "Refresh Schema",
     blurb: "Invalidate schema cache and reload the tree.",
     icon: "$(refresh)",
-    commandId: "vsdb.refreshSchema",
+    commandId: "UnicDB.refreshSchema",
   },
   {
     id: "browse-table-data",
     title: "Browse Table Data",
     blurb: "Open the Results grid for a table (paginated, inline editable).",
     icon: "$(table)",
-    commandId: "vsdb.browseTableData",
+    commandId: "UnicDB.browseTableData",
   },
   {
     id: "generate-select",
     title: "Generate SELECT",
     blurb: "Right-click a table/view → insert a driver-aware SELECT into the editor.",
     icon: "$(preview)",
-    commandId: "vsdb.generateSelect",
+    commandId: "UnicDB.generateSelect",
   },
   {
     id: "ai-chat",
     title: "AI Chat",
     blurb: "Open the AI chat panel (built-in or OMP engine) for the active connection.",
     icon: "$(comment-discussion)",
-    commandId: "vsdb.aiChat",
+    commandId: "UnicDB.aiChat",
   },
   {
     id: "manage-connections",
     title: "Manage Connections",
     blurb: "Add, edit, delete connections and set the active one.",
     icon: "$(plug)",
-    commandId: "vsdb.manageConnections",
+    commandId: "UnicDB.manageConnections",
   },
   {
     id: "results-placement",
@@ -101,7 +101,7 @@ const CARDS: readonly HelpCard[] = [
  * Filter the registry against the actual set of registered command ids
  * (caller supplies the set — keeps this module pure). Any card whose
  * `commandId` is empty OR not in the supplied set is dropped. The
- * `workbench.*` / `vsdb.*` ids are the only valid prefixes for the help
+ * `workbench.*` / `UnicDB.*` ids are the only valid prefixes for the help
  * grid; any other prefix is also filtered out as a defence-in-depth check
  * (prevents a future card from accidentally launching an unrelated,
  * arbitrary command id).
@@ -111,7 +111,7 @@ export function helpCardRegistry(
 ): readonly HelpCard[] {
   return CARDS.filter((c) => {
     if (typeof c.commandId !== "string" || c.commandId.length === 0) return false;
-    if (!c.commandId.startsWith("vsdb.") && !c.commandId.startsWith("workbench.")) {
+    if (!c.commandId.startsWith("UnicDB.") && !c.commandId.startsWith("workbench.")) {
       return false;
     }
     // Settings / workbench.* may not be in registeredCommandIds (they live

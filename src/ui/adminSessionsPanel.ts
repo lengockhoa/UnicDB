@@ -12,7 +12,7 @@ import { hasAdapterCapability, type DbAdapter } from "../adapters/types";
  * adapter does NOT declare the `admin` capability. Pinned text; do not reword.
  */
 export const ADMIN_UNSUPPORTED_MESSAGE =
-  "VSDB: Admin tools are not supported by this connection's database.";
+  "UnicDB: Admin tools are not supported by this connection's database.";
 
 /**
  * DBX-08 — precise unsupported error state: renders ONLY the explanation
@@ -270,7 +270,7 @@ export class AdminSessionsPanel {
       return existing;
     }
     const panel = vscode.window.createWebviewPanel(
-      "vsdb.adminSessions",
+      "UnicDB.adminSessions",
       "Admin: Sessions & Locks",
       vscode.ViewColumn.One,
       { enableScripts: true },
@@ -394,7 +394,7 @@ export class AdminSessionsPanel {
   }
 
   /**
-   * TASK-AHL-004 — public surface for the `vsdb.killSession` command. Drives
+   * TASK-AHL-004 — public surface for the `UnicDB.killSession` command. Drives
    * the same message path the webview buttons do, so the panel's
    * self-pid detection + confirm modal + error rendering all stay in one
    * place. Returns silently if no panel is open or the core declines
@@ -413,7 +413,7 @@ export class AdminSessionsPanel {
     await this.refresh();
   }
 
-  /** TASK-AHL-004 — public surface for `vsdb.terminateSession`. */
+  /** TASK-AHL-004 — public surface for `UnicDB.terminateSession`. */
   async runTerminate(pid: number): Promise<void> {
     const sql = await this.core.handleMessage({ kind: "terminate", pid });
     if (!sql) return;

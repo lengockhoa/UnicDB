@@ -7,7 +7,7 @@
 
 ## §1 Intent
 
-VSDB currently ships three user-visible "does not work at all" surfaces:
+UnicDB currently ships three user-visible "does not work at all" surfaces:
 
 1. **Grid editing is unsafe and half-dead.** Add Row never inserts, the grid shows stale values
    after a successful commit, edits on a schema-qualified table hit the wrong table via
@@ -29,7 +29,7 @@ VSDB currently ships three user-visible "does not work at all" surfaces:
 and commit — with the grid showing the committed values, the correct table, and all-or-nothing
 semantics; (b) open AI chat with no configuration when `omp` is on PATH, get streamed text, a
 settled turn, a working Stop, and an assistant that can list tables and run read-only SQL; (c)
-run a `BEGIN…COMMIT` script as separate statements without VSDB issuing catalog queries it does
+run a `BEGIN…COMMIT` script as separate statements without UnicDB issuing catalog queries it does
 not need.
 
 Cycle T is **unbreak only**. No new features.
@@ -80,7 +80,7 @@ user-facing manual-commit mode, which is out of scope.
 
 The defect inventory that seeded this plan predates commit `8b58f24` (cycle S). Verified at HEAD:
 
-- **A1 / A2 are already fixed** — `maybeAppendCtidForNoPk` and the `__vsdb_browse__` subquery
+- **A1 / A2 are already fixed** — `maybeAppendCtidForNoPk` and the `__UnicDB_browse__` subquery
   wrap no longer exist in `src/ui/browseCommands.ts` (zero `ctid` matches in that file), so
   `parseFromClause` receives plain `SELECT * FROM "s"."t"` and resolves. No task.
 - **A18 is already fixed** — `resultsGridModel.inferColumns` no longer hides columns named
@@ -136,7 +136,7 @@ cell with `""`, so numeric / date / NOT NULL columns receive `''`. Fix both ends
   its DEFAULT (and `INSERT INTO t DEFAULT VALUES` when *every* column is untouched).
 
 ```ts
-export interface DefaultValueMarker { __vsdb_default__: true }
+export interface DefaultValueMarker { __UnicDB_default__: true }
 export function isDefaultValueMarker(v: unknown): v is DefaultValueMarker;
 ```
 
@@ -311,7 +311,7 @@ against today's code.
 |------|-----------|----------|
 | Happy | `buildSaveStatements` UPDATE on `analytics.orders` | emits `UPDATE "analytics"."orders" SET …`, not `UPDATE orders` |
 | Edge-quoting | mixed-case identifiers | `"Users"` / `"createdAt"` emitted double-quoted; round-trips on PG |
-| Edge-boundary | INSERT where all columns are `__vsdb_default__` | exactly `INSERT INTO "public"."t" DEFAULT VALUES` |
+| Edge-boundary | INSERT where all columns are `__UnicDB_default__` | exactly `INSERT INTO "public"."t" DEFAULT VALUES` |
 | R (A8) | qualified table + non-`public` `search_path` | statement targets `analytics.orders`; fails today (bare `orders`) |
 | R (A9) | PG `quoteIdent("createdAt")` | returns `"createdAt"`; today returns `createdAt` |
 | R (A10) | MySQL no-PK DELETE marker | `warnings` contains a `no primary key` note; today: silent `continue` |

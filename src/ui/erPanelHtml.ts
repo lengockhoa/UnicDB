@@ -30,8 +30,8 @@ export function buildErHtml(
   <link rel="stylesheet" href="${styleUri}" />
   <title>Relationship Explorer</title>
 </head>
-<body class="vsdb-form-body">
-  <div id="vsdb-root" class="vsdb-er"></div>
+<body class="UnicDB-form-body">
+  <div id="UnicDB-root" class="UnicDB-er"></div>
   <script src="${scriptUri}"></script>
 </body>
 </html>`;

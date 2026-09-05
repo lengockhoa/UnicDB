@@ -108,7 +108,7 @@ RED_OUTPUT: |
         Tests  3 failed | 43 passed (46)
 Verification Output: |
   Command 1: npx vitest run src/adapters/__tests__/adapterQueryShape.test.ts
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-002
      ✓ src/adapters/__tests__/adapterQueryShape.test.ts  (46 tests) 13ms
      Test Files  1 passed (1)
           Tests  46 passed (46)
@@ -116,7 +116,7 @@ Verification Output: |
     Targeted sibling regression sweep (factory / mysql.sortQuery / schemas /
     timezone / queryComposer): 5 files, 82 passed, exit 0.
   Command 2: npm run typecheck
-    > vsdb@1.6.7 typecheck
+    > UnicDB@1.6.7 typecheck
     > tsc --noEmit
     EXIT: 0
 Status: PASS

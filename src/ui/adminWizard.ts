@@ -136,7 +136,7 @@ export async function previewSql(
   sql: string,
 ): Promise<string | undefined> {
   const choice = await deps.showInformationMessage(
-    `VSDB will run:\n\n${sql}\n\nProceed?`,
+    `UnicDB will run:\n\n${sql}\n\nProceed?`,
     { modal: true },
   );
   return choice === "OK" ? sql : undefined;
@@ -199,12 +199,12 @@ export async function runRevokeWizard(args: {
 }
 
 /**
- * TASK-AHL-004 — host command entry for `vsdb.runGrantSql`. Walks the user
+ * TASK-AHL-004 — host command entry for `UnicDB.runGrantSql`. Walks the user
  * through object → privileges → grantee via the existing quickPick chain
  * (uses defaultDeps), then executes the resulting SQL through the
  * caller-supplied `execute` callback. The host wires `execute` to the
  * confirmDangerousStatements + runQuery pipeline so the admin-red gate
- * (vsdb.admin.confirmGrant) is enforced on THIS path too (re-review fix:
+ * (UnicDB.admin.confirmGrant) is enforced on THIS path too (re-review fix:
  * the previous direct adapter.runQuery call bypassed the gate).
  */
 export async function commandOpenGrantWizard(
@@ -217,7 +217,7 @@ export async function commandOpenGrantWizard(
     | undefined;
   if (!active) {
     void vscode.window.showWarningMessage(
-      "VSDB: select a connection first to use the grant/revoke wizard.",
+      "UnicDB: select a connection first to use the grant/revoke wizard.",
     );
     return;
   }
@@ -262,11 +262,11 @@ export async function commandOpenGrantWizard(
     try {
       await execute(sql);
       void vscode.window.showInformationMessage(
-        `VSDB: ${kind.toUpperCase()} executed.`,
+        `UnicDB: ${kind.toUpperCase()} executed.`,
       );
     } catch (err) {
       void vscode.window.showErrorMessage(
-        `VSDB: ${kind} failed — ${
+        `UnicDB: ${kind} failed — ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -278,18 +278,18 @@ export async function commandOpenGrantWizard(
   };
   if (typeof adapter.runQuery !== "function") {
     void vscode.window.showErrorMessage(
-      "VSDB: active connection does not expose a runQuery.",
+      "UnicDB: active connection does not expose a runQuery.",
     );
     return;
   }
   try {
     await adapter.runQuery(sql);
     void vscode.window.showInformationMessage(
-      `VSDB: ${kind.toUpperCase()} executed.`,
+      `UnicDB: ${kind.toUpperCase()} executed.`,
     );
   } catch (err) {
     void vscode.window.showErrorMessage(
-      `VSDB: ${kind} failed — ${
+      `UnicDB: ${kind} failed — ${
         err instanceof Error ? err.message : String(err)
       }`,
     );

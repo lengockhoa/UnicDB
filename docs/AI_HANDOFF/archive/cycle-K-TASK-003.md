@@ -5,7 +5,7 @@ A chat webview panel (house pattern like newTableForm/aiSettingsForm): user/assi
 
 ## Target Files
 - `src/ui/aiChatPanelMessages.ts` (new), `src/ui/aiChatPanel.ts` (new), `webview/aiChatPanelMain.ts` (new)
-- `esbuild.js` (add entry), `package.json` (command `vsdb.aiChat` + menu)
+- `esbuild.js` (add entry), `package.json` (command `UnicDB.aiChat` + menu)
 - Tests: `src/ui/__tests__/aiChatPanel.test.ts`, `src/ui/__tests__/aiChatPanelBundle.test.ts`
 
 ## Spec (frozen)
@@ -25,7 +25,7 @@ export class AiChatPanel {
 - Clear: reset internal history + `{type:"init", hasHistory:false}`.
 - Panel lifecycle: dispose parity with newTableForm (onDidDispose, retainContextWhenHidden=false, enableScripts=true, CSP like aiSettingsForm). The `error` message NEVER contains the apiKey (deps errors are already scrubbed at the provider — only the message is forwarded).
 - Webview `aiChatPanelMain.ts`: bubbles, input + Send/Stop/Clear, markdown render (same minimal renderer style as existing webviews — no CDN).
-- `package.json`: command `vsdb.aiChat` title "VSDB: AI Chat".
+- `package.json`: command `UnicDB.aiChat` title "UnicDB: AI Chat".
 
 ## Test Cases
 | # | Type | Name | Expected |
@@ -69,7 +69,7 @@ FILES_CHANGED:
   - src/ui/aiChatPanel.ts: new — AiChatPanel class + ChatAbortToken + AiChatPanelOptions; per-turn registry = createDbTools(adapterFactory).register(createSqlTool(adapterFactory)); buildMessages uses formatSchemaContext from T2; stop flips token.aborted; onStep gated by token; settle skips assistant+history if aborted but always posts done; clear resets history + posts init.
   - webview/aiChatPanelMain.ts: new — minimal markdown renderer (no CDN), bubbles, Send/Stop/Clear buttons, capture-phase user echo before send clears field.
   - esbuild.js: aiChatPanelConfig entry added (entryPoints webview/aiChatPanelMain.ts → dist/aiChatPanel.js); wired into watch + build arrays.
-  - package.json: vsdb.aiChat command added (title "VSDB: AI Chat", icon $(comment-discussion), category VSDB) + onCommand:vsdb.aiChat activationEvent.
+  - package.json: UnicDB.aiChat command added (title "UnicDB: AI Chat", icon $(comment-discussion), category UnicDB) + onCommand:UnicDB.aiChat activationEvent.
   - src/ui/__tests__/aiChatPanel.test.ts: new — 9 host tests with vi.mock("vscode") + vi.mock("../../ai/agent") harness.
   - src/ui/__tests__/aiChatPanelBundle.test.ts: new — 8 jsdom bundle tests for webview/aiChatPanelMain.ts.
 TESTS_ADDED:
@@ -79,7 +79,7 @@ VERIFICATION:
   command: npm run compile && npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelBundle.test.ts && npx tsc --noEmit
   result: 0 exit / 17 of 17 pass / tsc clean
   output_excerpt: |
-    > vsdb@1.5.1 compile
+    > UnicDB@1.5.1 compile
     > node esbuild.js
       dist/aiChatPanel.js       5.2kb
       dist/aiChatPanel.js.map  10.8kb
@@ -103,7 +103,7 @@ RED_OUTPUT (verbatim, captured at first run before impl):
   ❯ src/ui/__tests__/aiChatPanel.test.ts  (0 test)
   ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
   FAIL  src/ui/__tests__/aiChatPanel.test.ts [ src/ui/__tests__/aiChatPanel.test.ts ]
-  Error: Failed to load url ../aiChatPanel (resolved id: ../aiChatPanel) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003/src/ui/__tests__/aiChatPanel.test.ts. Does the file exist?
+  Error: Failed to load url ../aiChatPanel (resolved id: ../aiChatPanel) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-003/src/ui/__tests__/aiChatPanel.test.ts. Does the file exist?
    � loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
   Test Files  1 failed (1)
        Tests  no tests

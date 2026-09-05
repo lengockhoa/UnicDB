@@ -1,16 +1,16 @@
 // src/adapters/__tests__/mssql.integration.test.ts
-// Integration tests for MsSqlAdapter. Run only when VSDB_IT=1.
+// Integration tests for MsSqlAdapter. Run only when UnicDB_IT=1.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MsSqlAdapter } from "../mssql";
 
-const IT = process.env.VSDB_IT === "1";
-const HOST = process.env.VSDB_MSSQL_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.VSDB_MSSQL_PORT ?? 1434);
-const USER = process.env.VSDB_MSSQL_USER ?? "sa";
-const PASS = process.env.VSDB_MSSQL_PASS ?? "VsdbPass123!";
+const IT = process.env.UnicDB_IT === "1";
+const HOST = process.env.UnicDB_MSSQL_HOST ?? "127.0.0.1";
+const PORT = Number(process.env.UnicDB_MSSQL_PORT ?? 1434);
+const USER = process.env.UnicDB_MSSQL_USER ?? "sa";
+const PASS = process.env.UnicDB_MSSQL_PASS ?? "UnicDBPass123!";
 // The compose service does not create a separate database; sa connects to master.
 // The compose service is provisioned by its test setup with this database.
-const DB = process.env.VSDB_MSSQL_DB ?? "vsdb";
+const DB = process.env.UnicDB_MSSQL_DB ?? "UnicDB";
 
 function makeAdapter(password = PASS): MsSqlAdapter {
   return new MsSqlAdapter(
@@ -33,9 +33,9 @@ describe.skipIf(!IT)("MsSqlAdapter — integration", () => {
   beforeAll(async () => {
     adapter = makeAdapter();
     await adapter.connect();
-    await adapter.runQuery("IF OBJECT_ID('dbo.vsdb_it_rows', 'U') IS NOT NULL DROP TABLE dbo.vsdb_it_rows");
+    await adapter.runQuery("IF OBJECT_ID('dbo.UnicDB_it_rows', 'U') IS NOT NULL DROP TABLE dbo.UnicDB_it_rows");
     await adapter.runQuery(
-      "CREATE TABLE dbo.vsdb_it_rows (id INT NOT NULL PRIMARY KEY, value NVARCHAR(64) NOT NULL)",
+      "CREATE TABLE dbo.UnicDB_it_rows (id INT NOT NULL PRIMARY KEY, value NVARCHAR(64) NOT NULL)",
     );
     const values = Array.from(
       { length: 1200 },
@@ -43,7 +43,7 @@ describe.skipIf(!IT)("MsSqlAdapter — integration", () => {
     );
     for (let start = 0; start < values.length; start += 500) {
       await adapter.runQuery(
-        `INSERT dbo.vsdb_it_rows (id, value) VALUES ${values
+        `INSERT dbo.UnicDB_it_rows (id, value) VALUES ${values
           .slice(start, start + 500)
           .join(",")}`,
       );
@@ -53,7 +53,7 @@ describe.skipIf(!IT)("MsSqlAdapter — integration", () => {
   afterAll(async () => {
     if (adapter) {
       await adapter
-        .runQuery("IF OBJECT_ID('dbo.vsdb_it_rows', 'U') IS NOT NULL DROP TABLE dbo.vsdb_it_rows")
+        .runQuery("IF OBJECT_ID('dbo.UnicDB_it_rows', 'U') IS NOT NULL DROP TABLE dbo.UnicDB_it_rows")
         .catch(() => undefined);
       await adapter.close();
     }
@@ -71,7 +71,7 @@ describe.skipIf(!IT)("MsSqlAdapter — integration", () => {
 
   it("Test #5 — batch 500/500/200/null, tables và columns", async () => {
     const { batched } = await adapter.runQuery(
-      "SELECT id FROM dbo.vsdb_it_rows ORDER BY id",
+      "SELECT id FROM dbo.UnicDB_it_rows ORDER BY id",
     );
     expect(batched).toBeDefined();
     const b1 = await batched!.fetchBatch();
@@ -88,10 +88,10 @@ describe.skipIf(!IT)("MsSqlAdapter — integration", () => {
     await batched!.close();
 
     const tables = await adapter.listTables("dbo");
-    expect(tables.some((t) => t.name === "vsdb_it_rows" && t.schema === "dbo")).toBe(
+    expect(tables.some((t) => t.name === "UnicDB_it_rows" && t.schema === "dbo")).toBe(
       true,
     );
-    const columns = await adapter.listColumns("vsdb_it_rows", "dbo");
+    const columns = await adapter.listColumns("UnicDB_it_rows", "dbo");
     const id = columns.find((column) => column.name === "id");
     expect(id).toBeDefined();
     expect(id!.isPrimaryKey).toBe(true);
@@ -119,7 +119,7 @@ describe.skipIf(!IT)("MsSqlAdapter — integration", () => {
 
   it("Test #6b — cancel dừng batch và lần fetch sau trả null", async () => {
     const { batched } = await adapter.runQuery(
-      "SELECT TOP 5000000 value FROM dbo.vsdb_it_rows CROSS JOIN (VALUES (1),(2),(3),(4),(5)) AS x(n)",
+      "SELECT TOP 5000000 value FROM dbo.UnicDB_it_rows CROSS JOIN (VALUES (1),(2),(3),(4),(5)) AS x(n)",
     );
     expect(batched).toBeDefined();
     await expect(batched!.fetchBatch()).resolves.toHaveLength(500);

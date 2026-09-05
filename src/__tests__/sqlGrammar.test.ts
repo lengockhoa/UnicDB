@@ -1,9 +1,9 @@
 // src/__tests__/sqlGrammar.test.ts
 // TASK-001 — SQL TextMate injection grammar + package.json contribution.
 //
-// Guards that the new `syntaxes/vsdb-sql-injection.tmLanguage.json` injection
+// Guards that the new `syntaxes/UnicDB-sql-injection.tmLanguage.json` injection
 // grammar is (a) declared in package.json `contributes.grammars`, (b) readable
-// and JSON-parseable on disk, (c) actually contains the VSDB dialect keywords it
+// and JSON-parseable on disk, (c) actually contains the UnicDB dialect keywords it
 // claims to scope, (d) regex-safe (no rule matches the empty string — that hangs
 // the TextMate engine), (e) not excluded from the packaged .vsix, and (f) does
 // not shadow VS Code's built-in `sql` language by re-declaring `contributes.languages`.
@@ -45,7 +45,7 @@ interface GrammarFile {
   patterns?: GrammarPattern[];
 }
 
-describe("vsdb sql injection grammar (TASK-001)", () => {
+describe("UnicDB sql injection grammar (TASK-001)", () => {
   it("package.json contributes a grammar injected into source.sql", () => {
     const pkg = readJson<{ contributes?: Contributes }>("package.json");
     const grammars = pkg.contributes?.grammars ?? [];
@@ -55,7 +55,7 @@ describe("vsdb sql injection grammar (TASK-001)", () => {
 
     const entry = grammars[0];
     expect(entry.injectTo, "injection grammar must target source.sql").toContain("source.sql");
-    expect(entry.scopeName).toBe("source.sql.vsdb");
+    expect(entry.scopeName).toBe("source.sql.UnicDB");
   });
 
   it("grammar file exists at the contributed path and parses as JSON", () => {
@@ -74,8 +74,8 @@ describe("vsdb sql injection grammar (TASK-001)", () => {
       .toBe(entry.scopeName);
   });
 
-  it("grammar declares at least the VSDB dialect keywords", () => {
-    const grammar = readJson<GrammarFile>("syntaxes/vsdb-sql-injection.tmLanguage.json");
+  it("grammar declares at least the UnicDB dialect keywords", () => {
+    const grammar = readJson<GrammarFile>("syntaxes/UnicDB-sql-injection.tmLanguage.json");
     const patterns = grammar.patterns ?? [];
 
     // Join match/begin/end so a keyword rule stays covered whether it is written
@@ -90,7 +90,7 @@ describe("vsdb sql injection grammar (TASK-001)", () => {
   });
 
   it("no pattern matches the empty string", () => {
-    const grammar = readJson<GrammarFile>("syntaxes/vsdb-sql-injection.tmLanguage.json");
+    const grammar = readJson<GrammarFile>("syntaxes/UnicDB-sql-injection.tmLanguage.json");
     const patterns = grammar.patterns ?? [];
 
     const regexes = patterns

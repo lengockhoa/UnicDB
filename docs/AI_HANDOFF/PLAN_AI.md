@@ -9,13 +9,13 @@ Answers from the one asking window:
 1. Placement: "Mặc định Below (Recommended)" — default result placement is below the active editor, with a setting for users who prefer beside.
 2. Reveal behavior: "Tôn trọng chỗ user đặt (Recommended)" — once the user drags an already-open results panel, later query runs must retain that location; never force it back to the setting.
 
-**Success definition**: running a query creates VSDB Results below the editor (vertical editor split), not beside it. A user may set placement to `beside`; a user-dragged existing panel stays where it was moved when later queries render results. Setting changes apply to the next newly-created panel only.
+**Success definition**: running a query creates UnicDB Results below the editor (vertical editor split), not beside it. A user may set placement to `beside`; a user-dragged existing panel stays where it was moved when later queries render results. Setting changes apply to the next newly-created panel only.
 
 ## §2 Scope
 
 **In scope (one task):**
 
-- Add `vsdb.resultsPlacement` configuration (`"below" | "beside"`, default `"below"`) in package.json.
+- Add `UnicDB.resultsPlacement` configuration (`"below" | "beside"`, default `"below"`) in package.json.
 - Read that setting where the single `ResultsPanel` is constructed in `src/extension.ts`, passing `vscode.ViewColumn.Below` (default) or `Beside`.
 - Change `ResultsPanel`'s internal default from `ViewColumn.Beside` to `ViewColumn.Below`.
 - Change `show()` for an already-created panel from `panel.reveal(this.viewColumn)` to `panel.reveal()` with no column argument, preserving the user’s current editor group.
@@ -27,9 +27,9 @@ Answers from the one asking window:
 
 ## §3 Approach
 
-1. **Initial placement is configuration-driven**: declare `vsdb.resultsPlacement` as enum `below|beside`, default `below`. At `src/extension.ts` construction site, translate it into `ViewColumn.Below` or `ViewColumn.Beside` and pass it to `new ResultsPanel(...)`. The `ResultsPanel` default itself also changes to `Below` as a defensive direct-construction default.
+1. **Initial placement is configuration-driven**: declare `UnicDB.resultsPlacement` as enum `below|beside`, default `below`. At `src/extension.ts` construction site, translate it into `ViewColumn.Below` or `ViewColumn.Beside` and pass it to `new ResultsPanel(...)`. The `ResultsPanel` default itself also changes to `Below` as a defensive direct-construction default.
 2. **Reveal preserves user choice**: `viewColumn` is only an initial creation hint. `show()` calls `this.panel.reveal()` without a view-column argument when `this.panel` already exists. VS Code preserves the existing webview editor group, including a position manually dragged by the user.
-3. **No live setting migration**: changing `vsdb.resultsPlacement` affects the next panel creation (after closing Results), not a live panel. This respects the explicit user-drag decision and avoids surprise editor moves.
+3. **No live setting migration**: changing `UnicDB.resultsPlacement` affects the next panel creation (after closing Results), not a live panel. This respects the explicit user-drag decision and avoids surprise editor moves.
 4. **Test using the existing VS Code mock**: add `Below` to its `ViewColumn` fixture and record arguments passed to `createWebviewPanel` / `reveal`. Existing panel tests prove the precise no-argument reveal contract.
 5. **Versioning**: patch `v1.11.1 → v1.11.2` if free at release; releasing cycle wins if another patch ships first.
 
@@ -52,13 +52,13 @@ npm test
 npm run compile
 ```
 
-Manual smoke: open a SQL editor → run query → Results opens BELOW editor; close Results → set `vsdb.resultsPlacement` to `beside` → run query → Results opens beside; drag Results to another editor group → run another query → it remains in the dragged group.
+Manual smoke: open a SQL editor → run query → Results opens BELOW editor; close Results → set `UnicDB.resultsPlacement` to `beside` → run query → Results opens beside; drag Results to another editor group → run another query → it remains in the dragged group.
 
 ## §6 Acceptance
 
 - [ ] TASK-AI-001 TDD cases pass (RED output and GREEN evidence recorded by executor).
 - [ ] Default new Results panel uses `vscode.ViewColumn.Below`.
-- [ ] `vsdb.resultsPlacement` supports only `below` and `beside`, defaults to `below`.
+- [ ] `UnicDB.resultsPlacement` supports only `below` and `beside`, defaults to `below`.
 - [ ] Existing Results panel is revealed without a view-column argument, retaining user placement.
 - [ ] Placement setting applies to next panel creation only; never moves a live panel.
 - [ ] SQL Console / webview layout / query execution paths unchanged.

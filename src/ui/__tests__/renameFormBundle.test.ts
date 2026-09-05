@@ -47,7 +47,7 @@ function loadBundle(): BundleHandle {
   if (!bundleSrc) {
     throw new Error("dist/renameForm.js missing — run `npm run compile`");
   }
-  document.body.innerHTML = '<div id="vsdb-root"></div>';
+  document.body.innerHTML = '<div id="UnicDB-root"></div>';
   const received: Array<Record<string, unknown>> = [];
   (globalThis as unknown as { acquireVsCodeApi: () => unknown }).acquireVsCodeApi =
     () => ({ postMessage: (m: unknown) => received.push(m as Record<string, unknown>) });
@@ -73,13 +73,13 @@ describeIf("webview/renameFormMain.ts bundle (DBX-06)", () => {
       table: "users",
       oldName: "users",
     });
-    const root = document.getElementById("vsdb-root") as HTMLDivElement;
-    expect(root.querySelector("#vsdb-rename-input")).not.toBeNull();
-    expect(root.querySelector("#vsdb-rename-analyze")).not.toBeNull();
-    expect(root.querySelector("#vsdb-rename-approve")).not.toBeNull();
-    expect(root.querySelector("#vsdb-rename-cancel")).not.toBeNull();
+    const root = document.getElementById("UnicDB-root") as HTMLDivElement;
+    expect(root.querySelector("#UnicDB-rename-input")).not.toBeNull();
+    expect(root.querySelector("#UnicDB-rename-analyze")).not.toBeNull();
+    expect(root.querySelector("#UnicDB-rename-approve")).not.toBeNull();
+    expect(root.querySelector("#UnicDB-rename-cancel")).not.toBeNull();
     const approve = root.querySelector(
-      "#vsdb-rename-approve",
+      "#UnicDB-rename-approve",
     ) as HTMLButtonElement;
     expect(approve.disabled).toBe(true); // disabled until a clean analysis
     // textContent-only invariant: no innerHTML writes in the bundle source.
@@ -97,11 +97,11 @@ describeIf("webview/renameFormMain.ts bundle (DBX-06)", () => {
       errors: ["Name collision — target already exists: customers (table)."],
     });
     const box = document.getElementById(
-      "vsdb-rename-analysis",
+      "UnicDB-rename-analysis",
     ) as HTMLDivElement;
     expect(box.textContent).toContain("Name collision");
     const approve = document.getElementById(
-      "vsdb-rename-approve",
+      "UnicDB-rename-approve",
     ) as HTMLButtonElement;
     expect(approve.disabled).toBe(true);
   });
@@ -134,7 +134,7 @@ describeIf("webview/renameFormMain.ts bundle (DBX-06)", () => {
       errors: [],
     });
     const box = document.getElementById(
-      "vsdb-rename-analysis",
+      "UnicDB-rename-analysis",
     ) as HTMLDivElement;
     expect(box.textContent).toContain("v_users");
     expect(box.textContent).toContain("Trigger: trg_audit");
@@ -144,7 +144,7 @@ describeIf("webview/renameFormMain.ts bundle (DBX-06)", () => {
       'ALTER TABLE "public"."users" RENAME TO "customers";',
     );
     const approve = document.getElementById(
-      "vsdb-rename-approve",
+      "UnicDB-rename-approve",
     ) as HTMLButtonElement;
     expect(approve.disabled).toBe(false);
   });
@@ -176,7 +176,7 @@ describeIf("webview/renameFormMain.ts bundle (DBX-06)", () => {
       errors: [],
     });
     const box = document.getElementById(
-      "vsdb-rename-analysis",
+      "UnicDB-rename-analysis",
     ) as HTMLDivElement;
     expect(box.textContent).toContain('<img src=x onerror=1>');
     expect(box.querySelectorAll("img").length).toBe(0);
@@ -204,7 +204,7 @@ describeIf("webview/renameFormMain.ts bundle (DBX-06)", () => {
       },
     });
     const box = document.getElementById(
-      "vsdb-rename-progress",
+      "UnicDB-rename-progress",
     ) as HTMLDivElement;
     expect(box.textContent).toContain("FAILED");
     expect(box.textContent).toContain("rename");
@@ -221,7 +221,7 @@ describeIf("webview/renameFormMain.ts bundle (DBX-06)", () => {
       remaining: 2,
     });
     const box = document.getElementById(
-      "vsdb-rename-progress",
+      "UnicDB-rename-progress",
     ) as HTMLDivElement;
     expect(box.textContent).toContain("Cancelled");
     expect(box.textContent).toContain("2 remaining");

@@ -141,7 +141,7 @@ describe("AdminSessionsPanelCore", () => {
 // =============================================================================
 describe("AdminSessionsPanel refresh — DBX-08 declared admin capability", () => {
   const UNSUPPORTED_MESSAGE =
-    "VSDB: Admin tools are not supported by this connection's database.";
+    "UnicDB: Admin tools are not supported by this connection's database.";
 
   function makeAdminApi(): {
     api: {

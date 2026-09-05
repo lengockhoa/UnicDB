@@ -119,7 +119,7 @@ async function until(cond: () => boolean): Promise<void> {
 
 function consolePanels(): MockPanel[] {
   return state.panels.filter(
-    (p) => (p as { viewType?: string }).viewType === "vsdb.console",
+    (p) => (p as { viewType?: string }).viewType === "UnicDB.console",
   ) as unknown as MockPanel[];
 }
 

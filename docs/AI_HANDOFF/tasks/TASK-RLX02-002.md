@@ -96,14 +96,14 @@ Verification Output: |
 
    ✓ src/adapters/__tests__/mssql.sortQuery.test.ts  (7 tests) 2ms
    ✓ src/adapters/__tests__/mssql.parameterized.test.ts  (12 tests) 214ms
-   (mssql.integration.test.ts: describe.skipIf(!VSDB_IT) — 0 collected without VSDB_IT=1)
+   (mssql.integration.test.ts: describe.skipIf(!UnicDB_IT) — 0 collected without UnicDB_IT=1)
 
    Test Files  2 passed (2)
         Tests  19 passed (19)
 
   Command 2 — npm run typecheck
 
-   > vsdb@1.30.0 typecheck
+   > UnicDB@1.30.0 typecheck
    > tsc --noEmit
    (exit 0, no errors)
 

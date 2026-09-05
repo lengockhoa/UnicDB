@@ -118,7 +118,7 @@ $ npx vitest run src/adapters/__tests__/mssql.parameterized.test.ts
       Tests  17 passed (17)
 
 $ npm run typecheck
-> vsdb@1.40.0 typecheck
+> UnicDB@1.40.0 typecheck
 > tsc --noEmit          # exit 0
 
 $ npm run compile

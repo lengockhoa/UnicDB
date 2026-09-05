@@ -6,15 +6,15 @@
 // `npm run compile`), dispatches state messages, then asserts the DOM +
 // behaviors required by TASK-004 §Test Cases:
 //
-//   1. null value renders "(NULL)" in an italic `.vsdb-null` span
-//   2. non-null value renders normally (no `.vsdb-null`)
+//   1. null value renders "(NULL)" in an italic `.UnicDB-null` span
+//   2. non-null value renders normally (no `.UnicDB-null`)
 //   3. undefined renders "(NULL)" the same as null
 //   4. the valueFormatter only changes display — underlying data stays null
 //   5. double-click on a null cell still enters edit mode
 //   6. double-click on a read-only cell opens the value viewer overlay with
 //      the FULL raw value (500-char string)
 //
-// plus a styles.css contract check for `.vsdb-null` / `.vsdb-value-viewer`
+// plus a styles.css contract check for `.UnicDB-null` / `.UnicDB-value-viewer`
 // (jsdom does not apply external stylesheets, so the rules are asserted
 // against the source CSS text directly).
 //
@@ -86,10 +86,10 @@ beforeAll(() => {
 const distPath = resolve(process.cwd(), "dist", "webview.js");
 const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
 
-interface VsdbGlobals {
+interface UnicDBGlobals {
   gridApi?: GridApi;
 }
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -100,20 +100,20 @@ function evaluateBundleOnce(): {
   received: Array<Record<string, unknown>>;
   root: HTMLDivElement;
 } {
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-webview"></div>';
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
   (0, eval)(bundleSrc);
 
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
   return { received, root };
 }
 
@@ -146,7 +146,7 @@ async function resetGrid(
   currentApi?.setGridOption("rowData", []);
   currentApi?.flushAllAnimationFrames();
   await waitForGrid(() => {
-    expect(root.querySelector(".vsdb-empty")).toBeTruthy();
+    expect(root.querySelector(".UnicDB-empty")).toBeTruthy();
     expect(root.querySelectorAll(".ag-cell")).toHaveLength(0);
     if (getGridApi()) expect(getGridApi()!.getEditingCells()).toHaveLength(0);
   });
@@ -174,7 +174,7 @@ async function resetGrid(
   // The reset column/cell is the observable boundary for the shared grid
   // lifecycle. It also proves that any previous editor has been stopped.
   await waitForGrid(() => {
-    expect(root.querySelector(".vsdb-value-viewer")).toBeNull();
+    expect(root.querySelector(".UnicDB-value-viewer")).toBeNull();
     expect(getGridApi()).toBeTruthy();
     expect(root.querySelector('.ag-cell[col-id="reset"]')).toBeTruthy();
     expect(getGridApi()!.getEditingCells()).toHaveLength(0);
@@ -200,8 +200,8 @@ function selectState(args: {
 }
 
 function getGridApi(): GridApi | null {
-  const w = window as unknown as { __vsdb?: VsdbGlobals };
-  return w.__vsdb?.gridApi ?? null;
+  const w = window as unknown as { __UnicDB?: UnicDBGlobals };
+  return w.__UnicDB?.gridApi ?? null;
 }
 
 /** Dispatch a real-user-style double-click on a cell: mousedown to focus,
@@ -236,7 +236,7 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
     await resetGrid(root, received);
   });
 
-  itIfBundle("1. null value renders \"(NULL)\" in an italic .vsdb-null span", async () => {
+  itIfBundle("1. null value renders \"(NULL)\" in an italic .UnicDB-null span", async () => {
     dispatchState(
       selectState({
         results: [
@@ -260,24 +260,24 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
     );
     getGridApi()?.flushAllAnimationFrames();
     await waitForGrid(() =>
-      expect(root.querySelectorAll(".vsdb-null").length).toBe(1),
+      expect(root.querySelectorAll(".UnicDB-null").length).toBe(1),
     );
 
     // Exactly the null cell carries the placeholder span.
-    const nullSpans = root.querySelectorAll(".vsdb-null");
+    const nullSpans = root.querySelectorAll(".UnicDB-null");
     expect(nullSpans.length).toBe(1);
-    expect(nullSpans[0].getAttribute("class")).toContain("vsdb-null");
+    expect(nullSpans[0].getAttribute("class")).toContain("UnicDB-null");
     expect(nullSpans[0].textContent).toBe("(NULL)");
     // The span lives INSIDE the null cell (col-id="name"), not the id cell.
     const nameCell = root.querySelector(
       ".ag-cell[col-id=\"name\"]",
     ) as HTMLElement | null;
     expect(nameCell).toBeTruthy();
-    expect(nameCell!.querySelector(".vsdb-null")).toBeTruthy();
+    expect(nameCell!.querySelector(".UnicDB-null")).toBeTruthy();
     expect(nameCell!.textContent).toContain("(NULL)");
   });
 
-  itIfBundle("2. non-null value renders normally (no .vsdb-null)", async () => {
+  itIfBundle("2. non-null value renders normally (no .UnicDB-null)", async () => {
     dispatchState(
       selectState({
         results: [
@@ -298,10 +298,10 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
     );
     getGridApi()?.flushAllAnimationFrames();
     await waitForGrid(() =>
-      expect(root.querySelectorAll(".vsdb-null").length).toBe(0),
+      expect(root.querySelectorAll(".UnicDB-null").length).toBe(0),
     );
 
-    expect(root.querySelectorAll(".vsdb-null").length).toBe(0);
+    expect(root.querySelectorAll(".UnicDB-null").length).toBe(0);
     const nameCell = root.querySelector(
       ".ag-cell[col-id=\"name\"]",
     ) as HTMLElement | null;
@@ -330,10 +330,10 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
     );
     getGridApi()?.flushAllAnimationFrames();
     await waitForGrid(() =>
-      expect(root.querySelectorAll(".vsdb-null").length).toBe(1),
+      expect(root.querySelectorAll(".UnicDB-null").length).toBe(1),
     );
 
-    const nullSpans = root.querySelectorAll(".vsdb-null");
+    const nullSpans = root.querySelectorAll(".UnicDB-null");
     expect(nullSpans.length).toBe(1);
     expect(nullSpans[0].textContent).toBe("(NULL)");
   });
@@ -406,7 +406,7 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
     // AG Grid's default double-click-to-edit still activates the editor.
     expect(api!.getEditingCells().length).toBeGreaterThan(0);
     // The value viewer must NOT open for an editable cell.
-    expect(root.querySelector(".vsdb-value-viewer")).toBeNull();
+    expect(root.querySelector(".UnicDB-value-viewer")).toBeNull();
 
     api!.stopEditing();
   });
@@ -457,11 +457,11 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
     doubleClickCell(root, "s");
     api!.flushAllAnimationFrames();
     await waitForGrid(() =>
-      expect(root.querySelector(".vsdb-value-viewer")).toBeTruthy(),
+      expect(root.querySelector(".UnicDB-value-viewer")).toBeTruthy(),
     );
 
     const overlay = root.querySelector(
-      ".vsdb-value-viewer",
+      ".UnicDB-value-viewer",
     ) as HTMLElement | null;
     expect(overlay).toBeTruthy();
     // Full raw content, plain text, nothing truncated.
@@ -473,7 +473,7 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
     // lifecycle.
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     await waitForGrid(() =>
-      expect(root.querySelector(".vsdb-value-viewer")).toBeNull(),
+      expect(root.querySelector(".UnicDB-value-viewer")).toBeNull(),
     );
   });
 });
@@ -481,19 +481,19 @@ describeIfBundle("TASK-004 — NULL cell display + value viewer", () => {
 // ---- styles.css contract ---------------------------------------------------
 // jsdom does not apply external stylesheets, so the TASK-004 acceptance
 // criteria for the CSS classes are asserted against the source CSS text.
-describe("TASK-004 — styles.css contract (.vsdb-null / .vsdb-value-viewer)", () => {
+describe("TASK-004 — styles.css contract (.UnicDB-null / .UnicDB-value-viewer)", () => {
   const cssPath = resolve(process.cwd(), "webview", "styles.css");
   const css = existsSync(cssPath) ? readFileSync(cssPath, "utf8") : "";
 
-  it(".vsdb-null is styled italic + muted", () => {
-    const m = css.match(/\.vsdb-null\s*\{[^}]*\}/);
+  it(".UnicDB-null is styled italic + muted", () => {
+    const m = css.match(/\.UnicDB-null\s*\{[^}]*\}/);
     expect(m).toBeTruthy();
     expect(m![0]).toMatch(/font-style:\s*italic/);
     expect(m![0]).toMatch(/color\s*:/);
   });
 
-  it(".vsdb-value-viewer overlay has padding, border, monospace font", () => {
-    const m = css.match(/\.vsdb-value-viewer\s*\{[^}]*\}/);
+  it(".UnicDB-value-viewer overlay has padding, border, monospace font", () => {
+    const m = css.match(/\.UnicDB-value-viewer\s*\{[^}]*\}/);
     expect(m).toBeTruthy();
     expect(m![0]).toMatch(/padding\s*:/);
     expect(m![0]).toMatch(/border\s*:/);

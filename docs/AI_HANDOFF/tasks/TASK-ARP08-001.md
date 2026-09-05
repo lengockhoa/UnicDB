@@ -47,7 +47,7 @@ npm run typecheck
 - [ ] `parseConsoleDraftSnapshot` is fail-closed: returns `null` (never throws) on malformed JSON, wrong/missing version, non-string id/name/buffer, non-array `tabs`, unknown `activeTabId`, over-cap tabs (>20), over-cap buffer (>64k).
 - [ ] `encodeConsoleDraftSnapshot` / `parseConsoleDraftSnapshot` round-trip losslessly for valid snapshots; unknown extra fields are stripped (tolerated-and-stripped) and re-encoding omits them.
 - [ ] `isConsoleToHostMessage` accepts `{ type: "clearDrafts" }` and still rejects unknown types; no existing guard case regressed.
-- [ ] Constants exported and asserted in tests: `CONSOLE_DRAFTS_KEY = "vsdb.consoleDrafts"`, `CONSOLE_DRAFT_SNAPSHOT_VERSION = 1`, `CONSOLE_DRAFTS_MAX_TABS = 20`, `CONSOLE_DRAFTS_MAX_BUFFER_CHARS = 64_000`.
+- [ ] Constants exported and asserted in tests: `CONSOLE_DRAFTS_KEY = "UnicDB.consoleDrafts"`, `CONSOLE_DRAFT_SNAPSHOT_VERSION = 1`, `CONSOLE_DRAFTS_MAX_TABS = 20`, `CONSOLE_DRAFTS_MAX_BUFFER_CHARS = 64_000`.
 - [ ] Module remains pure (no vscode/DOM import) so the webview bundle can import the codec — verified by typecheck + the existing pure-module invariant.
 - [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
@@ -63,7 +63,7 @@ npm run typecheck
   export interface ConsoleDraftSnapshot { version: 1; tabs: Array<{ id: string; name: string; buffer: string }>; activeTabId: string; }
   export function encodeConsoleDraftSnapshot(snapshot: ConsoleDraftSnapshot): string;
   export function parseConsoleDraftSnapshot(raw: string): ConsoleDraftSnapshot | null;
-  export const CONSOLE_DRAFTS_KEY = "vsdb.consoleDrafts";
+  export const CONSOLE_DRAFTS_KEY = "UnicDB.consoleDrafts";
   export const CONSOLE_DRAFT_SNAPSHOT_VERSION = 1;
   export const CONSOLE_DRAFTS_MAX_TABS = 20;
   export const CONSOLE_DRAFTS_MAX_BUFFER_CHARS = 64_000;

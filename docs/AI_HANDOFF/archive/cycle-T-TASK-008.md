@@ -185,7 +185,7 @@ did not exist yet (TypeError on import use). Confirmed RED for the right reason,
 Verification Output:
 ```
 === npm run typecheck ===
-> vsdb@1.6.3 typecheck
+> UnicDB@1.6.3 typecheck
 > tsc --noEmit
 (clean, no output)
 

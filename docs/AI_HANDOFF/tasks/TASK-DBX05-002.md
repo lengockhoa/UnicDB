@@ -13,7 +13,7 @@ SSH tunnel plumbing: a pure argv builder/ps parser (`src/core/sshTunnel.ts`) and
 - `src/core/sshTunnel.ts` — NEW pure:
   - `interface TunnelConfig { host: string; port?: number; user?: string; identityFile?: string; localPort?: number; }`
   - `buildTunnelArgs(cfg: TunnelConfig): string[]` — returns ssh argv (N, L forwarding). Validations (throw `TunnelError` typed codes): host non-empty; host/user restricted to `[A-Za-z0-9._-]` (user additionally allows nothing else; no `@` splitting — caller passes `user@host` only via user field); port 1..65535; identityFile absolute-looking path, no whitespace; localPort when provided 1024..65535, default 0 → ssh picks ephemeral.
-  - `parseTunnelProcLine(line: string): TunnelProc | null` — parse a `ps -o pid=,args=` line carrying our `vsdb-tunnel` marker; returns `{ pid, localPort? }` or null.
+  - `parseTunnelProcLine(line: string): TunnelProc | null` — parse a `ps -o pid=,args=` line carrying our `UnicDB-tunnel` marker; returns `{ pid, localPort? }` or null.
 - `src/core/sshTunnelManager.ts` — NEW runtime:
   - `class SshTunnelManager` — `start(cfg, key): Promise<TunnelHandle>` spawns ssh (NO shell), waits for `Local forwarding listening on 127.0.0.1:<port>` (10s timeout → kill + throw); `stop(key)`, `stopAll()`, `list()`, `dispose()`. Idempotent per key.
 - Tests:
@@ -46,5 +46,5 @@ npm run typecheck
 
 **RED evidence**: first run of `npx vitest run src/core/__tests__/sshTunnel.test.ts src/core/__tests__/sshTunnelManager.test.ts` failed at module load — `sshTunnelManager.ts` referenced `TunnelConfig`/fixtures before they existed (import-time RED, module not found). After wiring the fixture shim (`makeShim()` writes a temp `/bin/sh` wrapper exec'ing `node fixtures/fake-ssh.mjs`) both suites went green.
 
-**GREEN evidence**: `npx vitest run src/core/__tests__/sshTunnel.test.ts src/core/__tests__/sshTunnelManager.test.ts` → all passed (14 total). `spawn` (no shell), validated argv via `buildTunnelArgs`, readiness parsed from `Local forwarding listening on 127.0.0.1 port (\d+)`, 10s timeout, `-o SetEnv=vsdb-tunnel:<key>` marker, `stop`/`stopAll`/`dispose`.
+**GREEN evidence**: `npx vitest run src/core/__tests__/sshTunnel.test.ts src/core/__tests__/sshTunnelManager.test.ts` → all passed (14 total). `spawn` (no shell), validated argv via `buildTunnelArgs`, readiness parsed from `Local forwarding listening on 127.0.0.1 port (\d+)`, 10s timeout, `-o SetEnv=UnicDB-tunnel:<key>` marker, `stop`/`stopAll`/`dispose`.
 

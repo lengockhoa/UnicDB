@@ -11,7 +11,7 @@ User (verbatim): "[please review the AI feature carefully. Right now it does not
 Success = 5 outcomes:
 1. **Chat always produces a result** — builtin engine end-to-end: config error → actionable error bubble; every turn ends in `assistant` or `error` + `done`; Clear does NOT kill the panel; Cmd+Enter cursor-mode runs the statement containing the cursor.
 2. **Full-DB context** — system prompt contains ALL user schemas/tables/views of the connection (NOT just the first 30 tables in `public`), rendered through Export-Structure DDL, with a char budget + footer pointing the model at `export_structure`.
-3. **Export Structure → AI context** — tool `export_structure` lets the model pull the full DDL blob on demand; command `vsdb.exportAllStructures` copies the whole-DB DDL for the user.
+3. **Export Structure → AI context** — tool `export_structure` lets the model pull the full DDL blob on demand; command `UnicDB.exportAllStructures` copies the whole-DB DDL for the user.
 4. **Excel-like grid** — fix the no-PK ctid save bug (hidden-ctid-column approach), edit highlight, add/delete row, single-transaction Cmd+Enter commit, unified undo/redo stack.
 5. **Grid alignment** — requery bar sits on a single straight baseline; set-filter popup items left-aligned uniformly.
 
@@ -21,7 +21,7 @@ Success = 5 outcomes:
 - TASK-001: `buildDatabaseStructure` builder + `export_structure` agent tool (src/ui/exportStructure.ts, src/ai/tools/schemaTools.ts + tests).
 - TASK-002: Full-DB context injection into `buildMessages` (src/ui/aiChatPanel.ts + tests).
 - TASK-003: Chat reliability — Clear dead-state + not-configured error surface (src/ui/aiChatPanel.ts, webview/aiChatPanelMain.ts + tests).
-- TASK-004: `vsdb.exportAllStructures` command copies the whole-DB DDL (src/ui/tableCommands.ts, package.json, src/extension.test.ts + tests).
+- TASK-004: `UnicDB.exportAllStructures` command copies the whole-DB DDL (src/ui/tableCommands.ts, package.json, src/extension.test.ts + tests).
 - TASK-005: Cmd+Enter cursor-mode lock + gap-rule fix (src/core/statementParser.ts, src/core/__tests__/statementParser.test.ts, src/extension.test.ts, src/ui/__tests__/codeLensProvider.test.ts).
 - TASK-006 (grid A, P0): Fix no-PK ctid save — hidden ctid column (src/ui/resultsPanel.ts, src/ui/resultsGridModel.ts + tests).
 - TASK-007 (grid B): Excel editing — dirty highlight + add-row/delete-row commit INSERT/DELETE (webview/main.ts, webview/styles.css, src/core/saveStatements.ts + tests).
@@ -44,7 +44,7 @@ Rationale (Round-1 review finding #1): T7 no longer belongs in wave 1 — it tou
 
 **D2 — Clear dead-state (user report).** `handleClear` (aiChatPanel.ts:738-741) resets `history` + posts `init` but does NOT reset `token`/`currentAbort`/`turnDonePosted`; the webview busy state only un-disables via `done` — Clear during an active turn stream → input dies. **Fix:** host clear = full turn reset (token/currentAbort/turnDonePosted + cancelAllPending) + post `done`; webview receives `init{hasHistory:false}` → force `setBusy(false)` + deStream.
 
-**D3 — "AI is not configured" surfaces unclearly.** `commandOpenAiChat` (extension.ts:382-404) gates at command level; if the panel was opened earlier and settings get cleared mid-session, `runAgent` throws and the original error bubble lacks guidance. **Fix (T3):** enrich the catch in `runBuiltinTurn` with the standard message `"AI is not configured — open VSDB: Open AI Settings to configure baseUrl/model/API key"` (keep the original prefix unchanged so any existing tests that match the prefix still pass). (The "engine-banner hint" sentence is removed from scope — no task covers it, dropped from §3.)
+**D3 — "AI is not configured" surfaces unclearly.** `commandOpenAiChat` (extension.ts:382-404) gates at command level; if the panel was opened earlier and settings get cleared mid-session, `runAgent` throws and the original error bubble lacks guidance. **Fix (T3):** enrich the catch in `runBuiltinTurn` with the standard message `"AI is not configured — open UnicDB: Open AI Settings to configure baseUrl/model/API key"` (keep the original prefix unchanged so any existing tests that match the prefix still pass). (The "engine-banner hint" sentence is removed from scope — no task covers it, dropped from §3.)
 
 **D5 — Cmd+Enter cursor-mode (orchestrator probe did not reproduce across the parser's 17 cases).** The strongest deviation candidate per code-read: `statementAtCursor`'s fallback (statementParser.ts:497-500) returns `stmts[stmts.length-1]` when the offset sits in a GAP between two statements — a user standing between stmt1/stmt2 will run the LAST statement in the file instead of the statement preceding the cursor. **Fix:** in a gap → nearest statement BEFORE the cursor (user intent "run the statement containing the cursor"); before the first statement → the first statement. Lock the entire cursor-mode behaviour via regression tests (TASK-005) + audit the `runQueryFromEditor` handler + CodeLens path.
 
@@ -54,11 +54,11 @@ Rationale (Round-1 review finding #1): T7 no longer belongs in wave 1 — it tou
 
 **G1 — No-PK ctid save bug (P0, user blocked).** `fetchPostgresCtids()` (resultsPanel.ts:699-748) matches rows by VALUE comparison (`WHERE col IS NOT DISTINCT FROM <literal>` over every column, requiring exactly 1 match) — round-trip literals (timestamp/numeric/boolean via `sqlLiteral`) drift ⇒ 0 matches ⇒ "all_failed" banner. **Fix (spec recommendation):** for PG no-PK tables, the host adds `ctid` to the initial SELECT as a hidden column (requery/original path inside resultsPanel.ts) → row address is exact, no value match. Keep value-match only as a fallback when the `ctid` column is absent (hand-written query). The webview hides the `ctid` column (AG Grid `hide`); the host reads `ctid` from row data when building the save payload.
 
-**G2 — Excel editing (spec B).** Already present: cell edit (TASK-501 EditState), Add Row/Delete Row markers (webview/main.ts:1716-1734), Commit button + Cmd+Enter, buildSaveStatements already understands NewRowMarker/DeleteRowMarker → INSERT/DELETE. Missing: **dirty highlight** (cellStyle/CSS class vs original), **new-row highlight**, **deleted-row strikethrough**, per-row error report, refresh + clear highlights after commit (new baseline). **Fix:** CSS classes `vsdb-cell-dirty`/`vsdb-row-new`/`vsdb-row-deleted` (styles.css) + AG Grid `cellClassRules`/`getRowClass` reading editState; commit flow re-syncs the grid with DB truth.
+**G2 — Excel editing (spec B).** Already present: cell edit (TASK-501 EditState), Add Row/Delete Row markers (webview/main.ts:1716-1734), Commit button + Cmd+Enter, buildSaveStatements already understands NewRowMarker/DeleteRowMarker → INSERT/DELETE. Missing: **dirty highlight** (cellStyle/CSS class vs original), **new-row highlight**, **deleted-row strikethrough**, per-row error report, refresh + clear highlights after commit (new baseline). **Fix:** CSS classes `UnicDB-cell-dirty`/`UnicDB-row-new`/`UnicDB-row-deleted` (styles.css) + AG Grid `cellClassRules`/`getRowClass` reading editState; commit flow re-syncs the grid with DB truth.
 
 **G3 — Unified undo/redo (spec C).** AG Grid undo only covers cell edits; add/delete row needs custom. **Fix:** ONE unified stack (pure module `src/ui/undoStack.ts` — new file, no vscode import) records every action (cell-edit, add-row, delete-row) in order; Ctrl/Cmd+Z + Shift+Z (and toolbar icons) drive the stack; redo stack is cleared on a new action. Undo-after-commit is out-of-scope (documented in the task).
 
-**G4 — Alignment (spec D+E).** Requery bar: flexbox `align-items:center`, input/button at a uniform 26px height (makeIconButton is already 26px — webview/main.ts:393), even gaps — add rules `.vsdb-requery-bar / .vsdb-requery-label / .vsdb-requery-input / .vsdb-requery-run / .vsdb-requery-clear` to styles.css (currently NO such rules exist — grep 0 matches, bar is unstyled). Set-filter popup: AG Grid themeQuartz params (webview/main.ts:1371 themeQuartz.withParams) — adjust via a CSS override of `.ag-set-filter-item` alignment or a theme param; left-align "Select All" + items at a uniform indent.
+**G4 — Alignment (spec D+E).** Requery bar: flexbox `align-items:center`, input/button at a uniform 26px height (makeIconButton is already 26px — webview/main.ts:393), even gaps — add rules `.UnicDB-requery-bar / .UnicDB-requery-label / .UnicDB-requery-input / .UnicDB-requery-run / .UnicDB-requery-clear` to styles.css (currently NO such rules exist — grep 0 matches, bar is unstyled). Set-filter popup: AG Grid themeQuartz params (webview/main.ts:1371 themeQuartz.withParams) — adjust via a CSS override of `.ag-set-filter-item` alignment or a theme param; left-align "Select All" + items at a uniform indent.
 
 ## §4 Test Plan
 
@@ -77,7 +77,7 @@ Rationale (Round-1 review finding #1): T7 no longer belongs in wave 1 — it tou
 | edge | T3#2 Clear while idle | history=[] + init posted; next turn runs normally |
 | edge | T3#3 not-configured error surface | loadConfig null → error bubble `"AI is not configured"` in the thread, done posted, NO unhandled rejection |
 | edge | T3#4 webview init re-enable | `init{hasHistory:false}` sau busy → setBusy(false) called, prompt enabled |
-| happy | T4#1 vsdb.exportAllStructures copies DDL | clipboard text = buildDatabaseStructure output (header + tables), statusbar message posted |
+| happy | T4#1 UnicDB.exportAllStructures copies DDL | clipboard text = buildDatabaseStructure output (header + tables), statusbar message posted |
 | edge | T4#4 no active connection (palette invoke, no arg) | mgr.getActive() null → info message instructing the user to connect first, NO crash, clipboard not written |
 | happy | T5#1 cursor mid-stmt → full stmt | sqlToRun returns one statement with full text from the start of SELECT to `;`, NOT truncated from the offset |
 | regression | T5#2 gap between 2 stmts → stmt BEFORE cursor | RED currently (returns last stmt); GREEN: statements[0] === stmt1 |
@@ -86,8 +86,8 @@ Rationale (Round-1 review finding #1): T7 no longer belongs in wave 1 — it tou
 | regression | T6#2 no-PK edit→commit saves successfully via ctid | NO banner "Cannot save... all_failed"; UPDATE ... WHERE ctid='(0,1)' targets the correct row (currently RED with literal round-trip data) |
 | edge | T6#3 hand-written query without ctid column → fallback old value-match | old behaviour preserved (fallback path) |
 | edge | T6#4 row ctid null/missing → skip per-row warning | remaining rows are saved, warning points at the correct row |
-| happy | T7#1 dirty cell highlight | editState.markDirty → cell has class `vsdb-cell-dirty`; revert/commit → class removed |
-| happy | T7#2 add row + delete row → INSERT/DELETE on commit | new row has class `vsdb-row-new`; deleted `vsdb-row-deleted`; buildSaveStatements emits INSERT/DELETE (already present — lock via E2E message flow) |
+| happy | T7#1 dirty cell highlight | editState.markDirty → cell has class `UnicDB-cell-dirty`; revert/commit → class removed |
+| happy | T7#2 add row + delete row → INSERT/DELETE on commit | new row has class `UnicDB-row-new`; deleted `UnicDB-row-deleted`; buildSaveStatements emits INSERT/DELETE (already present — lock via E2E message flow) |
 | edge | T7#3 commit with 0 dirty → no-op (does NOT post saveEdits) | no message, no banner |
 | edge | T7#4 commit 1 row with error → per-row error report + keep remaining dirty | banner lists the failing row; OK rows are saved |
 | happy | T8#1 undo walks through cell-edit → add-row → delete-row (reverse order) | Ctrl+Z 3 times returns the grid to the initial state; Shift+Z redoes it |
@@ -144,7 +144,7 @@ Wave boundary (orchestrator): `npx vitest run` full suite.
 
 - TypeScript strict; do NOT import vscode inside `src/ai/**` and `src/ui/exportStructure.ts` (pure, webview-importable pattern).
 - npm/vitest/tsc is the verification stack; tests use fake adapters + vi.mock('vscode') following the pattern in src/ui/__tests__/aiChatE2e.test.ts.
-- No real-DB integration (the VSDB_IT=1 pattern exists but is not needed — unit tests with a fake adapter are sufficient).
+- No real-DB integration (the UnicDB_IT=1 pattern exists but is not needed — unit tests with a fake adapter are sufficient).
 - Error strings lockstep with existing patterns: `"No active connection..."` / `"Tool failed: <msg>"` / PG-only messages in describe_table style.
 - apiKey NEVER crosses the webview wire.
 - Version: no new dependencies added.
@@ -155,7 +155,7 @@ PLANNER_MODEL: unic/unic-smart
 ## Planner Self-Audit
 Checklist: 12/12 pass
 Fixed during audit: (a) T2/T3 share src/ui/aiChatPanel.ts → T3 deps T2; (b) grid scope was added mid-plan → re-waved (T7→T8/T9 same-file serialization; T6 wave 1 because the user-blocking save bug); (c) T9 verification path `tests/webviewRequeryAlignment.test.ts` is a NEW test file (documented as new in TASK-009) — all other paths verified against tests-map.json / existing files; (d) src/ui/undoStack.test.ts is NEW (TASK-008 creates the module + test). `typecheck` script verified in package.json (`tsc --noEmit`).
-Known gaps: (1) View CREATE definition cannot be emitted — ColumnInfo lacks pg_get_viewdef (T1 contract: column list only). (2) ACP/omp engine path is not audited deeply — builtin fallback is the main path; if the omp engine is actually the source of "no result" issues, that requires another cycle. (3) T6 hidden-ctid integration on a real PG (docker) is NOT covered by unit tests — the unit uses a fake adapter with a ctid column; the spec notes "Integration (docker PG)" as optional (VSDB_IT=1 pattern) — the executor may add it if quick, but it is not blocking. (4) T9 visual alignment: jsdom does not render for real — acceptance needs a human check / screenshot (documented in the task). (5) Undo-after-commit is out-of-scope (spec C).
+Known gaps: (1) View CREATE definition cannot be emitted — ColumnInfo lacks pg_get_viewdef (T1 contract: column list only). (2) ACP/omp engine path is not audited deeply — builtin fallback is the main path; if the omp engine is actually the source of "no result" issues, that requires another cycle. (3) T6 hidden-ctid integration on a real PG (docker) is NOT covered by unit tests — the unit uses a fake adapter with a ctid column; the spec notes "Integration (docker PG)" as optional (UnicDB_IT=1 pattern) — the executor may add it if quick, but it is not blocking. (4) T9 visual alignment: jsdom does not render for real — acceptance needs a human check / screenshot (documented in the task). (5) Undo-after-commit is out-of-scope (spec C).
 
 ## Plan Review Log
 

@@ -255,13 +255,13 @@ STATUS: DONE
 threaded the dialect through the remaining production call sites:
 - `src/ui/codeLensProvider.ts` — constructor now takes an optional `getDialect?: () =>
   SqlDialect | undefined` resolver (additive, back-compat with every existing zero-arg
-  `new VsdbCodeLensProvider()` call); `provideCodeLenses` calls
+  `new UnicDBCodeLensProvider()` call); `provideCodeLenses` calls
   `splitStatements(sql, this.getDialect?.())`.
 - `src/ui/sampleDataAi.ts` — `parseInsertStatements` takes an explicit `dialect: SqlDialect =
   "postgres"` 4th param; call site passes `"postgres"` explicitly (this path is Postgres-only,
   gated by `guardPostgres()` — explicit-for-auditability, not a behavior change).
 - `src/extension.ts` — `runQueryFromEditor` now calls `sqlToRun(sql, sel, cursorOffset,
-  mgr.getActive()?.driver)`; CodeLens is constructed as `new VsdbCodeLensProvider(() =>
+  mgr.getActive()?.driver)`; CodeLens is constructed as `new UnicDBCodeLensProvider(() =>
   mgr.getActive()?.driver)`.
 
 RED (reverted the `sqlToRun` 4th arg and the CodeLens resolver, ran
@@ -355,7 +355,7 @@ GREEN after restore: `src/core/__tests__/statementParser.test.ts` 69/69.
 
 STATUS: DONE
 `buildBrowseSelect` always emits a fully-quoted, always-schema-qualified (2-part) SQL reference
-whenever `registerBrowseCommands`'s `vsdb.browseTableData` command runs (schema is required
+whenever `registerBrowseCommands`'s `UnicDB.browseTableData` command runs (schema is required
 non-empty by `resolveBrowseNode`'s own validation), and `qualifyKeywordTables` deliberately never
 rewrites an already-qualified 2-part reference (see `keywordQualify.test.ts` #3) — so the real
 command path can structurally never reach the rewrite branch, and `listTables` genuinely never

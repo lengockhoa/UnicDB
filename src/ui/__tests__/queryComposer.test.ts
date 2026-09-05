@@ -181,7 +181,7 @@ describe("composeSortQuery", () => {
     // Behavioral: composeSortQuery("mssql", …) still returns the full T-SQL —
     // proving the export is wired, not orphaned.
     expect(composeSortQuery("mssql", "SELECT 1", "", "name", "ASC")).toBe(
-      "SELECT * FROM (SELECT 1) vsdb_sort ORDER BY [name] ASC",
+      "SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY [name] ASC",
     );
   });
 
@@ -194,7 +194,7 @@ describe("composeSortQuery", () => {
   // Case 1 — happy: helper and composer parity
   it("mysql helper and composer parity (TASK-005 case 1)", () => {
     const sql = composeSortQuery("mysql", "SELECT 1", "", "name", "ASC");
-    expect(sql).toBe("SELECT * FROM (SELECT 1) vsdb_sort ORDER BY `name` ASC");
+    expect(sql).toBe("SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY `name` ASC");
     expect(sql).toBe(mysqlGetTableSortQuery("SELECT 1", "", "name", "ASC"));
   });
 
@@ -202,7 +202,7 @@ describe("composeSortQuery", () => {
   it("mysql injection payload is one backtick-quoted identifier (TASK-005 case 2)", () => {
     const sql = composeSortQuery("mysql", "SELECT 1", "", "n`; DROP TABLE x--", "ASC");
     expect(sql).toBe(
-      "SELECT * FROM (SELECT 1) vsdb_sort ORDER BY `n``; DROP TABLE x--` ASC",
+      "SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY `n``; DROP TABLE x--` ASC",
     );
     // No free DROP token outside the quoted identifier: strip the single
     // backtick-quoted identifier and the remainder contains no DROP.
@@ -219,10 +219,10 @@ describe("composeSortQuery", () => {
     expect(
       composeSortQuery("mysql", "SELECT * FROM t", "age > 18", "name", "DESC"),
     ).toBe(
-      "SELECT * FROM (SELECT * FROM t) vsdb_sort WHERE age > 18 ORDER BY `name` DESC",
+      "SELECT * FROM (SELECT * FROM t) UnicDB_sort WHERE age > 18 ORDER BY `name` DESC",
     );
     expect(composeSortQuery("mysql", "", "", "n", "ASC")).toBe(
-      "SELECT * FROM () vsdb_sort ORDER BY `n` ASC",
+      "SELECT * FROM () UnicDB_sort ORDER BY `n` ASC",
     );
   });
 
@@ -518,7 +518,7 @@ describe("buildPagedQueryTerms (TASK-001)", () => {
       sql, where, terms, 0, 500, "postgres", ["tenant_id", "id"],
     );
     expect(q).toBe(
-      `SELECT * FROM (SELECT * FROM t) vsdb_page ORDER BY "name" ASC, "tenant_id" ASC, "id" ASC LIMIT 500 OFFSET 0`,
+      `SELECT * FROM (SELECT * FROM t) UnicDB_page ORDER BY "name" ASC, "tenant_id" ASC, "id" ASC LIMIT 500 OFFSET 0`,
     );
   });
 
@@ -879,7 +879,7 @@ describe("buildPagedQueryTerms — NULLS + tiebreaker path (TASK-005)", () => {
       ["id"],
     );
     expect(q).toBe(
-      "SELECT * FROM (SELECT * FROM t) vsdb_page ORDER BY `a` IS NULL ASC, `a` ASC, `id` ASC LIMIT 500 OFFSET 0",
+      "SELECT * FROM (SELECT * FROM t) UnicDB_page ORDER BY `a` IS NULL ASC, `a` ASC, `id` ASC LIMIT 500 OFFSET 0",
     );
   });
 
@@ -894,7 +894,7 @@ describe("buildPagedQueryTerms — NULLS + tiebreaker path (TASK-005)", () => {
       ["tenant_id"],
     );
     expect(q).toBe(
-      "SELECT * FROM (SELECT * FROM t) vsdb_page ORDER BY CASE WHEN [a] IS NULL THEN 1 ELSE 0 END DESC, [a] DESC, [tenant_id] ASC OFFSET 100 ROWS FETCH NEXT 50 ROWS ONLY",
+      "SELECT * FROM (SELECT * FROM t) UnicDB_page ORDER BY CASE WHEN [a] IS NULL THEN 1 ELSE 0 END DESC, [a] DESC, [tenant_id] ASC OFFSET 100 ROWS FETCH NEXT 50 ROWS ONLY",
     );
   });
 
@@ -911,7 +911,7 @@ describe("buildPagedQueryTerms — NULLS + tiebreaker path (TASK-005)", () => {
       [],
     );
     expect(q).toBe(
-      `SELECT * FROM (SELECT * FROM t) vsdb_page ORDER BY "a" ASC NULLS LAST LIMIT 500 OFFSET 0`,
+      `SELECT * FROM (SELECT * FROM t) UnicDB_page ORDER BY "a" ASC NULLS LAST LIMIT 500 OFFSET 0`,
     );
   });
 });

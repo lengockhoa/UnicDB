@@ -26,7 +26,7 @@ Add the ARP-04 lifecycle/race test coverage to `SshTunnelManager` (reusing the e
 | 5 | edge: stop idempotent | stop on missing / repeated stop is safe | `stop("missing")` → false; `stopAll()` then `stop("gone")` → false; `stop("k1")` after a successful `stop("k1")` → false; no throw on any path | `fake-ssh.mjs` shim |
 | 6 | edge (spawn-path pin) | spawned argv inherits the pinned strict flag | a recording shim writes the spawned argv to a file then execs `fake-ssh.mjs` → `start` succeeds AND the logged argv contains `["-o","StrictHostKeyChecking=yes"]` and no relaxing token (`/StrictHostKeyChecking=(no\|ask\|accept-new\|off)/` absent, no `UserKnownHostsFile`). The manager cannot strip or relax the flag its builder emits | recording shim + `fake-ssh.mjs` |
 
-**Design note for case 4 (`fake-ssh-foreign.mjs`).** Parse `-L` like the existing fixture. Spawn a DETACHED binder: `spawn(process.execPath, ["-e", "<bind 127.0.0.1:port, stay alive, close+exit on SIGTERM>"], { detached: true, stdio: "ignore" })`. Print the binder's PID on a marker line (e.g. `VSDB_BINDER_PID=<pid>` to stderr) and print the forward line `Local forwarding listening on 127.0.0.1 port <port>.`. Stay alive (like the existing fixture's `delay(60_000)`) so the manager does not see an early exit. The manager's `proveOwnership` retries until `listeningPids(port)` is non-empty, then compares against `child.pid` → mismatch → SIGKILL + reject. The TEST reads the binder PID from the marker line and `process.kill(pid, "SIGTERM")` in `finally` so the binder closes and the port is released (the manager already SIGKILLs the foreign fixture child itself). Platform note: `listeningPids` uses `lsof` on darwin/bsd, `ss` on linux, `netstat` on win32 (`sshTunnelManager.ts:69-125`) — the assertion targets the rejection CONTRACT, not the tool text; if a platform's output differs, adapt the assertion to the observed literal while keeping fail-closed (reject + child killed).
+**Design note for case 4 (`fake-ssh-foreign.mjs`).** Parse `-L` like the existing fixture. Spawn a DETACHED binder: `spawn(process.execPath, ["-e", "<bind 127.0.0.1:port, stay alive, close+exit on SIGTERM>"], { detached: true, stdio: "ignore" })`. Print the binder's PID on a marker line (e.g. `UnicDB_BINDER_PID=<pid>` to stderr) and print the forward line `Local forwarding listening on 127.0.0.1 port <port>.`. Stay alive (like the existing fixture's `delay(60_000)`) so the manager does not see an early exit. The manager's `proveOwnership` retries until `listeningPids(port)` is non-empty, then compares against `child.pid` → mismatch → SIGKILL + reject. The TEST reads the binder PID from the marker line and `process.kill(pid, "SIGTERM")` in `finally` so the binder closes and the port is released (the manager already SIGKILLs the foreign fixture child itself). Platform note: `listeningPids` uses `lsof` on darwin/bsd, `ss` on linux, `netstat` on win32 (`sshTunnelManager.ts:69-125`) — the assertion targets the rejection CONTRACT, not the tool text; if a platform's output differs, adapt the assertion to the observed literal while keeping fail-closed (reject + child killed).
 
 ## Test Files
 
@@ -90,13 +90,13 @@ RED_OUTPUT: |
 
   FAIL  src/core/__tests__/sshTunnelManager.test.ts > SshTunnelManager (fixture ssh) > spawned argv inherits the pinned strict host-key flag
   AssertionError: expected [ '-o', …(1) ] to deeply equal [ '-o', 'StrictHostKeyChecking=yes' ]
-    Received: [ "-o", "SetEnv=VSDB_TUNNEL=vsdb-tunnel:k6" ]
+    Received: [ "-o", "SetEnv=UnicDB_TUNNEL=UnicDB-tunnel:k6" ]
 
     Test Files  1 failed (1)
     Tests  1 failed | 14 passed (15)
 
   The single failure was a TEST bug, not a production gap: the manager legitimately appends its
-  own `-o SetEnv=VSDB_TUNNEL=<marker>:<key>` pair after the builder output, so "last -o pair"
+  own `-o SetEnv=UnicDB_TUNNEL=<marker>:<key>` pair after the builder output, so "last -o pair"
   was the wrong assertion. Fixed the test to assert the strict pair exists as ADJACENT elements
   anywhere in the argv (spec wording: "the logged argv contains [\"-o\",\"StrictHostKeyChecking=yes\"]").
   After the test fix: 15/15 green with ZERO production changes — the manager already satisfies
@@ -105,7 +105,7 @@ RED_OUTPUT: |
 Test Plan Followed: task §Test Cases 1–6 (all 6 implemented) + §Test Files + §Verification Commands
 Files Changed:
   - src/core/__tests__/sshTunnelManager.test.ts — added cases 1–6 (same-key reuse identity; different-key isolation + fresh handle after stopAll; late external SIGKILL removes only its own handle + exactly one TunnelExit{key:"a",intentional:false}; foreign-held-port fail-closed reject + SIGKILL proof; stop/stopAll idempotent-false paths; spawned-argv strict-pin via recording shim). Extended makeShim with fixture/recordArgvTo/env options; added waitForFile + isPidAlive helpers.
-  - src/core/__tests__/fixtures/fake-ssh-foreign.mjs — NEW fixture per task Design Note: parses -L, spawns a DETACHED grandchild binder (net server on 127.0.0.1:port, PID-file handshake, SIGTERM close, 60s failsafe self-exit so a crashed test cannot leak the port), prints `VSDB_BINDER_PID=<pid>` + the exact OpenSSH forward line to stderr, stays alive 60s. Control files under $VSDB_TEST_FOREIGN_DIR: child-pid, binder-pid, caught-sigterm (proves the child was SIGKILLed, not SIGTERMed).
+  - src/core/__tests__/fixtures/fake-ssh-foreign.mjs — NEW fixture per task Design Note: parses -L, spawns a DETACHED grandchild binder (net server on 127.0.0.1:port, PID-file handshake, SIGTERM close, 60s failsafe self-exit so a crashed test cannot leak the port), prints `UnicDB_BINDER_PID=<pid>` + the exact OpenSSH forward line to stderr, stays alive 60s. Control files under $UnicDB_TEST_FOREIGN_DIR: child-pid, binder-pid, caught-sigterm (proves the child was SIGKILLed, not SIGTERMed).
   - src/core/sshTunnelManager.ts — UNCHANGED (no gap found; see RED_OUTPUT).
 Verification Output: |
   npx vitest run src/core/__tests__/sshTunnelManager.test.ts

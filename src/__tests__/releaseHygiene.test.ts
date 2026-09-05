@@ -1,7 +1,7 @@
 // src/__tests__/releaseHygiene.test.ts
 // Release hygiene guards (TASK-703):
 //   - lock root version phải khớp package.json version (no hardcoded version).
-//   - README giữ pattern install `vsdb-<version>.vsix`.
+//   - README giữ pattern install `UnicDB-<version>.vsix`.
 //   - package.json version phải là semver hợp lệ X.Y.Z.
 //
 // Đọc động từ file on disk; bump version không phải sửa test.
@@ -45,14 +45,14 @@ describe("release hygiene (TASK-703)", () => {
       .toBe(pkg.version);
   });
 
-  it("README giữ pattern install vsdb-<version>.vsix", () => {
+  it("README giữ pattern install UnicDB-<version>.vsix", () => {
     const readme = fs.readFileSync(path.join(repoRoot, "README.md"), "utf-8");
     // README phải giữ placeholder '<version>' (không hardcode số) để bump version
     // không phải sửa README. Test đọc từ file — không hardcode version cụ thể.
     expect(
       readme,
-      "README phải chứa pattern 'vsdb-<version>.vsix' (placeholder, không hardcode số)",
-    ).toContain("vsdb-<version>.vsix");
+      "README phải chứa pattern 'UnicDB-<version>.vsix' (placeholder, không hardcode số)",
+    ).toContain("UnicDB-<version>.vsix");
   });
 
   it("package.json version match semver X.Y.Z (3 thành phần số)", () => {
@@ -139,9 +139,9 @@ describe("release confidence profiles (ARP-09)", () => {
     }
   });
 
-  it("contributes.configuration.properties does NOT add vsdb.diagnostics.verbosity (YAGNI rejection — PLAN §3)", () => {
+  it("contributes.configuration.properties does NOT add UnicDB.diagnostics.verbosity (YAGNI rejection — PLAN §3)", () => {
     const pkg = readJson<ScriptsPackageJson>("package.json");
     const props = pkg.contributes?.configuration?.properties ?? {};
-    expect(Object.keys(props)).not.toContain("vsdb.diagnostics.verbosity");
+    expect(Object.keys(props)).not.toContain("UnicDB.diagnostics.verbosity");
   });
 });

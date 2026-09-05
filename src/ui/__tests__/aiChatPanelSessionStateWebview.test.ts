@@ -16,7 +16,7 @@ const compiled = execFileSync(
   { encoding: "utf8" },
 ).toString();
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 interface Harness {
@@ -27,14 +27,14 @@ interface Harness {
 
 function makeHarness(): Harness {
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg: unknown) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-form-body"></div>';
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-form-body"></div>';
 
   const originalAdd = window.addEventListener.bind(window);
   let latestMessageHandler: ((ev: MessageEvent) => void) | null = null;
@@ -61,7 +61,7 @@ function makeHarness(): Harness {
     dispatch: (msg: Record<string, unknown>) => {
       latestMessageHandler?.({ data: msg } as MessageEvent);
     },
-    root: document.getElementById("vsdb-root") as HTMLDivElement,
+    root: document.getElementById("UnicDB-root") as HTMLDivElement,
   };
 }
 
@@ -85,7 +85,7 @@ describe("webview — session_state chip", () => {
     const chip = h.root.querySelector("#sessionChip") as HTMLElement | null;
     expect(chip).not.toBeNull();
     expect(chip!.textContent).toContain("Connecting");
-    expect(chip!.className).toContain("vsdb-chat-session-connecting");
+    expect(chip!.className).toContain("UnicDB-chat-session-connecting");
   });
 
   it("transitions label + class per state (connecting → running → done)", () => {
@@ -95,8 +95,8 @@ describe("webview — session_state chip", () => {
     h.dispatch(stateMsg({ state: "done" }));
     const chip = h.root.querySelector("#sessionChip") as HTMLElement;
     expect(chip.textContent).toContain("Done");
-    expect(chip.className).toContain("vsdb-chat-session-done");
-    expect(chip.className).not.toContain("vsdb-chat-session-connecting");
+    expect(chip.className).toContain("UnicDB-chat-session-done");
+    expect(chip.className).not.toContain("UnicDB-chat-session-connecting");
   });
 
   it("renders Error state", () => {
@@ -104,7 +104,7 @@ describe("webview — session_state chip", () => {
     h.dispatch(stateMsg({ state: "error" }));
     const chip = h.root.querySelector("#sessionChip") as HTMLElement;
     expect(chip.textContent).toContain("Error");
-    expect(chip.className).toContain("vsdb-chat-session-error");
+    expect(chip.className).toContain("UnicDB-chat-session-error");
   });
 
   it("chip is textContent-only — no child nodes on hostile state value", () => {
@@ -141,7 +141,7 @@ describe("webview — usage chip (TASK-ARP06-005)", () => {
     expect(chip!.textContent).toContain("34");
     expect(chip!.textContent).toContain("100");
     expect(chip!.textContent).toContain("200");
-    expect(chip!.className).toContain("vsdb-chat-usage");
+    expect(chip!.className).toContain("UnicDB-chat-usage");
   });
 
   it("renders the unknown state instead of invented totals", () => {
@@ -161,12 +161,12 @@ describe("webview — usage chip (TASK-ARP06-005)", () => {
     h.dispatch(
       usageMsg({
         policyNotice:
-          "VSDB AI policy: sensitive AI capabilities are unavailable — workspace is not trusted.",
+          "UnicDB AI policy: sensitive AI capabilities are unavailable — workspace is not trusted.",
       }),
     );
     const chip = h.root.querySelector("#usageChip") as HTMLElement | null;
     expect(chip).not.toBeNull();
-    expect(chip!.textContent).toContain("VSDB AI policy");
+    expect(chip!.textContent).toContain("UnicDB AI policy");
   });
 
   it("accumulates across turns — second usage frame shows the running session totals", () => {

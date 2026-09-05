@@ -193,7 +193,7 @@ VERIFICATION OUTPUT:
      failures — ran `npm run compile`, reran)
      → Test Files  215 passed | 1 skipped (216)
      → Tests  2995 passed | 2 skipped (2997)   [0 failed; the 2 skips are
-       src/ai/omp/__tests__/acpLiveSmoke.test.ts, gated on VSDB_OMP_SMOKE=1 —
+       src/ai/omp/__tests__/acpLiveSmoke.test.ts, gated on UnicDB_OMP_SMOKE=1 —
        pre-existing env gate, unrelated; baseline floor (2997 collected, no
        failures) met. Worktree HEAD == main c136182.]
   3) npm run typecheck  → exit 0 (tsc --noEmit clean)
@@ -267,7 +267,7 @@ VERIFICATION OUTPUT (all fresh, current turn):
   2) npm test
      → Test Files  216 passed | 1 skipped (217)
      → Tests  3007 passed | 2 skipped (3009)   [0 failed; floor 3005 + 2 new
-       = 3007 exact. The 2 skips are the pre-existing VSDB_OMP_SMOKE env gate.]
+       = 3007 exact. The 2 skips are the pre-existing UnicDB_OMP_SMOKE env gate.]
   3) npm run typecheck → exit 0
   4) npm run compile   → exit 0 ("esbuild: build complete")
 

@@ -1,14 +1,14 @@
 // src/adapters/__tests__/mysql.integration.test.ts
-// Integration tests for MySqlAdapter. Run only when VSDB_IT=1.
+// Integration tests for MySqlAdapter. Run only when UnicDB_IT=1.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MySqlAdapter } from "../mysql";
 
-const IT = process.env.VSDB_IT === "1";
-const HOST = process.env.VSDB_MYSQL_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.VSDB_MYSQL_PORT ?? 3307);
-const USER = process.env.VSDB_MYSQL_USER ?? "root";
-const PASS = process.env.VSDB_MYSQL_PASS ?? "vsdb";
-const DB = process.env.VSDB_MYSQL_DB ?? "vsdb";
+const IT = process.env.UnicDB_IT === "1";
+const HOST = process.env.UnicDB_MYSQL_HOST ?? "127.0.0.1";
+const PORT = Number(process.env.UnicDB_MYSQL_PORT ?? 3307);
+const USER = process.env.UnicDB_MYSQL_USER ?? "root";
+const PASS = process.env.UnicDB_MYSQL_PASS ?? "UnicDB";
+const DB = process.env.UnicDB_MYSQL_DB ?? "UnicDB";
 
 function makeAdapter(password = PASS): MySqlAdapter {
   return new MySqlAdapter(
@@ -31,22 +31,22 @@ describe.skipIf(!IT)("MySqlAdapter — integration", () => {
   beforeAll(async () => {
     adapter = makeAdapter();
     await adapter.connect();
-    await adapter.runQuery("DROP TABLE IF EXISTS vsdb_it_rows");
+    await adapter.runQuery("DROP TABLE IF EXISTS UnicDB_it_rows");
     await adapter.runQuery(
-      "CREATE TABLE vsdb_it_rows (id INT NOT NULL PRIMARY KEY, value VARCHAR(64) NOT NULL)",
+      "CREATE TABLE UnicDB_it_rows (id INT NOT NULL PRIMARY KEY, value VARCHAR(64) NOT NULL)",
     );
     const values = Array.from(
       { length: 1200 },
       (_, i) => `(${i + 1}, 'row-${i + 1}')`,
     ).join(",");
     await adapter.runQuery(
-      `INSERT INTO vsdb_it_rows (id, value) VALUES ${values}`,
+      `INSERT INTO UnicDB_it_rows (id, value) VALUES ${values}`,
     );
   });
 
   afterAll(async () => {
     if (adapter) {
-      await adapter.runQuery("DROP TABLE IF EXISTS vsdb_it_rows").catch(() => undefined);
+      await adapter.runQuery("DROP TABLE IF EXISTS UnicDB_it_rows").catch(() => undefined);
       await adapter.close();
     }
   });
@@ -63,7 +63,7 @@ describe.skipIf(!IT)("MySqlAdapter — integration", () => {
 
   it("Test #2 — batch 500/500/200/null và giữ thứ tự", async () => {
     const { batched } = await adapter.runQuery(
-      "SELECT id FROM vsdb_it_rows ORDER BY id",
+      "SELECT id FROM UnicDB_it_rows ORDER BY id",
     );
     expect(batched).toBeDefined();
     const b1 = await batched!.fetchBatch();
@@ -91,20 +91,20 @@ describe.skipIf(!IT)("MySqlAdapter — integration", () => {
     // implementation resolved the second fetchBatch() with `null` (200 rows
     // lost). The fix delivers the partial batch first, then null on the
     // subsequent call.
-    await adapter.runQuery("DROP TABLE IF EXISTS vsdb_it_rows_partial");
+    await adapter.runQuery("DROP TABLE IF EXISTS UnicDB_it_rows_partial");
     await adapter.runQuery(
-      "CREATE TABLE vsdb_it_rows_partial (id INT NOT NULL PRIMARY KEY, value VARCHAR(64) NOT NULL)",
+      "CREATE TABLE UnicDB_it_rows_partial (id INT NOT NULL PRIMARY KEY, value VARCHAR(64) NOT NULL)",
     );
     const values = Array.from(
       { length: 700 },
       (_, i) => `(${i + 1}, 'row-${i + 1}')`,
     ).join(",");
     await adapter.runQuery(
-      `INSERT INTO vsdb_it_rows_partial (id, value) VALUES ${values}`,
+      `INSERT INTO UnicDB_it_rows_partial (id, value) VALUES ${values}`,
     );
     try {
       const { batched } = await adapter.runQuery(
-        "SELECT id FROM vsdb_it_rows_partial ORDER BY id",
+        "SELECT id FROM UnicDB_it_rows_partial ORDER BY id",
       );
       expect(batched).toBeDefined();
       const b1 = await batched!.fetchBatch();
@@ -121,7 +121,7 @@ describe.skipIf(!IT)("MySqlAdapter — integration", () => {
       await batched!.close();
     } finally {
       await adapter
-        .runQuery("DROP TABLE IF EXISTS vsdb_it_rows_partial")
+        .runQuery("DROP TABLE IF EXISTS UnicDB_it_rows_partial")
         .catch(() => undefined);
     }
   });
@@ -147,10 +147,10 @@ describe.skipIf(!IT)("MySqlAdapter — integration", () => {
 
   it("metadata — tables và columns", async () => {
     const tables = await adapter.listTables(DB);
-    expect(tables.some((t) => t.name === "vsdb_it_rows" && t.schema === DB)).toBe(
+    expect(tables.some((t) => t.name === "UnicDB_it_rows" && t.schema === DB)).toBe(
       true,
     );
-    const columns = await adapter.listColumns("vsdb_it_rows", DB);
+    const columns = await adapter.listColumns("UnicDB_it_rows", DB);
     const id = columns.find((column) => column.name === "id");
     expect(id).toBeDefined();
     expect(id!.isPrimaryKey).toBe(true);

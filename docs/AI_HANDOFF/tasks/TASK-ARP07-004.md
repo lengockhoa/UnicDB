@@ -79,7 +79,7 @@ npm run typecheck
   In `runStatements`, inside the existing `if (!deactivating)` block after `panel.render(results, header, { appendBase })`:
   `invalidateAfterSchemaDdl?.(results.filter((r) => r.status === "done").map((r) => r.sql), active?.driver);`
   `runner.run()` resolves to `StatementResult[]` — the exported `StatementResult` interface (`queryRunner.ts:49-52`): `status: StatementStatus` (line 52) and the original statement text on `sql: string` (line 51). Pin these two field names in the mocked result records (test #9); the seam receives the real SQL, never undefined.
-- Test-drive approach: drive the shared run path via the editor `vsdb.runQuery` command (open a mock SQL editor document) or the console run callback, with `QueryRunner` mocked/real-but-adapter-mocked. The essential assertions are on the two `invalidate` spies and the tree refresh; prefer the lightest harness that reaches `runStatements`' success path.
+- Test-drive approach: drive the shared run path via the editor `UnicDB.runQuery` command (open a mock SQL editor document) or the console run callback, with `QueryRunner` mocked/real-but-adapter-mocked. The essential assertions are on the two `invalidate` spies and the tree refresh; prefer the lightest harness that reaches `runStatements`' success path.
 - `active?.driver` is captured at the top of `runStatements` (`extension.ts:1711`) — reuse it for the classifier dialect.
 
 ---
@@ -131,14 +131,14 @@ in its mocked `StatementResult` records.
 4. Called from `runStatements` INSIDE the existing `if (!deactivating) { panel.render(...) }` success block, feeding only `results.filter(r => r.status === "done").map(r => r.sql)` with `active?.driver` (captured at the top of `runStatements`). `runStatements` signature UNCHANGED — all three callers untouched. ARP-02 `ownsRun` snapshot / finally busy gate / `!deactivating` gate byte-identical in behavior.
 5. `deactivate()` nulls the seam alongside the caches it closes over.
 
-Tests: new describe block `TASK-ARP07-004 — successful-DDL cache invalidation seam` in `src/extension.test.ts` (9 tests, one per §Test Cases row). Harness: `vi.resetModules()` + `vi.doMock("./ui/schemaCache")` / `vi.doMock("./ai/schemaContextCache")` scoped to the block, dynamic re-import; `QueryRunner.prototype.run` mocked to return controlled `StatementResult[]` records built with the REAL field names `.status` / `.sql` (queryRunner.ts:49-52); `SchemaTreeProvider.prototype.refresh` spied; driven through the real `vsdb.runStatement` command so `confirmDangerousStatements`, `runStatements`, and the seam all execute for real.
+Tests: new describe block `TASK-ARP07-004 — successful-DDL cache invalidation seam` in `src/extension.test.ts` (9 tests, one per §Test Cases row). Harness: `vi.resetModules()` + `vi.doMock("./ui/schemaCache")` / `vi.doMock("./ai/schemaContextCache")` scoped to the block, dynamic re-import; `QueryRunner.prototype.run` mocked to return controlled `StatementResult[]` records built with the REAL field names `.status` / `.sql` (queryRunner.ts:49-52); `SchemaTreeProvider.prototype.refresh` spied; driven through the real `UnicDB.runStatement` command so `confirmDangerousStatements`, `runStatements`, and the seam all execute for real.
 
 ### Verification Output (GREEN)
 
 Command: `npm test src/extension.test.ts` (worktree)
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp07-004
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-arp07-004
 
  ✓ src/extension.test.ts  (97 tests) 719ms
 
@@ -151,7 +151,7 @@ Command: `npm test src/extension.test.ts` (worktree)
 Command: `npm run typecheck` (worktree)
 
 ```
-> vsdb@1.42.0 typecheck
+> UnicDB@1.42.0 typecheck
 > tsc --noEmit
 EXIT=0
 ```

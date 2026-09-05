@@ -1,5 +1,5 @@
 // src/ui/largeValueEditor.ts
-// DBX-01-004 — large-value editor. Registers a `vsdb-lv:` text
+// DBX-01-004 — large-value editor. Registers a `UnicDB-lv:` text
 // document content provider that serves full-fidelity cell values
 // (JSON blobs, long text) in a read-only editor tab. Content passes
 // through verbatim — 200 KB or 2 MB, never truncated. State is a
@@ -7,7 +7,7 @@
 
 import * as vscode from "vscode";
 
-export const LARGE_VALUE_SCHEME = "vsdb-lv";
+export const LARGE_VALUE_SCHEME = "UnicDB-lv";
 
 export class LargeValueProvider implements vscode.TextDocumentContentProvider {
   private readonly entries = new Map<string, string>();
@@ -39,8 +39,8 @@ export function getLargeValueProvider(): LargeValueProvider {
 }
 
 /**
- * Open a cell value in a read-only editor via the `vsdb-lv:` scheme.
- * Command handler for `vsdb.editLargeValue`.
+ * Open a cell value in a read-only editor via the `UnicDB-lv:` scheme.
+ * Command handler for `UnicDB.editLargeValue`.
  */
 export async function openLargeValueEditor(cell: { label: string; value: string }): Promise<void> {
   const provider = getLargeValueProvider();

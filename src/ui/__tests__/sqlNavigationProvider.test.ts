@@ -83,7 +83,7 @@ describe("SqlNavigationProvider — minimal contract", () => {
     const def = await provider.provideDefinition(doc, pos);
     expect(def).toBeDefined();
     const loc = Array.isArray(def) ? def[0] : def;
-    expect((loc as { uri: vscode.Uri }).uri.scheme).toBe("vsdb-sql-catalog");
+    expect((loc as { uri: vscode.Uri }).uri.scheme).toBe("UnicDB-sql-catalog");
     const content = document.provideTextDocumentContent((loc as { uri: vscode.Uri }).uri);
     expect(content).toContain("public.users");
   });

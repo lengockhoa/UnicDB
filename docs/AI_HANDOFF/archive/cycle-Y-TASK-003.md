@@ -114,7 +114,7 @@ Verification Output: |
    EXIT_VITEST=0
 
   Command 2 — npm run typecheck:
-   > vsdb@1.6.7 typecheck
+   > UnicDB@1.6.7 typecheck
    > tsc --noEmit
    EXIT_TYPECHECK=0
 
@@ -214,7 +214,7 @@ Verification Output: |
     EXIT_VITEST=1; npm run typecheck and npm run compile were not reached by the chain.
 
   npm run typecheck (run separately):
-   > vsdb@1.6.7 typecheck
+   > UnicDB@1.6.7 typecheck
    > tsc --noEmit
   src/ui/keysetPaging.ts(578,3): error TS1128: Declaration or statement expected.
   src/ui/keysetPaging.ts(607,1): error TS1128: Declaration or statement expected.

@@ -27,7 +27,7 @@ function makeShim(fixture: string = FAKE_SSH, opts?: {
   recordArgvTo?: string;
   env?: Record<string, string>;
 }): string {
-  const dir = mkdtempSync(join(tmpdir(), "vsdb-ssh-"));
+  const dir = mkdtempSync(join(tmpdir(), "UnicDB-ssh-"));
   const shim = join(dir, "fake-ssh-shim");
   // CASE 6: recording shim — dumps the spawned "$*" argv string, then execs
   // the fixture. Mirrors makeCountingShim's append-then-exec pattern (the
@@ -59,7 +59,7 @@ const shim = makeShim();
  * "exited before becoming ready" literal while still incrementing the count.
  */
 function makeCountingShim(counterFile: string, opts?: { fail?: boolean }): string {
-  const dir = mkdtempSync(join(tmpdir(), "vsdb-ssh-count-"));
+  const dir = mkdtempSync(join(tmpdir(), "UnicDB-ssh-count-"));
   const shim = join(dir, "fake-ssh-count-shim");
   const tail = opts?.fail ? "exit 1\n" : `exec node "${FAKE_SSH}" "$@"\n`;
   writeFileSync(
@@ -154,7 +154,7 @@ describe("SshTunnelManager (fixture ssh)", () => {
   // DBX-05 review round 2: a missing/unexecutable ssh binary emits `error`
   // (not `exit`) — start must reject promptly instead of crashing the host.
   it("rejects with a clear error when the ssh binary is missing", async () => {
-    const mgr = new SshTunnelManager("/nonexistent/vsdb-missing-ssh");
+    const mgr = new SshTunnelManager("/nonexistent/UnicDB-missing-ssh");
     managers.push(mgr);
     await expect(mgr.start(cfg, "c5")).rejects.toThrow(
       /failed to start ssh|exited before becoming ready/,
@@ -242,7 +242,7 @@ describe("SshTunnelManager (fixture ssh)", () => {
   // start is a FRESH SPAWN (proved via the counting shim), not a replayed
   // settled rejection from a stale `pending` entry.
   it("coalesces a same-key missing-binary rejection and clears its in-flight record", async () => {
-    const counterFile = join(mkdtempSync(join(tmpdir(), "vsdb-ssh-cnt-")), "spawns");
+    const counterFile = join(mkdtempSync(join(tmpdir(), "UnicDB-ssh-cnt-")), "spawns");
     writeFileSync(counterFile, "");
     const mgr = new SshTunnelManager(makeCountingShim(counterFile, { fail: true }));
     managers.push(mgr);
@@ -393,10 +393,10 @@ describe("SshTunnelManager (fixture ssh)", () => {
   // traffic through a foreign listener. Assertion targets the CONTRACT:
   // rejection matching /port <N> is held by another process/ + child killed.
   it("rejects and SIGKILLs the child when a foreign process holds the port", async () => {
-    const controlDir = mkdtempSync(join(tmpdir(), "vsdb-foreign-ctl-"));
+    const controlDir = mkdtempSync(join(tmpdir(), "UnicDB-foreign-ctl-"));
     // Hand the fixture its control dir via the shim's environment.
     const shim = makeShim(FAKE_SSH_FOREIGN, {
-      env: { VSDB_TEST_FOREIGN_DIR: controlDir },
+      env: { UnicDB_TEST_FOREIGN_DIR: controlDir },
     });
     const mgr = new SshTunnelManager(shim);
     managers.push(mgr);
@@ -457,7 +457,7 @@ describe("SshTunnelManager (fixture ssh)", () => {
   // actual spawned argv, `start` succeeds against the fixture, and the logged
   // argv carries the strict pair with no relaxing token.
   it("spawned argv inherits the pinned strict host-key flag", async () => {
-    const argvFile = join(mkdtempSync(join(tmpdir(), "vsdb-ssh-argv-")), "argv.log");
+    const argvFile = join(mkdtempSync(join(tmpdir(), "UnicDB-ssh-argv-")), "argv.log");
     writeFileSync(argvFile, "");
     const mgr = new SshTunnelManager(makeShim(FAKE_SSH, { recordArgvTo: argvFile }));
     managers.push(mgr);

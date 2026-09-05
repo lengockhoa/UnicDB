@@ -75,11 +75,11 @@ beforeAll(() => {
 const distPath = resolve(process.cwd(), "dist", "webview.js");
 const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
 
-interface VsdbGlobals {
+interface UnicDBGlobals {
   gridApi?: GridApi;
 }
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -93,16 +93,16 @@ function loadBundle(): {
     );
   }
 
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-webview"></div>';
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
   (0, eval)(bundleSrc);
@@ -154,7 +154,7 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       void received;
 
       const select = root.querySelector(
-        ".vsdb-export-format",
+        ".UnicDB-export-format",
       ) as HTMLSelectElement | null;
       expect(select).toBeTruthy();
       const opts = Array.from(select!.options).map((o) => o.value);
@@ -179,10 +179,10 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       void received;
 
       const select = root.querySelector(
-        ".vsdb-export-format",
+        ".UnicDB-export-format",
       ) as HTMLSelectElement | null;
       const headerCb = root.querySelector(
-        ".vsdb-export-header",
+        ".UnicDB-export-header",
       ) as HTMLInputElement | null;
       expect(select).toBeTruthy();
       expect(headerCb).toBeTruthy();
@@ -228,7 +228,7 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       void received;
 
       const copyBtn = root.querySelector(
-        ".vsdb-export-copy",
+        ".UnicDB-export-copy",
       ) as HTMLButtonElement | null;
       expect(copyBtn).toBeTruthy();
       copyBtn!.click();
@@ -251,13 +251,13 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       void received;
 
       const headerCb = root.querySelector(
-        ".vsdb-export-header",
+        ".UnicDB-export-header",
       ) as HTMLInputElement | null;
       headerCb!.checked = true;
       headerCb!.dispatchEvent(new Event("change"));
 
       const copyBtn = root.querySelector(
-        ".vsdb-export-copy",
+        ".UnicDB-export-copy",
       ) as HTMLButtonElement | null;
       copyBtn!.click();
 
@@ -278,13 +278,13 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       void received;
 
       const select = root.querySelector(
-        ".vsdb-export-format",
+        ".UnicDB-export-format",
       ) as HTMLSelectElement | null;
       select!.value = "csv";
       select!.dispatchEvent(new Event("change"));
 
       const exportBtn = root.querySelector(
-        ".vsdb-export-file",
+        ".UnicDB-export-file",
       ) as HTMLButtonElement | null;
       expect(exportBtn).toBeTruthy();
       exportBtn!.click();
@@ -308,8 +308,8 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
 
       // Select row 0 + row 2 via the grid API (AG Grid auto-selects when
       // rowSelection.checkboxes is true).
-      const api = (window as unknown as { __vsdb?: { gridApi?: GridApi } })
-        .__vsdb?.gridApi;
+      const api = (window as unknown as { __UnicDB?: { gridApi?: GridApi } })
+        .__UnicDB?.gridApi;
       expect(api).toBeTruthy();
       api!.forEachNode((node) => {
         if (node.data && (node.data.__rowId === 0 || node.data.__rowId === 2)) {
@@ -318,13 +318,13 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       });
 
       const select = root.querySelector(
-        ".vsdb-export-format",
+        ".UnicDB-export-format",
       ) as HTMLSelectElement | null;
       select!.value = "sql-where";
       select!.dispatchEvent(new Event("change"));
 
       const exportBtn = root.querySelector(
-        ".vsdb-export-file",
+        ".UnicDB-export-file",
       ) as HTMLButtonElement | null;
       exportBtn!.click();
 
@@ -370,7 +370,7 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       });
 
       const select = root.querySelector(
-        ".vsdb-export-format",
+        ".UnicDB-export-format",
       ) as HTMLSelectElement | null;
       // sql-where with no PK → all columns become the key, so quoting shows
       // in the WHERE clause (sql-updates would hit the empty-SET skip path).
@@ -378,7 +378,7 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       select!.dispatchEvent(new Event("change"));
 
       const exportBtn = root.querySelector(
-        ".vsdb-export-file",
+        ".UnicDB-export-file",
       ) as HTMLButtonElement | null;
       exportBtn!.click();
 
@@ -398,13 +398,13 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       void received;
 
       const select = root.querySelector(
-        ".vsdb-export-format",
+        ".UnicDB-export-format",
       ) as HTMLSelectElement | null;
       select!.value = "sql-updates";
       select!.dispatchEvent(new Event("change"));
 
       const exportBtn = root.querySelector(
-        ".vsdb-export-file",
+        ".UnicDB-export-file",
       ) as HTMLButtonElement | null;
       // Until TASK-503 wires PK metadata, the webview has no PK source.
       // R1: the click handler must NOT throw.
@@ -459,19 +459,19 @@ describeIfBundle("webview/main.ts export toolbar (TASK-502)", () => {
       void received;
 
       const select = root.querySelector(
-        ".vsdb-export-format",
+        ".UnicDB-export-format",
       ) as HTMLSelectElement | null;
       select!.value = "tsv";
       select!.dispatchEvent(new Event("change"));
       // Header is unchecked by default — toggle it on for the header assertion.
       const headerCb = root.querySelector(
-        ".vsdb-export-header",
+        ".UnicDB-export-header",
       ) as HTMLInputElement | null;
       headerCb!.checked = true;
       headerCb!.dispatchEvent(new Event("change"));
 
       const exportBtn = root.querySelector(
-        ".vsdb-export-file",
+        ".UnicDB-export-file",
       ) as HTMLButtonElement | null;
       exportBtn!.click();
 

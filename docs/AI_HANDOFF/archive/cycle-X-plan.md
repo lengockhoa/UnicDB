@@ -2,7 +2,7 @@
 
 ## §1 Intent
 
-The user wants the most reliable runnable VSDB release, not another feature-heavy cycle. Cycle X therefore starts with an adversarial review of the shipped `v1.6.3..v1.6.6` changes, fixes the known aggregate-only AG Grid test flake at its test-harness root cause, and closes selected small hardening gaps whose real source paths and interfaces are already known.
+The user wants the most reliable runnable UnicDB release, not another feature-heavy cycle. Cycle X therefore starts with an adversarial review of the shipped `v1.6.3..v1.6.6` changes, fixes the known aggregate-only AG Grid test flake at its test-harness root cause, and closes selected small hardening gaps whose real source paths and interfaces are already known.
 
 Success means:
 
@@ -94,7 +94,7 @@ The executor/orchestrator performs the reconciliation gate immediately after Wav
 | edge — SQL escaping | String-column blanks SQL | MySQL/Postgres/MSSQL quote the identifier by dialect and emit `IS NULL OR TRIM(quoted) = ''`; a mixed normal value remains in the `IN` list. |
 | happy | Shared trailing-semicolon helper | Each wrapper builds the same SQL as before for `SELECT 1;   ` while importing the single shared helper. |
 | edge — lexical | Interior semicolon and whitespace input | `SELECT ';' AS s;` preserves the literal semicolon and strips only the terminator; whitespace-only input returns `""`. |
-| happy | MySQL adapter sort twin | Helper returns `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY `backtick-name` ASC`, and composer output is identical. |
+| happy | MySQL adapter sort twin | Helper returns `SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY `backtick-name` ASC`, and composer output is identical. |
 | edge — injection | MySQL quoted sort identifier | Embedded backtick/payload stays inside one doubled-backtick identifier; direction is constrained to `ASC|DESC`. |
 | edge — empty/boundary | Sort WHERE/original SQL boundaries | Whitespace WHERE is omitted; DESC and empty original SQL match existing adapter contracts. |
 | happy | UTC connection contract | mysql2 pool receives `timezone: "Z"`, each new connection queues `SET time_zone = '+00:00'`, and tedious receives `useUTC: true`. |
@@ -153,7 +153,7 @@ Traceability: acceptance items 1–2 map to TASK-001/002; item 3 maps to the rec
 
 - Runtime/version floors: preserve Node/TypeScript targets and VS Code engine `^1.75.0`; do not change package version in this cycle.
 - Dependency limits: npm only; add no dependency and do not modify lockfiles except if an existing npm command does so unexpectedly (then revert it).
-- Naming/copy: retain `vsdb_*` SQL aliases, `(Blanks)` display copy, English code/test names, and existing Vietnamese comments where untouched.
+- Naming/copy: retain `UnicDB_*` SQL aliases, `(Blanks)` display copy, English code/test names, and existing Vietnamese comments where untouched.
 - SQL safety: identifiers use `quoteIdent`; values use `sqlLiteral`/bound parameters; sort direction remains a closed `ASC|DESC` union.
 - Platform: extension host and webview must remain cross-platform; tests may set `TZ` but must restore process state.
 - TDD: each implementation task proves RED for behavior/regression before production edits, then GREEN; no retries or test-only production APIs.

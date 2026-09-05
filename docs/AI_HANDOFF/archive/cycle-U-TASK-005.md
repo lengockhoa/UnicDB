@@ -92,7 +92,7 @@ RED_OUTPUT: |
         AssertionError: expected null to be truthy  (no retry button in banner)
   [6/7] FAIL webviewRetry.test.ts > R5. retry with 0 failed rows → no message posted
         AssertionError: expected 'undefined' to be 'function'
-        ❯ expect(typeof vsdbApi()?.retry).toBe("function")  (retry seam absent)
+        ❯ expect(typeof UnicDBApi()?.retry).toBe("function")  (retry seam absent)
   [7/7] FAIL webviewRetry.test.ts > R6. retry edits come from editState for failed rows only
         AssertionError: expected null to be truthy  (no retry button in banner)
 

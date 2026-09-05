@@ -7,7 +7,7 @@
 
 ## Goal
 
-Add AI ghost-text suggestions to the VSDB Console textarea, using AIC-002's sole debounce/cancellation service plus Console-specific rendering/acceptance and stale-response lifecycle handling, while preserving Console tabs, query execution/results, history, formatting, and existing context-menu behavior.
+Add AI ghost-text suggestions to the UnicDB Console textarea, using AIC-002's sole debounce/cancellation service plus Console-specific rendering/acceptance and stale-response lifecycle handling, while preserving Console tabs, query execution/results, history, formatting, and existing context-menu behavior.
 
 ## Target Files
 

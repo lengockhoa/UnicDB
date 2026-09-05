@@ -49,11 +49,11 @@ interface EditStateHandle {
   snapshot: () => Array<{ rowId: number; colIndex: number; value: unknown }>;
 }
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
-interface VsdbDebug {
+interface UnicDBDebug {
   gridApi?: GridApi;
   editState?: EditStateHandle;
   addRow?: () => void;
@@ -69,14 +69,14 @@ interface VsdbDebug {
   ) => void;
 }
 
-function vsdbApi(): VsdbDebug | null {
+function UnicDBApi(): UnicDBDebug | null {
   if (typeof window === "undefined") return null;
-  const maybe = (window as unknown as { __vsdb?: VsdbDebug }).__vsdb;
+  const maybe = (window as unknown as { __UnicDB?: UnicDBDebug }).__UnicDB;
   return maybe ?? null;
 }
 
 function getEditState(): EditStateHandle | null {
-  return vsdbApi()?.editState ?? null;
+  return UnicDBApi()?.editState ?? null;
 }
 
 function getSimulateEdit():
@@ -87,7 +87,7 @@ function getSimulateEdit():
       oldValue: unknown,
     ) => void)
   | null {
-  return vsdbApi()?.simulateCellEdit ?? null;
+  return UnicDBApi()?.simulateCellEdit ?? null;
 }
 
 beforeAll(() => {
@@ -133,16 +133,16 @@ function loadBundle(): {
     );
   }
 
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-webview"></div>';
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
   (0, eval)(bundleSrc);
@@ -276,7 +276,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
     // (which invokes the registered onCellValueChanged handler — same code
     // path as a real user edit, only the trigger source differs).
     const sim = getSimulateEdit();
-    const grid = vsdbApi()?.gridApi;
+    const grid = UnicDBApi()?.gridApi;
     expect(grid).toBeTruthy();
     expect(sim).toBeTruthy();
     sim!(0, "name", "new-alpha", "alpha");
@@ -300,8 +300,8 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
     const editState = getEditState();
     expect(editState).toBeTruthy();
 
-    const gridWrap = (root.querySelector(".vsdb-grid-host") ||
-      document.querySelector(".vsdb-grid-host")) as HTMLDivElement | null;
+    const gridWrap = (root.querySelector(".UnicDB-grid-host") ||
+      document.querySelector(".UnicDB-grid-host")) as HTMLDivElement | null;
     expect(gridWrap).toBeTruthy();
 
     // jsdom 29 does not expose DataTransfer or ClipboardEvent on its
@@ -336,8 +336,8 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
     const editState = getEditState();
     expect(editState).toBeTruthy();
 
-    const gridWrap = (root.querySelector(".vsdb-grid-host") ||
-      document.querySelector(".vsdb-grid-host")) as HTMLDivElement | null;
+    const gridWrap = (root.querySelector(".UnicDB-grid-host") ||
+      document.querySelector(".UnicDB-grid-host")) as HTMLDivElement | null;
     expect(gridWrap).toBeTruthy();
 
     // Append an input element inside the grid wrap (mirrors the floating
@@ -389,7 +389,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
     dispatchState(threeRowsState());
     await flushGridEvents();
 
-    const api = vsdbApi()!;
+    const api = UnicDBApi()!;
     expect(typeof api.addRow).toBe("function");
     expect(typeof api.deleteRow).toBe("function");
     expect(typeof api.refresh).toBe("function");
@@ -402,7 +402,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
     dispatchState(threeRowsState());
     await flushGridEvents();
 
-    const api = vsdbApi()!;
+    const api = UnicDBApi()!;
     expect(typeof api.toggleCsv).toBe("function");
     const grid = api.gridApi!;
     expect(grid).toBeTruthy();
@@ -449,7 +449,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
     const editState = getEditState();
     expect(editState).toBeTruthy();
 
-    const api = vsdbApi()!.gridApi!;
+    const api = UnicDBApi()!.gridApi!;
     expect(api).toBeTruthy();
 
     // Sort descending by id — display order becomes [5,4,3,2,1].
@@ -493,7 +493,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
     dispatchState(threeRowsState());
     await flushGridEvents();
 
-    const api = vsdbApi()!;
+    const api = UnicDBApi()!;
     const editState = getEditState();
     const grid = api.gridApi!;
     expect(typeof api.addRow).toBe("function");
@@ -516,7 +516,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
     const snap = editState!.snapshot();
     const newRowMarkers = snap.filter(
       (s) =>
-        s.value === "__vsdb_new_row__" ||
+        s.value === "__UnicDB_new_row__" ||
         Array.isArray(s.value) ||
         (typeof s.value === "object" && s.value !== null),
     );
@@ -536,7 +536,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
       dispatchState(threeRowsState());
       await flushGridEvents();
 
-      const api = vsdbApi()!;
+      const api = UnicDBApi()!;
       const grid = api.gridApi!;
       const before = grid.getDisplayedRowCount();
       api.addRow!();
@@ -621,7 +621,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
       dispatchState(threeColState);
       await flushGridEvents();
 
-      const api = vsdbApi()!.gridApi!;
+      const api = UnicDBApi()!.gridApi!;
       expect(api).toBeTruthy();
 
       // Reorder columns to [b, a, c] via the live API (this is what a
@@ -644,8 +644,8 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
       // mark colIndex=0 for the paste → wrong cell dirty (would write into
       // `a`). The fix reads currentSpecs[0].field === "a" → marks
       // colIndex=0 for `a` correctly.
-      const gridWrap = (root.querySelector(".vsdb-grid-host") ||
-        document.querySelector(".vsdb-grid-host")) as HTMLDivElement | null;
+      const gridWrap = (root.querySelector(".UnicDB-grid-host") ||
+        document.querySelector(".UnicDB-grid-host")) as HTMLDivElement | null;
       expect(gridWrap).toBeTruthy();
       const fakeClipboardData = { getData: (_type: string) => "X\tY" };
       const ev = new Event("paste", { bubbles: true, cancelable: true });
@@ -675,11 +675,11 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
       expect(node!.data!.a).toBe("X");
       expect(node!.data!.b).toBe("Y");
 
-      // Undo through the registered __vsdb.undo handler — LIFO pops the
+      // Undo through the registered __UnicDB.undo handler — LIFO pops the
       // LAST marked cell (the second paste cell, which is original `b`
       // at colIndex=1). After undo, `b` returns to its server value
       // "b0", `a` stays at the pasted "X" (colIndex=0).
-      vsdbApi()!.undo!();
+      UnicDBApi()!.undo!();
       await flushGridEvents();
       const after = api.getRowNode("0")!;
       expect(after.data!.a).toBe("X"); // colIndex=0 still dirty
@@ -700,7 +700,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
       dispatchState(threeRowsState());
       await flushGridEvents();
 
-      const api = vsdbApi()!;
+      const api = UnicDBApi()!;
       const grid = api.gridApi!;
       expect(grid).toBeTruthy();
 
@@ -775,7 +775,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
       dispatchState(stateWithNull);
       await flushGridEvents();
 
-      const api = vsdbApi()!;
+      const api = UnicDBApi()!;
       const grid = api.gridApi!;
       const editState = getEditState()!;
       expect(grid).toBeTruthy();
@@ -826,7 +826,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
       dispatchState(threeRowsState());
       await flushGridEvents();
 
-      const api = vsdbApi()!;
+      const api = UnicDBApi()!;
       const grid = api.gridApi!;
       const editState = getEditState()!;
       expect(grid).toBeTruthy();
@@ -894,7 +894,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
       dispatchState(threeRowsState());
       await flushGridEvents();
 
-      const api = vsdbApi()!;
+      const api = UnicDBApi()!;
       const grid = api.gridApi!;
       const editState = getEditState()!;
       expect(grid).toBeTruthy();
@@ -910,7 +910,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
         (s) =>
           typeof s.value === "object" &&
           s.value !== null &&
-          "__vsdb_new_row__" in (s.value as Record<string, unknown>),
+          "__UnicDB_new_row__" in (s.value as Record<string, unknown>),
       );
       expect(insertMarkersBefore.length).toBeGreaterThanOrEqual(1);
 
@@ -928,8 +928,8 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
       //     stops BEFORE the local row OR clips it out so we don't
       //     silently overwrite the pending-insert marker.
       // The bug would write R3 into the local row at id=3 and dirty it.
-      const gridWrap = (root.querySelector(".vsdb-grid-host") ||
-        document.querySelector(".vsdb-grid-host")) as HTMLDivElement | null;
+      const gridWrap = (root.querySelector(".UnicDB-grid-host") ||
+        document.querySelector(".UnicDB-grid-host")) as HTMLDivElement | null;
       expect(gridWrap).toBeTruthy();
       const fakeClipboardData = {
         getData: (_type: string) => "R1\nR2\nR3",
@@ -959,7 +959,7 @@ describeIfBundle("webview/main.ts bundle (TASK-501)", () => {
       if (localKey in byKey) {
         const v = byKey[localKey];
         // If the paste reached the local row, the value would be "R3"
-        // (string) — NOT an object with __vsdb_new_row__. So either the
+        // (string) — NOT an object with __UnicDB_new_row__. So either the
         // key is absent, or it is still the marker object.
         expect(typeof v).toBe("object");
         expect(v).not.toBe("R3");

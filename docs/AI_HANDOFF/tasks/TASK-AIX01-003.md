@@ -69,7 +69,7 @@ Addresses all seven CHANGES-REQUESTED findings (unic-smart):
 4. **Byte cap (P2)** — groundingService caps by Buffer.byteLength(utf8), initial slice at 100_000 chars then a 3/4 shrink loop until the encoded size fits; attribution bytes are now encoded bytes too. CJK-heavy 60_000-char files are cut to the 100 KB budget.
 5. **workspace_search registration (P1)** — registered on BOTH the builtin registry (runBuiltinTurn) and the OMP/MCP mirror (runOmpEngineTurn's registry), with the host-curated files + readFile deps per the reviewer's note. Gated on the grounding opt-in so the tool is absent (not dead) when grounding is off.
 6. **Attribution record + line ranges (P1)** — the grounded block now renders `--- file <path>:1-<N> ---` headers (rendered line range) AND appends formatAttributionFooter(bundle.record) so every attached fact is answer-visible and inspectable.
-7. **Panel toggle protocol (P2)** — `grounding_toggle` added to the webview message union; handleMessage dispatches it into a panel-scoped `groundingPanelEnabled` field (no persistence — fresh panel re-reads vsdb.ai.grounding), and re-posts grounding_state so chips update immediately. handleSend honors `!== false`.
+7. **Panel toggle protocol (P2)** — `grounding_toggle` added to the webview message union; handleMessage dispatches it into a panel-scoped `groundingPanelEnabled` field (no persistence — fresh panel re-reads UnicDB.ai.grounding), and re-posts grounding_state so chips update immediately. handleSend honors `!== false`.
 
 Fresh verification: targeted (grounding + service + chat + tool + scaffold + erService) 63/63; extension 71/71; full 2442 passed | 2 skipped; typecheck exit 0; esbuild clean.
 

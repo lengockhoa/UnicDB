@@ -23,7 +23,7 @@ Add two NAMED release-confidence profiles to `package.json` scripts that referen
 | 12 | edge (reference integrity) | every `npm run <key>` fragment across `profile:*` values | resolves to a real key in `pkg.scripts` | split on `&&`, trim, match `/^npm run (.+)$/` |
 | 13 | edge (shell-injection) | `profile:*` values | contain no `` ` ``, `$(`, `;`, `|`, `>`, `<` | value scan (mirrors releaseVerify style) |
 | 14 | regression | baseline + verify pins preserved | `test`/`typecheck`/`compile`/`test:integration` AND `verify:fast`/`verify:release` byte-identical to today's strings | assert against literals |
-| 15 | edge (config untouched) | package.json `contributes.configuration.properties` | does NOT contain `vsdb.diagnostics.verbosity` (documents the YAGNI rejection — the setting was deliberately not added this cycle) | scan keys |
+| 15 | edge (config untouched) | package.json `contributes.configuration.properties` | does NOT contain `UnicDB.diagnostics.verbosity` (documents the YAGNI rejection — the setting was deliberately not added this cycle) | scan keys |
 | 16 | regression | `releaseVerify.test.ts` stays green | run it unchanged (its `verify:*` + baseline + runner pins all pass) | existing file, no modification |
 
 ## Test Files
@@ -44,7 +44,7 @@ node -e 'const p=require("./package.json"); const assert=(c,m)=>{if(!c)throw new
 - [ ] `package.json` gains exactly the two `profile:*` keys with the exact values above; every other script byte-identical.
 - [ ] `releaseHygiene.test.ts` new pins pass; the existing 3 hygiene tests pass; `releaseVerify.test.ts` (unchanged) passes.
 - [ ] `profile:*` values reference only real existing artifacts and have no shell-injection surface.
-- [ ] No `vsdb.diagnostics.verbosity` configuration key added (rejection documented in PLAN §3).
+- [ ] No `UnicDB.diagnostics.verbosity` configuration key added (rejection documented in PLAN §3).
 - [ ] `npm run typecheck` and both focused vitest runs exit 0.
 - [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
@@ -63,7 +63,7 @@ node -e 'const p=require("./package.json"); const assert=(c,m)=>{if(!c)throw new
 
 (no comments yet)
 
-- [executor, 2026-09-02] Ambiguity: task file §Target Files names the describe block `release profiles (ARP-09)`; the executor dispatch names it `release confidence profiles (ARP-09)`. Chose the dispatch's string (more specific instruction; task file names the tests, dispatch names the describe). Also included task-file Test Case 15 (`vsdb.diagnostics.verbosity` YAGNI guard), which the dispatch's test list omitted — task file is the contract. Task file Test Case 16 (releaseVerify stays green) satisfied by running the file unchanged (19/19 combined).
+- [executor, 2026-09-02] Ambiguity: task file §Target Files names the describe block `release profiles (ARP-09)`; the executor dispatch names it `release confidence profiles (ARP-09)`. Chose the dispatch's string (more specific instruction; task file names the tests, dispatch names the describe). Also included task-file Test Case 15 (`UnicDB.diagnostics.verbosity` YAGNI guard), which the dispatch's test list omitted — task file is the contract. Task file Test Case 16 (releaseVerify stays green) satisfied by running the file unchanged (19/19 combined).
 
 ---
 
@@ -127,7 +127,7 @@ All 5 failures are the new profile pins failing because `profile:*` keys do not 
 - [x] `package.json` gains exactly the two `profile:*` keys with exact values; every other script byte-identical (pinned by test).
 - [x] New hygiene pins pass; existing 3 hygiene tests pass; `releaseVerify.test.ts` (unchanged) passes.
 - [x] `profile:*` values reference only real keys (`typecheck`, `compile`, `verify:release`) and have no shell-injection surface.
-- [x] No `vsdb.diagnostics.verbosity` configuration key added (guard test pins the rejection).
+- [x] No `UnicDB.diagnostics.verbosity` configuration key added (guard test pins the rejection).
 - [x] `npm run typecheck` and both focused vitest runs exit 0.
 - [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
 
@@ -154,4 +154,4 @@ FINDINGS:
   minor:
     - src/__tests__/releaseVerify.test.ts:155-168 — wave-3 task 005 added a duplicate profile:release pin in this range; harmless belt-and-braces, informational only (002's own wave-1 commit left releaseVerify untouched — verified empty diff).
 NEXT_STATUS_FOR_INDEX: approved
-NOTES: Pins use hardcoded literals, not package.json's own values (not tautological); the case-15 YAGNI guard is non-vacuous (configuration.properties has 9 real keys, vsdb.diagnostics.verbosity absent); releaseVerify's injection/reference scans iterate ONLY verify:* (releaseVerify.test.ts:172,208) so profile:* keys are unconstrained there — the plan claim holds. R4.5 (817315f) audited for the orchestrator: package.json icons + extension.ts comment are clean; one comment-satisfiable regex weakness in the rewritten trace.test.ts:401 appendLine pin is reported separately (file owned by 004/R4.5, not this task).
+NOTES: Pins use hardcoded literals, not package.json's own values (not tautological); the case-15 YAGNI guard is non-vacuous (configuration.properties has 9 real keys, UnicDB.diagnostics.verbosity absent); releaseVerify's injection/reference scans iterate ONLY verify:* (releaseVerify.test.ts:172,208) so profile:* keys are unconstrained there — the plan claim holds. R4.5 (817315f) audited for the orchestrator: package.json icons + extension.ts comment are clean; one comment-satisfiable regex weakness in the rewritten trace.test.ts:401 appendLine pin is reported separately (file owned by 004/R4.5, not this task).

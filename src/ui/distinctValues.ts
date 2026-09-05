@@ -21,10 +21,10 @@ export const DISTINCT_VALUES_LIMIT = 1000;
  * Compose the DISTINCT-values query for a set-filter dropdown.
  *
  *   buildDistinctValuesQuery("SELECT * FROM t", "name", "postgres", "")
- *     → `SELECT DISTINCT "name" FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1 LIMIT 1001`
+ *     → `SELECT DISTINCT "name" FROM (SELECT * FROM t) UnicDB_distinct ORDER BY 1 LIMIT 1001`
  *
- * The original SQL is wrapped verbatim in a `vsdb_distinct` subquery
- * (deliberately different from `vsdb_page` / `vsdb_sort` so a nested
+ * The original SQL is wrapped verbatim in a `UnicDB_distinct` subquery
+ * (deliberately different from `UnicDB_page` / `UnicDB_sort` so a nested
  * composition can never collide on the alias). The outer projection is
  * exactly one column and sorts by ordinal (`ORDER BY 1`), which is valid on
  * all three dialects, avoids re-quoting the column, and gives MSSQL the
@@ -53,9 +53,9 @@ export function buildDistinctValuesQuery(
   const quotedColumn = quoteIdent(column, dialect);
   const whereClause = where.trim().length ? ` WHERE ${where.trim()}` : "";
   if (dialect === "mssql") {
-    return `SELECT DISTINCT TOP (${probe}) ${quotedColumn} FROM (${inner}) vsdb_distinct${whereClause} ORDER BY 1`;
+    return `SELECT DISTINCT TOP (${probe}) ${quotedColumn} FROM (${inner}) UnicDB_distinct${whereClause} ORDER BY 1`;
   }
-  return `SELECT DISTINCT ${quotedColumn} FROM (${inner}) vsdb_distinct${whereClause} ORDER BY 1 LIMIT ${probe}`;
+  return `SELECT DISTINCT ${quotedColumn} FROM (${inner}) UnicDB_distinct${whereClause} ORDER BY 1 LIMIT ${probe}`;
 }
 
 /**

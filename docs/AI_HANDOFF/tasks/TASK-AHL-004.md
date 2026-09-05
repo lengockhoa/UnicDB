@@ -2,13 +2,13 @@
 
 ## Goal
 
-Wire the admin cycle into `extension.ts` and `package.json`: register the `adminTree` provider, expose the sessions/locks webview panel, add 5 new commands (`vsdb.refreshAdmin`, `vsdb.openSessionsPanel`, `vsdb.killSession`, `vsdb.terminateSession`, `vsdb.runGrantSql`), extend `confirmDangerousStatements` so GRANT/REVOKE always prompt (new admin-red tier) while leaving existing DML/DDL tier semantics unchanged. Add a `vsdb.admin.confirmGrant` setting (default true).
+Wire the admin cycle into `extension.ts` and `package.json`: register the `adminTree` provider, expose the sessions/locks webview panel, add 5 new commands (`UnicDB.refreshAdmin`, `UnicDB.openSessionsPanel`, `UnicDB.killSession`, `UnicDB.terminateSession`, `UnicDB.runGrantSql`), extend `confirmDangerousStatements` so GRANT/REVOKE always prompt (new admin-red tier) while leaving existing DML/DDL tier semantics unchanged. Add a `UnicDB.admin.confirmGrant` setting (default true).
 
 ## Target Files
 
 - `src/extension.ts` — ADDITIVE only. Register the admin tree provider + session panel commands inside `activate()`. NEVER modify `runStatements` body or `ResultsPanel` construction site (AH/AI-locked regions). Extension.ts gains a small `registerAdminFeatures(ctx, mgr, rootSaveContext)` helper called from `activate()` after the schema tree registration.
 - `src/core/dangerousStatement.ts` — ADDITIVE. Extend `analyzeStatement()` to detect GRANT/REVOKE shapes via a `matchAdminDcl(sql)` helper; new kinds: `"grant" | "revoke" | "kill" | "terminate"`; new tier `"admin-red"` (always prompt). Existing `kind: "drop"|"delete"|"truncate"|"update"|"other"` and tier `"red"|"amber"|"none"` branches unchanged.
-- `package.json` — ADDITIVE. `contributes.commands`: add 5 new with icon and category "VSDB". `activationEvents`: add the two palette ones. `menus.view/item/context`: add entries for admin nodes. `menus.view/title`: add refresh-admin in navigation group. `configuration`: add `vsdb.admin.confirmGrant` (default true). Optional `vsdb.admin.allowGrantPublic` (default false) — gated behind TASK-AHL-001 builder.
+- `package.json` — ADDITIVE. `contributes.commands`: add 5 new with icon and category "UnicDB". `activationEvents`: add the two palette ones. `menus.view/item/context`: add entries for admin nodes. `menus.view/title`: add refresh-admin in navigation group. `configuration`: add `UnicDB.admin.confirmGrant` (default true). Optional `UnicDB.admin.allowGrantPublic` (default false) — gated behind TASK-AHL-001 builder.
 - `src/__tests__/extension.test.ts` — EXTEND. Add an admin-feature smoke that verifies the 5 commands appear in `package.json contributes.commands` (counting by id).
 - `src/__tests__/scaffold.test.ts` — EXTEND. Confirm new command ids + activation events exist after compile.
 
@@ -16,9 +16,9 @@ Wire the admin cycle into `extension.ts` and `package.json`: register the `admin
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit (manifest) | 5 new command ids declared with category "VSDB" + icon | json shape | n/a |
-| 2 | unit (manifest) | activation events include `onCommand:vsdb.refreshAdmin` + `onCommand:vsdb.openSessionsPanel` | n/a | n/a |
-| 3 | unit (manifest) | `vsdb.admin.confirmGrant` setting defaults to true | n/a | n/a |
+| 1 | unit (manifest) | 5 new command ids declared with category "UnicDB" + icon | json shape | n/a |
+| 2 | unit (manifest) | activation events include `onCommand:UnicDB.refreshAdmin` + `onCommand:UnicDB.openSessionsPanel` | n/a | n/a |
+| 3 | unit (manifest) | `UnicDB.admin.confirmGrant` setting defaults to true | n/a | n/a |
 | 4 | unit (dangerous) | `analyzeStatement("GRANT SELECT ON TABLE x TO y")` returns `{kind:"grant", tier:"admin-red"}` | tier/admin branch | n/a |
 | 5 | unit (dangerous) | analyzeStatement on existing DML kinds (DELETE/UPDATE/DROP) returns unchanged tiers | kinds/tiers identical to baseline | n/a |
 | 6 | unit (dangerous) | kind/tier union type now includes `grant\|revoke\|kill\|terminate`; tier union now includes `admin-red` | TypeScript compile succeeds | n/a |
@@ -55,7 +55,7 @@ npm run compile
 ## Interfaces
 
 - Consumes: existing extension.ts context, `connectionManager`, `confirmDangerousStatements`, `runSql`.
-- Produces: 5 new commands (`vsdb.refreshAdmin`, `vsdb.openSessionsPanel`, `vsdb.killSession`, `vsdb.terminateSession`, `vsdb.runGrantSql`), new `vsdb.adminTree` view, new panel `vsdb.adminSessions`; one setting `vsdb.admin.confirmGrant`.
+- Produces: 5 new commands (`UnicDB.refreshAdmin`, `UnicDB.openSessionsPanel`, `UnicDB.killSession`, `UnicDB.terminateSession`, `UnicDB.runGrantSql`), new `UnicDB.adminTree` view, new panel `UnicDB.adminSessions`; one setting `UnicDB.admin.confirmGrant`.
 
 ---
 
@@ -79,11 +79,11 @@ npm run compile
   - `src/core/__tests__/dangerousStatement.test.ts` — +12 admin tests (B1–B7 + C1–C4).
   - `src/ui/adminSessionsPanel.ts` — new public methods `runKill(pid)` / `runTerminate(pid)` on `AdminSessionsPanel` so the registered commands can drive the same path the webview buttons do.
   - `src/ui/adminWizard.ts` — new `commandOpenGrantWizard(mgr, kind)` entry that walks schema → object → grantee → privileges, then posts the resulting SQL via `adapter.runQuery`. Always threads through `confirmDangerousStatements` (which now treats admin-red as always-confirm).
-  - `src/extension.ts` — ADDITIVE: imports `AdminTreeProvider` + `AdminSessionsPanel` + `commandOpenGrantWizard`; registers admin tree view (`vsdb.adminTree`); registers 5 new commands (`vsdb.refreshAdmin` / `vsdb.openSessionsPanel` / `vsdb.killSession` / `vsdb.terminateSession` / `vsdb.runGrantSql`). Disposes `adminTree` on activation tail. NEVER touches `runStatements` body or `ResultsPanel` construction site (verified by `git diff`).
-  - `src/__tests__/ahlScaffold.test.ts` — NEW. 7 smoke tests: 5 new command ids exist; each has category "VSDB" + icon; command count = 35; 2 new activation events present; view `vsdb.adminTree` declared; setting `vsdb.admin.confirmGrant` defaults to `true`; runtime DCL detection round-trips.
-  - `package.json` — ADDITIVE: 5 new `contributes.commands` entries, 2 new `activationEvents`, 1 new `contributes.views.vsdb` entry, 1 new `contributes.configuration.properties.vsdb.admin.confirmGrant` setting (default true).
+  - `src/extension.ts` — ADDITIVE: imports `AdminTreeProvider` + `AdminSessionsPanel` + `commandOpenGrantWizard`; registers admin tree view (`UnicDB.adminTree`); registers 5 new commands (`UnicDB.refreshAdmin` / `UnicDB.openSessionsPanel` / `UnicDB.killSession` / `UnicDB.terminateSession` / `UnicDB.runGrantSql`). Disposes `adminTree` on activation tail. NEVER touches `runStatements` body or `ResultsPanel` construction site (verified by `git diff`).
+  - `src/__tests__/ahlScaffold.test.ts` — NEW. 7 smoke tests: 5 new command ids exist; each has category "UnicDB" + icon; command count = 35; 2 new activation events present; view `UnicDB.adminTree` declared; setting `UnicDB.admin.confirmGrant` defaults to `true`; runtime DCL detection round-trips.
+  - `package.json` — ADDITIVE: 5 new `contributes.commands` entries, 2 new `activationEvents`, 1 new `contributes.views.UnicDB` entry, 1 new `contributes.configuration.properties.UnicDB.admin.confirmGrant` setting (default true).
 - Safety: 
-  - All DCL admin paths still flow through `confirmDangerousStatements`. The gate now always prompts for `admin-red` (no opt-out via `vsdb.confirmDestructive=false`).
+  - All DCL admin paths still flow through `confirmDangerousStatements`. The gate now always prompts for `admin-red` (no opt-out via `UnicDB.confirmDestructive=false`).
   - Self-pid detection remains owned by `AdminSessionsPanelCore`; `runKill` / `runTerminate` are thin wrappers.
   - `commandOpenGrantWizard` rejects PUBLIC grantee at the `buildGrantSql` builder (pgAdmin.test.ts proves this).
   - `quoteIdent` already in `pgAdmin.ts` — every role/object name is properly quoted.
@@ -103,7 +103,7 @@ npm run compile
   - important: none
   - minor:
     - `commandOpenGrantWizard` accepts the grantee + privileges as free-form text input. A future enhancement is to wire it into the actual schema tree (select grantee from existing roles, select privileges via multi-select quickPick). Functional for v1.
-    - `vsdb.runGrantSql` is registered with category "VSDB" + icon `$(shield)`. Without a dedicated `menus.view/item/context` entry, it's only reachable via the command palette. Acceptable for the cycle; can be added when the admin tree surfaces a "Grant…" right-click action.
+    - `UnicDB.runGrantSql` is registered with category "UnicDB" + icon `$(shield)`. Without a dedicated `menus.view/item/context` entry, it's only reachable via the command palette. Acceptable for the cycle; can be added when the admin tree surfaces a "Grant…" right-click action.
     - `confirmDangerousStatements` extension is additive; the `admin-red` modal copy is a follow-up if the team wants a distinct prompt (currently the tier "red" modal prompt fires for DML too, and admin-red piggybacks on the same `confirmDangerousStatements` path with a different copy).
 - NEXT_STATUS_FOR_INDEX: done
 
@@ -121,7 +121,7 @@ Anchors TASK-AHL-001 + this file; findings also apply to TASK-AHL-002 (wizard pa
 
 **Date:** 2026-08-30 · **Executor:** unic-code · Addresses all 3 AhlReviewer findings.
 
-1. **Gate order (P1)** — `confirmDangerousStatements` now classifies ALL tiers first; the `vsdb.confirmDestructive=false` switch clears only the red/amber buckets. Admin-red statements always reach the `vsdb.admin.confirmGrant` modal regardless of the non-admin switch.
+1. **Gate order (P1)** — `confirmDangerousStatements` now classifies ALL tiers first; the `UnicDB.confirmDestructive=false` switch clears only the red/amber buckets. Admin-red statements always reach the `UnicDB.admin.confirmGrant` modal regardless of the non-admin switch.
 2. **Wizard execution path (P1)** — `commandOpenGrantWizard` accepts an `execute` callback; the production wiring in extension.ts routes the confirmed SQL through `confirmDangerousStatements` (admin-red gate) before `adapter.runQuery`. Gate rejection surfaces as an error message and no query runs. Tests: callback receives the built SQL; bare `runQuery` is NOT called when the callback is supplied; gate rejection path covered.
 3. **Target identifier validation (P2)** — new `validateTargetIdentifier` runs before quoting for every grant target (table/sequence/schema): embedded NUL → `AdminError(invalidIdentifier)`; >63 chars → `AdminError(nameTooLong)`. 5 regression tests (NUL on table/sequence/schema, overlong schema, 63-char accept).
 

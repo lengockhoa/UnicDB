@@ -57,7 +57,7 @@ interface PreviewMsg {
   errors: string[];
 }
 
-const root = document.getElementById("vsdb-root") as HTMLDivElement;
+const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 let spec: TableSpec = { name: "table_name", schema: "public", columns: [], keys: [] };
 let mode: "create" | "modify" = "create";
 let selectedColumn: number | null = null;
@@ -147,29 +147,29 @@ function div(id: string): HTMLDivElement {
 function render(): void {
   root.innerHTML = `
   <h2 id="formTitle">${mode === "modify" ? `Modify — ${spec.schema}.${spec.originalName ?? spec.name}` : "New Table"}</h2>
-  ${spec && (spec as unknown as { loadError?: string }).loadError ? `<div class="vsdb-designer-load-error">Load failed: ${escapeHtml(((spec as unknown as { loadError?: string }).loadError) ?? "")}</div>` : ""}
-  <div class="vsdb-designer">
-    <div class="vsdb-designer-header">
+  ${spec && (spec as unknown as { loadError?: string }).loadError ? `<div class="UnicDB-designer-load-error">Load failed: ${escapeHtml(((spec as unknown as { loadError?: string }).loadError) ?? "")}</div>` : ""}
+  <div class="UnicDB-designer">
+    <div class="UnicDB-designer-header">
       <label for="tableName">Table name</label>
       <input id="tableName" type="text" />
       <label>Schema</label>
-      <span id="schemaLabel" class="vsdb-designer-item-meta"></span>
+      <span id="schemaLabel" class="UnicDB-designer-item-meta"></span>
     </div>
-    <div class="vsdb-designer-sections">
-      <div class="vsdb-designer-section">
-        <div class="vsdb-designer-section-title">COLUMNS (${spec.columns.length})</div>
+    <div class="UnicDB-designer-sections">
+      <div class="UnicDB-designer-section">
+        <div class="UnicDB-designer-section-title">COLUMNS (${spec.columns.length})</div>
         <ul id="columnsList"></ul>
-        <div class="vsdb-designer-toolbar">
+        <div class="UnicDB-designer-toolbar">
           <button id="addColBtn" title="Add column">+</button>
           <button id="removeColBtn" title="Remove">−</button>
           <button id="upColBtn" title="Up">↑</button>
           <button id="downColBtn" title="Down">↓</button>
         </div>
       </div>
-      <div class="vsdb-designer-section">
-        <div class="vsdb-designer-section-title">KEYS (${spec.keys.length})</div>
+      <div class="UnicDB-designer-section">
+        <div class="UnicDB-designer-section-title">KEYS (${spec.keys.length})</div>
         <ul id="keysList"></ul>
-        <div class="vsdb-designer-toolbar">
+        <div class="UnicDB-designer-toolbar">
           <button id="addKeyBtn" title="Add key">+</button>
           <button id="removeKeyBtn" title="Remove">−</button>
           <button id="upKeyBtn" title="Up">↑</button>
@@ -177,16 +177,16 @@ function render(): void {
         </div>
       </div>
     </div>
-    <div class="vsdb-designer-edit" id="editPane">
-      <div class="vsdb-designer-placeholder">Select a column or key from the left panel to edit.</div>
+    <div class="UnicDB-designer-edit" id="editPane">
+      <div class="UnicDB-designer-placeholder">Select a column or key from the left panel to edit.</div>
     </div>
     <pre id="sql-preview">${escapeHtml(lastPreviewSql || "—")}</pre>
-    <div class="vsdb-designer-errors" id="sql-errors">
+    <div class="UnicDB-designer-errors" id="sql-errors">
       ${lastErrors.length > 0 ? `<ul>${lastErrors.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul>` : ""}
     </div>
-    <div class="vsdb-designer-actions">
+    <div class="UnicDB-designer-actions">
       <button id="cancelBtn">Cancel</button>
-      <button id="okBtn" class="vsdb-form-primary">OK — Execute</button>
+      <button id="okBtn" class="UnicDB-form-primary">OK — Execute</button>
     </div>
   </div>`;
 
@@ -300,14 +300,14 @@ function render(): void {
 
 function renderColumnsList(): void {
   const ul = document.getElementById("columnsList") as HTMLUListElement;
-  const title = document.querySelector(".vsdb-designer-section-title");
+  const title = document.querySelector(".UnicDB-designer-section-title");
   if (title) title.textContent = `COLUMNS (${spec.columns.length})`;
   ul.innerHTML = spec.columns
     .map(
       (c, i) =>
         `<li data-section="columns" data-index="${i}" class="${selectedColumn === i ? "selected" : ""}">` +
-        `<span class="vsdb-designer-item-name">${escapeHtml(c.name)}</span>` +
-        `<span class="vsdb-designer-item-meta">${escapeHtml(c.type)}</span>` +
+        `<span class="UnicDB-designer-item-name">${escapeHtml(c.name)}</span>` +
+        `<span class="UnicDB-designer-item-meta">${escapeHtml(c.type)}</span>` +
         `</li>`,
     )
     .join("");
@@ -325,7 +325,7 @@ function renderColumnsList(): void {
 
 function renderKeysList(): void {
   const ul = document.getElementById("keysList") as HTMLUListElement;
-  const titles = document.querySelectorAll(".vsdb-designer-section-title");
+  const titles = document.querySelectorAll(".UnicDB-designer-section-title");
   if (titles[1]) titles[1].textContent = `KEYS (${spec.keys.length})`;
   ul.innerHTML = spec.keys
     .map((k, i) => {
@@ -339,8 +339,8 @@ function renderKeysList(): void {
               : `FK (${(k.columns ?? []).join(", ")}) → ${k.references?.table ?? "?"}`;
       return (
         `<li data-section="keys" data-index="${i}" class="${selectedKey === i ? "selected" : ""}">` +
-        `<span class="vsdb-designer-item-name">${escapeHtml(k.name ?? label)}</span>` +
-        `<span class="vsdb-designer-item-meta">${escapeHtml(k.kind)}</span>` +
+        `<span class="UnicDB-designer-item-name">${escapeHtml(k.name ?? label)}</span>` +
+        `<span class="UnicDB-designer-item-meta">${escapeHtml(k.kind)}</span>` +
         `</li>`
       );
     })
@@ -364,17 +364,17 @@ function renderEditPane(): void {
     const formType = mapTypeToForm(c.type);
     pane.innerHTML = `
       <h3>Column</h3>
-      <div class="vsdb-field"><label>Name</label><input id="colName" type="text" value="${escapeHtml(c.name)}" /></div>
-      <div class="vsdb-field"><label>Type</label>
+      <div class="UnicDB-field"><label>Name</label><input id="colName" type="text" value="${escapeHtml(c.name)}" /></div>
+      <div class="UnicDB-field"><label>Type</label>
         <select id="colType">
           <option value="varchar" ${formType === "varchar" ? "selected" : ""}>varchar</option>
           <option value="numeric" ${formType === "numeric" ? "selected" : ""}>numeric</option>
           <option value="boolean" ${formType === "boolean" ? "selected" : ""}>boolean</option>
         </select>
       </div>
-      <div class="vsdb-field"><label>Default</label><input id="colDefault" type="text" value="${escapeHtml(c.default ?? "")}" /></div>
-      <div class="vsdb-field"><label><input id="colNullable" type="checkbox" ${c.nullable === false ? "" : "checked"} /> Nullable</label></div>
-      <div class="vsdb-field"><label><input id="colPrimaryKey" type="checkbox" ${c.isPrimaryKey ? "checked" : ""} /> Primary Key</label></div>
+      <div class="UnicDB-field"><label>Default</label><input id="colDefault" type="text" value="${escapeHtml(c.default ?? "")}" /></div>
+      <div class="UnicDB-field"><label><input id="colNullable" type="checkbox" ${c.nullable === false ? "" : "checked"} /> Nullable</label></div>
+      <div class="UnicDB-field"><label><input id="colPrimaryKey" type="checkbox" ${c.isPrimaryKey ? "checked" : ""} /> Primary Key</label></div>
     `;
     wireColumnEdit(c);
     return;
@@ -383,7 +383,7 @@ function renderEditPane(): void {
     const k = spec.keys[selectedKey];
     pane.innerHTML = `
       <h3>Key</h3>
-      <div class="vsdb-field"><label>Kind</label>
+      <div class="UnicDB-field"><label>Kind</label>
         <select id="keyKind">
           <option value="primaryKey" ${k.kind === "primaryKey" ? "selected" : ""}>PRIMARY KEY</option>
           <option value="unique" ${k.kind === "unique" ? "selected" : ""}>UNIQUE</option>
@@ -391,20 +391,20 @@ function renderEditPane(): void {
           <option value="check" ${k.kind === "check" ? "selected" : ""}>CHECK</option>
         </select>
       </div>
-      <div class="vsdb-field"><label>Name</label><input id="keyName" type="text" value="${escapeHtml(k.name ?? "")}" /></div>
-      <div class="vsdb-field"><label>Columns (comma separated)</label><input id="keyColumns" type="text" value="${escapeHtml((k.columns ?? []).join(", "))}" /></div>
-      <div class="vsdb-field" id="fkRefs" style="${k.kind === "foreignKey" ? "" : "display:none"}">
+      <div class="UnicDB-field"><label>Name</label><input id="keyName" type="text" value="${escapeHtml(k.name ?? "")}" /></div>
+      <div class="UnicDB-field"><label>Columns (comma separated)</label><input id="keyColumns" type="text" value="${escapeHtml((k.columns ?? []).join(", "))}" /></div>
+      <div class="UnicDB-field" id="fkRefs" style="${k.kind === "foreignKey" ? "" : "display:none"}">
         <label>References table</label><input id="fkTable" type="text" value="${escapeHtml(k.references?.table ?? "")}" />
         <label>References columns</label><input id="fkColumns" type="text" value="${escapeHtml((k.references?.columns ?? []).join(", "))}" />
       </div>
-      <div class="vsdb-field" id="checkExpr" style="${k.kind === "check" ? "" : "display:none"}">
+      <div class="UnicDB-field" id="checkExpr" style="${k.kind === "check" ? "" : "display:none"}">
         <label>CHECK expression</label><input id="keyExpr" type="text" value="${escapeHtml(k.expr ?? "")}" />
       </div>
     `;
     wireKeyEdit(k);
     return;
   }
-  pane.innerHTML = `<div class="vsdb-designer-placeholder">Select a column or key from the left panel to edit.</div>`;
+  pane.innerHTML = `<div class="UnicDB-designer-placeholder">Select a column or key from the left panel to edit.</div>`;
 }
 
 function wireColumnEdit(c: ColumnSpec): void {
@@ -551,15 +551,15 @@ function escapeHtml(s: string): string {
 // previously-registered listener so that messages reach THIS instance
 // (whose root is connected) rather than the stale instance (whose root
 // is orphaned and would throw on input("tableName").value = ...).
-type VsdbListener = (ev: Event) => void;
-const __vsdbWin = window as unknown as {
-  __vsdbMsgListener?: VsdbListener;
-  __vsdbKeyListener?: VsdbListener;
+type UnicDBListener = (ev: Event) => void;
+const __UnicDBWin = window as unknown as {
+  __UnicDBMsgListener?: UnicDBListener;
+  __UnicDBKeyListener?: UnicDBListener;
 };
-if (__vsdbWin.__vsdbMsgListener) {
-  window.removeEventListener("message", __vsdbWin.__vsdbMsgListener);
+if (__UnicDBWin.__UnicDBMsgListener) {
+  window.removeEventListener("message", __UnicDBWin.__UnicDBMsgListener);
 }
-const __vsdbMsgHandler: VsdbListener = (ev: Event) => {
+const __UnicDBMsgHandler: UnicDBListener = (ev: Event) => {
   const mev = ev as MessageEvent;
   const msg = mev.data;
   if (msg && msg.type === "init") {
@@ -583,8 +583,8 @@ const __vsdbMsgHandler: VsdbListener = (ev: Event) => {
     return;
   }
 };
-__vsdbWin.__vsdbMsgListener = __vsdbMsgHandler;
-window.addEventListener("message", __vsdbMsgHandler);
+__UnicDBWin.__UnicDBMsgListener = __UnicDBMsgHandler;
+window.addEventListener("message", __UnicDBMsgHandler);
 
 function applyInit(msg: InitMsg): void {
   mode = msg.mode;
@@ -619,22 +619,22 @@ function refreshOkButton(): void {
 }
 // keydown listener: same replace-on-reimport pattern as the message
 // listener above. Only one keydown listener per window.
-if (__vsdbWin.__vsdbKeyListener) {
-  window.removeEventListener("keydown", __vsdbWin.__vsdbKeyListener);
+if (__UnicDBWin.__UnicDBKeyListener) {
+  window.removeEventListener("keydown", __UnicDBWin.__UnicDBKeyListener);
 }
-const __vsdbKeyHandler: VsdbListener = (ev: Event) => {
+const __UnicDBKeyHandler: UnicDBListener = (ev: Event) => {
   const kev = ev as KeyboardEvent;
   if (kev.key === "Escape") {
     kev.preventDefault();
     post({ type: "cancel" });
   }
 };
-__vsdbWin.__vsdbKeyListener = __vsdbKeyHandler;
-window.addEventListener("keydown", __vsdbKeyHandler);
-// Auto-init: tests can set `data-vsdb-skip-auto-init` on the root div to skip
+__UnicDBWin.__UnicDBKeyListener = __UnicDBKeyHandler;
+window.addEventListener("keydown", __UnicDBKeyHandler);
+// Auto-init: tests can set `data-UnicDB-skip-auto-init` on the root div to skip
 // the initial render + ready post (drive lifecycle manually via init msg).
-const __vsdbSkipAutoInit = root.dataset.vsdbSkipAutoInit === "true";
-if (!__vsdbSkipAutoInit) {
+const __UnicDBSkipAutoInit = root.dataset.UnicDBSkipAutoInit === "true";
+if (!__UnicDBSkipAutoInit) {
   render();
   post({ type: "ready" });
 }

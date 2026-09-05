@@ -1,11 +1,11 @@
-# VSDB — Manual Testing Checklist (v1)
+# UnicDB — Manual Testing Checklist (v1)
 
 Smoke checklist for the first release (v1.0.0). Run on the Extension Development
 Host (`F5`) or after installing from a `.vsix`. Test each DB once; check both
 positive + negative flows.
 
 > In this checklist -> tick each line manually while testing. Report issues at
-> [GitHub Issues](https://github.com/lengockhoa/VSDB/issues).
+> [GitHub Issues](https://github.com/lengockhoa/UnicDB/issues).
 
 ---
 
@@ -42,14 +42,14 @@ positive + negative flows.
 - [ ] **▶ (Run) button on the title bar** when focused inside `.sql` -> runs the query.
 - [ ] **■ (Cancel) button** while running -> query is cancelled server-side, panel shows "Cancelled".
 - [ ] **CodeLens ▶ Run** on every statement -> click runs the correct statement.
-- [ ] **Disable CodeLens**: setting `vsdb.showRunLens = false` -> CodeLens disappears, stays disabled after restart.
+- [ ] **Disable CodeLens**: setting `UnicDB.showRunLens = false` -> CodeLens disappears, stays disabled after restart.
 
 ## 4. Schema Explorer
 
 - [ ] **Tree expand**: connection -> schema -> Tables / Views / Routines -> table -> column.
 - [ ] **All schemas shown**: open connection -> every accessible schema appears, not only `public` / `dbo` / the default database.
 - [ ] **Count badge**: after expanding, the category shows the object count (e.g. Tables -> `2`).
-- [ ] **Setting `vsdb.hideSystemSchemas`**: enabled (default) -> hides `pg_*` / `information_schema` / `mysql` / `sys`; disabled -> shows them again.
+- [ ] **Setting `UnicDB.hideSystemSchemas`**: enabled (default) -> hides `pg_*` / `information_schema` / `mysql` / `sys`; disabled -> shows them again.
 - [ ] **Tables + views + routines** (if the DB has them) render the correct kind.
 - [ ] **Right-click table/view -> Generate SELECT** -> inserts `SELECT * FROM schema.table` into the editor (works for non-default schemas too).
 - [ ] **Right-click -> Copy Qualified Name** -> clipboard has `schema.table` / `schema.table.column`.
@@ -58,7 +58,7 @@ positive + negative flows.
 
 - [ ] **Small result** (< 500 rows): shows everything in one go.
 - [ ] **Large result** (> 500 rows): shows 500 rows + a **Load 500 more** button at the bottom -> click to extend.
-- [ ] **`vsdb.batchSize` = 1000**: reload extension -> loads 1000 per batch.
+- [ ] **`UnicDB.batchSize` = 1000**: reload extension -> loads 1000 per batch.
 - [ ] **Cancel mid-load**: click ■ while loading -> stops immediately, no further load.
 - [ ] **Column types**: timestamp/date/bytea/blob render correctly (string / hex / base64).
 - [ ] **NULL cells**: show `(NULL)`, no layout breakage.
@@ -78,8 +78,8 @@ positive + negative flows.
 ## 8. Packaging / install (release smoke)
 
 - [ ] `bash scripts/build.sh` exit 0, prints the `.vsix` path.
-- [ ] `bash scripts/install-vsdb.sh --local dist/vsdb-*.vsix` exit 0.
-- [ ] `code --list-extensions | grep vsdb` shows `lengockhoa.vsdb`.
+- [ ] `bash scripts/install-UnicDB.sh --local dist/UnicDB-*.vsix` exit 0.
+- [ ] `code --list-extensions | grep UnicDB` shows `lengockhoa.UnicDB`.
 - [ ] Uninstall + reinstall multiple times (idempotency): always lands on the same final version.
 
 ---

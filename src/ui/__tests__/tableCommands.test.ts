@@ -28,7 +28,7 @@ import {
 } from "../tableCommands";
 import {
   SchemaTreeProvider,
-  type VsdbNode,
+  type UnicDBNode,
   registerSchemaTreeProvider,
 } from "../schemaTree";
 import type { ConnectionManager } from "../../core/connectionManager";
@@ -176,8 +176,8 @@ function makeFakeMgr(opts: FakeMgrOptions = {}) {
     driver: opts.driver ?? "postgres",
     host: "127.0.0.1",
     port: 5432,
-    user: "vsdb",
-    database: "vsdb",
+    user: "UnicDB",
+    database: "UnicDB",
   };
   const adapter = makeFakeAdapter({
     driver: opts.driver,
@@ -218,7 +218,7 @@ function resetState() {
 
 beforeEach(() => { resetState(); });
 
-describe("tableCommands — vsdb.newTable", () => {
+describe("tableCommands — UnicDB.newTable", () => {
   it("#5 schema node → NewTableForm mode create; runDdl → adapter.runQuery + refresh + reveal + Created info", async () => {
     const mgr = makeFakeMgr({ tables: [{ name: "users", schema: "public" }] });
     const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
@@ -230,13 +230,13 @@ describe("tableCommands — vsdb.newTable", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const schemaNode: VsdbNode = {
+    const schemaNode: UnicDBNode = {
       label: "public",
       contextValue: "schema",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public" },
     };
-    const fn = state.registeredCommands.get("vsdb.newTable");
+    const fn = state.registeredCommands.get("UnicDB.newTable");
     await fn!(schemaNode);
     const panel = state.createdPanels[0];
     const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
@@ -250,7 +250,7 @@ describe("tableCommands — vsdb.newTable", () => {
   });
 });
 
-describe("tableCommands — vsdb.modifyTable", () => {
+describe("tableCommands — UnicDB.modifyTable", () => {
   it("#6 table node → mode modify; loadSpec introspect + runDdl diff joined + refresh + reveal + Modified info", async () => {
     const cols: PgColumnRow[] = [
       { column_name: "id", format_type: "bigint", is_nullable: "NO", column_default: null },
@@ -272,13 +272,13 @@ describe("tableCommands — vsdb.modifyTable", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const tableNode: VsdbNode = {
+    const tableNode: UnicDBNode = {
       label: "t",
       contextValue: "table",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", objectName: "t" },
     };
-    const fn = state.registeredCommands.get("vsdb.modifyTable");
+    const fn = state.registeredCommands.get("UnicDB.modifyTable");
     await fn!(tableNode);
     const panel = state.createdPanels[0];
     const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
@@ -301,7 +301,7 @@ describe("tableCommands — vsdb.modifyTable", () => {
 });
 
 describe("tableCommands — guards", () => {
-  it("#7 mysql guard → 'VSDB: Modify Table is not supported by this connection's database.' info, no runQuery", async () => {
+  it("#7 mysql guard → 'UnicDB: Modify Table is not supported by this connection's database.' info, no runQuery", async () => {
     const mgr = makeFakeMgr({ driver: "mysql", listTableDetailUnsupported: true });
     const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
     registerSchemaTreeProvider(provider);
@@ -311,14 +311,14 @@ describe("tableCommands — guards", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const tableNode: VsdbNode = {
+    const tableNode: UnicDBNode = {
       label: "t",
       contextValue: "table",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", objectName: "t" },
     };
-    await state.registeredCommands.get("vsdb.modifyTable")!(tableNode);
-    expect(state.infoMessages.some((m) => m === "VSDB: Modify Table is not supported by this connection's database.")).toBe(true);
+    await state.registeredCommands.get("UnicDB.modifyTable")!(tableNode);
+    expect(state.infoMessages.some((m) => m === "UnicDB: Modify Table is not supported by this connection's database.")).toBe(true);
     expect(mgr.adapter.runCalls).toHaveLength(0);
     expect(state.createdPanels.length).toBe(0);
     expect(treeView.reveal).not.toHaveBeenCalled();
@@ -337,7 +337,7 @@ describe("tableCommands — guards", () => {
     // objectKey is lossy ("c1.public.foo.bar" → "bar" by naive split);
     // the column node must carry objectName = "foo.bar" and resolve it
     // exactly.
-    const columnNode: VsdbNode = {
+    const columnNode: UnicDBNode = {
       label: "id",
       contextValue: "column",
       collapsible: 0,
@@ -352,7 +352,7 @@ describe("tableCommands — guards", () => {
     const resolved = resolveTableNode(columnNode);
     expect(resolved?.table).toBe("foo.bar");
     expect(resolved?.column).toBe("id");
-    await state.registeredCommands.get("vsdb.renameColumn")!(columnNode);
+    await state.registeredCommands.get("UnicDB.renameColumn")!(columnNode);
     expect(mgr.adapter.listTableDetailCalls).toHaveLength(0);
     expect(state.createdPanels.length).toBeGreaterThan(0);
   });
@@ -367,7 +367,7 @@ describe("tableCommands — guards", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const columnNode: VsdbNode = {
+    const columnNode: UnicDBNode = {
       label: "id",
       contextValue: "column",
       collapsible: 0,
@@ -379,7 +379,7 @@ describe("tableCommands — guards", () => {
         column: { name: "id", dataType: "int" },
       },
     };
-    await state.registeredCommands.get("vsdb.renameColumn")!(columnNode);
+    await state.registeredCommands.get("UnicDB.renameColumn")!(columnNode);
     // No introspectTable call (we have the name from arg.meta.column).
     expect(mgr.adapter.listTableDetailCalls).toHaveLength(0);
     // A webview panel was created (the rename form).
@@ -396,13 +396,13 @@ describe("tableCommands — guards", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const viewsNode: VsdbNode = {
+    const viewsNode: UnicDBNode = {
       label: "Views",
       contextValue: "category",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", category: "views" },
     };
-    await state.registeredCommands.get("vsdb.newTable")!(viewsNode);
+    await state.registeredCommands.get("UnicDB.newTable")!(viewsNode);
     expect(state.infoMessages.some((m) => /New Table.*Tables/.test(m))).toBe(true);
     expect(state.createdPanels.length).toBe(0);
     expect(mgr.adapter.runCalls).toHaveLength(0);
@@ -420,13 +420,13 @@ describe("tableCommands — guards", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const schemaNode: VsdbNode = {
+    const schemaNode: UnicDBNode = {
       label: "public",
       contextValue: "schema",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public" },
     };
-    await state.registeredCommands.get("vsdb.newTable")!(schemaNode);
+    await state.registeredCommands.get("UnicDB.newTable")!(schemaNode);
     const panel = state.createdPanels[0];
     const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
     await handler({ type: "ready" });
@@ -439,7 +439,7 @@ describe("tableCommands — guards", () => {
   });
 });
 
-describe("tableCommands — vsdb.copyCreateDdl", () => {
+describe("tableCommands — UnicDB.copyCreateDdl", () => {
   it("#9 introspect → generateCreateTable → clipboard.writeText + status message", async () => {
     const cols: PgColumnRow[] = [
       { column_name: "id", format_type: "bigint", is_nullable: "NO", column_default: null },
@@ -460,23 +460,23 @@ describe("tableCommands — vsdb.copyCreateDdl", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const tableNode: VsdbNode = {
+    const tableNode: UnicDBNode = {
       label: "t",
       contextValue: "table",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", objectName: "t" },
     };
-    await state.registeredCommands.get("vsdb.copyCreateDdl")!(tableNode);
+    await state.registeredCommands.get("UnicDB.copyCreateDdl")!(tableNode);
     const expectedSpec = rowsToSpec("public", "t", cols, cons);
     const expectedDdl = generateCreateTable(expectedSpec);
     expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith(expectedDdl);
     expect(state.statusMessages.some((m) => /DDL copied/.test(m.text))).toBe(true);
   });
 });
-describe("tableCommands — vsdb.generateSampleData (TASK-006 AI flow)", () => {
+describe("tableCommands — UnicDB.generateSampleData (TASK-006 AI flow)", () => {
   // TASK-UX1-003 — the menu default is now console templates (see the
   // TASK-UX1-003 describe block below). The old AI-driven integration tests
-  // for vsdb.generateSampleData were removed because the default no longer
+  // for UnicDB.generateSampleData were removed because the default no longer
   // calls aiGenerateSampleData / AiConfigStore / showInputBox. The unit tests
   // in src/ui/__tests__/sampleDataAi.test.ts still cover the AI module (case
   // #8 regression pin).
@@ -500,14 +500,14 @@ describe("tableCommands — analyze / vacuum", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const tableNode: VsdbNode = {
+    const tableNode: UnicDBNode = {
       label: "t",
       contextValue: "table",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", objectName: "t" },
     };
-    await state.registeredCommands.get("vsdb.analyzeTable")!(tableNode);
-    await state.registeredCommands.get("vsdb.vacuumTable")!(tableNode);
+    await state.registeredCommands.get("UnicDB.analyzeTable")!(tableNode);
+    await state.registeredCommands.get("UnicDB.vacuumTable")!(tableNode);
     const ddlCalls = mgr.adapter.runCalls.map((c) => c.sql);
     expect(ddlCalls).toContain('ANALYZE "public"."t"');
     expect(ddlCalls).toContain('VACUUM ANALYZE "public"."t"');
@@ -543,13 +543,13 @@ describe("tableCommands — R1 regression: listTableDetail bind params", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const tableNode: VsdbNode = {
+    const tableNode: UnicDBNode = {
       label: "t",
       contextValue: "table",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", objectName: "t" },
     };
-    await state.registeredCommands.get("vsdb.modifyTable")!(tableNode);
+    await state.registeredCommands.get("UnicDB.modifyTable")!(tableNode);
     const panel = state.createdPanels[0];
     const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
     await handler({ type: "ready" });
@@ -574,13 +574,13 @@ describe("tableCommands — R1 regression: listTableDetail bind params", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const tableNode: VsdbNode = {
+    const tableNode: UnicDBNode = {
       label: "users",
       contextValue: "table",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", objectName: "users" },
     };
-    await state.registeredCommands.get("vsdb.copyCreateDdl")!(tableNode);
+    await state.registeredCommands.get("UnicDB.copyCreateDdl")!(tableNode);
     expect(mgr.adapter.listTableDetailCalls).toEqual([{ schema: "public", table: "users" }]);
     expect(mgr.adapter.runCalls).toHaveLength(0);
   });
@@ -601,13 +601,13 @@ describe("tableCommands — R1 regression: newTable accepts table node (columns 
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const tableNode: VsdbNode = {
+    const tableNode: UnicDBNode = {
       label: "users",
       contextValue: "table",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", objectName: "users", category: "columns" },
     };
-    await state.registeredCommands.get("vsdb.newTable")!(tableNode);
+    await state.registeredCommands.get("UnicDB.newTable")!(tableNode);
     expect(state.createdPanels.length).toBe(1);
     expect(state.infoMessages.some((m) => /open the Tables category/.test(m))).toBe(false);
   });
@@ -650,13 +650,13 @@ describe("tableCommands — R1 regression: no DEBUG logs + spec.name pass-throug
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const schemaNode: VsdbNode = {
+    const schemaNode: UnicDBNode = {
       label: "public",
       contextValue: "schema",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public" },
     };
-    await state.registeredCommands.get("vsdb.newTable")!(schemaNode);
+    await state.registeredCommands.get("UnicDB.newTable")!(schemaNode);
     const panel = state.createdPanels[0];
     const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
     await handler({ type: "ready" });
@@ -670,12 +670,12 @@ describe("tableCommands — R1 regression: no DEBUG logs + spec.name pass-throug
 });
 
 // =============================================================================
-// TASK-003 — vsdb.createSchema: open SchemaForm on connection/schema node;
+// TASK-003 — UnicDB.createSchema: open SchemaForm on connection/schema node;
 // OK runs DDL via adapter.runQuery, refreshes tree, reveals new schema node,
 // info toast. Driver guard (mysql/mssql) → info, no form. No active conn +
 // no node conn → info, no form.
 // =============================================================================
-describe("tableCommands — TASK-003 vsdb.createSchema", () => {
+describe("tableCommands — TASK-003 UnicDB.createSchema", () => {
   it("#2 connection node → SchemaForm; submit → runDdl(CREATE SCHEMA \"x\";) + refresh + reveal + info", async () => {
     const mgr = makeFakeMgr();
     // Simulate CREATE SCHEMA succeeding: listSchemas() reflects the new schema
@@ -700,13 +700,13 @@ describe("tableCommands — TASK-003 vsdb.createSchema", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const connNode: VsdbNode = {
+    const connNode: UnicDBNode = {
       label: "Test PG",
       contextValue: "connection",
       collapsible: 0,
       meta: { connection: mgr.cfg },
     };
-    await state.registeredCommands.get("vsdb.createSchema")!(connNode);
+    await state.registeredCommands.get("UnicDB.createSchema")!(connNode);
     const panel = state.createdPanels[state.createdPanels.length - 1];
     const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
     await handler({ type: "ready" });
@@ -718,7 +718,7 @@ describe("tableCommands — TASK-003 vsdb.createSchema", () => {
     expect(state.infoMessages.some((m) => /schema\s+"x"\s+created/i.test(m))).toBe(true);
   });
 
-  it("#5 mysql driver on connection node → 'VSDB: Create Schema is not supported by this connection's database.' info; no form", async () => {
+  it("#5 mysql driver on connection node → 'UnicDB: Create Schema is not supported by this connection's database.' info; no form", async () => {
     const mgr = makeFakeMgr({ driver: "mysql" });
     const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
     registerSchemaTreeProvider(provider);
@@ -728,14 +728,14 @@ describe("tableCommands — TASK-003 vsdb.createSchema", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const connNode: VsdbNode = {
+    const connNode: UnicDBNode = {
       label: "MySQL",
       contextValue: "connection",
       collapsible: 0,
       meta: { connection: mgr.cfg },
     };
-    await state.registeredCommands.get("vsdb.createSchema")!(connNode);
-    expect(state.infoMessages.some((m) => m === "VSDB: Create Schema is not supported by this connection's database.")).toBe(true);
+    await state.registeredCommands.get("UnicDB.createSchema")!(connNode);
+    expect(state.infoMessages.some((m) => m === "UnicDB: Create Schema is not supported by this connection's database.")).toBe(true);
     expect(state.createdPanels.length).toBe(0);
     expect(mgr.adapter.runCalls).toHaveLength(0);
     expect(treeView.reveal).not.toHaveBeenCalled();
@@ -751,14 +751,14 @@ describe("tableCommands — TASK-003 vsdb.createSchema", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const connNode: VsdbNode = {
+    const connNode: UnicDBNode = {
       label: "MSSQL",
       contextValue: "connection",
       collapsible: 0,
       meta: { connection: mgr.cfg },
     };
-    await state.registeredCommands.get("vsdb.createSchema")!(connNode);
-    expect(state.infoMessages.some((m) => m === "VSDB: Create Schema is not supported by this connection's database.")).toBe(true);
+    await state.registeredCommands.get("UnicDB.createSchema")!(connNode);
+    expect(state.infoMessages.some((m) => m === "UnicDB: Create Schema is not supported by this connection's database.")).toBe(true);
     expect(state.createdPanels.length).toBe(0);
   });
 
@@ -780,7 +780,7 @@ describe("tableCommands — TASK-003 vsdb.createSchema", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    await state.registeredCommands.get("vsdb.createSchema")!();
+    await state.registeredCommands.get("UnicDB.createSchema")!();
     expect(state.infoMessages.some((m) => /no.*(connection|active)/i.test(m))).toBe(true);
     expect(state.createdPanels.length).toBe(0);
   });
@@ -796,13 +796,13 @@ describe("tableCommands — TASK-003 vsdb.createSchema", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const connNode: VsdbNode = {
+    const connNode: UnicDBNode = {
       label: "Test PG",
       contextValue: "connection",
       collapsible: 0,
       meta: { connection: mgr.cfg },
     };
-    await state.registeredCommands.get("vsdb.createSchema")!(connNode);
+    await state.registeredCommands.get("UnicDB.createSchema")!(connNode);
     const panel = state.createdPanels[state.createdPanels.length - 1];
     const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
     await handler({ type: "ready" });
@@ -815,11 +815,11 @@ describe("tableCommands — TASK-003 vsdb.createSchema", () => {
   });
 
 // =============================================================================
-// TASK-008 — vsdb.postmanPayload: register the command + context menu entry;
+// TASK-008 — UnicDB.postmanPayload: register the command + context menu entry;
 // route table/view nodes through listColumns, routine through listRoutineParams;
 // driver guard (mysql/mssql) → info message, no clipboard write.
 // =============================================================================
-describe("tableCommands — TASK-008 vsdb.postmanPayload", () => {
+describe("tableCommands — TASK-008 UnicDB.postmanPayload", () => {
   it("case #2: view node → listColumns + clipboard + status bar", async () => {
     const mgr = makeFakeMgr();
     (mgr.adapter.listColumns as Mock).mockResolvedValue([
@@ -834,13 +834,13 @@ describe("tableCommands — TASK-008 vsdb.postmanPayload", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const viewNode: VsdbNode = {
+    const viewNode: UnicDBNode = {
       label: "v_users",
       contextValue: "view",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", objectName: "v_users" },
     };
-    await state.registeredCommands.get("vsdb.postmanPayload")!(viewNode);
+    await state.registeredCommands.get("UnicDB.postmanPayload")!(viewNode);
     expect(mgr.adapter.listColumns).toHaveBeenCalledWith("v_users", "public");
     expect(mgr.adapter.listRoutineParams).not.toHaveBeenCalled();
     const expected =
@@ -868,13 +868,13 @@ describe("tableCommands — TASK-008 vsdb.postmanPayload", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const routineNode: VsdbNode = {
+    const routineNode: UnicDBNode = {
       label: "add_credit",
       contextValue: "routine",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", objectName: "add_credit" },
     };
-    await state.registeredCommands.get("vsdb.postmanPayload")!(routineNode);
+    await state.registeredCommands.get("UnicDB.postmanPayload")!(routineNode);
     expect(mgr.adapter.listRoutineParams).toHaveBeenCalledWith("public", "add_credit");
     expect(mgr.adapter.listColumns).not.toHaveBeenCalled();
     const expected =
@@ -898,17 +898,17 @@ describe("tableCommands — TASK-008 vsdb.postmanPayload", () => {
         treeView: treeView as unknown as TreeView<unknown>,
         context: { subscriptions: [] } as unknown as ExtensionContext,
       });
-      const tableNode: VsdbNode = {
+      const tableNode: UnicDBNode = {
         label: "t",
         contextValue: "table",
         collapsible: 0,
         meta: { connection: mgr.cfg, schema: "public", objectName: "t" },
       };
       vscode.env.clipboard.writeText.mockClear();
-      await state.registeredCommands.get("vsdb.postmanPayload")!(tableNode);
+      await state.registeredCommands.get("UnicDB.postmanPayload")!(tableNode);
       expect(
         state.infoMessages.some((m) =>
-          m === "VSDB: Postman Payload is not supported by this connection's database.",
+          m === "UnicDB: Postman Payload is not supported by this connection's database.",
         ),
       ).toBe(true);
       expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
@@ -926,20 +926,20 @@ describe("tableCommands — TASK-008 vsdb.postmanPayload", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const routineNode: VsdbNode = {
+    const routineNode: UnicDBNode = {
       label: "no_args",
       contextValue: "routine",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", objectName: "no_args" },
     };
-    await state.registeredCommands.get("vsdb.postmanPayload")!(routineNode);
+    await state.registeredCommands.get("UnicDB.postmanPayload")!(routineNode);
     const expected =
       '{\n  schema: "public",\n  table: "no_args",\n}';
     expect(vscode.env.clipboard.writeText).toHaveBeenCalledWith(expected);
     expect(state.statusMessages.some((m) => /Postman payload copied/.test(m.text))).toBe(true);
   });
 
-  it("case #9 wiring: registeredCommands has vsdb.postmanPayload + package.json menu entry covers table|view|routine", () => {
+  it("case #9 wiring: registeredCommands has UnicDB.postmanPayload + package.json menu entry covers table|view|routine", () => {
     const mgr = makeFakeMgr();
     const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
     registerSchemaTreeProvider(provider);
@@ -949,13 +949,13 @@ describe("tableCommands — TASK-008 vsdb.postmanPayload", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    expect(state.registeredCommands.has("vsdb.postmanPayload")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.postmanPayload")).toBe(true);
     const pkgPath = path.join(__dirname, "..", "..", "..", "package.json");
     const pkgJson = fs.readFileSync(pkgPath, "utf8");
     interface MenuItem { command: string; when: string; }
     const menuItems = JSON.parse(pkgJson)
       .contributes.menus["view/item/context"] as MenuItem[];
-    const entry = menuItems.find((m) => m.command === "vsdb.postmanPayload");
+    const entry = menuItems.find((m) => m.command === "UnicDB.postmanPayload");
     expect(entry).toBeDefined();
     expect(entry!.when).toMatch(/viewItem == table/);
     expect(entry!.when).toMatch(/viewItem == view/);
@@ -965,12 +965,12 @@ describe("tableCommands — TASK-008 vsdb.postmanPayload", () => {
 });
 
 // =============================================================================
-// TASK-004 — vsdb.exportAllStructures: copy whole-DB DDL to clipboard.
+// TASK-004 — UnicDB.exportAllStructures: copy whole-DB DDL to clipboard.
 // connection/schema node arg → introspect every user schema (or single schema
 // if node is schema) → buildDatabaseStructure → clipboard. PG-only; non-PG
 // info guard; no active conn → error; per-object listColumns throw → skipped.
 // =============================================================================
-describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
+describe("tableCommands — TASK-004 UnicDB.exportAllStructures", () => {
   it("#1 happy: connection node PG → clipboard full-DB DDL + statusbar message", async () => {
     const mgr = makeFakeMgr({
       tables: [
@@ -1004,14 +1004,14 @@ describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const connNode: VsdbNode = {
+    const connNode: UnicDBNode = {
       label: "Test PG",
       contextValue: "connection",
       collapsible: 0,
       meta: { connection: mgr.cfg },
     };
     vscode.env.clipboard.writeText.mockClear();
-    await state.registeredCommands.get("vsdb.exportAllStructures")!(connNode);
+    await state.registeredCommands.get("UnicDB.exportAllStructures")!(connNode);
     const writes = (vscode.env.clipboard.writeText as Mock).mock.calls;
     expect(writes.length).toBe(1);
     const text = writes[0][0] as string;
@@ -1030,17 +1030,17 @@ describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const connNode: VsdbNode = {
+    const connNode: UnicDBNode = {
       label: "MySQL",
       contextValue: "connection",
       collapsible: 0,
       meta: { connection: mgr.cfg },
     };
     vscode.env.clipboard.writeText.mockClear();
-    await state.registeredCommands.get("vsdb.exportAllStructures")!(connNode);
+    await state.registeredCommands.get("UnicDB.exportAllStructures")!(connNode);
     expect(
       state.infoMessages.some((m) =>
-        m === "VSDB: Export All Structures is not supported by this connection's database.",
+        m === "UnicDB: Export All Structures is not supported by this connection's database.",
       ),
     ).toBe(true);
     expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
@@ -1057,14 +1057,14 @@ describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const connNode: VsdbNode = {
+    const connNode: UnicDBNode = {
       label: "Empty PG",
       contextValue: "connection",
       collapsible: 0,
       meta: { connection: mgr.cfg },
     };
     vscode.env.clipboard.writeText.mockClear();
-    await state.registeredCommands.get("vsdb.exportAllStructures")!(connNode);
+    await state.registeredCommands.get("UnicDB.exportAllStructures")!(connNode);
     const writes = (vscode.env.clipboard.writeText as Mock).mock.calls;
     expect(writes.length).toBe(1);
     expect(writes[0][0]).toBe(
@@ -1100,14 +1100,14 @@ describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const connNode: VsdbNode = {
+    const connNode: UnicDBNode = {
       label: "Test PG",
       contextValue: "connection",
       collapsible: 0,
       meta: { connection: mgr.cfg },
     };
     vscode.env.clipboard.writeText.mockClear();
-    await state.registeredCommands.get("vsdb.exportAllStructures")!(connNode);
+    await state.registeredCommands.get("UnicDB.exportAllStructures")!(connNode);
     const writes = (vscode.env.clipboard.writeText as Mock).mock.calls;
     expect(writes.length).toBe(1);
     const text = writes[0][0] as string;
@@ -1136,7 +1136,7 @@ describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
     vscode.env.clipboard.writeText.mockClear();
-    await state.registeredCommands.get("vsdb.exportAllStructures")!();
+    await state.registeredCommands.get("UnicDB.exportAllStructures")!();
     expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
     const messages = [
       ...state.errorMessages,
@@ -1164,19 +1164,19 @@ describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
     vscode.env.clipboard.writeText.mockClear();
-    await state.registeredCommands.get("vsdb.exportAllStructures")!();
+    await state.registeredCommands.get("UnicDB.exportAllStructures")!();
     expect(vscode.env.clipboard.writeText).not.toHaveBeenCalled();
     // DBX-08: an unresolvable adapter declares nothing → fail-closed gate
     // reports the unsupported capability instead of running the export.
     expect(
       state.infoMessages.some((m) =>
-        m === "VSDB: Export All Structures is not supported by this connection's database.",
+        m === "UnicDB: Export All Structures is not supported by this connection's database.",
       ),
     ).toBe(true);
     expect(state.errorMessages).toHaveLength(0);
   });
 
-  it("#7 wiring: registeredCommands has vsdb.exportAllStructures + package.json menu covers connection|schema", () => {
+  it("#7 wiring: registeredCommands has UnicDB.exportAllStructures + package.json menu covers connection|schema", () => {
     const mgr = makeFakeMgr();
     const { provider, treeView } = makeTreeWithAdapter(mgr.adapter);
     registerSchemaTreeProvider(provider);
@@ -1186,13 +1186,13 @@ describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    expect(state.registeredCommands.has("vsdb.exportAllStructures")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.exportAllStructures")).toBe(true);
     const pkgPath = path.join(__dirname, "..", "..", "..", "package.json");
     const pkgJson = fs.readFileSync(pkgPath, "utf8");
     interface MenuItem { command: string; when: string; }
     const menuItems = JSON.parse(pkgJson)
       .contributes.menus["view/item/context"] as MenuItem[];
-    const entry = menuItems.find((m) => m.command === "vsdb.exportAllStructures");
+    const entry = menuItems.find((m) => m.command === "UnicDB.exportAllStructures");
     expect(entry).toBeDefined();
     expect(entry!.when).toMatch(/viewItem == connection/);
     expect(entry!.when).toMatch(/viewItem == schema/);
@@ -1205,7 +1205,7 @@ describe("tableCommands — TASK-004 vsdb.exportAllStructures", () => {
 // (forms open, DDL runs, clipboard writes).
 // Test Case #2: `tableDdl: false` (MySQL/MSSQL-shaped) stops EVERY current
 // table-DDL utility command before runQuery / listTableDetail / AI / clipboard
-// / form side effects with one concise `VSDB:` message.
+// / form side effects with one concise `UnicDB:` message.
 // =============================================================================
 describe("tableCommands — DBX-08 tableDdl capability gate", () => {
   /** Register commands against a fresh tree for the given adapter opts. */
@@ -1222,7 +1222,7 @@ describe("tableCommands — DBX-08 tableDdl capability gate", () => {
     return { mgr, treeView };
   }
 
-  function tableNodeMeta(cfg: ConnectionConfig): VsdbNode {
+  function tableNodeMeta(cfg: ConnectionConfig): UnicDBNode {
     return {
       label: "t",
       contextValue: "table",
@@ -1232,13 +1232,13 @@ describe("tableCommands — DBX-08 tableDdl capability gate", () => {
   }
 
   const TABLE_DDL_COMMANDS = [
-    "vsdb.modifyTable",
-    "vsdb.copyCreateDdl",
-    "vsdb.generateSampleData",
-    "vsdb.analyzeTable",
-    "vsdb.vacuumTable",
-    "vsdb.renameTable",
-    "vsdb.renameColumn",
+    "UnicDB.modifyTable",
+    "UnicDB.copyCreateDdl",
+    "UnicDB.generateSampleData",
+    "UnicDB.analyzeTable",
+    "UnicDB.vacuumTable",
+    "UnicDB.renameTable",
+    "UnicDB.renameColumn",
   ] as const;
 
   /** Exact concise capability message the guard must emit for a command. */
@@ -1258,8 +1258,8 @@ describe("tableCommands — DBX-08 tableDdl capability gate", () => {
       exportAllStructures: "Export All Structures",
       createSchema: "Create Schema",
     };
-    const key = command.replace("vsdb.", "");
-    return `VSDB: ${titles[key]} is not supported by this connection's database.`;
+    const key = command.replace("UnicDB.", "");
+    return `UnicDB: ${titles[key]} is not supported by this connection's database.`;
   }
 
   it("declared PostgreSQL table-DDL preserves existing flow (analyze + vacuum + copyCreateDdl)", async () => {
@@ -1272,9 +1272,9 @@ describe("tableCommands — DBX-08 tableDdl capability gate", () => {
       tables: [{ name: "t", schema: "public" }],
     });
     const tableNode = tableNodeMeta(mgr.mgr.cfg);
-    await state.registeredCommands.get("vsdb.analyzeTable")!(tableNode);
-    await state.registeredCommands.get("vsdb.vacuumTable")!(tableNode);
-    await state.registeredCommands.get("vsdb.copyCreateDdl")!(tableNode);
+    await state.registeredCommands.get("UnicDB.analyzeTable")!(tableNode);
+    await state.registeredCommands.get("UnicDB.vacuumTable")!(tableNode);
+    await state.registeredCommands.get("UnicDB.copyCreateDdl")!(tableNode);
     const ddlCalls = mgr.mgr.adapter.runCalls.map((c) => c.sql);
     expect(ddlCalls).toContain('ANALYZE "public"."t"');
     expect(ddlCalls).toContain('VACUUM ANALYZE "public"."t"');
@@ -1289,7 +1289,7 @@ describe("tableCommands — DBX-08 tableDdl capability gate", () => {
       capabilities: { catalog: false, objectDdl: false, tableDdl: true, admin: false },
     });
     const tableNode = tableNodeMeta(mgr.mgr.cfg);
-    await state.registeredCommands.get("vsdb.analyzeTable")!(tableNode);
+    await state.registeredCommands.get("UnicDB.analyzeTable")!(tableNode);
     expect(mgr.mgr.adapter.runCalls.some((c) => c.sql.startsWith("ANALYZE"))).toBe(true);
     expect(state.errorMessages).toHaveLength(0);
   });
@@ -1317,22 +1317,22 @@ describe("tableCommands — DBX-08 tableDdl capability gate", () => {
 
   it("tableDdl:false blocks newTable before form creation", async () => {
     const mgr = setup({ driver: "mysql", listTableDetailUnsupported: true });
-    const schemaNode: VsdbNode = {
+    const schemaNode: UnicDBNode = {
       label: "public",
       contextValue: "schema",
       collapsible: 0,
       meta: { connection: mgr.mgr.cfg, schema: "public" },
     };
-    await state.registeredCommands.get("vsdb.newTable")!(schemaNode);
+    await state.registeredCommands.get("UnicDB.newTable")!(schemaNode);
     expect(state.createdPanels.length).toBe(0);
     expect(mgr.mgr.adapter.runCalls).toHaveLength(0);
     expect(
-      state.infoMessages.some((m) => m === expectedMsg("vsdb.newTable")),
+      state.infoMessages.some((m) => m === expectedMsg("UnicDB.newTable")),
     ).toBe(true);
   });
 
   it("tableDdl:false blocks postmanPayload + exportStructure + exportAllStructures before clipboard", async () => {
-    for (const cmd of ["vsdb.postmanPayload", "vsdb.exportStructure", "vsdb.exportAllStructures"]) {
+    for (const cmd of ["UnicDB.postmanPayload", "UnicDB.exportStructure", "UnicDB.exportAllStructures"]) {
       const mgr = setup({ driver: "mysql", listTableDetailUnsupported: true });
       vscode.env.clipboard.writeText.mockClear();
       const tableNode = tableNodeMeta(mgr.mgr.cfg);
@@ -1353,24 +1353,24 @@ describe("tableCommands — DBX-08 tableDdl capability gate", () => {
     const mgr = setup({ driver: "mysql", listTableDetailUnsupported: true });
     const tableNode = tableNodeMeta(mgr.mgr.cfg);
     state.inputBoxResult = "5";
-    await state.registeredCommands.get("vsdb.generateSampleData")!(tableNode);
+    await state.registeredCommands.get("UnicDB.generateSampleData")!(tableNode);
     expect(
-      state.infoMessages.some((m) => m === expectedMsg("vsdb.generateSampleData")),
+      state.infoMessages.some((m) => m === expectedMsg("UnicDB.generateSampleData")),
     ).toBe(true);
     expect(
       state.infoMessages.some((m) => /AI not configured/i.test(m)),
     ).toBe(false);
   });
 
-  // DBX06-006 — `vsdb.renameTable` with tableDdl:false emits the exact DBX-08
+  // DBX06-006 — `UnicDB.renameTable` with tableDdl:false emits the exact DBX-08
   // capability message and performs zero side effects (no panel, no
   // renameUsage lookup, no listTableDetail, no runQuery).
-  it("vsdb.renameTable with tableDdl:false shows the exact message and no side effects", async () => {
+  it("UnicDB.renameTable with tableDdl:false shows the exact message and no side effects", async () => {
     const mgr = setup({ driver: "mysql", listTableDetailUnsupported: true });
     const tableNode = tableNodeMeta(mgr.mgr.cfg);
-    await state.registeredCommands.get("vsdb.renameTable")!(tableNode);
+    await state.registeredCommands.get("UnicDB.renameTable")!(tableNode);
     expect(
-      state.infoMessages.some((m) => m === expectedMsg("vsdb.renameTable")),
+      state.infoMessages.some((m) => m === expectedMsg("UnicDB.renameTable")),
     ).toBe(true);
     expect(state.createdPanels.length).toBe(0);
     expect(mgr.mgr.adapter.runCalls).toHaveLength(0);
@@ -1397,13 +1397,13 @@ describe("tableCommands — TASK-CL-002 ARP-07 invalidation seam", () => {
       context: { subscriptions: [] } as unknown as ExtensionContext,
       onSchemaDdl,
     });
-    const schemaNode: VsdbNode = {
+    const schemaNode: UnicDBNode = {
       label: "public",
       contextValue: "schema",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public" },
     };
-    await state.registeredCommands.get("vsdb.newTable")!(schemaNode);
+    await state.registeredCommands.get("UnicDB.newTable")!(schemaNode);
     const panel = state.createdPanels[0];
     const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
     await handler({ type: "ready" });
@@ -1441,13 +1441,13 @@ describe("tableCommands — TASK-CL-002 ARP-07 invalidation seam", () => {
       context: { subscriptions: [] } as unknown as ExtensionContext,
       onSchemaDdl,
     });
-    const tableNode: VsdbNode = {
+    const tableNode: UnicDBNode = {
       label: "t",
       contextValue: "table",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", objectName: "t" },
     };
-    await state.registeredCommands.get("vsdb.modifyTable")!(tableNode);
+    await state.registeredCommands.get("UnicDB.modifyTable")!(tableNode);
     const panel = state.createdPanels[0];
     const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
     await handler({ type: "ready" });
@@ -1482,13 +1482,13 @@ describe("tableCommands — TASK-CL-002 ARP-07 invalidation seam", () => {
       context: { subscriptions: [] } as unknown as ExtensionContext,
       onSchemaDdl,
     });
-    const schemaNode: VsdbNode = {
+    const schemaNode: UnicDBNode = {
       label: "public",
       contextValue: "schema",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public" },
     };
-    await state.registeredCommands.get("vsdb.newTable")!(schemaNode);
+    await state.registeredCommands.get("UnicDB.newTable")!(schemaNode);
     const panel = state.createdPanels[0];
     const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
     await handler({ type: "ready" });
@@ -1510,13 +1510,13 @@ describe("tableCommands — TASK-CL-002 ARP-07 invalidation seam", () => {
       treeView: treeView as unknown as TreeView<unknown>,
       context: { subscriptions: [] } as unknown as ExtensionContext,
     });
-    const schemaNode: VsdbNode = {
+    const schemaNode: UnicDBNode = {
       label: "public",
       contextValue: "schema",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public" },
     };
-    const fn = state.registeredCommands.get("vsdb.newTable");
+    const fn = state.registeredCommands.get("UnicDB.newTable");
     await fn!(schemaNode);
     const panel = state.createdPanels[0];
     const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
@@ -1546,13 +1546,13 @@ describe("tableCommands — TASK-CL-002 ARP-07 invalidation seam", () => {
       context: { subscriptions: [] } as unknown as ExtensionContext,
       onSchemaDdl,
     });
-    const schemaNode: VsdbNode = {
+    const schemaNode: UnicDBNode = {
       label: "public",
       contextValue: "schema",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public" },
     };
-    await state.registeredCommands.get("vsdb.newTable")!(schemaNode);
+    await state.registeredCommands.get("UnicDB.newTable")!(schemaNode);
     const panel = state.createdPanels[0];
     const handler = panel.webview.onDidReceiveMessage.mock.calls[0][0] as (msg: unknown) => Promise<void>;
     await handler({ type: "ready" });
@@ -1567,8 +1567,8 @@ describe("tableCommands — TASK-CL-002 ARP-07 invalidation seam", () => {
 });
 
 // =============================================================================
-// TASK-UX1-003 — R1: "Insert Sample Data…" rewires vsdb.generateSampleData to
-// open the VSDB Console pre-filled with typed INSERT templates (manual
+// TASK-UX1-003 — R1: "Insert Sample Data…" rewires UnicDB.generateSampleData to
+// open the UnicDB Console pre-filled with typed INSERT templates (manual
 // execution). The AI-driven flow code stays importable + unit-tested in
 // src/ui/__tests__/sampleDataAi.test.ts (case 8 regression) — the menu default
 // just stops calling it. buildInsertTemplate is a pure export on tableCommands.
@@ -1612,20 +1612,20 @@ describe("tableCommands — buildInsertTemplate (pure)", () => {
     expect(out.trim().endsWith(";")).toBe(true);
   });
 
-  it("case #2: menu retitle — package.json vsdb.generateSampleData title is 'Insert Sample Data…' (id unchanged)", () => {
+  it("case #2: menu retitle — package.json UnicDB.generateSampleData title is 'Insert Sample Data…' (id unchanged)", () => {
     const pkgPath = path.join(__dirname, "..", "..", "..", "package.json");
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as {
       contributes: { commands: Array<{ command: string; title: string }> };
     };
-    const cmd = pkg.contributes.commands.find((c) => c.command === "vsdb.generateSampleData");
+    const cmd = pkg.contributes.commands.find((c) => c.command === "UnicDB.generateSampleData");
     expect(cmd).toBeDefined();
     expect(cmd!.title).toBe("Insert Sample Data…");
-    // activationEvents + menu entries unchanged (id still vsdb.generateSampleData)
+    // activationEvents + menu entries unchanged (id still UnicDB.generateSampleData)
     const actEvts: unknown = (pkg as unknown as {
       activationEvents?: string[];
     }).activationEvents;
     if (Array.isArray(actEvts)) {
-      expect(actEvts).toContain("onCommand:vsdb.generateSampleData");
+      expect(actEvts).toContain("onCommand:UnicDB.generateSampleData");
     }
   });
 
@@ -1664,7 +1664,7 @@ describe("tableCommands — buildInsertTemplate (pure)", () => {
     expect(out).toMatch(/\/\* USER-DEFINED \*\/ NULL/);
     // Every statement round-trips through splitStatements without leaving an
     // unbalanced string literal / construct stack. The first parsed
-    // statement is the leading `-- VSDB: ...` header comment block, so we
+    // statement is the leading `-- UnicDB: ...` header comment block, so we
     // filter to lines that actually start a SQL statement. splitStatements
     // strips the trailing `;` on each parsed statement — the original
     // buffer must contain it (and our buildInsertTemplate guarantees that).
@@ -1692,7 +1692,7 @@ describe("tableCommands — buildInsertTemplate (pure)", () => {
   });
 });
 
-describe("tableCommands — vsdb.generateSampleData (TASK-UX1-003 console templates)", () => {
+describe("tableCommands — UnicDB.generateSampleData (TASK-UX1-003 console templates)", () => {
   // Hoisted mock fns so vi.mock factories (which run before imports resolve)
   // can hand the same instances back via sampleDataAi + AiConfigStore.
   const aiHarness = vi.hoisted(() => ({
@@ -1754,7 +1754,7 @@ describe("tableCommands — vsdb.generateSampleData (TASK-UX1-003 console templa
       context: makeCtx(),
       openConsoleWithTemplate: consoleSeam.openConsoleWithTemplate,
     });
-    const tableNode: VsdbNode = {
+    const tableNode: UnicDBNode = {
       label: "users",
       contextValue: "table",
       collapsible: 0,
@@ -1785,7 +1785,7 @@ describe("tableCommands — vsdb.generateSampleData (TASK-UX1-003 console templa
       { column_name: "created_at", format_type: "timestamp", is_nullable: "YES", column_default: null },
     ];
     const { mgr, tableNode } = setupCommand(cols);
-    await state.registeredCommands.get("vsdb.generateSampleData")!(tableNode);
+    await state.registeredCommands.get("UnicDB.generateSampleData")!(tableNode);
     // Console opened once with a non-empty buffer
     expect(consoleSeam.openConsoleWithTemplate).toHaveBeenCalledTimes(1);
     const [name, buffer] = consoleSeam.openConsoleWithTemplate.mock.calls[0]!;
@@ -1811,16 +1811,16 @@ describe("tableCommands — vsdb.generateSampleData (TASK-UX1-003 console templa
       context: makeCtx(),
       openConsoleWithTemplate: consoleSeam.openConsoleWithTemplate,
     });
-    const tableNode: VsdbNode = {
+    const tableNode: UnicDBNode = {
       label: "t",
       contextValue: "table",
       collapsible: 0,
       meta: { connection: mgr.cfg, schema: "public", objectName: "t" },
     };
-    await state.registeredCommands.get("vsdb.generateSampleData")!(tableNode);
+    await state.registeredCommands.get("UnicDB.generateSampleData")!(tableNode);
     expect(
       state.infoMessages.some((m) =>
-        m === "VSDB: Insert Sample Data… is not supported by this connection's database.",
+        m === "UnicDB: Insert Sample Data… is not supported by this connection's database.",
       ),
     ).toBe(true);
     expect(consoleSeam.openConsoleWithTemplate).not.toHaveBeenCalled();
@@ -1834,7 +1834,7 @@ describe("tableCommands — vsdb.generateSampleData (TASK-UX1-003 console templa
       { column_name: "id", format_type: "integer", is_nullable: "NO", column_default: "nextval('users_seq')" },
     ];
     const { tableNode } = setupCommand(cols);
-    await state.registeredCommands.get("vsdb.generateSampleData")!(tableNode);
+    await state.registeredCommands.get("UnicDB.generateSampleData")!(tableNode);
     expect(consoleSeam.openConsoleWithTemplate).toHaveBeenCalledTimes(1);
     const [, buffer] = consoleSeam.openConsoleWithTemplate.mock.calls[0]!;
     expect(buffer as string).toMatch(/-- Edit values, then run/i);

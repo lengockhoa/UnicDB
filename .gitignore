@@ -20,7 +20,7 @@ CLAUDE.md
 .codex/settings.local.json
 # /UKit
 
-# VSDB build outputs
+# UnicDB build outputs
 dist/
 *.vsix
 *.tsbuildinfo

@@ -75,7 +75,7 @@ npm run typecheck
 - Debounce design: one module-level timer + one per-tab dirty map is enough — `dirtyByTab: Set<string>` plus `pendingFlushTimer`. `on input` → set local buffer (existing behavior), add tab to dirty set, reset the single 500ms timer. Timer fires → `flushPending()` posts `updateBuffer` for the ACTIVE dirty tab only (latest-wins per active tab; a background dirty tab flushes when the user returns to it via the flush-before-switch hook). Simplest correct variant acceptable; the test pins are: one `updateBuffer` per debounce window with the final value (#4), and `updateBuffer` before `switchTab` (#7).
 - `flushPending()` must be idempotent and cheap — it removes the tab from the dirty set and posts if the tab still exists. It is the single function shared by the debounce timer, `visibilitychange`, `beforeunload`, and the switch/close pre-post hooks, so test #5/#6/#7 all exercise the same code path.
 - jsdom `visibilityState` is read-only; if `Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true })` does not stick, drop test #6 to a comment + the Discussion note and rely on #5 (beforeunload) + #4 (debounce) — the flush function is identical. Record what you tried.
-- Clear button placement: the existing toolbar (`consolePanelMain.ts:69-78`) — add `<button id="consoleClearDraftsBtn" class="vsdb-console-secondary">Clear drafts</button>` next to History. Click handler: cancel the pending timer, clear `dirtyByTab` for the active tab, set local buffer `""` + `e.value = ""`, then `post({ type: "clearDrafts" })`. No confirm dialog (PLAN §3).
+- Clear button placement: the existing toolbar (`consolePanelMain.ts:69-78`) — add `<button id="consoleClearDraftsBtn" class="UnicDB-console-secondary">Clear drafts</button>` next to History. Click handler: cancel the pending timer, clear `dirtyByTab` for the active tab, set local buffer `""` + `e.value = ""`, then `post({ type: "clearDrafts" })`. No confirm dialog (PLAN §3).
 - The `state` handler already clobbers `tabs` (`327-341`) — that is fine AFTER the flush-before-switch fix because the host now has the latest buffer before it pushes state. Do not weaken the `state` handler.
 
 ---
@@ -92,7 +92,7 @@ npm run typecheck
 Command: `npx vitest run src/ui/__tests__/consolePanelBundle.test.ts src/ui/__tests__/consoleTabs.test.ts`
 
 ```
-RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp08-003
+RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-arp08-003
 
  ✓ src/ui/__tests__/consoleTabs.test.ts  (9 tests) 20ms
  ❯ src/ui/__tests__/consolePanelBundle.test.ts  (18 tests | 8 failed) 72ms
@@ -141,7 +141,7 @@ Note: consoleTabs.test.ts #30 (host pin) passed pre-implementation — correct: 
 - `cancelPendingFlush()`: timer-only cancel used by Clear drafts and the `draftsCleared` reset.
 - `input` handler: existing local-buffer mutation + `requestGhost()` preserved byte-for-byte; added dirty-add + cancel/re-arm of the 500ms timer (latest-wins: each keystroke resets, only the final value posts).
 - History recall (ArrowUp/Down + history-pane click) and `acceptGhost()` buffer mutations arm the same debounce (task-file requirement).
-- Clear drafts button: `consoleClearDraftsBtn` / `vsdb-console-secondary` next to History, matching house style. Handler empties textarea + local buffer, removes dirty, cancels the timer, posts `{ type: "clearDrafts" }`. No `confirm()` — the click IS the confirmation.
+- Clear drafts button: `consoleClearDraftsBtn` / `UnicDB-console-secondary` next to History, matching house style. Handler empties textarea + local buffer, removes dirty, cancels the timer, posts `{ type: "clearDrafts" }`. No `confirm()` — the click IS the confirmation.
 - `draftsCleared` handler: cancels pending flush, clears dirty set, resets `tabs` to one fresh `tab-1 / Query 1 / ""`, resets `historyIndex`, renders through the existing `render()` path (restore pre-input).
 - No host→webview message added; `state` handler untouched; `consolePanelMessages.ts` / `consolePanel.ts` NOT modified (001/002 own them). No `vscode` import in the webview bundle; `updateBuffer` frames carry only `tabId`+`buffer`, `clearDrafts` is type-only — no secret/result data.
 - AIC-004 ghost text, TASK-002 context menu, and history recall behavior unchanged (all pre-existing bundle tests still green: 10 TASK-002 + 9 host tabs tests).

@@ -107,7 +107,7 @@ discipline (`totalBytesBilled: string` in `bigqueryTypes.ts`).
   - src/adapters/__tests__/bigqueryConfig.test.ts: NEW — 13 unit tests covering all 6 task §Test Cases. Fixture `bqCfg()` mirrors factory.test.ts pattern with minimum required fields.
   - src/adapters/factory.ts: added `case "bigquery": throw new NotImplementedError("bigquery")` to keep the `never` exhaustiveness arm valid (BQ01-003 will replace with real adapter case).
   - src/ui/browseCommands.ts: added `case "bigquery": throw new Error(...)` to `quoteForDriver()` switch — same exhaustiveness reason.
-  - src/extension.ts: added private `toSqlDialect()` helper (DriverType | undefined → SqlDialect | undefined; returns undefined for bigquery) and wrapped 5 call sites (VsdbCodeLensProvider, sqlToRun x2, confirmDangerousStatements, invalidateAfterSchemaDdl). SqlDialect type stays narrow.
+  - src/extension.ts: added private `toSqlDialect()` helper (DriverType | undefined → SqlDialect | undefined; returns undefined for bigquery) and wrapped 5 call sites (UnicDBCodeLensProvider, sqlToRun x2, confirmDangerousStatements, invalidateAfterSchemaDdl). SqlDialect type stays narrow.
   - src/ui/resultsPanel.ts: added private `toDialect()` helper (DriverType | null → Dialect | null; returns null for bigquery) and wrapped 4 call sites (decorateStateMessage, distinct values, requery parsing, requery compose). Dialect type stays narrow.
 
 **TESTS_ADDED:**
@@ -136,7 +136,7 @@ discipline (`totalBytesBilled: string` in `bigqueryTypes.ts`).
   command: npm run typecheck
   result: clean / exit 0 (no errors)
   output_excerpt: |
-    > vsdb@1.46.0 typecheck
+    > UnicDB@1.46.0 typecheck
     > tsc --noEmit
   command: npx vitest run src/adapters/__tests__/bigqueryConfig.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryAdc.test.ts src/adapters/__tests__/factory.test.ts
   result: 30 pass / 0 fail / exit 0 (BQ-00 surfaces + factory stay green)

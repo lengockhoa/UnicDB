@@ -86,7 +86,7 @@ VERIFICATION:
   command: `npx vitest run src/core/__tests__/ddlAlterTable.test.ts && npx tsc --noEmit`
   result: 14 pass / 0 fail (vitest), tsc no errors, both exit 0
   output_excerpt: |
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-003
      ✓ src/core/__tests__/ddlAlterTable.test.ts  (14 tests) 3ms
      Test Files  1 passed (1)
           Tests  14 passed (14)

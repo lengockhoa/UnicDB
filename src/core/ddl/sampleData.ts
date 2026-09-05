@@ -1,6 +1,6 @@
 // src/core/ddl/sampleData.ts
 // TASK-005 — Pure PostgreSQL INSERT … VALUES sample-data generator.
-// No vscode imports, no I/O. Used by vsdb.generateSampleData command (TASK-005).
+// No vscode imports, no I/O. Used by UnicDB.generateSampleData command (TASK-005).
 //
 // Spec (from task file §src/core/ddl/sampleData.ts):
 //   generateSampleInserts(spec, n): string

@@ -211,14 +211,14 @@ describe("buildTunnelArgs", () => {
 describe("parseTunnelProcLine", () => {
   it("parses our marker line", () => {
     const p = parseTunnelProcLine(
-      "12345 ssh -v -N -T -o SetEnv=VSDB_TUNNEL=vsdb-tunnel:conn1 bastion",
+      "12345 ssh -v -N -T -o SetEnv=UnicDB_TUNNEL=UnicDB-tunnel:conn1 bastion",
     );
     expect(p).toEqual({ pid: 12345, localPort: undefined });
   });
 
   it("parses marker with port", () => {
     const p = parseTunnelProcLine(
-      " 999 ssh ... VSDB_TUNNEL=vsdb-tunnel:15432 ... bastion",
+      " 999 ssh ... UnicDB_TUNNEL=UnicDB-tunnel:15432 ... bastion",
     );
     expect(p).toEqual({ pid: 999, localPort: 15432 });
   });

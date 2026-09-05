@@ -14,7 +14,7 @@ Make the webview results panel accumulate tabs across runs without replace churn
 - `webview/main.ts` — SURGICAL changes only (file is 3612 LOC — do not refactor):
   1. State handler (:3429-3492): detect append as `msg.results.length > results.length` (computed BEFORE :3433 reassigns). On append: capture `prevLen`; keep `distinctByColumn`/`distinctNotesByColumn` entries with keys `${i}::${col}` for `i < prevLen`; set `activeTab = prevLen` (first new tab) BEFORE the identity check so the existing identity computation (:3462-3476) runs only for the new active tab. The shrink clamp (:3457) stays for replace runs.
   2. `tabTitle` (:1090-1103): if `r.runNo` and `r.runStmtNo` are numbers → `Run ${r.runNo} · Stmt ${r.runStmtNo}` (fall back to existing `label`/"Statement N" behavior when absent — replace-mode and browse tabs unchanged).
-  3. No other function changes: `rebuildTabs` (:1105-1135) already renders whatever `results` holds; messages tab index (`results.length`) already accounts for growth. STYLES.CSS MUST NOT BE TOUCHED — labels use the existing `.vsdb-tab` classes (cycle AG owns styles.css right now).
+  3. No other function changes: `rebuildTabs` (:1105-1135) already renders whatever `results` holds; messages tab index (`results.length`) already accounts for growth. STYLES.CSS MUST NOT BE TOUCHED — labels use the existing `.UnicDB-tab` classes (cycle AG owns styles.css right now).
 - `tests/webviewMultiRunTabs.test.ts` — NEW: jsdom bundle test following the `tests/webviewRequeryAlignment.test.ts` pattern (loads `dist/webview.js`, dispatches state messages via `window.postMessage`/handler, asserts tab strip DOM + cache state; skipped when dist missing; `@vitest-environment jsdom`).
 - `tests/webviewEditHighlight.test.ts`, `tests/webviewRequeryAlignment.test.ts`, `tests/webviewUndoRedo.test.ts` — REGRESSION only (must stay green unmodified).
 
@@ -22,7 +22,7 @@ Make the webview results panel accumulate tabs across runs without replace churn
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit | growth state post grows the tab strip and activates the first new tab | dispatch state with 2 results, then state with 5 (2 old + 3 new) → tab strip shows 5 statement tabs + Messages tab; tab at index 2 carries `.vsdb-tab-active`; old tabs' DOM nodes keep their labels/badges | dist/webview.js loaded; two sequential state posts via the message listener |
+| 1 | unit | growth state post grows the tab strip and activates the first new tab | dispatch state with 2 results, then state with 5 (2 old + 3 new) → tab strip shows 5 statement tabs + Messages tab; tab at index 2 carries `.UnicDB-tab-active`; old tabs' DOM nodes keep their labels/badges | dist/webview.js loaded; two sequential state posts via the message listener |
 | 2 | unit | stamped entries show "Run N · Stmt M" labels | results entries with `runNo:2, runStmtNo:1` → tab text starts `Run 2 · Stmt 1`; entries WITHOUT runNo (replace-mode/browse) → label falls back to `Statement N` / `r.label` exactly as today | direct state posts with/without the fields |
 | 3 | edge (cache-stability) | append post does NOT clear old tabs' DISTINCT caches | request distinct for column on tab 0; post growth state (3 new tabs) → `distinctByColumn` still returns the cached entry for key `0::col`; only the new active tab's cache is empty; the identity generation bump fired exactly once (for the new tab) | fixture with a captured distinct reply before the append post |
 | 4 | edge (boundary/shrink) | replace-run shrink still clamps | after a 5-tab accumulated view, dispatch a state post with 1 result (replace run / new panel context) → `activeTab` clamps to 0 (Messages guard `activeTab <= results.length` holds), old caches for indices >= 1 cleared via the existing identity path | 5-tab fixture then a shrinking state post |
@@ -53,7 +53,7 @@ npm test
 - [ ] Every test in §Test Cases passes (RED first for new cases, GREEN after; RED output pasted in Executor Report).
 - [ ] Bôi đen 3 câu → 3 tabs; second run appends 3 more → 6 tabs, newest active, old tabs' rows/labels/caches intact (matches PLAN_AH §1 success definition).
 - [ ] `webview/main.ts` diff is confined to the state handler + `tabTitle` (surgical; no refactor of the 3612-LOC file).
-- [ ] NO diff in `webview/styles.css` (cycle AG lock) — labels reuse existing `.vsdb-tab` classes.
+- [ ] NO diff in `webview/styles.css` (cycle AG lock) — labels reuse existing `.UnicDB-tab` classes.
 - [ ] `src/ui/messages.ts` unchanged — append is derived from array growth, not a new field.
 - [ ] No diff in `src/**` at all (host files belong to AH-001/AH-002); `npm run typecheck` exit 0; full `npm test` green; `npm run compile` clean.
 
@@ -117,7 +117,7 @@ VERIFICATION:
   command: npm run typecheck
   result: exit 0
   output_excerpt: |
-    > vsdb@1.13.0 typecheck
+    > UnicDB@1.13.0 typecheck
     > tsc --noEmit
   command: npm test
   result: exit 0

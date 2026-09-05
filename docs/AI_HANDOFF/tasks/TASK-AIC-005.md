@@ -23,7 +23,7 @@ Wire the AIC service into VS Code SQL editors and Console lifecycle: register a 
 | 3 | edge — lifecycle | deactivation disposes all autocomplete resources | `deactivate()` disposes native provider/service and a late completion cannot publish; no throw with partial VS Code language mock. | Disposable/cancellation fakes. |
 | 4 | edge — unavailable | unconfigured autocomplete does not affect activation | Missing AI config/model registers safely, typing path returns no result through the provider seam, one passive status-bar affordance can open AI Settings, and no modal/notification opens during typing. | Existing unconfigured context fixture. |
 | 5 | edge — configuration lifecycle | disabling model mid-session clears work | Saving empty-after-trim autocomplete ID cancels pending work, clears editor/Console ghosts and cache, and makes no provider call until re-enabled. | Deferred service request and settings-change fixture. |
-| 6 | regression | Console and AI Chat/run paths remain separate | Console autocomplete callback does not call `QueryRunner.run` while typing; current `vsdb.aiChat`, `vsdb.openConsole`, deterministic completion, semantic tokens, and command registration tests remain green. | Existing extension mock harness. |
+| 6 | regression | Console and AI Chat/run paths remain separate | Console autocomplete callback does not call `QueryRunner.run` while typing; current `UnicDB.aiChat`, `UnicDB.openConsole`, deterministic completion, semantic tokens, and command registration tests remain green. | Existing extension mock harness. |
 
 ## Test Files
 

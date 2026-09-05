@@ -29,8 +29,8 @@ export function buildCompareHtml(
   <link rel="stylesheet" href="${styleUri}" />
   <title>Compare Tables</title>
 </head>
-<body class="vsdb-form-body">
-  <div id="vsdb-root" class="vsdb-compare"></div>
+<body class="UnicDB-form-body">
+  <div id="UnicDB-root" class="UnicDB-compare"></div>
   <script src="${scriptUri}"></script>
 </body>
 </html>`;

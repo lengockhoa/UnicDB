@@ -177,10 +177,10 @@ red_output: |
   1) keysetPaging.test.ts (module did not exist):
      Error: Failed to load ../src/ui/keysetPaging.ts from ../src/ui/__tests__/keysetPaging.test.ts
   2) requery keyset test:
-     AssertionError: expected 'SELECT * FROM (SELECT * FROM events) vsdb_page ORDER BY "id" DESC LIMIT 500 OFFSET 100000'
+     AssertionError: expected 'SELECT * FROM (SELECT * FROM events) UnicDB_page ORDER BY "id" DESC LIMIT 500 OFFSET 100000'
      to contain '("created_at" < \'2026-01-01T00:00:00Z\') OR (…AND "id" > 42)'
   3) widening test:
-     expected 'SELECT * FROM (SELECT name FROM users) vsdb_page …' to be 'SELECT * FROM (SELECT name, "id" FROM users) …'
+     expected 'SELECT * FROM (SELECT name FROM users) UnicDB_page …' to be 'SELECT * FROM (SELECT name, "id" FROM users) …'
   4) manualCommit stale-index test:
      AssertionError: expected [ 'SELECT secret FROM audit_log' ] to have a length of +0 but got 1
   5) saveEdits refresh-failure test:
@@ -277,7 +277,7 @@ blocking item is the dropped NULLS field; it is a small, well-localised fix.
 RESPONDER_MODEL: bao-sonnet
 FIX_SUMMARY: Carried user OrderByTerm fields through composeKeysetQuery with structural spreads, derived keyset views from the full terms, and forced NULLS-ordered terms onto the OFFSET fallback because raw keyset comparisons cannot model null ranking. Added postgres/mysql/mssql byte-identity regression tests, refusal tests, and a nulls-free keyset guard.
 RED_OUTPUT: |
-  $ npx vitest run /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/keysetPaging.test.ts
+  $ npx vitest run /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/src/ui/__tests__/keysetPaging.test.ts
 
    ❯ src/ui/__tests__/keysetPaging.test.ts  (40 tests | 8 failed) 11ms
      ❯ ... > postgres native: NULLS LAST + deep offset is byte-identical to buildPagedQueryTerms
@@ -296,7 +296,7 @@ RED_OUTPUT: |
        Tests  8 failed | 32 passed (40)
 
 Verification Output: |
-  $ npx vitest run /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/keysetPaging.test.ts /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/resultsPanelRequery.test.ts /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/manualCommit.test.ts /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/resultsPanelSaveEdits.test.ts /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/resultsPanelOrderBy.test.ts && npm run typecheck
+  $ npx vitest run /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/src/ui/__tests__/keysetPaging.test.ts /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/src/ui/__tests__/resultsPanelRequery.test.ts /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/src/ui/__tests__/manualCommit.test.ts /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/src/ui/__tests__/resultsPanelSaveEdits.test.ts /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/src/ui/__tests__/resultsPanelOrderBy.test.ts && npm run typecheck
 
    ✓ src/ui/__tests__/keysetPaging.test.ts  (40 tests) 8ms
    ✓ src/ui/__tests__/manualCommit.test.ts  (12 tests) 9ms
@@ -307,7 +307,7 @@ Verification Output: |
    Test Files  5 passed (5)
         Tests  111 passed (111)
 
-  > vsdb@1.6.7 typecheck
+  > UnicDB@1.6.7 typecheck
   > tsc --noEmit
 
 Status: PASS

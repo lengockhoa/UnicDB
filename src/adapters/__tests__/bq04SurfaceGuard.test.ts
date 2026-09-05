@@ -55,7 +55,7 @@ function gitDiff(ref: string, paths: readonly string[]): string {
  * diff. Every release cycle:
  *  - bumps `version` from one cycle to the next (intentional);
  *  - may add new command palette entries / menu bindings for new features
- *    (intentional, e.g. `vsdb.openConsoleForObject` shipped after BQ-04).
+ *    (intentional, e.g. `UnicDB.openConsoleForObject` shipped after BQ-04).
  * The guard exists to catch ADAPTER drift (new / removed / upgraded
  * dependencies, @google-cloud/bigquery version drift), not version or
  * contributes drift. Returns the +/- lines that remain after filtering;
@@ -65,7 +65,7 @@ function gitDiff(ref: string, paths: readonly string[]): string {
  * keys (`command`, `title`, `category`, `icon`, `when`, `group`,
  * `keybinding`, `mac`, `win`, `linux`) when the line is part of a command
  * block or menu binding. The simpler approach — filter by a single
- * `+/- "command": "vsdb.X",` anchor — works for the command block but
+ * `+/- "command": "UnicDB.X",` anchor — works for the command block but
  * misses the surrounding `title`/`category`/`icon`/`when`/`group` lines
  * that live in the same diff hunk. Filtering on a whitelist of safe
  * contributes keys covers both the command palette block and the menu
@@ -93,7 +93,7 @@ function packageJsonDepsDiff(ref: string): string {
   const contributesMenuKeyPattern =
     /^[+-]\s+"(webview\/[a-zA-Z0-9/._-]+|view\/[a-zA-Z0-9/._-]+|editor\/[a-zA-Z0-9/._-]+|scm\/[a-zA-Z0-9/._-]+|file\/[a-zA-Z0-9/._-]+|commandPalette|menus)":\s*[?[{]?\s*$/;
   // TASK-UX1-006 (R8a) — extension 1: `activationEvents` lines of the
-  // shape `+        "onCommand:vsdb.<id>",` are non-dependency contributes
+  // shape `+        "onCommand:UnicDB.<id>",` are non-dependency contributes
   // (UX1 tasks add new onCommand activation events). Anchored to the FULL
   // line shape so unrelated `onCommand:` strings in dependencies/scripts
   // never match.
@@ -108,7 +108,7 @@ function packageJsonDepsDiff(ref: string): string {
   const bareListDelimiter = /^[+-]\s*\[\s*,?\s*$/;
   const bareListClose = /^[+-]\s*\]\s*,?\s*$/;
 
-  // TASK-UX1-006 (R8a) — extension 2: a `vsdb.<dotted.id>` configuration
+  // TASK-UX1-006 (R8a) — extension 2: a `UnicDB.<dotted.id>` configuration
   // PROPERTY KEY opens a sub-block whose content is non-dependency
   // contributes. To detect when a +/- line is INSIDE such a block we
   // need to know the property block's line range in the SOURCE file
@@ -117,27 +117,27 @@ function packageJsonDepsDiff(ref: string): string {
   // no `+`/`-` for the key, but plenty of `+`/`-` for the values).
   //
   // Approach: parse the package.json at the BASE_REF and at the
-  // current commit to find every `vsdb.<dotted>` property key and the
+  // current commit to find every `UnicDB.<dotted>` property key and the
   // line range of its block (open `{` line through matching close `}`
   // line). Then walk the diff hunk headers to translate each `+`/`-`
   // line to its corresponding line number in the new (or old) file;
-  // any line that falls inside a `vsdb.*` property block range in the
+  // any line that falls inside a `UnicDB.*` property block range in the
   // respective file is dropped. The negative-control tests
   // (dependencies / devDependencies / peerDependencies) have ranges
-  // that do NOT intersect with the vsdb block set, so they keep
+  // that do NOT intersect with the UnicDB block set, so they keep
   // firing the guard.
   const newFileLines = readCurrentPackageJsonLines();
   const oldFileLines = readPackageJsonAtRef(ref);
-  const newVsdbBlockRanges = findVsdbPropertyBlockRanges(newFileLines);
-  const oldVsdbBlockRanges = findVsdbPropertyBlockRanges(oldFileLines);
+  const newUnicDBBlockRanges = findUnicDBPropertyBlockRanges(newFileLines);
+  const oldUnicDBBlockRanges = findUnicDBPropertyBlockRanges(oldFileLines);
 
-  const inNewVsdbBlock = new Set<number>();
-  for (const { start, end } of newVsdbBlockRanges) {
-    for (let n = start; n <= end; n++) inNewVsdbBlock.add(n);
+  const inNewUnicDBBlock = new Set<number>();
+  for (const { start, end } of newUnicDBBlockRanges) {
+    for (let n = start; n <= end; n++) inNewUnicDBBlock.add(n);
   }
-  const inOldVsdbBlock = new Set<number>();
-  for (const { start, end } of oldVsdbBlockRanges) {
-    for (let n = start; n <= end; n++) inOldVsdbBlock.add(n);
+  const inOldUnicDBBlock = new Set<number>();
+  for (const { start, end } of oldUnicDBBlockRanges) {
+    for (let n = start; n <= end; n++) inOldUnicDBBlock.add(n);
   }
 
   const lines = raw.split("\n");
@@ -164,8 +164,8 @@ function packageJsonDepsDiff(ref: string): string {
       // Diff metadata header `+++ b/<file>` — NOT an addition line.
       if (line.startsWith("+++ ")) continue;
       // A `+` line: present at `newLine` in the NEW file.
-      if (inNewVsdbBlock.has(newLine)) {
-        // Inside a `vsdb.*` configuration property block — non-dependency
+      if (inNewUnicDBBlock.has(newLine)) {
+        // Inside a `UnicDB.*` configuration property block — non-dependency
         // contributes. Drop.
         newLine += 1;
         continue;
@@ -193,7 +193,7 @@ function packageJsonDepsDiff(ref: string): string {
       // Diff metadata header `--- a/<file>` — NOT a deletion line.
       if (line.startsWith("--- ")) continue;
       // A `-` line: present at `oldLine` in the OLD file only.
-      if (inOldVsdbBlock.has(oldLine)) {
+      if (inOldUnicDBBlock.has(oldLine)) {
         continue;
       }
       if (
@@ -231,7 +231,7 @@ function readCurrentPackageJsonLines(): string[] {
 /**
  * Read `package.json` at the given git ref into lines. Used to translate
  * OLD-side `-` line numbers in the diff to the OLD file's
- * `vsdb.*` property block ranges.
+ * `UnicDB.*` property block ranges.
  */
 function readPackageJsonAtRef(ref: string): string[] {
   const out = execSync(`git -C "${REPO_ROOT}" show ${ref}:package.json`, {
@@ -242,22 +242,22 @@ function readPackageJsonAtRef(ref: string): string[] {
 }
 
 /**
- * Scan the current package.json lines and return every `vsdb.<dotted.id>`
+ * Scan the current package.json lines and return every `UnicDB.<dotted.id>`
  * configuration property block as `{ keyLine, start, end }` where:
- *  - `keyLine` is the 1-based line number of `"vsdb.<id>": {`
+ *  - `keyLine` is the 1-based line number of `"UnicDB.<id>": {`
  *  - `start`   is the 1-based line number of the opening `{` line (== keyLine)
  *  - `end`     is the 1-based line number of the matching closing `}`
  *
  * Implemented as a brace-depth scan restricted to lines whose leading
- * key matches the `vsdb.` prefix. A bare `": {` catch-all is intentionally
+ * key matches the `UnicDB.` prefix. A bare `": {` catch-all is intentionally
  * avoided — `dependencies`, `devDependencies`, and `peerDependencies`
  * must NOT be in the returned ranges.
  */
-function findVsdbPropertyBlockRanges(
+function findUnicDBPropertyBlockRanges(
   fileLines: string[],
 ): Array<{ keyLine: number; start: number; end: number }> {
   const ranges: Array<{ keyLine: number; start: number; end: number }> = [];
-  const keyRe = /^\s*"(vsdb\.[a-zA-Z0-9.]+)"\s*:\s*\{/;
+  const keyRe = /^\s*"(UnicDB\.[a-zA-Z0-9.]+)"\s*:\s*\{/;
   for (let i = 0; i < fileLines.length; i++) {
     const line = fileLines[i]!;
     const m = keyRe.exec(line);
@@ -360,15 +360,15 @@ describe(`TASK-BQ04-003 frozen-surface guard (base ${BASE_REF})`, () => {
 
 // =============================================================================
 // TASK-UX1-006 (R8a) — extend the packageJsonDepsDiff filter so that
-// `activationEvents` lines (`onCommand:vsdb.foo`) and `contributes.configuration`
-// property keys (`"vsdb.foo": {`) are recognised as non-dependency
+// `activationEvents` lines (`onCommand:UnicDB.foo`) and `contributes.configuration`
+// property keys (`"UnicDB.foo": {`) are recognised as non-dependency
 // contributes — required BEFORE any later UX1 task edits package.json
 // contributes/activationEvents.
 //
 // The extension is two narrow whitelists, anchored to the EXACT shapes:
 //   1. `^[+-]\s+"onCommand:[a-zA-Z0-9.]+",?\s*$`   (single-line activation
 //      event lines — full match including the optional trailing comma).
-//   2. `"vsdb\.[a-zA-Z0-9.]+"\s*:\s*\{`           (configuration property
+//   2. `"UnicDB\.[a-zA-Z0-9.]+"\s*:\s*\{`           (configuration property
 //      keys INSIDE the contributes.configuration block; the block
 //      delimiters are already dropped by the existing filter).
 //
@@ -384,9 +384,9 @@ describe("TASK-UX1-006 — packageJsonDepsDiff filter extension (R8a)", () => {
    * caller-supplied raw diff string (no git wiring). Any change to the
    * production filter MUST be mirrored here to keep this test honest.
    *
-   * Mirror strategy: for synthetic diffs (which DO include a `vsdb.X`
+   * Mirror strategy: for synthetic diffs (which DO include a `UnicDB.X`
    * property key line), use the simpler "stripped-line" detection
-   * (vsdb.X: { opens a block, `}` closes it) — this matches the
+   * (UnicDB.X: { opens a block, `}` closes it) — this matches the
    * production filter's intent for synthetic inputs where the property
    * key itself appears in the diff. The production filter additionally
    * consults the live package.json file for cases where the property
@@ -400,7 +400,7 @@ describe("TASK-UX1-006 — packageJsonDepsDiff filter extension (R8a)", () => {
       /^[+-]\s+"(webview\/[a-zA-Z0-9/._-]+|view\/[a-zA-Z0-9/._-]+|editor\/[a-zA-Z0-9/._-]+|scm\/[a-zA-Z0-9/._-]+|file\/[a-zA-Z0-9/._-]+|commandPalette|menus)":\s*[?[{]?\s*$/;
     const onCommandLinePattern =
       /^[+-]\s+"onCommand:[a-zA-Z0-9.]+",?\s*$/;
-    const configPropertyKeyPattern = /^\s*"?vsdb\.[a-zA-Z0-9.]+"?\s*:\s*\{/;
+    const configPropertyKeyPattern = /^\s*"?UnicDB\.[a-zA-Z0-9.]+"?\s*:\s*\{/;
     const bareBlockDelimiter = /^[+-]\s*[{}]\s*,?\s*$/;
     const bareListDelimiter = /^[+-]\s*\[\s*,?\s*$/;
     const bareListClose = /^[+-]\s*\]\s*,?\s*$/;
@@ -466,9 +466,9 @@ describe("TASK-UX1-006 — packageJsonDepsDiff filter extension (R8a)", () => {
 
   it("T-UX1-006 #7a — activationEvents + configuration property lines are filtered (empty remaining diff)", () => {
     const synthetic = [
-      '+      "onCommand:vsdb.openUserGuide",',
-      '+      "onCommand:vsdb.runStatement",',
-      '+      "vsdb.resultsPlacement": {',
+      '+      "onCommand:UnicDB.openUserGuide",',
+      '+      "onCommand:UnicDB.runStatement",',
+      '+      "UnicDB.resultsPlacement": {',
       '+        "type": "string",',
       '+        "enum": [',
       '+          "below",',
@@ -477,7 +477,7 @@ describe("TASK-UX1-006 — packageJsonDepsDiff filter extension (R8a)", () => {
       '+        ],',
       '+        "default": "below"',
       '+      },',
-      '+      "vsdb.showRunLens": {',
+      '+      "UnicDB.showRunLens": {',
       '+        "type": "boolean"',
       '+      }',
     ].join("\n");
@@ -496,7 +496,7 @@ describe("TASK-UX1-006 — packageJsonDepsDiff filter extension (R8a)", () => {
     expect(remaining.trim().length).toBeGreaterThan(0);
   });
 
-  it("T-UX1-006 #7c — bare `': {'` in a non-vsdb key is NOT filtered (anchored to `vsdb.`) ", () => {
+  it("T-UX1-006 #7c — bare `': {'` in a non-UnicDB key is NOT filtered (anchored to `UnicDB.`) ", () => {
     const synthetic = [
       '+  "devDependencies": {',
       '+    "typescript": "^5.5.0"',
@@ -507,9 +507,9 @@ describe("TASK-UX1-006 — packageJsonDepsDiff filter extension (R8a)", () => {
     expect(remaining.trim().length).toBeGreaterThan(0);
   });
 
-  it("T-UX1-006 #7d — bare 'onCommand:' without the `vsdb.` prefix is NOT filtered (anchored shape)", () => {
+  it("T-UX1-006 #7d — bare 'onCommand:' without the `UnicDB.` prefix is NOT filtered (anchored shape)", () => {
     // The activationEvents whitelist matches the full line shape
-    // `+        "onCommand:vsdb.X",` — a generic `onCommand:` key outside
+    // `+        "onCommand:UnicDB.X",` — a generic `onCommand:` key outside
     // the activationEvents block (e.g. an unrelated package.json key
     // shape) must NOT be silently dropped.
     const synthetic = [

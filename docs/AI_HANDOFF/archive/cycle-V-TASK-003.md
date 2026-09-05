@@ -7,7 +7,7 @@
 
 ## Goal
 
-Colorize SQL inside VSDB's own webviews, which no TextMate grammar or semantic-token
+Colorize SQL inside UnicDB's own webviews, which no TextMate grammar or semantic-token
 provider can reach: the Results panel's Messages tab (`r.sql` rendered flat at
 `webview/main.ts:2758-2761`) and the AI chat's fenced ```` ```sql ```` block
 (`webview/aiChatPanelMain.ts:139`). Ship a dependency-free pure tokenizer that emits a
@@ -20,7 +20,7 @@ provider can reach: the Results panel's Messages tab (`r.sql` rendered flat at
 - `webview/aiChatPanelMain.ts` — in `renderMarkdown` (line 134) the fenced-code branch
   (line 139) currently returns an HTML string. Keep the string path for non-SQL langs, but
   mark SQL blocks so the caller at line 262 (`div.innerHTML = markdown ? renderMarkdown(text) : …`)
-  can post-process: after assigning, query `code.vsdb-md-code-lang-sql` nodes and replace
+  can post-process: after assigning, query `code.UnicDB-md-code-lang-sql` nodes and replace
   each one's children with `highlightSql(node.textContent ?? "")`. Reading `textContent`
   from an already-escaped node and writing back via a fragment keeps the existing
   no-`innerHTML`-for-user-content contract intact.
@@ -28,7 +28,7 @@ provider can reach: the Results panel's Messages tab (`r.sql` rendered flat at
   `sql.textContent = r.sql;` (line 2760) with `sql.appendChild(highlightSql(r.sql));`.
   This is the only edit to this file in this task. **Wave-1 only** — TASK-005 edits the
   same file in wave 2 and must re-read it.
-- `webview/styles.css` — add `.vsdb-sql-tok-*` rules keyed off `--vscode-*` theme
+- `webview/styles.css` — add `.UnicDB-sql-tok-*` rules keyed off `--vscode-*` theme
   variables so colors track the user's theme.
 - `src/ui/__tests__/sqlHighlight.test.ts` **(new)** — cases 1-7.
 - `src/ui/__tests__/webviewSqlHighlight.test.ts` **(new)** — case 8 (bundle integration).
@@ -44,7 +44,7 @@ provider can reach: the Results panel's Messages tab (`r.sql` rendered flat at
 | 5 | edge (unterminated literal) | `unterminated string terminates and does not hang` | `SELECT 'abc` returns in < 50 ms; the tail is one `string` token `'abc` | asserted with an explicit elapsed-time bound |
 | 6 | edge (empty + whitespace-only) | `empty input yields an empty fragment` | `highlightSql("")` → `childNodes.length === 0`; `highlightSql("   ")` → `textContent === "   "` | boundary |
 | 7 | edge (dialect quoting) | `bracket and backtick identifiers are one ident token each` | `SELECT [a b], \`c d\` FROM t` → `[a b]` and `` `c d` `` each a single `ident` token | mssql/mysql quoting |
-| 8 | integration (bundle) | `Messages tab renders colorized SQL` | after a `state` message with `status:"error"`, `pre.vsdb-msg-sql` contains ≥ 1 `span.vsdb-sql-tok-keyword` and its `textContent` equals the original SQL | loads `dist/webview.js` in jsdom — mirror the skip-if-missing guard in `src/ui/__tests__/webviewSetFilter.test.ts:15-16` |
+| 8 | integration (bundle) | `Messages tab renders colorized SQL` | after a `state` message with `status:"error"`, `pre.UnicDB-msg-sql` contains ≥ 1 `span.UnicDB-sql-tok-keyword` and its `textContent` equals the original SQL | loads `dist/webview.js` in jsdom — mirror the skip-if-missing guard in `src/ui/__tests__/webviewSetFilter.test.ts:15-16` |
 
 Kinds: happy (1-3), security (4), malformed-input/hang (5), empty boundary (6),
 dialect-lexical (7), end-to-end wiring (8).
@@ -79,11 +79,11 @@ require an empty diff:
 
 ```bash
 npx tsc -p tsconfig.webview.json --noEmit 2>&1 \
-  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/vsdb-webview-tsc-before.txt
+  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/UnicDB-webview-tsc-before.txt
 # ... make the edits ...
 npx tsc -p tsconfig.webview.json --noEmit 2>&1 \
-  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/vsdb-webview-tsc-after.txt
-diff /tmp/vsdb-webview-tsc-before.txt /tmp/vsdb-webview-tsc-after.txt && echo "WEBVIEW TSC BASELINE UNCHANGED"
+  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/UnicDB-webview-tsc-after.txt
+diff /tmp/UnicDB-webview-tsc-before.txt /tmp/UnicDB-webview-tsc-after.txt && echo "WEBVIEW TSC BASELINE UNCHANGED"
 ```
 
 Note `webview/sqlHighlight.ts` is a **new** file: it must contribute **zero** errors, i.e.
@@ -97,7 +97,7 @@ the diff result into the Executor Report.
       `! grep -q innerHTML webview/sqlHighlight.ts`
 - [ ] `webview/main.ts:2760`'s `sql.textContent = r.sql` is replaced by an `appendChild`
       of the fragment; no other line in that file is changed by this task.
-- [ ] AI-chat SQL code blocks contain `span.vsdb-sql-tok-*` children after render.
+- [ ] AI-chat SQL code blocks contain `span.UnicDB-sql-tok-*` children after render.
 - [ ] `webview/styles.css` new rules reference only `var(--vscode-…)` colors — no hardcoded
       hex values (so light/dark/high-contrast themes all work).
 - [ ] All 8 Test Cases PASS.
@@ -124,7 +124,7 @@ the diff result into the Executor Report.
   export function tokenizeSql(sql: string): SqlToken[];
   export function highlightSql(sql: string): DocumentFragment;
   ```
-  CSS class per token: `vsdb-sql-tok-<kind>`.
+  CSS class per token: `UnicDB-sql-tok-<kind>`.
 
 ---
 
@@ -192,7 +192,7 @@ $ npx tsc -p tsconfig.webview.json --noEmit   (AFTER snapshot, 5 files / 40 raw 
    5 webview/schemaFormMain.ts
    1 webview/newTableFormMain.ts
 
-$ diff /tmp/vsdb-webview-tsc-before.txt /tmp/vsdb-webview-tsc-after.txt
+$ diff /tmp/UnicDB-webview-tsc-before.txt /tmp/UnicDB-webview-tsc-after.txt
 1d0
 <   21 webview/aiSettingsFormMain.ts
 4c3
@@ -217,7 +217,7 @@ $ npm test
       Tests  1336 passed | 2 skipped (1338)     # baseline 1327 + 9 new, 0 failed
 ```
 
-Acceptance gates re-verified: `grep -q innerHTML webview/sqlHighlight.ts` → no match (PASS); new `styles.css` `.vsdb-sql-tok-*` rules reference only `var(--vscode-…)`, no hex; AI-chat ```sql block renders `span.vsdb-sql-tok-keyword` children (manual jsdom check on the bundled aiChatPanel — 3 keyword spans, no `<script>`/`<img>` injection).
+Acceptance gates re-verified: `grep -q innerHTML webview/sqlHighlight.ts` → no match (PASS); new `styles.css` `.UnicDB-sql-tok-*` rules reference only `var(--vscode-…)`, no hex; AI-chat ```sql block renders `span.UnicDB-sql-tok-keyword` children (manual jsdom check on the bundled aiChatPanel — 3 keyword spans, no `<script>`/`<img>` injection).
 
 Status: PASS
 

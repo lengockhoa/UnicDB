@@ -8,7 +8,7 @@
 ## Goal
 
 Make the schema-tree table-node right-click menu render `New Table…` as item #1 and
-`Modify Table…` as item #2 ("Đưa cả hai lên đầu"), leaving every other `vsdb`-group item in
+`Modify Table…` as item #2 ("Đưa cả hai lên đầu"), leaving every other `UnicDB`-group item in
 its current alphabetical relative order. Mechanism: two `order` keys in package.json menu
 contributions, plus the one-word guard-whitelist extension that keeps the BQ04 surface guard
 green, plus tests pinning the ordering contract.
@@ -16,7 +16,7 @@ green, plus tests pinning the ordering contract.
 ## Target Files
 
 - `package.json` — in `contributes.menus["view/item/context"]`: add `"order": "1"` to the
-  `vsdb.newTable` entry and `"order": "2"` to the `vsdb.modifyTable` entry (lines ~467-476;
+  `UnicDB.newTable` entry and `"order": "2"` to the `UnicDB.modifyTable` entry (lines ~467-476;
   unique anchors below in Discussion). Nothing else in the file changes.
 - `src/adapters/__tests__/bq04SurfaceGuard.test.ts` — extend `contributesKeyPattern`
   (line 74) from
@@ -34,9 +34,9 @@ green, plus tests pinning the ordering contract.
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|-----------|----------|---------------------|
-| 1 | happy | `MENU: vsdb.newTable menu entry có order "1" + when/group đúng; vsdb.modifyTable có order "2" + when/group đúng` | `newTable` entry: `order === "1"`, `when === "view == vsdb.schemaTree && (viewItem == schema \|\| viewItem == category \|\| viewItem == table)"`, `group === "vsdb"`; `modifyTable` entry: `order === "2"`, `when === "view == vsdb.schemaTree && viewItem == table"`, `group === "vsdb"` | `pkgJson` (module-level, `src/extension.test.ts` line 552); RED before the package.json edit (both entries lack `order` → `entry!.order` is `undefined`) |
-| 2 | edge (structural) | `MENU: chỉ đúng 2 entry vsdb-group có order — 13 entry còn lại KHÔNG có order (alphabet fallback giữ nguyên)` | `Set(ctxMenus.filter(m => m.order !== undefined).map(m => m.command))` deep-equals exactly `["vsdb.newTable", "vsdb.modifyTable"]`; e.g. `vsdb.analyzeTable` and `vsdb.copyCreateDdl` entries both have `order === undefined` | same `pkgJson`; RED before (set is empty), GREEN after |
-| 3 | edge (behavioral) | `MENU: sort mô phỏng VS Code trên table-node vsdb group → New Table… #1, Modify Table… #2, phần còn lại giữ relative alphabet` | With comparator `(a, b) => (a.order ?? Infinity-ish "zzzz") localeCompare on order, then localeCompare on title`: filtered to entries whose `when` includes `viewItem == table`, result titles are `["New Table…", "Modify Table…", "Analyze Table", "Copy Create Query", "Generate Sample Data…", "Rename Column…", "Rename Table…", "Vacuum Table", "VSDB: Export Structure", "VSDB: Postman Payload"]` — items 3..10 in current alphabetical order; note `VSDB: Refresh Schema` and other schema/connection-only entries are correctly excluded by the table filter | same `pkgJson`; RED before (title[0] === "Analyze Table") |
+| 1 | happy | `MENU: UnicDB.newTable menu entry có order "1" + when/group đúng; UnicDB.modifyTable có order "2" + when/group đúng` | `newTable` entry: `order === "1"`, `when === "view == UnicDB.schemaTree && (viewItem == schema \|\| viewItem == category \|\| viewItem == table)"`, `group === "UnicDB"`; `modifyTable` entry: `order === "2"`, `when === "view == UnicDB.schemaTree && viewItem == table"`, `group === "UnicDB"` | `pkgJson` (module-level, `src/extension.test.ts` line 552); RED before the package.json edit (both entries lack `order` → `entry!.order` is `undefined`) |
+| 2 | edge (structural) | `MENU: chỉ đúng 2 entry UnicDB-group có order — 13 entry còn lại KHÔNG có order (alphabet fallback giữ nguyên)` | `Set(ctxMenus.filter(m => m.order !== undefined).map(m => m.command))` deep-equals exactly `["UnicDB.newTable", "UnicDB.modifyTable"]`; e.g. `UnicDB.analyzeTable` and `UnicDB.copyCreateDdl` entries both have `order === undefined` | same `pkgJson`; RED before (set is empty), GREEN after |
+| 3 | edge (behavioral) | `MENU: sort mô phỏng VS Code trên table-node UnicDB group → New Table… #1, Modify Table… #2, phần còn lại giữ relative alphabet` | With comparator `(a, b) => (a.order ?? Infinity-ish "zzzz") localeCompare on order, then localeCompare on title`: filtered to entries whose `when` includes `viewItem == table`, result titles are `["New Table…", "Modify Table…", "Analyze Table", "Copy Create Query", "Generate Sample Data…", "Rename Column…", "Rename Table…", "Vacuum Table", "UnicDB: Export Structure", "UnicDB: Postman Payload"]` — items 3..10 in current alphabetical order; note `UnicDB: Refresh Schema` and other schema/connection-only entries are correctly excluded by the table filter | same `pkgJson`; RED before (title[0] === "Analyze Table") |
 | 4 | regression (guard) | existing `bq04SurfaceGuard` suite still passes with `order` keys in the working tree | All 4 tests of `src/adapters/__tests__/bq04SurfaceGuard.test.ts` pass — test 3 (`package.json dependency manifest unchanged`) still drops contributes lines (incl. the new `order` lines) and the sanity block still proves the wiring is live | Working tree with the package.json change applied; RED before the guard regex edit (guard test 3 fails on `+ "order": "1",` lines) |
 
 Test-case #4 is verified by running the guard file (see Verification), not by a new test
@@ -68,7 +68,7 @@ npm run compile
 ## Acceptance Criteria
 
 - [ ] `git diff package.json` shows exactly two added lines: `"order": "1"` on the
-      `vsdb.newTable` entry, `"order": "2"` on the `vsdb.modifyTable` entry; both `when`
+      `UnicDB.newTable` entry, `"order": "2"` on the `UnicDB.modifyTable` entry; both `when`
       strings and both `group` values byte-unchanged; no other line changed.
 - [ ] All 3 new MENU tests pass; both were demonstrated RED against unmodified package.json
       before the edit and GREEN after.
@@ -86,8 +86,8 @@ npm run compile
 
 - Consumes: `(none)` — declarative manifest change only; no runtime symbol used.
 - Produces: `package.json contributes.menus["view/item/context"]` entries
-  `{ command: "vsdb.newTable", when: "view == vsdb.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)", group: "vsdb", order: "1" }`
-  and `{ command: "vsdb.modifyTable", when: "view == vsdb.schemaTree && viewItem == table", group: "vsdb", order: "2" }`
+  `{ command: "UnicDB.newTable", when: "view == UnicDB.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)", group: "UnicDB", order: "1" }`
+  and `{ command: "UnicDB.modifyTable", when: "view == UnicDB.schemaTree && viewItem == table", group: "UnicDB", order: "2" }`
   (exact current `when` strings, verified from package.json lines 467-476). No later task
   consumes this; it is the user-facing deliverable.
 
@@ -100,11 +100,11 @@ npm run compile
 Verified before writing (do not re-derive):
 
 - Zero `order` keys exist anywhere in package.json today; all 15 `view/item/context`
-  `group: "vsdb"` entries sort alphabetically. Raw anchors (package.json lines 467-476):
-  the `newTable` menu entry ends `"group": "vsdb"` on line 470 and the `modifyTable` entry
-  ends `"group": "vsdb"` on line 475 — each with the `when` strings quoted in §Interfaces.
+  `group: "UnicDB"` entries sort alphabetically. Raw anchors (package.json lines 467-476):
+  the `newTable` menu entry ends `"group": "UnicDB"` on line 470 and the `modifyTable` entry
+  ends `"group": "UnicDB"` on line 475 — each with the `when` strings quoted in §Interfaces.
   Suggested edit shape (unique because the full `when` strings are unique):
-  `"when": "view == vsdb.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",\n          "group": "vsdb"` → append `\n          "order": "1"` — and analogously `"when": "view == vsdb.schemaTree && viewItem == table",\n          "group": "vsdb"` → append `\n          "order": "2"`.
+  `"when": "view == UnicDB.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",\n          "group": "UnicDB"` → append `\n          "order": "1"` — and analogously `"when": "view == UnicDB.schemaTree && viewItem == table",\n          "group": "UnicDB"` → append `\n          "order": "2"`.
 - `package.json` scripts: `test`=`vitest run`, `typecheck`=`tsc --noEmit`,
   `compile`=`node esbuild.js`, `verify:release`=`npm test && npm run typecheck && npm run compile`.
   **There is no `lint` script** — do not invent one.

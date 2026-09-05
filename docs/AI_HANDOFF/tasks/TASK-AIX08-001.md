@@ -137,7 +137,7 @@ RED_OUTPUT: |
   ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
 
    FAIL  src/ai/omp/__tests__/mcpExtensionRegistry.test.ts [ src/ai/omp/__tests__/mcpExtensionRegistry.test.ts ]
-  Error: Failed to load url ../mcpExtensionRegistry (resolved id: ../mcpExtensionRegistry) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-aix08-001/src/ai/omp/__tests__/mcpExtensionRegistry.test.ts. Does the file exist?
+  Error: Failed to load url ../mcpExtensionRegistry (resolved id: ../mcpExtensionRegistry) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-aix08-001/src/ai/omp/__tests__/mcpExtensionRegistry.test.ts. Does the file exist?
    ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
 
   ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯

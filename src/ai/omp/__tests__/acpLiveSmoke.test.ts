@@ -1,6 +1,6 @@
 // src/ai/omp/__tests__/acpLiveSmoke.test.ts
 // Gated live smoke against the real omp binary. TASK-001 §Test Cases #5.
-// Activated only when VSDB_OMP_SMOKE=1. Probes initialize/initialized + a
+// Activated only when UnicDB_OMP_SMOKE=1. Probes initialize/initialized + a
 // minimal session/new (no prompt, no model/tool use). Records evidence in
 // the process log; the assertion is that the binary actually returns a
 // real sessionId and that --cwd is accepted.
@@ -80,7 +80,7 @@ async function awaitResponse(
   return promise;
 }
 
-describe.skipIf(!process.env.VSDB_OMP_SMOKE)("omp acp live smoke", () => {
+describe.skipIf(!process.env.UnicDB_OMP_SMOKE)("omp acp live smoke", () => {
   it(
     "initialize, initialized, session/new produce real IDs; --cwd is accepted",
     async () => {
@@ -95,7 +95,7 @@ describe.skipIf(!process.env.VSDB_OMP_SMOKE)("omp acp live smoke", () => {
           params: {
             protocolVersion: 1,
             clientCapabilities: {},
-            clientInfo: { name: "vsdb-acp-smoke", version: "0.0.1" },
+            clientInfo: { name: "UnicDB-acp-smoke", version: "0.0.1" },
           },
         });
 
@@ -155,7 +155,7 @@ describe.skipIf(!process.env.VSDB_OMP_SMOKE)("omp acp live smoke", () => {
           params: {
             protocolVersion: 1,
             clientCapabilities: {},
-            clientInfo: { name: "vsdb-acp-smoke", version: "0.0.1" },
+            clientInfo: { name: "UnicDB-acp-smoke", version: "0.0.1" },
           },
         });
         const init = await awaitResponse(

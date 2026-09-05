@@ -36,12 +36,12 @@ interface MediaQueryListLike {
   dispatchEvent: () => boolean;
 }
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
-interface VsdbGlobal {
-  acquireVsCodeApi?: () => VsdbApi;
+interface UnicDBGlobal {
+  acquireVsCodeApi?: () => UnicDBApi;
 }
 
 // Local alias for the global object so we can assign and read typed members
@@ -91,14 +91,14 @@ function loadBundle(): BundleHandle {
       "dist/webview.js missing — run `npm run compile` before this test",
     );
   }
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
-  const root = document.getElementById("vsdb-root");
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-webview"></div>';
+  const root = document.getElementById("UnicDB-root");
   if (!root) {
-    throw new Error("vsdb-root missing after body.innerHTML");
+    throw new Error("UnicDB-root missing after body.innerHTML");
   }
-  const api: VsdbApi = { postMessage: () => {} };
-  const vsdbGlobal: VsdbGlobal = globalThis;
-  vsdbGlobal.acquireVsCodeApi = () => api;
+  const api: UnicDBApi = { postMessage: () => {} };
+  const UnicDBGlobal: UnicDBGlobal = globalThis;
+  UnicDBGlobal.acquireVsCodeApi = () => api;
   // eslint-disable-next-line no-eval
   (0, eval)(bundleSrc);
   return { root };
@@ -163,35 +163,35 @@ function readRuleBody(src: string, selector: string): string {
 // -----------------------------------------------------------------------
 
 describe("TASK-009 D — requery bar CSS alignment", () => {
-  it("declares .vsdb-requery-bar with display:flex + align-items:center", () => {
-    const body = readRuleBody(stylesSrc, ".vsdb-requery-bar");
-    expect(body, "rule body for .vsdb-requery-bar").not.toBe("");
+  it("declares .UnicDB-requery-bar with display:flex + align-items:center", () => {
+    const body = readRuleBody(stylesSrc, ".UnicDB-requery-bar");
+    expect(body, "rule body for .UnicDB-requery-bar").not.toBe("");
     expect(body).toMatch(/display\s*:\s*flex/);
     expect(body).toMatch(/align-items\s*:\s*center/);
   });
 
-  it(".vsdb-requery-label sets line-height to 26px (shared baseline)", () => {
-    const body = readRuleBody(stylesSrc, ".vsdb-requery-label");
-    expect(body, "rule body for .vsdb-requery-label").not.toBe("");
+  it(".UnicDB-requery-label sets line-height to 26px (shared baseline)", () => {
+    const body = readRuleBody(stylesSrc, ".UnicDB-requery-label");
+    expect(body, "rule body for .UnicDB-requery-label").not.toBe("");
     expect(body).toMatch(/line-height\s*:\s*26px/);
   });
 
-  it(".vsdb-requery-input sets height:26px + box-sizing:border-box", () => {
-    const body = readRuleBody(stylesSrc, ".vsdb-requery-input");
-    expect(body, "rule body for .vsdb-requery-input").not.toBe("");
+  it(".UnicDB-requery-input sets height:26px + box-sizing:border-box", () => {
+    const body = readRuleBody(stylesSrc, ".UnicDB-requery-input");
+    expect(body, "rule body for .UnicDB-requery-input").not.toBe("");
     expect(body).toMatch(/height\s*:\s*26px/);
     expect(body).toMatch(/box-sizing\s*:\s*border-box/);
   });
 
-  it("button.vsdb-requery-run sets height:26px", () => {
-    const body = readRuleBody(stylesSrc, "button.vsdb-requery-run");
-    expect(body, "rule body for button.vsdb-requery-run").not.toBe("");
+  it("button.UnicDB-requery-run sets height:26px", () => {
+    const body = readRuleBody(stylesSrc, "button.UnicDB-requery-run");
+    expect(body, "rule body for button.UnicDB-requery-run").not.toBe("");
     expect(body).toMatch(/height\s*:\s*26px/);
   });
 
-  it("button.vsdb-requery-clear sets height:26px", () => {
-    const body = readRuleBody(stylesSrc, "button.vsdb-requery-clear");
-    expect(body, "rule body for button.vsdb-requery-clear").not.toBe("");
+  it("button.UnicDB-requery-clear sets height:26px", () => {
+    const body = readRuleBody(stylesSrc, "button.UnicDB-requery-clear");
+    expect(body, "rule body for button.UnicDB-requery-clear").not.toBe("");
     expect(body).toMatch(/height\s*:\s*26px/);
   });
 });
@@ -210,16 +210,16 @@ describeIfBundle("TASK-009 D — requery bar element in DOM", () => {
       // minimal 2-row state so the panel takes the grid branch.
       dispatchState(oneStatementState());
       await flushGridEvents();
-      const bar = root.querySelector(".vsdb-requery-bar");
+      const bar = root.querySelector(".UnicDB-requery-bar");
       expect(
         bar,
-        "expected .vsdb-requery-bar element in persistent DOM",
+        "expected .UnicDB-requery-bar element in persistent DOM",
       ).toBeTruthy();
       if (!bar) return;
-      const label = bar.querySelector(".vsdb-requery-label");
-      const input = bar.querySelector(".vsdb-requery-input");
-      const runBtn = bar.querySelector("button.vsdb-requery-run");
-      const clearBtn = bar.querySelector("button.vsdb-requery-clear");
+      const label = bar.querySelector(".UnicDB-requery-label");
+      const input = bar.querySelector(".UnicDB-requery-input");
+      const runBtn = bar.querySelector("button.UnicDB-requery-run");
+      const clearBtn = bar.querySelector("button.UnicDB-requery-clear");
       expect(label).toBeTruthy();
       expect(input).toBeTruthy();
       expect(runBtn).toBeTruthy();
@@ -253,21 +253,21 @@ describe("TASK-009 E — set-filter popup left alignment", () => {
     return "";
   }
 
-  it(".vsdb-setfilter-selectall-row declares padding (left indent)", () => {
-    const body = readRuleBody(stylesSrc, ".vsdb-setfilter-selectall-row");
-    expect(body, "selector .vsdb-setfilter-selectall-row must exist").not.toBe("");
+  it(".UnicDB-setfilter-selectall-row declares padding (left indent)", () => {
+    const body = readRuleBody(stylesSrc, ".UnicDB-setfilter-selectall-row");
+    expect(body, "selector .UnicDB-setfilter-selectall-row must exist").not.toBe("");
     expect(body).toMatch(/padding(-left)?\s*:/);
   });
 
-  it(".vsdb-setfilter-entry declares padding (left indent)", () => {
-    const body = readRuleBody(stylesSrc, ".vsdb-setfilter-entry");
-    expect(body, "selector .vsdb-setfilter-entry must exist").not.toBe("");
+  it(".UnicDB-setfilter-entry declares padding (left indent)", () => {
+    const body = readRuleBody(stylesSrc, ".UnicDB-setfilter-entry");
+    expect(body, "selector .UnicDB-setfilter-entry must exist").not.toBe("");
     expect(body).toMatch(/padding(-left)?\s*:/);
   });
 
   it("both select-all-row and entry rules use the same left padding value", () => {
-    const selectAllLeft = extractLeftPadding(".vsdb-setfilter-selectall-row");
-    const entryLeft = extractLeftPadding(".vsdb-setfilter-entry");
+    const selectAllLeft = extractLeftPadding(".UnicDB-setfilter-selectall-row");
+    const entryLeft = extractLeftPadding(".UnicDB-setfilter-entry");
     expect(selectAllLeft, "select-all-row must have a left padding value").not.toBe("");
     expect(entryLeft, "entry must have a left padding value").not.toBe("");
     expect(selectAllLeft).toBe(entryLeft);

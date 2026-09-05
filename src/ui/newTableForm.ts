@@ -16,7 +16,7 @@ import type {
   NewTableFormWebviewMessage,
 } from "./newTableFormMessages";
 
-const PANEL_ID_CREATE = "vsdb.newTableForm";
+const PANEL_ID_CREATE = "UnicDB.newTableForm";
 const DEFAULT_NAME = "table_name";
 
 export interface NewTableFormOptions {
@@ -235,10 +235,10 @@ export class NewTableForm {
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <link rel="stylesheet" href="${styleUri}" />
-  <title>VSDB New Table</title>
+  <title>UnicDB New Table</title>
 </head>
-<body class="vsdb-form-body">
-  <div id="vsdb-root" class="vsdb-form"></div>
+<body class="UnicDB-form-body">
+  <div id="UnicDB-root" class="UnicDB-form"></div>
   <script src="${scriptUri}"></script>
 </body>
 </html>`;

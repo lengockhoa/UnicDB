@@ -124,7 +124,7 @@ export interface SchemaContextCache {
  * connection changes, the next resolve detects a new identity and
  * re-hydrates (no separate invalidate call needed for the connection-change
  * case). `invalidate()` is the explicit seam for callers that want to force
- * a refresh for any other reason (e.g. a manual vsdb.refreshSchema command).
+ * a refresh for any other reason (e.g. a manual UnicDB.refreshSchema command).
  */
 export function createSchemaContextCache(
   deps: ResolverDeps,

@@ -629,7 +629,7 @@ describe("serializeSqlUpdates — no-SET degrade emits skip-comment (Fix R2)", (
       tableName: "t",
       pkColumns: [],
     });
-    const path = "/tmp/vsdb-r2-roundtrip.sql";
+    const path = "/tmp/UnicDB-r2-roundtrip.sql";
     writeFileSync(path, out);
     let stderr = "";
     try {

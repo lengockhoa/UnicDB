@@ -7,7 +7,7 @@
 
 ## Goal
 
-Make the existing `vsdb.cancelQuery` path cancel the PostgreSQL operation currently owned by `QueryRunner` when it is not a `BatchedQuery`, without closing the adapter or changing cursor cancellation.
+Make the existing `UnicDB.cancelQuery` path cancel the PostgreSQL operation currently owned by `QueryRunner` when it is not a `BatchedQuery`, without closing the adapter or changing cursor cancellation.
 
 ## Target Files
 
@@ -119,7 +119,7 @@ AssertionError: expected "spy" to be called 1 times, but got 0 times
 Command 1: `npx vitest run src/core/__tests__/queryRunner.test.ts src/adapters/__tests__/postgres.test.ts`
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-rlx-001
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-rlx-001
 
  ✓ src/adapters/__tests__/postgres.test.ts  (15 tests) 17ms
  ✓ src/core/__tests__/queryRunner.test.ts  (31 tests) 126ms
@@ -132,7 +132,7 @@ Command 1: `npx vitest run src/core/__tests__/queryRunner.test.ts src/adapters/_
 Command 2: `npm run typecheck`
 
 ```
-> vsdb@1.26.0 typecheck
+> UnicDB@1.26.0 typecheck
 > tsc --noEmit
 
 exit=0
@@ -154,12 +154,12 @@ REVIEWER_MODEL: unic-smart
 EXECUTOR_MODEL: unic-code
 VERIFICATION_RERUN:
   npx vitest run src/core/__tests__/queryRunner.test.ts src/adapters/__tests__/postgres.test.ts: PASS — Test Files 2 passed (2); Tests 46 passed (46); Duration 389ms
-  npm run typecheck: PASS — > vsdb@1.26.0 typecheck; > tsc --noEmit
+  npm run typecheck: PASS — > UnicDB@1.26.0 typecheck; > tsc --noEmit
 FINDINGS:
   critical: none
   important:
     - src/core/__tests__/queryRunner.test.ts:693-701 — Test #2 resolves the adapter provider before calling `runner.cancel()`, so it does not exercise the required cancellation-before-provider-resolution race. Keep the provider deferred through `cancel()`, then resolve it and assert `runQuery`/the seam were never called and the result is cancelled.
-    - src/adapters/postgres.ts:252,387-415 — A single adapter-wide `activeNonCursorPid` is overwritten and unconditionally cleared by concurrent `runQuery()` calls. A concurrent direct run (for example src/extension.ts:770) can therefore cause `vsdb.cancelQuery` to cancel that unrelated backend or make the runner query un-cancellable; associate cancellation state with the owning runner operation or prevent overlapping non-cursor runs before exposing this seam.
+    - src/adapters/postgres.ts:252,387-415 — A single adapter-wide `activeNonCursorPid` is overwritten and unconditionally cleared by concurrent `runQuery()` calls. A concurrent direct run (for example src/extension.ts:770) can therefore cause `UnicDB.cancelQuery` to cancel that unrelated backend or make the runner query un-cancellable; associate cancellation state with the owning runner operation or prevent overlapping non-cursor runs before exposing this seam.
   minor: none
 NEXT_STATUS_FOR_INDEX: changes_requested
 
@@ -181,7 +181,7 @@ Ran first against the pre-fix scalar implementation:
 `npx vitest run src/adapters/__tests__/postgres.test.ts -t "overlap race"`
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
 
  ❯ src/adapters/__tests__/postgres.test.ts  (18 tests | 2 failed | 15 skipped) 23ms
    ❯ ... > Test O1 — earlier run settling must NOT clear the later run's PID window; cancel targets the survivor
@@ -216,7 +216,7 @@ RED fidelity notes:
 Command 1: `npx vitest run src/core/__tests__/queryRunner.test.ts src/adapters/__tests__/postgres.test.ts`
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
 
  ✓ src/adapters/__tests__/postgres.test.ts  (18 tests) 33ms
  ✓ src/core/__tests__/queryRunner.test.ts  (31 tests) 131ms
@@ -229,7 +229,7 @@ Command 1: `npx vitest run src/core/__tests__/queryRunner.test.ts src/adapters/_
 Command 2: `npm run typecheck`
 
 ```
-> vsdb@1.26.0 typecheck
+> UnicDB@1.26.0 typecheck
 > tsc --noEmit
 
 exit=0
@@ -243,7 +243,7 @@ Status: PASS
 VERDICT: approved
 REVIEWER_MODEL: unic-smart
 EXECUTOR_MODEL: unic-code
-VERIFICATION_RERUN: npx vitest run src/core/__tests__/queryRunner.test.ts src/adapters/__tests__/postgres.test.ts — Test Files 2 passed (2); Tests 49 passed (49); Duration 377ms. npm run typecheck — > vsdb@1.26.0 typecheck; > tsc --noEmit; exit=0.
+VERIFICATION_RERUN: npx vitest run src/core/__tests__/queryRunner.test.ts src/adapters/__tests__/postgres.test.ts — Test Files 2 passed (2); Tests 49 passed (49); Duration 377ms. npm run typecheck — > UnicDB@1.26.0 typecheck; > tsc --noEmit; exit=0.
 FINDINGS:
   critical: none
   important: none

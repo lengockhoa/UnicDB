@@ -291,7 +291,7 @@ Known gaps: `tool_call` replay field names are not probe-pinned (R2) — mitigat
 defensive extraction, never throwing; `configOptions`/`modes` from `session/load` are
 carried but unused this cycle (mode/model switching is future scope). Live end-to-end
 resume is covered by unit + fake-transport integration tests only; the gated
-`VSDB_OMP_ACP_SMOKE=1` live probe remains opt-in and was not extended this cycle.
+`UnicDB_OMP_ACP_SMOKE=1` live probe remains opt-in and was not extended this cycle.
 
 ## Plan Review Log
 

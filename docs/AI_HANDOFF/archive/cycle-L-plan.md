@@ -2,7 +2,7 @@
 
 ## §1 Intent
 
-Hook the oh-my-pi (omp) agent into the VSDB extension to raise the quality of AI assist: the agent has the full tool surface (read/grep/edit/LSP…) plus omp's model routing, while DB tools (read-only) remain controlled by VSDB via a host-tool bridge. Upgrade with one command: the extension checks `omp --version` at runtime; missing/wrong version → fallback to the existing AI path (cycle J/K) + a one-time notification with the install command `curl -fsSL https://omp.sh/install | sh` / update `omp update`. User chooses (P0): research + implement in one run.
+Hook the oh-my-pi (omp) agent into the UnicDB extension to raise the quality of AI assist: the agent has the full tool surface (read/grep/edit/LSP…) plus omp's model routing, while DB tools (read-only) remain controlled by UnicDB via a host-tool bridge. Upgrade with one command: the extension checks `omp --version` at runtime; missing/wrong version → fallback to the existing AI path (cycle J/K) + a one-time notification with the install command `curl -fsSL https://omp.sh/install | sh` / update `omp update`. User chooses (P0): research + implement in one run.
 
 ## §2 Scope
 
@@ -42,7 +42,7 @@ export async function detectOmp(execFn?: (cmd: string) => Promise<string>): Prom
 // src/ui/aiChatPanel.ts (T4) — engine switch; builtin path untouched behaviorally
 ```
 
-Architecture: panel calls `detectOmp()` → ok ⇒ `OmpProcess.start()` → rpc client + `set_host_tools` (defs from DbToolRegistry + createSqlTool — read-only guard still runs inside VSDB) → `prompt` RpcCommand → stream AgentSessionEvent (message_update/text_delta) into webview bubbles → host_tool_call → executor (guard + adapter) → host_tool_result. omp missing/old/crashed ⇒ banner + builtin engine (current behavior).
+Architecture: panel calls `detectOmp()` → ok ⇒ `OmpProcess.start()` → rpc client + `set_host_tools` (defs from DbToolRegistry + createSqlTool — read-only guard still runs inside UnicDB) → `prompt` RpcCommand → stream AgentSessionEvent (message_update/text_delta) into webview bubbles → host_tool_call → executor (guard + adapter) → host_tool_result. omp missing/old/crashed ⇒ banner + builtin engine (current behavior).
 
 ## §4 Test Plan (TDD)
 

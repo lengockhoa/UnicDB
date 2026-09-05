@@ -70,6 +70,6 @@ npm run compile
 
 ## Review gate
 
-Executor commits with `git -c user.name=vsdb -c user.email=vsdb@local`, spawns the unic-smart
+Executor commits with `git -c user.name=UnicDB -c user.email=UnicDB@local`, spawns the unic-smart
 cycle reviewer (NOT unic-code), iterates fix rounds until VERDICT: APPROVED, then docs closure →
 release v1.21.0 (bump, vsix, tag, push, GitHub Release) → clear/compact → next cycle (AIX-03).

@@ -1,4 +1,4 @@
-# TASK-006 — PG integration tests (VSDB_IT=1) + docs
+# TASK-006 — PG integration tests (UnicDB_IT=1) + docs
 
 - Status: `ready` · Owner: `-` · Reviewer: `-` · Parent: `docs/AI_HANDOFF/PLAN.md` §4,§5,§7
 
@@ -9,9 +9,9 @@ Prove the DDL stack against live PostgreSQL (create → introspect round-trip �
 - `src/adapters/__tests__/ddl.integration.test.ts` (new) · `CODE_MAP.md` (modify) · `README.md` (modify)
 
 ## Spec
-Integration file — pattern `postgres.integration.test.ts`: `const IT = process.env.VSDB_IT === "1"`; env VSDB_PG_HOST (127.0.0.1), VSDB_PG_PORT (5433), VSDB_PG_USER/PASS/DB (vsdb/vsdb/vsdb); `describe.skipIf(!IT)`; `PostgresAdapter` direct (no ConnectionManager). Each test owns a throwaway table (`vsdb_it_ddl_<seq>` unique suffix), DROPped in afterAll — independent, re-runnable. PG is orchestrator-managed at 127.0.0.1:5433; executor does NOT touch docker; connect failure → critical_block, never convert to unit tests.
+Integration file — pattern `postgres.integration.test.ts`: `const IT = process.env.UnicDB_IT === "1"`; env UnicDB_PG_HOST (127.0.0.1), UnicDB_PG_PORT (5433), UnicDB_PG_USER/PASS/DB (UnicDB/UnicDB/UnicDB); `describe.skipIf(!IT)`; `PostgresAdapter` direct (no ConnectionManager). Each test owns a throwaway table (`UnicDB_it_ddl_<seq>` unique suffix), DROPped in afterAll — independent, re-runnable. PG is orchestrator-managed at 127.0.0.1:5433; executor does NOT touch docker; connect failure → critical_block, never convert to unit tests.
 Tests (one `it` each):
-1. **create + introspect round-trip** — create referenced table first, then spec via `defaultColumnSpecs("vsdb_it_ddl_c")` + extra column + keys (pk id, unique, fk, check) → `generateCreateTable` → runQuery → both INTROSPECT SQLs → `rowsToSpec` → assert: column count/order; id default contains `uuid_in(overlay(`; created_at default contains `TO_CHAR(date_trunc('second', now() AT TIME ZONE 'Asia/Ho_Chi_Minh')`; nullability round-trips; primaryKey/unique/foreignKey/check present with expected column membership.
+1. **create + introspect round-trip** — create referenced table first, then spec via `defaultColumnSpecs("UnicDB_it_ddl_c")` + extra column + keys (pk id, unique, fk, check) → `generateCreateTable` → runQuery → both INTROSPECT SQLs → `rowsToSpec` → assert: column count/order; id default contains `uuid_in(overlay(`; created_at default contains `TO_CHAR(date_trunc('second', now() AT TIME ZONE 'Asia/Ho_Chi_Minh')`; nullability round-trips; primaryKey/unique/foreignKey/check present with expected column membership.
 2. **alter round-trip** — from (1)'s table: diffTable(before=introspected, after=edited: rename col via originalName, add column, drop unique key, SET NOT NULL another) → runQuery(statements.join("\n")) → re-introspect → renamed col present NEW name (old absent); added col present with type; unique key gone; nullable false.
 3. **multi-statement single call** — 2-statement script (CREATE + ALTER) in ONE runQuery resolves (documents single-script assumption).
 4. **regenerated CREATE executes** — `generateCreateTable(introspected spec)` runs cleanly on a fresh table name (guards Copy CREATE DDL).
@@ -28,19 +28,19 @@ Tests (one `it` each):
 | 4 | integration | regenerated CREATE executes | clean execute on fresh name | introspected spec |
 | 5 | integration | sample INSERTs count | count(*) === 5 | 3-col spec |
 | 6 | edge (failure) | duplicate create rejects | rejects with "already exists" | same name twice |
-(Happy #1/#2 + different-kind edges: failure #6, boundary/multi-statement #3. All gated by VSDB_IT=1; file skips otherwise.)
+(Happy #1/#2 + different-kind edges: failure #6, boundary/multi-statement #3. All gated by UnicDB_IT=1; file skips otherwise.)
 
 ## Test Files
 - `src/adapters/__tests__/ddl.integration.test.ts`
 
 ## Verification Commands
 ```bash
-npm run compile && VSDB_IT=1 VSDB_PG_HOST=127.0.0.1 VSDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit
+npm run compile && UnicDB_IT=1 UnicDB_PG_HOST=127.0.0.1 UnicDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit
 ```
 (`vitest.integration.config.ts` verified to include `src/adapters/__tests__/*.integration.test.ts`; releaseHygiene guards docs/dist additions. No lint script.)
 
 ## Acceptance Criteria
-- [ ] Integration PASS with VSDB_IT=1 vs 127.0.0.1:5433 (paste fresh output).
+- [ ] Integration PASS with UnicDB_IT=1 vs 127.0.0.1:5433 (paste fresh output).
 - [ ] 6 tests independent (own tables, cleaned in afterAll).
 - [ ] CODE_MAP rows for 7 new files; README subsection added.
 - [ ] Reviewer APPROVED/APPROVED-WITH-MINOR.
@@ -71,25 +71,25 @@ EXECUTOR_SUBAGENT: Exec-T006
 SUMMARY: Added `src/adapters/__tests__/ddl.integration.test.ts` (6 PG integration tests against 127.0.0.1:5433 covering create+introspect round-trip, alter round-trip, multi-statement runQuery, regenerated CREATE, sample INSERTs, duplicate create) and updated `README.md` + `docs/CODE_MAP.md` with the Table Designer feature set.
 TEST_PLAN_FOLLOWED: task §4 (6 tests) — all six required cases covered.
 FILES_CHANGED:
-  +- src/adapters/__tests__/ddl.integration.test.ts: new — 6 tests gated by VSDB_IT=1.
+  +- src/adapters/__tests__/ddl.integration.test.ts: new — 6 tests gated by UnicDB_IT=1.
   +- README.md: added **Table Designer (PostgreSQL)** subsection under `## Key Features` (New Table…, Modify Table…, Copy CREATE DDL, Generate Sample Data…, Analyze/Vacuum).
   +- docs/CODE_MAP.md: added `## DDL Stack (PostgreSQL Table Designer)` section with 7 file rows (createTable, alterTable, pgIntrospect, sampleData, newTableForm, newTableFormMessages, webview/newTableFormMain).
 TESTS_ADDED:
   +- src/adapters/__tests__/ddl.integration.test.ts: create+introspect round-trip preserves defaults/nullability/keys; alter round-trip (rename/add/drop-unique/SET NOT NULL); multi-statement single runQuery; regenerated CREATE executes on fresh table; generateSampleInserts(spec, 5) → count(*) === 5; duplicate CREATE rejects with "already exists".
 VERIFICATION:
-  command: npm run compile && VSDB_IT=1 VSDB_PG_HOST=127.0.0.1 VSDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit
+  command: npm run compile && UnicDB_IT=1 UnicDB_PG_HOST=127.0.0.1 UnicDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit
   result: 0 fail (esbuild OK, 6/6 integration, 3/3 releaseHygiene, tsc clean)
   output_excerpt: |
-    > vsdb@1.5.1 compile
+    > UnicDB@1.5.1 compile
     > node esbuild.js
     esbuild: build complete
 
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-006
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-006
      ✓ src/adapters/__tests__/ddl.integration.test.ts  (6 tests) 10159ms
     Test Files  1 passed (1)
          Tests  6 passed (6)
 
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-006
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-006
      ✓ src/__tests__/releaseHygiene.test.ts  (3 tests) 3ms
     Test Files  1 passed (1)
          Tests  3 passed (3)
@@ -106,8 +106,8 @@ ISSUES: Five real bugs surfaced + fixed during RED→GREEN iterations (all in te
 
 RED_OUTPUT (first failing run after initial draft — 3 fails before iteration):
   expected 'uuid_in((OVERLAY(OVERLAY(md5((((rando…' to contain 'uuid_in(overlay('
-  error: multiple primary keys for table "vsdb_it_ddl_regen_dst_…"
-  error: cannot DROP TABLE "vsdb_it_ddl_sample_…" because it is being used by active queries in this session
+  error: multiple primary keys for table "UnicDB_it_ddl_regen_dst_…"
+  error: cannot DROP TABLE "UnicDB_it_ddl_sample_…" because it is being used by active queries in this session
   (all three → fixed as documented in ISSUES #1/#3/#4 above; final GREEN run = 6/6.)
 
 HANDOFF_TO_REVIEWER: yes — full test surface exercised against live PG, docs landed, no source changes.
@@ -119,7 +119,7 @@ VERDICT: CHANGES-REQUESTED
 REVIEWER_MODEL: unic-smart
 EXECUTOR_MODEL: unic-code
 VERIFICATION_RERUN:
-  command: npm run compile && VSDB_IT=1 VSDB_PG_HOST=127.0.0.1 VSDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit
+  command: npm run compile && UnicDB_IT=1 UnicDB_PG_HOST=127.0.0.1 UnicDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit
   result: 0 fail (compile OK; 6/6 integration vs live PG @5433; 3/3 releaseHygiene; tsc clean)
 TEST_PLAN_COVERAGE: all-followed — 6/6 per §4, edge cases #3 (multi-statement) + #6 (failure) present; RED_OUTPUT contains real failures.
 FINDINGS:
@@ -147,7 +147,7 @@ FILES_CHANGED:
   - .worktrees/fix1-ddl/README.md: removed false claims at line 91-92 (Copy CREATE DDL has no destination/apply-to-schema path; Sample Data opens untitled SQL doc, doesn't auto-run). Now reads "(same generator as the form) — copy to clipboard" and "open in an untitled SQL tab for user to review/edit before running".
 TESTS_ADDED: none — test count unchanged at 6
 VERIFICATION:
-  command: VSDB_IT=1 VSDB_PG_HOST=127.0.0.1 VSDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit
+  command: UnicDB_IT=1 UnicDB_PG_HOST=127.0.0.1 UnicDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit
   result: 6/6 integration PASS + 3/3 releaseHygiene PASS + tsc clean
   output_excerpt: |
     ✓ src/adapters/__tests__/ddl.integration.test.ts  (6 tests) 10174ms
@@ -164,7 +164,7 @@ VERDICT: APPROVED
 REVIEWER_MODEL: unic-smart
 EXECUTOR_MODEL: unic-code
 VERIFICATION_RERUN:
-  command: npm run compile && VSDB_IT=1 VSDB_PG_HOST=127.0.0.1 VSDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit
+  command: npm run compile && UnicDB_IT=1 UnicDB_PG_HOST=127.0.0.1 UnicDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit
   result: 0 fail (esbuild OK; 6/6 integration vs live PG @5433 in 10.2s; 3/3 releaseHygiene; tsc clean)
 R1_FINDINGS_RESOLUTION:
   - critical#2 double-PK: RESOLVED — createTable.ts:146-150 suppresses inline PRIMARY KEY when a primaryKey KeySpec exists; test #4 (ddl.integration.test.ts:446-478) now feeds rowsToSpec output verbatim into generateCreateTable (isPrimaryKey still set by pgIntrospect.ts:249, not stripped) → real product path guarded, passes vs live PG.

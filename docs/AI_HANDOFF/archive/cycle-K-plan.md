@@ -12,7 +12,7 @@ Bring the AI core (cycle J) down to earth: the agent can **read** the schema and
 
 ## §2 Scope
 
-In: `src/ai/tools/` (registry + introspection tools + SQL tool + schema-context formatter), `src/ui/aiChatPanel*.ts` + `webview/aiChatPanelMain.ts` (house webview pattern like newTableForm), wiring `src/extension.ts` + `package.json` (command `vsdb.aiChat` + editor/title menu), README AI DB-assist + guardrails section, unit tests (fake adapter + fake provider) — no PG container needed (the real adapter already has its own integration test from cycle I).
+In: `src/ai/tools/` (registry + introspection tools + SQL tool + schema-context formatter), `src/ui/aiChatPanel*.ts` + `webview/aiChatPanelMain.ts` (house webview pattern like newTableForm), wiring `src/extension.ts` + `package.json` (command `UnicDB.aiChat` + editor/title menu), README AI DB-assist + guardrails section, unit tests (fake adapter + fake provider) — no PG container needed (the real adapter already has its own integration test from cycle I).
 
 Out: streaming UI, any form of DML/DDL, write tools, mysql/mssql introspection implementation, telemetry, Anthropic protocol, multi-connection chat sessions.
 
@@ -105,7 +105,7 @@ Important:
 7. PLAN §3 flow line `runAgent(msgs, deps, { tools: createDbTools(adapterFactory) })` puts `tools` in the callbacks slot — the real signature is `runAgent(input: AgentInput, deps, callbacks?)` with `tools` on `input` (agent.ts:100-103). TASK-003 already has the correct form; fix the PLAN line so an executor reading §3 isn't misled.
 
 Minor:
-8. TASK-003 package.json note "activationEvents already enough (onCommand)" is garbled and contradicts house pattern (all 18 commands listed explicitly in activationEvents). Decide: add `"onCommand:vsdb.aiChat"` like its siblings.
+8. TASK-003 package.json note "activationEvents already enough (onCommand)" is garbled and contradicts house pattern (all 18 commands listed explicitly in activationEvents). Decide: add `"onCommand:UnicDB.aiChat"` like its siblings.
 9. PLAN §3 says budget "~8k chars" but TASK-003 never pins the constant the host passes to `formatSchemaContext` — pin `budgetChars = 8000` in the T3 spec so executors don't pick arbitrary values.
 
 NOTES: Plan review only — no executor report, so no model-isolation check applies. F1/F2 are frozen-interface changes that must land in PLAN.md + TASK-001/002 before wave 1 starts; recommend one quick re-review after the planner applies them.

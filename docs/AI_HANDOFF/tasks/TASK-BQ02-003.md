@@ -14,7 +14,7 @@ fire-and-forget row-count batcher must not fire for bigquery (no `capabilities` 
 `BigQueryAdapter` means `estimateTableRowsBatch` is implemented but the adapter is NOT a catalog
 adapter — the suppression must be explicit and pinned, because a spurious batch query per
 dataset expand violates the cost-safety posture). The browse gesture already flows through
-`vsdb.browseTableData` (TASK-BQ02-002) — this task only touches the tree side.
+`UnicDB.browseTableData` (TASK-BQ02-002) — this task only touches the tree side.
 
 ## Target Files
 
@@ -33,7 +33,7 @@ dataset expand violates the cost-safety posture). The browse gesture already flo
 | 5 | edge (cost) | row-count batch never fires for bigquery | expand a Tables category with 2 bigquery tables → mocked `estimateTableRowsBatch` call count === 0; table descriptions keep the dataset fallback; same fixture with postgres driver fires the batch (differential pin) | spy-counted fake adapter, both drivers |
 | 6 | regression | postgres/mysql/mssql tree behavior unchanged | existing `schemaTree.test.ts` + `schemaTreeCatalog.test.ts` suites pass verbatim (row-count batching, filter, folder grouping, reveal) | existing files, zero assertion edits |
 | 7 | edge (capability pin) | catalog categories absent for bigquery | `getChildren` on a bigquery table node → no Indexes/Constraints/Triggers categories; only column children | fake adapter without `capabilities`, columns fixture |
-| 8 | happy | bigquery table/view nodes stay wired to `vsdb.browseTableData` | `getTreeItem` on a bigquery table node AND a view node → `command.command === "vsdb.browseTableData"` with `command.arguments[0]` whose `meta` resolves `{ schema: "ds", objectName: "tbl" }` (the same node contract TASK-BQ02-002's #7 drives) — assert the node wiring only; the SQL/builder and runner are 002-owned and NOT edited by this task | node factory pin |
+| 8 | happy | bigquery table/view nodes stay wired to `UnicDB.browseTableData` | `getTreeItem` on a bigquery table node AND a view node → `command.command === "UnicDB.browseTableData"` with `command.arguments[0]` whose `meta` resolves `{ schema: "ds", objectName: "tbl" }` (the same node contract TASK-BQ02-002's #7 drives) — assert the node wiring only; the SQL/builder and runner are 002-owned and NOT edited by this task | node factory pin |
 
 ## Test Files
 
@@ -72,7 +72,7 @@ from `.cache/index/tests-map.json`. Non-empty floor satisfied; do NOT default to
 
 ## Interfaces
 
-- Consumes: `BigQueryAdapter` enumeration methods from TASK-BQ02-001 — `listSchemas(): Promise<SchemaInfo[]>`, `listTables(schema?: string): Promise<TableInfo[]>`, `listViews(schema?: string): Promise<ViewInfo[]>`, `listColumns(table: string, schema?: string): Promise<ColumnInfo[]>` (same `DbAdapter` signatures as postgres/mysql/mssql — the tree consumes through `DbAdapter`, no bigquery-specific import); `hasAdapterCapability` (adapters/types.ts:208, existing fail-closed predicate); `VsdbNode.meta` contract (`connection`, `schema`, `objectName`, `objectKey`) and the `vsdb.browseTableData` node-argument contract from TASK-BQ02-002 (command carries the whole node as `arguments[0]`).
+- Consumes: `BigQueryAdapter` enumeration methods from TASK-BQ02-001 — `listSchemas(): Promise<SchemaInfo[]>`, `listTables(schema?: string): Promise<TableInfo[]>`, `listViews(schema?: string): Promise<ViewInfo[]>`, `listColumns(table: string, schema?: string): Promise<ColumnInfo[]>` (same `DbAdapter` signatures as postgres/mysql/mssql — the tree consumes through `DbAdapter`, no bigquery-specific import); `hasAdapterCapability` (adapters/types.ts:208, existing fail-closed predicate); `UnicDBNode.meta` contract (`connection`, `schema`, `objectName`, `objectKey`) and the `UnicDB.browseTableData` node-argument contract from TASK-BQ02-002 (command carries the whole node as `arguments[0]`).
 - Produces: `DRIVER_ICONS.bigquery` entry + bigquery tooltip format in `schemaTree.ts`; the pinned invariant that bigquery tree expansion issues ZERO `estimateTableRowsBatch` calls. No new exports; no signature changes.
 
 ---
@@ -145,4 +145,4 @@ FINDINGS:
     - src/ui/schemaTree.ts:1218 (findSchemaNode) and src/ui/schemaTree.ts:1286 (getParent category→schema branch) still emit the pg-style "<conn> / <ds>" tooltip for bigquery datasets — an incomplete mirror of the executor's own getParent connection-branch fix (schemaTree.ts:1251-1262). Latent only (DDL-reveal paths; bigquery has no DDL flow yet). 3-line branch fix each, same owned file; can ride the next BQ-02 touch.
     - docs/AI_HANDOFF/tasks/TASK-BQ02-003.md:108-116 — stray template placeholders ("## Executor Report (pending)" + "## Reviewer Verdict (pending)") duplicated the real Executor Report at the bottom; cleaned during this review.
 NEXT_STATUS_FOR_INDEX: approved_minor
-NOTES: All gate checks pass — commit b97162a touches only the 3 task-owned files plus 004-owned release files (CHANGELOG/package.json/lockfile); browseCommands.ts and the BQ-00 frozen surface (bigqueryTypes.ts/bigqueryAdc.ts) are byte-untouched; cost-safety batch suppression is pinned differentially (bq never / postgres fires); browse dispatch chain vsdb.browseTableData → buildBrowseSelect("bigquery",…) → buildBigQueryPreviewSql verified intact at HEAD.
+NOTES: All gate checks pass — commit b97162a touches only the 3 task-owned files plus 004-owned release files (CHANGELOG/package.json/lockfile); browseCommands.ts and the BQ-00 frozen surface (bigqueryTypes.ts/bigqueryAdc.ts) are byte-untouched; cost-safety batch suppression is pinned differentially (bq never / postgres fires); browse dispatch chain UnicDB.browseTableData → buildBrowseSelect("bigquery",…) → buildBigQueryPreviewSql verified intact at HEAD.

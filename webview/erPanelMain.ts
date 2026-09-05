@@ -25,7 +25,7 @@ interface ModelMessage {
 }
 
 const vscode = acquireVsCodeApi();
-const root = document.getElementById("vsdb-root") as HTMLDivElement | null;
+const root = document.getElementById("UnicDB-root") as HTMLDivElement | null;
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 let current: { graph: GraphView; layout: LayoutView; schema: string } | null = null;
@@ -56,7 +56,7 @@ function svgEl(tag: string, attrs: Record<string, string | number>, text?: strin
 }
 
 function applyViewBox(): void {
-  const svg = document.getElementById("vsdb-er-svg") as SVGSVGElement | null;
+  const svg = document.getElementById("UnicDB-er-svg") as SVGSVGElement | null;
   if (svg) svg.setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
 }
 
@@ -68,16 +68,16 @@ function render(msg: ModelMessage): void {
   current = { graph: msg.graph, layout, schema: msg.schema };
   viewBox = { x: 0, y: 0, w: msg.layout.width, h: msg.layout.height };
 
-  const bar = el("div", "vsdb-er-bar");
-  bar.appendChild(el("span", "vsdb-er-title", `Relationships — ${msg.schema}`));
+  const bar = el("div", "UnicDB-er-bar");
+  bar.appendChild(el("span", "UnicDB-er-title", `Relationships — ${msg.schema}`));
   if (msg.truncated) {
     bar.appendChild(
-      el("span", "vsdb-er-warning", `Showing the first ${msg.graph.nodes.length} tables (capped).`),
+      el("span", "UnicDB-er-warning", `Showing the first ${msg.graph.nodes.length} tables (capped).`),
     );
   }
-  const exportBtn = el("button", "vsdb-er-export", "Export SVG");
+  const exportBtn = el("button", "UnicDB-er-export", "Export SVG");
   exportBtn.addEventListener("click", () => {
-    const svg = document.getElementById("vsdb-er-svg") as SVGSVGElement | null;
+    const svg = document.getElementById("UnicDB-er-svg") as SVGSVGElement | null;
     if (!svg) return;
     const serialized = new XMLSerializer().serializeToString(svg);
     vscode.postMessage({ type: "er_export_svg", svg: serialized, schema: msg.schema });
@@ -87,14 +87,14 @@ function render(msg: ModelMessage): void {
 
   if (msg.graph.droppedEdges > 0) {
     root.appendChild(
-      el("div", "vsdb-er-note", `${msg.graph.droppedEdges} FK edge(s) point outside this schema and are not drawn.`),
+      el("div", "UnicDB-er-note", `${msg.graph.droppedEdges} FK edge(s) point outside this schema and are not drawn.`),
     );
   }
 
-  const svg = svgEl("svg", { id: "vsdb-er-svg", width: "100%", height: "100%" });
+  const svg = svgEl("svg", { id: "UnicDB-er-svg", width: "100%", height: "100%" });
   svg.setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`);
   svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-  svg.appendChild(svgEl("style", {}, "text{font:12px sans-serif;fill:var(--vscode-editor-foreground,#ddd)} .vsdb-er-box{fill:var(--vscode-editorWidget-background,#252526);stroke:var(--vscode-panelBorder,#888)} .vsdb-er-wire{stroke:var(--vscode-panelBorder,#888);stroke-width:1.5}"));
+  svg.appendChild(svgEl("style", {}, "text{font:12px sans-serif;fill:var(--vscode-editor-foreground,#ddd)} .UnicDB-er-box{fill:var(--vscode-editorWidget-background,#252526);stroke:var(--vscode-panelBorder,#888)} .UnicDB-er-wire{stroke:var(--vscode-panelBorder,#888);stroke-width:1.5}"));
 
   // Edges under boxes.
   for (const e of msg.graph.edges) {
@@ -103,7 +103,7 @@ function render(msg: ModelMessage): void {
     if (!a || !b) continue;
     svg.appendChild(
       svgEl("line", {
-        class: "vsdb-er-wire",
+        class: "UnicDB-er-wire",
         x1: a.x + a.w / 2, y1: a.y + a.h / 2,
         x2: b.x + b.w / 2, y2: b.y + b.h / 2,
       }),
@@ -113,7 +113,7 @@ function render(msg: ModelMessage): void {
   for (const n of msg.graph.nodes) {
     const p = layout.get(n.id);
     if (!p) continue;
-    svg.appendChild(svgEl("rect", { class: "vsdb-er-box", x: p.x, y: p.y, width: p.w, height: p.h, rx: 6 }));
+    svg.appendChild(svgEl("rect", { class: "UnicDB-er-box", x: p.x, y: p.y, width: p.w, height: p.h, rx: 6 }));
     svg.appendChild(svgEl("text", { x: p.x + 10, y: p.y + 22 }, `${n.schema}.${n.table}`));
     svg.appendChild(
       svgEl("text", { x: p.x + 10, y: p.y + 42 }, n.pkColumns.length > 0 ? `PK: ${n.pkColumns.join(", ")}` : `${n.columnCount} cols`),

@@ -1,10 +1,10 @@
-# Portfolio Plan — VSDB Product Vision
+# Portfolio Plan — UnicDB Product Vision
 
 > Planning artifact only. This is not `PLAN.md`, creates no tasks, and must not change the active AHL state.
 
 ## §1 Intent
 
-Deliver the two-part VSDB product vision in sequenced, reviewable cycles: (1) a PostgreSQL-first database IDE inside VS Code and (2) a safe, grounded AI workspace for file and database work, with optional OMP-agent integration. Success means each released cycle gives a user a complete, safe workflow and preserves the existing live AI chat, DB-aware permission model, OMP engine, results grid, console, and connection manager.
+Deliver the two-part UnicDB product vision in sequenced, reviewable cycles: (1) a PostgreSQL-first database IDE inside VS Code and (2) a safe, grounded AI workspace for file and database work, with optional OMP-agent integration. Success means each released cycle gives a user a complete, safe workflow and preserves the existing live AI chat, DB-aware permission model, OMP engine, results grid, console, and connection manager.
 
 ## §2 Scope
 

@@ -42,7 +42,7 @@ interface FormConfig {
   };
 }
 
-const root = document.getElementById("vsdb-root") as HTMLDivElement;
+const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 let lastTestMessage = "";
 
 function post(msg: unknown): void {
@@ -119,7 +119,7 @@ function setBusy(busy: boolean): void {
   const status = document.getElementById("status");
   if (status) {
     status.textContent = busy ? "Đang kết nối thử…" : lastTestMessage;
-    status.className = busy ? "vsdb-form-status busy" : "vsdb-form-status";
+    status.className = busy ? "UnicDB-form-status busy" : "UnicDB-form-status";
   }
 }
 
@@ -128,7 +128,7 @@ function setStatus(ok: boolean, message: string): void {
   const status = document.getElementById("status");
   if (status) {
     status.textContent = message;
-    status.className = `vsdb-form-status ${ok ? "ok" : "err"}`;
+    status.className = `UnicDB-form-status ${ok ? "ok" : "err"}`;
   }
 }
 
@@ -255,7 +255,7 @@ function fileRow(id: SslField, text: string, placeholder: string): HTMLElement {
   const inputEl = el("input", { id, type: "text", placeholder });
   const pick = el(
     "button",
-    { id: `pick-${id}`, class: "vsdb-form-pick", title: "Chọn file…" },
+    { id: `pick-${id}`, class: "UnicDB-form-pick", title: "Chọn file…" },
     "Choose File",
   );
   pick.addEventListener("click", () => {
@@ -263,7 +263,7 @@ function fileRow(id: SslField, text: string, placeholder: string): HTMLElement {
   });
   return el(
     "div",
-    { class: "vsdb-file-row", id: `row-${id}` },
+    { class: "UnicDB-file-row", id: `row-${id}` },
     fieldLabel(text, id),
     inputEl,
     pick,
@@ -293,8 +293,8 @@ function render(): void {
 
   const sslPanel = el(
     "div",
-    { id: "sslPanel", class: "vsdb-form-ssl", style: "display:none" },
-    el("label", { class: "vsdb-form-mode" }, "Mode", sslMode),
+    { id: "sslPanel", class: "UnicDB-form-ssl", style: "display:none" },
+    el("label", { class: "UnicDB-form-mode" }, "Mode", sslMode),
     fileRow("sslCaPath", "CA certificate:", "/path/to/server-ca.pem"),
     fileRow("sslCertPath", "Client certificate:", "/path/to/client-cert.pem"),
     fileRow("sslKeyPath", "Client key:", "/path/to/client-key.pem"),
@@ -302,36 +302,36 @@ function render(): void {
 
   const tunnel = el(
     "details",
-    { id: "tunnelPanel", class: "vsdb-form-tunnel" },
+    { id: "tunnelPanel", class: "UnicDB-form-tunnel" },
     el("summary", {}, "SSH tunnel"),
     el(
       "div",
-      { class: "vsdb-row" },
+      { class: "UnicDB-row" },
       el(
         "div",
-        { class: "vsdb-field grow" },
+        { class: "UnicDB-field grow" },
         fieldLabel("Bastion host", "tunnelHost"),
         el("input", { id: "tunnelHost", type: "text", placeholder: "jump.example.com" }),
       ),
       el(
         "div",
-        { class: "vsdb-field" },
+        { class: "UnicDB-field" },
         fieldLabel("Bastion port", "tunnelPort"),
         el("input", { id: "tunnelPort", type: "number", placeholder: "22" }),
       ),
     ),
     el(
       "div",
-      { class: "vsdb-row" },
+      { class: "UnicDB-row" },
       el(
         "div",
-        { class: "vsdb-field grow" },
+        { class: "UnicDB-field grow" },
         fieldLabel("SSH user", "tunnelUser"),
         el("input", { id: "tunnelUser", type: "text", placeholder: "devops" }),
       ),
       el(
         "div",
-        { class: "vsdb-field grow" },
+        { class: "UnicDB-field grow" },
         fieldLabel("Identity file", "tunnelIdentityFile"),
         el("input", {
           id: "tunnelIdentityFile",
@@ -346,14 +346,14 @@ function render(): void {
     el("h2", { id: "formTitle" }, "Add Connection"),
     el(
       "div",
-      { class: "vsdb-row" },
+      { class: "UnicDB-row" },
       el(
         "div",
-        { class: "vsdb-field grow" },
+        { class: "UnicDB-field grow" },
         fieldLabel("Label", "name", true),
         el("input", { id: "name", type: "text", placeholder: "Local Dev" }),
       ),
-      el("div", { class: "vsdb-field" }, fieldLabel("Driver", "driver"), driver),
+      el("div", { class: "UnicDB-field" }, fieldLabel("Driver", "driver"), driver),
     ),
     // TASK-BQ01-004 — SQL-only field group. Hidden entirely for bigquery.
     el(
@@ -361,49 +361,49 @@ function render(): void {
       { id: "sqlFields" },
       el(
         "div",
-        { class: "vsdb-row" },
+        { class: "UnicDB-row" },
         el(
           "div",
-          { class: "vsdb-field grow" },
+          { class: "UnicDB-field grow" },
           fieldLabel("Host", "host", true),
           el("input", { id: "host", type: "text", value: "localhost" }),
         ),
         el(
           "div",
-          { class: "vsdb-field" },
+          { class: "UnicDB-field" },
           fieldLabel("Port", "port", true),
           el("input", { id: "port", type: "text", value: "5432" }),
         ),
       ),
       el(
         "div",
-        { class: "vsdb-row" },
+        { class: "UnicDB-row" },
         el(
           "div",
-          { class: "vsdb-field grow" },
+          { class: "UnicDB-field grow" },
           fieldLabel("Username", "user", true),
           el("input", { id: "user", type: "text" }),
         ),
         el(
           "div",
-          { class: "vsdb-field grow" },
+          { class: "UnicDB-field grow" },
           fieldLabel("Password", "password"),
           el("input", { id: "password", type: "password", autocomplete: "off" }),
         ),
       ),
       el(
         "div",
-        { class: "vsdb-row" },
+        { class: "UnicDB-row" },
         el(
           "div",
-          { class: "vsdb-field grow" },
+          { class: "UnicDB-field grow" },
           fieldLabel("Database", "database", true),
           el("input", { id: "database", type: "text" }),
         ),
       ),
       el(
         "label",
-        { class: "vsdb-form-check" },
+        { class: "UnicDB-form-check" },
         el("input", { id: "useSsl", type: "checkbox" }),
         " Use SSL",
       ),
@@ -415,10 +415,10 @@ function render(): void {
       { id: "bqFields", style: "display:none" },
       el(
         "div",
-        { class: "vsdb-row" },
+        { class: "UnicDB-row" },
         el(
           "div",
-          { class: "vsdb-field grow" },
+          { class: "UnicDB-field grow" },
           fieldLabel("Billing project", "billingProject", true),
           el("input", {
             id: "billingProject",
@@ -429,10 +429,10 @@ function render(): void {
       ),
       el(
         "div",
-        { class: "vsdb-row" },
+        { class: "UnicDB-row" },
         el(
           "div",
-          { class: "vsdb-field grow" },
+          { class: "UnicDB-field grow" },
           fieldLabel("Location", "bqLocation"),
           el("input", {
             id: "bqLocation",
@@ -442,7 +442,7 @@ function render(): void {
         ),
         el(
           "div",
-          { class: "vsdb-field grow" },
+          { class: "UnicDB-field grow" },
           fieldLabel("Max bytes billed", "bqMaxBytesBilled"),
           el("input", {
             id: "bqMaxBytesBilled",
@@ -453,7 +453,7 @@ function render(): void {
       ),
       el(
         "p",
-        { class: "vsdb-form-hint" },
+        { class: "UnicDB-form-hint" },
         "BigQuery dùng Application Default Credentials (ADC) từ máy local. Chạy ",
         el("code", {}, "gcloud auth application-default login"),
         " nếu chưa có.",
@@ -461,41 +461,41 @@ function render(): void {
     ),
     el(
       "label",
-      { class: "vsdb-form-check" },
+      { class: "UnicDB-form-check" },
       el("input", { id: "manualCommit", type: "checkbox" }),
       " Manual commit (gi\u1eef save trong transaction \u0111\u1ebfn khi Commit/Rollback)",
     ),
-    el("h3", { class: "vsdb-form-section" }, "Workspace"),
+    el("h3", { class: "UnicDB-form-section" }, "Workspace"),
     el(
       "div",
-      { class: "vsdb-row" },
+      { class: "UnicDB-row" },
       el(
         "div",
-        { class: "vsdb-field grow" },
+        { class: "UnicDB-field grow" },
         fieldLabel("Folder", "folder"),
         el("input", { id: "folder", type: "text", placeholder: "prod / staging / dev" }),
       ),
       el(
         "div",
-        { class: "vsdb-field" },
+        { class: "UnicDB-field" },
         fieldLabel("Color (hex)", "color"),
         el("input", { id: "color", type: "text", placeholder: "#4fc1ff" }),
       ),
     ),
     el(
       "label",
-      { class: "vsdb-form-check" },
+      { class: "UnicDB-form-check" },
       el("input", { id: "readOnly", type: "checkbox" }),
       " Read-only — ch\u1eb7n m\u1ecdi c\u00e2u l\u1ec7nh thay \u0111\u1ed5i (INSERT/UPDATE/DELETE/DDL/GRANT) tr\u01b0\u1edbc khi g\u1eedi t\u1edbi server",
     ),
     tunnel,
-    el("div", { id: "status", class: "vsdb-form-status" }),
+    el("div", { id: "status", class: "UnicDB-form-status" }),
     el(
       "div",
-      { class: "vsdb-form-actions" },
+      { class: "UnicDB-form-actions" },
       el("button", { id: "cancelBtn" }, "Cancel"),
       el("button", { id: "testBtn" }, "Test"),
-      el("button", { id: "saveBtn", class: "vsdb-form-primary" }, "Save"),
+      el("button", { id: "saveBtn", class: "UnicDB-form-primary" }, "Save"),
     ),
   );
 

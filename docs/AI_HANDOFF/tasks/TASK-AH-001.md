@@ -101,7 +101,7 @@ VERIFICATION:
   command: npm run typecheck
   result: exit 0
   output_excerpt: |
-    > vsdb@1.13.0 typecheck
+    > UnicDB@1.13.0 typecheck
     > tsc --noEmit
   command: npm run compile
   result: exit 0 (one existing ES2024 target warning)

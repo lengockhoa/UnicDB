@@ -211,7 +211,7 @@ export async function aiGenerateSampleData(
   } = deps;
 
   if (columns.length === 0 || n <= 0) {
-    showInfo(`VSDB: nothing to insert into ${schema}.${table}`);
+    showInfo(`UnicDB: nothing to insert into ${schema}.${table}`);
     return { inserted: 0 };
   }
 
@@ -246,6 +246,6 @@ export async function aiGenerateSampleData(
     throw new Error(msg, { cause: e });
   }
 
-  showInfo(`VSDB: inserted ${parsed.statements.length} sample rows into ${schema}.${table}`);
+  showInfo(`UnicDB: inserted ${parsed.statements.length} sample rows into ${schema}.${table}`);
   return { inserted: parsed.statements.length };
 }

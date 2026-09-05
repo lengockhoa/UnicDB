@@ -49,7 +49,7 @@ function gitDiff(ref: string, paths: readonly string[]): string {
 /**
  * Strip non-frozen contributes (UX1 R8a surface) from `package.json` diff —
  * release cycles bump `version` and add new commands / menus /
- * activationEvents / `vsdb.*` configuration property keys. The guard
+ * activationEvents / `UnicDB.*` configuration property keys. The guard
  * exists to catch ADAPTER drift (deps / @google-cloud/bigquery version),
  * not version/contributes drift. Returns the +/- lines that remain after
  * filtering.

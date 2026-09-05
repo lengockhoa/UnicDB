@@ -312,7 +312,7 @@ describe("ResultsPanel — handleRequery adopts batched cursor (Fix R1 critical 
     // composeRequery wraps + adds WHERE + ORDER BY. With the R2 fix, the
     // inner statement is verbatim — no `;` split.
     expect(recorded[0]?.sql).toBe(
-      "SELECT * FROM (SELECT id FROM t) vsdb_sub WHERE id > 5 ORDER BY id DESC",
+      "SELECT * FROM (SELECT id FROM t) UnicDB_sub WHERE id > 5 ORDER BY id DESC",
     );
 
     const states = stateMessages(fake);

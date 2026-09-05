@@ -21,7 +21,7 @@ render it in the webview as a collapsible block, `textContent` only.
 - `webview/aiChatPanelMain.ts` — `renderPermissionRequest` (~lines 370-445): detail ≤120
   chars & single-line → existing plain div; else `<details><summary>Show tool
   details</summary><pre>` all via textContent; empty detail → omit node
-- `webview/styles.css` — add `.vsdb-chat-permission`, `-header`, `-tool-id`, `-tool-name`,
+- `webview/styles.css` — add `.UnicDB-chat-permission`, `-header`, `-tool-id`, `-tool-name`,
   `-tool-detail`, `-detail pre`, `-actions` rules (grep confirms none exist today)
 
 ## Test Cases (REQUIRED — TDD)
@@ -35,7 +35,7 @@ render it in the webview as a collapsible block, `textContent` only.
 | 5 | edge (secret) | secret-like key redacted | value replaced with `"[redacted]"` in output | `{arguments:{sql:"x", api_key:"sk-1"}}` |
 | 6 | unit (host) | posted permission_request carries built detail + opaque ID unchanged | posted `tool.detail` matches sanitizer; requestId still `req-…`; options untouched | FakeAcp session per existing harness, server sends toolCall w/ args |
 | 7 | unit (webview) | long detail → collapsible, textContent only | card contains `<details>`+`<pre>`; `el.innerHTML` never assigned on new nodes; pre.textContent === detail | jsdom render, 150-char detail |
-| 8 | edge (webview) | empty detail | no `.vsdb-chat-permission-tool-detail` node in card | detail `""` |
+| 8 | edge (webview) | empty detail | no `.UnicDB-chat-permission-tool-detail` node in card | detail `""` |
 | 9 | regression | existing ACP permission semantics | all pre-existing cases in `aiChatPanelAcp.test.ts` + `aiChatPanelWebview.test.ts` still pass unmodified (opaque-ID, one-shot settle, deny default) | current suite |
 
 ## Test Files
@@ -95,7 +95,7 @@ FILES_CHANGED:
   - src/ui/permissionDetail.ts: (new) pure sanitizer, PERMISSION_DETAIL_CAP=2000, JSON_INDENT=2, recursive secret redaction (api_key/authorization/bearer/password/secret/token), SQL preview path for run_sql/execute_sql/sql, 2000-char cap with '… (truncated)' marker.
   - src/ui/aiChatPanel.ts: handleAcpServerRequest now uses buildPermissionToolInfo(toolCall) — id/name/detail derived from sanitizer, requestId still host-generated opaque, options untouched.
   - webview/aiChatPanelMain.ts: renderPermissionRequest delegates detail rendering to new `permissionDetailNode(detail)`; empty detail omits node, short single-line (<=120 chars, no newline) → plain div, otherwise → `<details><summary>Show tool details</summary><pre>` with textContent only.
-  - webview/styles.css: added `.vsdb-chat-permission`, `-header`, `-tool-id`, `-tool-name`, `-tool-detail`, `-tool-detail pre`, `-actions` rules.
+  - webview/styles.css: added `.UnicDB-chat-permission`, `-header`, `-tool-id`, `-tool-name`, `-tool-detail`, `-tool-detail pre`, `-actions` rules.
   - src/ui/__tests__/permissionDetail.test.ts: (new) cases 1-5.
   - src/ui/__tests__/aiChatPanelAcp.test.ts: added `feedPermissionRequestWithArgs` helper + cases #6a (sanitizer wired to host; opaque requestId unchanged; options untouched) and #6b (run_sql SQL preview).
   - src/ui/__tests__/aiChatPanelWebview.test.ts: added cases #7 (long detail → `<details><pre>`, textContent only), #7b (short detail → plain div), #8 (empty detail → node omitted).
@@ -114,7 +114,7 @@ VERIFICATION:
     Tests  42 passed (42)
 RED_OUTPUT (verbatim, before implementation):
   FAIL  src/ui/__tests__/permissionDetail.test.ts [ src/ui/__tests__/permissionDetail.test.ts ]
-  Error: Failed to load url ../permissionDetail (resolved id: ../permissionDetail) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/permissionDetail.test.ts. Does the file exist?
+  Error: Failed to load url ../permissionDetail (resolved id: ../permissionDetail) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/src/ui/__tests__/permissionDetail.test.ts. Does the file exist?
     Test Files  1 failed (1)
     Tests  no tests
 ISSUES: none

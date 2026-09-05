@@ -99,8 +99,8 @@ function makeCfg(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
     driver: overrides.driver ?? "postgres",
     host: overrides.host ?? "127.0.0.1",
     port: overrides.port ?? 5432,
-    user: overrides.user ?? "vsdb",
-    database: overrides.database ?? "vsdb",
+    user: overrides.user ?? "UnicDB",
+    database: overrides.database ?? "UnicDB",
     ...overrides,
   };
 }

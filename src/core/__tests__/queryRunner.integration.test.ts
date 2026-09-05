@@ -1,6 +1,6 @@
 // src/core/__tests__/queryRunner.integration.test.ts
 // Integration test: QueryRunner + PostgresAdapter + real docker postgres.
-// Chỉ chạy khi VSDB_IT=1.
+// Chỉ chạy khi UnicDB_IT=1.
 //
 // CRITICAL #1 fix round 1: closes the loop — adapter returns
 // { results: [], batched }, runner must build result from batched.columns
@@ -9,12 +9,12 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { QueryRunner } from "../queryRunner";
 import { PostgresAdapter } from "../../adapters/postgres";
 
-const IT = process.env.VSDB_IT === "1";
-const HOST = process.env.VSDB_PG_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.VSDB_PG_PORT ?? 5433);
-const USER = process.env.VSDB_PG_USER ?? "vsdb";
-const PASS = process.env.VSDB_PG_PASS ?? "vsdb";
-const DB = process.env.VSDB_PG_DB ?? "vsdb";
+const IT = process.env.UnicDB_IT === "1";
+const HOST = process.env.UnicDB_PG_HOST ?? "127.0.0.1";
+const PORT = Number(process.env.UnicDB_PG_PORT ?? 5433);
+const USER = process.env.UnicDB_PG_USER ?? "UnicDB";
+const PASS = process.env.UnicDB_PG_PASS ?? "UnicDB";
+const DB = process.env.UnicDB_PG_DB ?? "UnicDB";
 
 describe.skipIf(!IT)("QueryRunner + PostgresAdapter (docker) — batched contract", () => {
   let adapter: PostgresAdapter;

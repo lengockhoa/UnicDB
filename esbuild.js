@@ -1,4 +1,4 @@
-// esbuild.js — VSDB extension + webview bundler.
+// esbuild.js — UnicDB extension + webview bundler.
 // TASK-001 scaffold: builds two entries (extension host + webview).
 // TASK-203: CSS for the webview is now bundled via esbuild's CSS import
 // resolution from webview/main.ts (see ag-grid-community/styles/* and

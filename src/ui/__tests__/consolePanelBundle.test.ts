@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const distPath = resolve(process.cwd(), "dist", "consolePanel.js");
 const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -25,15 +25,15 @@ function loadBundle(): Array<Record<string, unknown>> {
       "dist/consolePanel.js missing — run `npm run compile` before this test",
     );
   }
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-form-body"></div>';
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-form-body"></div>';
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
   (0, eval)(bundleSrc);
   return received;
@@ -93,7 +93,7 @@ describe("webview/consolePanelMain.ts bundle (TASK-002)", () => {
     // The context menu exists up-front but stays out of view until a
     // right-click opens it (pinned further in #7).
     const menu = document.querySelector(
-      ".vsdb-console-contextmenu",
+      ".UnicDB-console-contextmenu",
     ) as HTMLElement | null;
     expect(menu).toBeTruthy();
     expect(menu!.hidden).toBe(true);
@@ -149,7 +149,7 @@ describe("webview/consolePanelMain.ts bundle (TASK-002)", () => {
     editor.value = "SELECT 4";
 
     const menu = document.querySelector(
-      ".vsdb-console-contextmenu",
+      ".UnicDB-console-contextmenu",
     ) as HTMLElement | null;
     expect(menu).toBeTruthy();
     // Closed before the right-click (initial state).
@@ -166,7 +166,7 @@ describe("webview/consolePanelMain.ts bundle (TASK-002)", () => {
     expect(menu!.hidden).toBe(false);
 
     const items = Array.from(
-      document.querySelectorAll<HTMLButtonElement>(".vsdb-console-context-item"),
+      document.querySelectorAll<HTMLButtonElement>(".UnicDB-console-context-item"),
     );
     const saveItem = items.find((b) =>
       (b.textContent ?? "").includes("Save as SQL file"),
@@ -184,7 +184,7 @@ describe("webview/consolePanelMain.ts bundle (TASK-002)", () => {
       new MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
     );
     return document.querySelector(
-      ".vsdb-console-contextmenu",
+      ".UnicDB-console-contextmenu",
     ) as HTMLElement;
   }
 
@@ -206,7 +206,7 @@ describe("webview/consolePanelMain.ts bundle (TASK-002)", () => {
     // Reopening after Escape still works (single node, not stacked).
     const reopened = openMenu(editor);
     expect(reopened.hidden).toBe(false);
-    expect(document.querySelectorAll(".vsdb-console-contextmenu")).toHaveLength(
+    expect(document.querySelectorAll(".UnicDB-console-contextmenu")).toHaveLength(
       1,
     );
   });
@@ -241,7 +241,7 @@ describe("webview/consolePanelMain.ts bundle (TASK-002)", () => {
     openMenu(editor);
     openMenu(editor);
     openMenu(editor);
-    expect(document.querySelectorAll(".vsdb-console-contextmenu")).toHaveLength(
+    expect(document.querySelectorAll(".UnicDB-console-contextmenu")).toHaveLength(
       1,
     );
   });
@@ -377,7 +377,7 @@ describe("webview/consolePanelMain.ts bundle — ARP-08 draft recovery", () => {
     // reach the host BEFORE the switch, or the host's next `state` push
     // clobbers A's edits (the latent divergence bug this task fixes).
     const tabButtons = document.querySelectorAll<HTMLButtonElement>(
-      ".vsdb-console-tab",
+      ".UnicDB-console-tab",
     );
     tabButtons[1].click();
     const bufIdx = received.findIndex((m) => m.type === "updateBuffer");
@@ -417,7 +417,7 @@ describe("webview/consolePanelMain.ts bundle — ARP-08 draft recovery", () => {
     expect(editorEl().value).toBe("SELECT drafts");
     postWindowState({ type: "draftsCleared" });
     expect(editorEl().value).toBe("");
-    const tabNodes = document.querySelectorAll<HTMLElement>(".vsdb-console-tab");
+    const tabNodes = document.querySelectorAll<HTMLElement>(".UnicDB-console-tab");
     expect(tabNodes).toHaveLength(1);
     // The label text node excludes the "×" close span appended after it.
     expect(tabNodes[0].firstChild?.textContent).toBe("Query 1");

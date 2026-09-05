@@ -27,7 +27,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -45,14 +45,14 @@ function loadBundle(): BundleHandle {
     );
   }
   document.body.innerHTML =
-    '<div id="vsdb-root" class="vsdb-form-body"><div class="vsdb-form-loading">Loading…</div></div>';
+    '<div id="UnicDB-root" class="UnicDB-form-body"><div class="UnicDB-form-loading">Loading…</div></div>';
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
   (0, eval)(bundleSrc);
   return { received };
@@ -95,7 +95,7 @@ describeIfBundle("webview/connectionFormMain.ts bundle — BigQuery field group 
   // -----------------------------------------------------------------------
   it("#1 bigquery driver renders BQ group, hides host/port/password/SSL", () => {
     loadBundle();
-    const root = document.getElementById("vsdb-root") as HTMLElement;
+    const root = document.getElementById("UnicDB-root") as HTMLElement;
 
     // Switch driver to bigquery.
     const driver = document.getElementById("driver") as HTMLSelectElement;
@@ -208,7 +208,7 @@ describeIfBundle("webview/connectionFormMain.ts bundle — BigQuery field group 
   // -----------------------------------------------------------------------
   it("#4 postgres driver keeps SQL fields rendered and BQ group hidden", () => {
     loadBundle();
-    const root = document.getElementById("vsdb-root") as HTMLElement;
+    const root = document.getElementById("UnicDB-root") as HTMLElement;
     // Default driver is postgres on first render.
     const driver = document.getElementById("driver") as HTMLSelectElement;
     expect(driver.value).toBe("postgres");

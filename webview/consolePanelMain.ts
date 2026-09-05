@@ -10,7 +10,7 @@ const vscodeApi = typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : 
 
 type Msg = Record<string, unknown>;
 interface Tab { id: string; name: string; buffer: string; active?: boolean }
-const root = document.getElementById("vsdb-root") as HTMLDivElement;
+const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 let tabs: Tab[] = [{ id: "tab-1", name: "Query 1", buffer: "", active: true }];
 let activeTabId = "tab-1";
 let history: string[] = [];
@@ -68,12 +68,12 @@ let contextMenu: HTMLDivElement | null = null;
 function ensureContextMenu(): HTMLDivElement {
   if (contextMenu) return contextMenu;
   const menu = document.createElement("div");
-  menu.className = "vsdb-console-contextmenu";
+  menu.className = "UnicDB-console-contextmenu";
   menu.setAttribute("role", "menu");
   menu.hidden = true;
   const saveItem = document.createElement("button");
   saveItem.type = "button";
-  saveItem.className = "vsdb-console-context-item";
+  saveItem.className = "UnicDB-console-context-item";
   saveItem.setAttribute("role", "menuitem");
   saveItem.textContent = "Save as SQL file";
   saveItem.addEventListener("click", () => {
@@ -98,25 +98,25 @@ function hideContextMenu(): void { if (contextMenu && !contextMenu.hidden) conte
 // ---- Render ------------------------------------------------------------------
 function render(): void {
   const a = activeTab();
-  root.innerHTML = `<div class="vsdb-console">
-    <div class="vsdb-console-tabs" role="tablist"></div>
-    <div class="vsdb-console-toolbar">
-      <button id="consoleRunBtn" class="vsdb-console-primary" title="Run (Cmd/Ctrl+Enter)">Run</button>
-      <button id="consoleRunSelectionBtn" class="vsdb-console-secondary">Run Selection</button>
-      <button id="consoleExplainBtn" class="vsdb-console-secondary">Explain</button>
-      <button id="consoleExplainAnalyzeBtn" class="vsdb-console-secondary">Explain Analyze</button>
-      <button id="consoleFormatBtn" class="vsdb-console-secondary">Format</button>
-      <button id="consoleSaveBtn" class="vsdb-console-secondary">Save</button>
-      <button id="consoleNewTabBtn" class="vsdb-console-secondary">+ Tab</button>
-      <button id="consoleHistoryBtn" class="vsdb-console-secondary">History</button>
-      <button id="consoleClearDraftsBtn" class="vsdb-console-secondary" title="Clear all saved console drafts">Clear drafts</button>
+  root.innerHTML = `<div class="UnicDB-console">
+    <div class="UnicDB-console-tabs" role="tablist"></div>
+    <div class="UnicDB-console-toolbar">
+      <button id="consoleRunBtn" class="UnicDB-console-primary" title="Run (Cmd/Ctrl+Enter)">Run</button>
+      <button id="consoleRunSelectionBtn" class="UnicDB-console-secondary">Run Selection</button>
+      <button id="consoleExplainBtn" class="UnicDB-console-secondary">Explain</button>
+      <button id="consoleExplainAnalyzeBtn" class="UnicDB-console-secondary">Explain Analyze</button>
+      <button id="consoleFormatBtn" class="UnicDB-console-secondary">Format</button>
+      <button id="consoleSaveBtn" class="UnicDB-console-secondary">Save</button>
+      <button id="consoleNewTabBtn" class="UnicDB-console-secondary">+ Tab</button>
+      <button id="consoleHistoryBtn" class="UnicDB-console-secondary">History</button>
+      <button id="consoleClearDraftsBtn" class="UnicDB-console-secondary" title="Clear all saved console drafts">Clear drafts</button>
     </div>
-    <div class="vsdb-console-editor-wrap">
-      <textarea id="consoleSqlEditor" class="vsdb-console-editor" rows="12" placeholder="Type SQL here…" spellcheck="false"></textarea>
-      <div id="consoleGhostOverlay" class="vsdb-console-ghost" hidden aria-hidden="true"></div>
+    <div class="UnicDB-console-editor-wrap">
+      <textarea id="consoleSqlEditor" class="UnicDB-console-editor" rows="12" placeholder="Type SQL here…" spellcheck="false"></textarea>
+      <div id="consoleGhostOverlay" class="UnicDB-console-ghost" hidden aria-hidden="true"></div>
     </div>
-    <pre id="consolePlanPane" class="vsdb-console-plan" hidden></pre>
-    <div id="consoleHistoryPane" class="vsdb-console-history" hidden></div>
+    <pre id="consolePlanPane" class="UnicDB-console-plan" hidden></pre>
+    <div id="consoleHistoryPane" class="UnicDB-console-history" hidden></div>
   </div>`;
   const e = editor();
   if (e) e.value = a?.buffer ?? "";
@@ -125,17 +125,17 @@ function render(): void {
   const p = document.getElementById("consolePlanPane") as HTMLElement | null;
   if (p && plan) { p.hidden = false; p.textContent = plan; }
   // The menu node exists from the first render (TASK-002 DOM contract:
-  // `.vsdb-console-contextmenu` present, hidden, before any right-click).
+  // `.UnicDB-console-contextmenu` present, hidden, before any right-click).
   ensureContextMenu();
 }
 function renderTabs(): void {
-  const bar = document.querySelector(".vsdb-console-tabs") as HTMLElement | null;
+  const bar = document.querySelector(".UnicDB-console-tabs") as HTMLElement | null;
   if (!bar) return;
   bar.innerHTML = "";
   for (const tab of tabs) {
     const node = document.createElement("button");
     node.type = "button";
-    node.className = `vsdb-console-tab${tab.id === activeTabId ? " vsdb-console-tab-active" : ""}`;
+    node.className = `UnicDB-console-tab${tab.id === activeTabId ? " UnicDB-console-tab-active" : ""}`;
     node.setAttribute("role", "tab");
     node.textContent = tab.name;
     node.addEventListener("click", () => {
@@ -146,7 +146,7 @@ function renderTabs(): void {
       post({ type: "switchTab", tabId: tab.id });
     });
     const close = document.createElement("span");
-    close.className = "vsdb-console-tab-close";
+    close.className = "UnicDB-console-tab-close";
     close.textContent = "×";
     close.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -266,7 +266,7 @@ function renderHistory(): void {
   history.forEach((sql, i) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "vsdb-console-history-item";
+    b.className = "UnicDB-console-history-item";
     b.textContent = sql;
     b.addEventListener("click", () => {
       const ed = editor();
@@ -358,7 +358,7 @@ function positionGhost(caretOffset: number, fullText: string): void {
   // Use a text-mirror to compute caret pixel offset within the textarea.
   if (!ghostMirror) {
     const mirror = document.createElement("div");
-    mirror.className = "vsdb-console-ghost-mirror";
+    mirror.className = "UnicDB-console-ghost-mirror";
     mirror.setAttribute("aria-hidden", "true");
     document.body.appendChild(mirror);
     ghostMirror = mirror;

@@ -102,18 +102,18 @@ RED_OUTPUT: |
       → expected undefined to be true (resultLimited not set by onExhausted)
 Verification Output: |
   ## npx vitest run src/core/__tests__/queryRunner.test.ts
-  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq03-003
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq03-003
    ✓ src/core/__tests__/queryRunner.test.ts  (52 tests) 238ms
    Test Files  1 passed (1)
         Tests  52 passed (52)
 
   ## npm run typecheck
-  > vsdb@1.49.0 typecheck
+  > UnicDB@1.49.0 typecheck
   > tsc --noEmit
   (no output, exit 0)
 
   ## npx vitest run src/core/__tests__/resultBatcher.test.ts
-  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq03-003
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq03-003
    ✓ src/core/__tests__/resultBatcher.test.ts  (14 tests) 3ms
    Test Files  1 passed (1)
         Tests  14 passed (14)
@@ -200,18 +200,18 @@ RED_OUTPUT:
 
 Verification Output:
   ## npx vitest run src/core/__tests__/queryRunner.test.ts
-  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/r45-bq03-003
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/r45-bq03-003
    ✓ src/core/__tests__/queryRunner.test.ts  (53 tests) 238ms
    Test Files  1 passed (1)
         Tests  53 passed (53)
 
   ## npm run typecheck
-  > vsdb@1.49.0 typecheck
+  > UnicDB@1.49.0 typecheck
   > tsc --noEmit
   (no output, exit 0)
 
   ## npx vitest run src/core/__tests__/resultBatcher.test.ts
-  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/r45-bq03-003
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/r45-bq03-003
    ✓ src/core/__tests__/resultBatcher.test.ts  (14 tests) 2ms
    Test Files  1 passed (1)
         Tests  14 passed (14)

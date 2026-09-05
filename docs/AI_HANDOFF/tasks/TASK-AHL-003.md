@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add a focused webview panel listing Postgres sessions (pg_stat_activity) and lock waits (pg_locks blocked → blocking chains). Per-row buttons Kill (cancel the running query via `pg_cancel_backend($pid)`) and Terminate (drop the connection via `pg_terminate_backend($pid)`), each behind a destructive confirm modal. Self-protection: pids matching `pg_backend_pid()` (the active VSDB connection) are rendered with a "(self)" badge and disabled buttons.
+Add a focused webview panel listing Postgres sessions (pg_stat_activity) and lock waits (pg_locks blocked → blocking chains). Per-row buttons Kill (cancel the running query via `pg_cancel_backend($pid)`) and Terminate (drop the connection via `pg_terminate_backend($pid)`), each behind a destructive confirm modal. Self-protection: pids matching `pg_backend_pid()` (the active UnicDB connection) are rendered with a "(self)" badge and disabled buttons.
 
 ## Target Files
 
@@ -58,7 +58,7 @@ npm run compile
 ## Interfaces
 
 - Consumes: `AdminApi` from TASK-AHL-001; existing `vscode.window.showWarningMessage` modal flow.
-- Produces: `vscode.window.createWebviewPanel("vsdb.adminSessions", ...)` (id declared in `package.json` — wired by TASK-AHL-004). Messages handled by the panel webview; no new host messages in TASK-AHL-003 scope.
+- Produces: `vscode.window.createWebviewPanel("UnicDB.adminSessions", ...)` (id declared in `package.json` — wired by TASK-AHL-004). Messages handled by the panel webview; no new host messages in TASK-AHL-003 scope.
 
 ---
 

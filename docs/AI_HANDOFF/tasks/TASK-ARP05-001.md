@@ -97,7 +97,7 @@ EXECUTOR_SUBAGENT: feature-implementer
 RED_OUTPUT: (step-1 TDD run on base code `0dd021e`, after writing the 5 cases from §Test Cases; first run had a second failure caused by my own case-4 test wiring — missing `clientCtor().mockImplementation(() => dedicated)` — fixed in the TEST only, production untouched; the clean RED below shows exactly the one expected production-gap failure. First-run tail included at the end for transparency.)
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp05-001
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-arp05-001
 
  ❯ src/adapters/__tests__/postgres.test.ts  (23 tests | 1 failed) 3048ms
    ❯ src/adapters/__tests__/postgres.test.ts > PostgresAdapter — ARP-05.1 resilience pins (TASK-ARP05-001) > connect() probe fails → no pool leak: end() once, pool nulled, next connect() builds a fresh pool
@@ -139,7 +139,7 @@ $ npx vitest run src/adapters/__tests__/postgres.test.ts
  Start at  05:01:55 / Duration  3.29s
 
 $ npm run typecheck
-> vsdb@1.40.0 typecheck
+> UnicDB@1.40.0 typecheck
 > tsc --noEmit
 typecheck exit 0
 

@@ -39,7 +39,7 @@ export interface EditEntry {
 
 /** Marker shape for a locally-added row (Add Row toolbar). */
 export interface NewRowMarker {
-  __vsdb_new_row__: true;
+  __UnicDB_new_row__: true;
   __rowId: number;
   /** Per-column current values (length === column count). */
   values: unknown[];
@@ -47,7 +47,7 @@ export interface NewRowMarker {
 
 /** Marker shape for a deleted row (Delete Row toolbar). */
 export interface DeleteRowMarker {
-  __vsdb_deleted__: true;
+  __UnicDB_deleted__: true;
   __rowId: number;
 }
 
@@ -55,12 +55,12 @@ export interface DeleteRowMarker {
  *  user — the column is omitted from the INSERT column/value lists so the
  *  server applies its own DEFAULT instead of receiving `''` (A11). */
 export interface DefaultValueMarker {
-  __vsdb_default__: true;
+  __UnicDB_default__: true;
 }
 
 export function isDefaultValueMarker(v: unknown): v is DefaultValueMarker {
   if (typeof v !== "object" || v === null) return false;
-  return (v as Record<string, unknown>)["__vsdb_default__"] === true;
+  return (v as Record<string, unknown>)["__UnicDB_default__"] === true;
 }
 
 /** Reserved `EditEntry.colIndex` slots for row-level markers (insert /
@@ -122,12 +122,12 @@ export type SaveStatementsResult = SaveStatementsOk | SaveStatementsRefused;
 
 function isNewRowMarker(v: unknown): v is NewRowMarker {
   if (typeof v !== "object" || v === null) return false;
-  return (v as Record<string, unknown>)["__vsdb_new_row__"] === true;
+  return (v as Record<string, unknown>)["__UnicDB_new_row__"] === true;
 }
 
 function isDeleteMarker(v: unknown): v is DeleteRowMarker {
   if (typeof v !== "object" || v === null) return false;
-  return (v as Record<string, unknown>)["__vsdb_deleted__"] === true;
+  return (v as Record<string, unknown>)["__UnicDB_deleted__"] === true;
 }
 
 /** Identifier-quoting per dialect. Exposed (not just internal) so the

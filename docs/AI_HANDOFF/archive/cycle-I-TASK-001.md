@@ -145,7 +145,7 @@ FILES_CHANGED:
 TESTS_ADDED:
   - ddlCreateTable.test.ts: "PK dedupe: isPrimaryKey + primaryKey KeySpec → exactly ONE PRIMARY KEY clause (executable)"; "default quoting: bare identifier 'pending'"; "default quoting: function call 'now()' passes through bare"; "default quoting: boolean literal 'true'"; "default quoting: pre-quoted literal stays as written"; "default quoting: numeric literal 42 → DEFAULT '42'"; "default quoting: uuid_in(...) expression passes through bare"
 VERIFICATION:
-  command: npx vitest run src/core/__tests__/ddlCreateTable.test.ts src/core/__tests__/ddlAlterTable.test.ts src/core/__tests__/pgIntrospect.test.ts && VSDB_IT=1 VSDB_PG_HOST=127.0.0.1 VSDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx tsc --noEmit
+  command: npx vitest run src/core/__tests__/ddlCreateTable.test.ts src/core/__tests__/ddlAlterTable.test.ts src/core/__tests__/pgIntrospect.test.ts && UnicDB_IT=1 UnicDB_PG_HOST=127.0.0.1 UnicDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx tsc --noEmit
   result: 48 unit pass / 6 integration pass / tsc exit 0
   output_excerpt: |
     ✓ src/core/__tests__/ddlCreateTable.test.ts  (16 tests)

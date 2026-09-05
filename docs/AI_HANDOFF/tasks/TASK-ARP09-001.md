@@ -99,7 +99,7 @@ Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 ```
  FAIL  src/core/__tests__/diagnostics.test.ts [ src/core/__tests__/diagnostics.test.ts ]
 Error: Failed to load url ../diagnostics (resolved id: ../diagnostics) in
-/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp09-001/src/core/__tests__/diagnostics.test.ts.
+/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-arp09-001/src/core/__tests__/diagnostics.test.ts.
 Does the file exist?
 
  Test Files  1 failed (1)
@@ -114,7 +114,7 @@ Does the file exist?
    Start at  10:53:24
    Duration  167ms
 
-> vsdb@1.44.0 typecheck
+> UnicDB@1.44.0 typecheck
 > tsc --noEmit
 TYPECHECK_EXIT=0
 ```

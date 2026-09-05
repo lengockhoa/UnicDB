@@ -115,7 +115,7 @@ vi.mock("vscode", () => ({
   workspace: {
     getConfiguration: vi.fn((section: string) => ({
       get: vi.fn((key: string, defaultValue?: unknown) => {
-        if (section === "vsdb" && key === "ai.engine") {
+        if (section === "UnicDB" && key === "ai.engine") {
           return state.rawConfiguredEngine;
         }
         return defaultValue;
@@ -678,7 +678,7 @@ describe("AiChatPanel — wire privacy", () => {
     expect(blob).not.toContain("hunter2");
     expect(blob).not.toContain("fk");
     // The trace recorder on the panel can dump its events for the host —
-    // the all-turn snapshot (the surface `vsdb.ai.exportTrace` reads) must
+    // the all-turn snapshot (the surface `UnicDB.ai.exportTrace` reads) must
     // also be free of the sentinels (defense in depth).
     const dump = panel.dumpAll();
     const dumpBlob = JSON.stringify(dump);
@@ -813,7 +813,7 @@ describe("AiChatPanel — invalid configuration denies admission", () => {
     });
     expect(policy.context.workspace).toBe(false);
     expect(policy.auditExportAllowed).toBe(false);
-    expect(policy.notice).toMatch(/VSDB AI policy/);
+    expect(policy.notice).toMatch(/UnicDB AI policy/);
     expect(policy.notice.length).toBeGreaterThan(0);
   });
 
@@ -826,7 +826,7 @@ describe("AiChatPanel — invalid configuration denies admission", () => {
     expect(policy.tools.database).toBe(false);
     expect(policy.auditExportAllowed).toBe(false);
     expect(policy.provider).toBeNull();
-    expect(policy.notice).toMatch(/VSDB AI policy/);
+    expect(policy.notice).toMatch(/UnicDB AI policy/);
   });
 
   it("#5c error frames posted on a denied send path carry the policy notice text", async () => {
@@ -1158,7 +1158,7 @@ describe("AiChatPanel — usage + policy notice frame (TASK-ARP06-005)", () => {
 
     const usages = postedMessages(p).filter(isUsage);
     expect(usages).toHaveLength(1);
-    expect(usages[0].policyNotice).toMatch(/VSDB AI policy/);
+    expect(usages[0].policyNotice).toMatch(/UnicDB AI policy/);
     // Generic prompt: no schema introspection ran (denied policy boundary).
     expect(spy.factory).not.toHaveBeenCalled();
     // Chat completed — no error bubble on the deny path.

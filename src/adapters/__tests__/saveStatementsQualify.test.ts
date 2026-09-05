@@ -124,11 +124,11 @@ describe("buildSaveStatements — DEFAULT-value INSERT (A11)", () => {
       rowId: 5,
       colIndex: 0,
       value: {
-        __vsdb_new_row__: true,
+        __UnicDB_new_row__: true,
         __rowId: 5,
         values: [
-          { __vsdb_default__: true },
-          { __vsdb_default__: true },
+          { __UnicDB_default__: true },
+          { __UnicDB_default__: true },
         ],
       },
     };
@@ -152,9 +152,9 @@ describe("buildSaveStatements — DEFAULT-value INSERT (A11)", () => {
       rowId: 6,
       colIndex: 0,
       value: {
-        __vsdb_new_row__: true,
+        __UnicDB_new_row__: true,
         __rowId: 6,
-        values: ["alice", { __vsdb_default__: true }, 30],
+        values: ["alice", { __UnicDB_default__: true }, 30],
       },
     };
     const r = buildSaveStatements(
@@ -174,8 +174,8 @@ describe("buildSaveStatements — DEFAULT-value INSERT (A11)", () => {
   });
 
   it("isDefaultValueMarker recognises the sentinel shape only", () => {
-    expect(isDefaultValueMarker({ __vsdb_default__: true })).toBe(true);
-    expect(isDefaultValueMarker({ __vsdb_default__: false })).toBe(false);
+    expect(isDefaultValueMarker({ __UnicDB_default__: true })).toBe(true);
+    expect(isDefaultValueMarker({ __UnicDB_default__: false })).toBe(false);
     expect(isDefaultValueMarker("")).toBe(false);
     expect(isDefaultValueMarker(null)).toBe(false);
   });
@@ -185,9 +185,9 @@ describe("buildSaveStatements — DEFAULT-value INSERT (A11)", () => {
       rowId: 1,
       colIndex: 0,
       value: {
-        __vsdb_new_row__: true,
+        __UnicDB_new_row__: true,
         __rowId: 1,
-        values: [{ __vsdb_default__: true }],
+        values: [{ __UnicDB_default__: true }],
       },
     };
     const r = buildSaveStatements(
@@ -289,7 +289,7 @@ describe("buildSaveStatements — serverIndexByRowId remap (A12)", () => {
     const marker: EditEntry = {
       rowId: 4,
       colIndex: 0,
-      value: { __vsdb_deleted__: true, __rowId: 4 },
+      value: { __UnicDB_deleted__: true, __rowId: 4 },
     };
     const serverRows: unknown[][] = [
       [0, "a"],
@@ -322,7 +322,7 @@ describe("buildSaveStatements — negative marker colIndex never reaches columns
       rowId: 9,
       colIndex: -1,
       value: {
-        __vsdb_new_row__: true,
+        __UnicDB_new_row__: true,
         __rowId: 9,
         values: ["a", "b"],
       },

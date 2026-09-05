@@ -7,7 +7,7 @@ import * as vscode from "vscode";
 import type { CompareRequest, CompareResult } from "./compareService";
 import { buildCompareHtml } from "./comparePanelHtml";
 
-export const COMPARE_PANEL_VIEW_TYPE = "vsdbComparePanel";
+export const COMPARE_PANEL_VIEW_TYPE = "UnicDBComparePanel";
 
 export interface ComparePanelOptions {
   extensionUri: vscode.Uri;
@@ -74,7 +74,7 @@ export class ComparePanel {
   private post(): void {
     if (this.panel && this.lastMessage) {
       void this.panel.webview.postMessage({
-        type: "vsdb-compare",
+        type: "UnicDB-compare",
         result: this.lastMessage.result,
         request: this.lastMessage.request,
       });

@@ -78,14 +78,14 @@ type StreamState = "open" | "eof" | "closed" | "error";
  * TASK-005 — server-side column sort as pure SQL composition (MySQL dialect).
  *
  * Mirrors `getTableSortQuery` (src/adapters/postgres.ts, src/adapters/mssql.ts)
- * exactly: same 4-arg signature, same `vsdb_sort` subquery wrap, same
+ * exactly: same 4-arg signature, same `UnicDB_sort` subquery wrap, same
  * ASC/DESC whitelist — but identifiers are quoted with MySQL backticks
  * (embedded `` ` `` doubled) via the shared `quoteIdent`. The emitted
  * `ORDER BY` is exactly what MySQL `LIMIT/OFFSET` paging can attach to
  * (see `buildPagedQuery`, src/ui/queryComposer.ts).
  *
  *   getTableSortQuery("SELECT * FROM t WHERE id>5", "", "name", "ASC")
- *     → SELECT * FROM (SELECT * FROM t WHERE id>5) vsdb_sort ORDER BY `name` ASC
+ *     → SELECT * FROM (SELECT * FROM t WHERE id>5) UnicDB_sort ORDER BY `name` ASC
  *
  * Injection safety: `column` is emitted as a single backtick-quoted
  * identifier, so a payload like ``n`; DROP TABLE x--`` stays one inert
@@ -109,7 +109,7 @@ export function getTableSortQuery(
   const whereClause = whereFromBar.trim().length
     ? ` WHERE ${whereFromBar.trim()}`
     : "";
-  return `SELECT * FROM (${inner}) vsdb_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`;
+  return `SELECT * FROM (${inner}) UnicDB_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`;
 }
 
 /**

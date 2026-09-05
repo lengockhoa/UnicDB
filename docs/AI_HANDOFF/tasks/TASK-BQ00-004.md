@@ -61,7 +61,7 @@ npm test
 ## Acceptance Criteria
 
 - [ ] ADR 0004 exists with Status/Date/Deciders/Scope header matching the 0001-0003 house style, and covers ALL decision areas listed in Test #1 (now ten, incl. the two Round-2 sections) — each citing the evidence from 001-003 (probe result, `.d.ts` field names, classifier categories, `docs/decisions/_bq00-evidence.md`).
-- [ ] Continuation ownership stated explicitly: VSDB owns `BigQueryJobRef` + opaque page token across pages; client is stateless per page; token decides continuation (not row count).
+- [ ] Continuation ownership stated explicitly: UnicDB owns `BigQueryJobRef` + opaque page token across pages; client is stateless per page; token decides continuation (not row count).
 - [ ] Cancellation mapping: owned active job ID only (project+location scoped); cancel-after-terminal is harmless; no guessed job IDs.
 - [ ] Safe scalar conversion table (roadmap §5): INT64/NUMERIC/BIGNUMERIC canonical strings; FLOAT64 non-finite explicit; BYTES b64; RECORD/REPEATED JSON-preview; NULL distinct from empty string.
 - [ ] Selected config fields: billing project, location, `maximumBytesBilled` — metadata only, no secret fields.
@@ -92,7 +92,7 @@ npm test
 To 004's executor: the ADR's job is to CLOSE the roadmap's open questions, not restate them. Two inputs decide real content: (1) the engine-floor outcome from 001 — if the probe showed 9.x is bundle-safe, the ADR records "9.0.3 selected, node>=22 floor documented, extension-host implication analyzed"; if the fallback fired, it records why 8.3.1 was chosen. (2) The `.d.ts` deltas from 002 and the error-shape findings from 003 — if reality differs from the planner's expected type surface or from substring-based classification, the ADR records REALITY, and this task file's Discussion should note the deltas so BQ-01's commissioning brief can absorb them. House style reference: `docs/decisions/0001-ssh-host-key-identity-policy.md` (Status line includes the gating cycle).
 
 ### 2026-09-02 · planner · unic-smart (Round 2)
-Two plan-review mandates land in this task. (Minor 2 / Important 2) The roadmap's line-67 evidence now has a concrete citation target: TASK-BQ00-001 writes `docs/decisions/_bq00-evidence.md`; your ADR cites it by path and duplicates the enumerated names into a "Pagination + cancellation method names" section — including the previously owner-less **cancellation return shape** (what `job.cancel()` actually returns; object vs void matters for BQ-01's cancel wiring). (Minor 1 partial) Add a "Grid continuation mapping" paragraph (3-5 sentences): `BigQueryPage.pageToken` maps onto the grid's existing continuation contract — `RunResult.batched` (src/adapters/types.ts:78) plus the panel's `loadMore` → `runner.loadMore(index)` path — VSDB owning jobRef + opaque token, client stateless per page. This is a PAPER deliverable: `resultBatcher.ts` and `resultsPanel.ts` are read-only this cycle, so the mapping must live entirely in the ADR prose. Verification commands above now grep for both.
+Two plan-review mandates land in this task. (Minor 2 / Important 2) The roadmap's line-67 evidence now has a concrete citation target: TASK-BQ00-001 writes `docs/decisions/_bq00-evidence.md`; your ADR cites it by path and duplicates the enumerated names into a "Pagination + cancellation method names" section — including the previously owner-less **cancellation return shape** (what `job.cancel()` actually returns; object vs void matters for BQ-01's cancel wiring). (Minor 1 partial) Add a "Grid continuation mapping" paragraph (3-5 sentences): `BigQueryPage.pageToken` maps onto the grid's existing continuation contract — `RunResult.batched` (src/adapters/types.ts:78) plus the panel's `loadMore` → `runner.loadMore(index)` path — UnicDB owning jobRef + opaque token, client stateless per page. This is a PAPER deliverable: `resultBatcher.ts` and `resultsPanel.ts` are read-only this cycle, so the mapping must live entirely in the ADR prose. Verification commands above now grep for both.
 
 ## Executor Report
 EXECUTOR_TOOL: Claude Code
@@ -117,7 +117,7 @@ grid mapping present
 evidence file exists (written by TASK-BQ00-001)
 README row
 === Section 2: typecheck + compile ===
-> vsdb@1.45.0 typecheck
+> UnicDB@1.45.0 typecheck
 > tsc --noEmit
   dist/webview.js.map    4.0mb
   dist/webview.css.map  65.2kb

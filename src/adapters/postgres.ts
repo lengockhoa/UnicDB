@@ -102,7 +102,7 @@ const DEFAULT_BATCH_SIZE = 500;
  * tree, keyword completion, row-count estimates, AI run_sql) runs on its own
  * pool slot while a manual-commit transaction or a streaming cursor pins
  * another — see the comment in connect(). Slots open lazily on demand, so
- * idle VSDB connections cost nothing.
+ * idle UnicDB connections cost nothing.
  */
 const PG_POOL_MAX = 4;
 
@@ -204,7 +204,7 @@ function stripLeadingCommentsAndWhitespace(text: string): string {
  * TASK-003 — server-side column sort as pure SQL composition.
  *
  * Wraps `originalSql` (the query whose result the webview table is showing)
- * in a subquery aliased `vsdb_sort` and appends an ORDER BY on the sorted
+ * in a subquery aliased `UnicDB_sort` and appends an ORDER BY on the sorted
  * column. The webview composes the requery by putting column sort into the
  * `orderBy` field of the existing `requery` message; this helper is the
  * Postgres side of that composition — the mssql twin lives in
@@ -212,7 +212,7 @@ function stripLeadingCommentsAndWhitespace(text: string): string {
  * is the dialect dispatch entry that selects between them.
  *
  *   getTableSortQuery("SELECT * FROM t WHERE id>5", "", "name", "ASC")
- *     → SELECT * FROM (SELECT * FROM t WHERE id>5) vsdb_sort ORDER BY "name" ASC
+ *     → SELECT * FROM (SELECT * FROM t WHERE id>5) UnicDB_sort ORDER BY "name" ASC
  *
  * Injection safety: `column` is emitted as a single double-quoted identifier
  * (embedded `"` doubled per Postgres rules), so a payload like
@@ -233,7 +233,7 @@ export function getTableSortQuery(
   const whereClause = whereFromBar.trim().length
     ? ` WHERE ${whereFromBar.trim()}`
     : "";
-  return `SELECT * FROM (${inner}) vsdb_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`;
+  return `SELECT * FROM (${inner}) UnicDB_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`;
 }
 
 type CursorState = "open" | "eof" | "closed" | "error";
@@ -694,7 +694,7 @@ export class PostgresAdapter implements DbAdapter {
     // proargnames[] is an array of the same length; subscript by ord → names
     // (NULL where the arg is unnamed positional).
     //
-    // Validated against real PG 16.15 (vsdb-postgres, PREPARE/EXECUTE mirroring
+    // Validated against real PG 16.15 (UnicDB-postgres, PREPARE/EXECUTE mirroring
     // $1/$2 binds) for: named all-IN args, unnamed positional args, no-arg,
     // and INOUT — see test cases.
     const res = await this.query<{
@@ -1119,7 +1119,7 @@ export class PostgresAdapter implements DbAdapter {
     if (!this.pool) throw new Error("PostgresAdapter: connect() chưa được gọi");
     const pool = this.pool;
     const client: PoolClient = await pool.connect();
-    const cursorName = `vsdb_c_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    const cursorName = `UnicDB_c_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
 
     // Track this cursor so adapter.close() can release it (CRITICAL #3).
     const record: OpenCursorRecord = {

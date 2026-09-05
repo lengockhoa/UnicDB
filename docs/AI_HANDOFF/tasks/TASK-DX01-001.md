@@ -97,7 +97,7 @@ VERIFICATION:
   command: npm run typecheck
   result: exit 0
   output_excerpt: |
-    > vsdb@1.35.0 typecheck
+    > UnicDB@1.35.0 typecheck
     > tsc --noEmit
   command: npm run compile
   result: exit 0

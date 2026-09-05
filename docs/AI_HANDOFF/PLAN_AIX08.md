@@ -7,7 +7,7 @@ Reviewer: `unic-smart` — MUST differ from executor `unic-code`
 
 Add a host-side contract for **curated** MCP extension tools. A contribution must declare a supported contract version, a restricted valid object-input schema, bounded execution time, required least-privilege capabilities, and an async handler. The host must refuse an invalid contribution before it can be listed or invoked; refuse capability escalation before its handler runs; expose only capability-scoped read functions rather than adapters or arbitrary filesystem/database handles; and contain a timeout or handler crash as an MCP error result.
 
-Success means a future VSDB-owned extension can be deliberately admitted to the existing in-process host MCP surface without weakening AIX-04 consent, AIX-05 host-MCP protocol behavior, AIX-07 default-deny policy, or DBX-08 adapter-capability gates. Existing standard tool registration remains unchanged and regression-green.
+Success means a future UnicDB-owned extension can be deliberately admitted to the existing in-process host MCP surface without weakening AIX-04 consent, AIX-05 host-MCP protocol behavior, AIX-07 default-deny policy, or DBX-08 adapter-capability gates. Existing standard tool registration remains unchanged and regression-green.
 
 ## §2 Scope
 
@@ -175,7 +175,7 @@ PLANNER_MODEL: unic-smart
 ## Planner Self-Audit
 Checklist: 12/12 pass
 Fixed during audit: separated the pure declaration/context boundary from host transport integration; pinned the closed version-1 declaration grammar and exact invalid-argument literals; bound each DBX-08 capability check and read-only SQL execution to the same per-call adapter instance; retained standard-tool error behavior as an explicit regression.
-Known gaps: no product-owned curated extension is registered in this cycle because the roadmap forbids arbitrary/dynamic tools and no existing VSDB feature requires a new extension contribution. The exported host contract is the safe enablement seam for a later curated feature.
+Known gaps: no product-owned curated extension is registered in this cycle because the roadmap forbids arbitrary/dynamic tools and no existing UnicDB feature requires a new extension contribution. The exported host contract is the safe enablement seam for a later curated feature.
 
 
 ## Plan Review Log

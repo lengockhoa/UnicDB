@@ -59,7 +59,7 @@ npx vitest run src/ai/omp/__tests__/acp.test.ts && npm run typecheck
 - FILES_CHANGED:
   - src/ai/omp/acp.ts (new): AcpClient + AcpTransport + AcpServerRequest/AcpNotification contracts; client-id correlation Map, dispatchNotification/ServerRequest/Response; dispose rejects pending and clears listeners.
   - src/ai/omp/__tests__/acp.test.ts (new): 6 unit tests over FakeAcpTransport covering #1..#4 plus notification/notify edges.
-  - src/ai/omp/__tests__/acpLiveSmoke.test.ts (new): env-gated (`VSDB_OMP_SMOKE=1`) lifecycle/cwd probe against real `omp acp`; spawn child via `child_process.spawn`, no prompt/model/tool use.
+  - src/ai/omp/__tests__/acpLiveSmoke.test.ts (new): env-gated (`UnicDB_OMP_SMOKE=1`) lifecycle/cwd probe against real `omp acp`; spawn child via `child_process.spawn`, no prompt/model/tool use.
 - TESTS_ADDED:
   - src/ai/omp/__tests__/acp.test.ts:
     - "client request writes JSON-RPC request and resolves matching response"
@@ -75,13 +75,13 @@ npx vitest run src/ai/omp/__tests__/acp.test.ts && npm run typecheck
   command: `npx vitest run src/ai/omp/__tests__/acp.test.ts && npm run typecheck`
   result: 6 tests pass / 0 fail; typecheck exits 0
   output_excerpt: |
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
      ✓ src/ai/omp/__tests__/acp.test.ts  (6 tests) 3ms
      Test Files  1 passed (1)
           Tests  6 passed (6)
-    > vsdb@1.5.1 typecheck
+    > UnicDB@1.5.1 typecheck
     > tsc --noEmit
-  command (gated): `VSDB_OMP_SMOKE=1 npx vitest run src/ai/omp/__tests__/acpLiveSmoke.test.ts`
+  command (gated): `UnicDB_OMP_SMOKE=1 npx vitest run src/ai/omp/__tests__/acpLiveSmoke.test.ts`
   result (gated): 2 tests pass / 0 fail
   output_excerpt: |
     [acp-smoke] init protocolVersion= 1
@@ -119,5 +119,5 @@ FINDINGS:
   minor:
     - none
 NEXT_STATUS_FOR_INDEX: approved
-NOTES: Env-gated live smoke (VSDB_OMP_SMOKE=1) not re-run by reviewer; assertions inspected and the executor's captured sessionId (real UUID, omp 18.0.1) corroborates session/new. No prompt/model/tool use in the probe.
+NOTES: Env-gated live smoke (UnicDB_OMP_SMOKE=1) not re-run by reviewer; assertions inspected and the executor's captured sessionId (real UUID, omp 18.0.1) corroborates session/new. No prompt/model/tool use in the probe.
 

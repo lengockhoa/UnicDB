@@ -26,10 +26,10 @@
 
 <!-- Rules AI must respect during implementation. Non-obvious limits not visible in the code. -->
 - **Ship constraint — user installs ONLY via the one-liner**:
-  `curl -fsSL https://raw.githubusercontent.com/lengockhoa/VSDB/main/scripts/install-vsdb.sh | bash`
+  `curl -fsSL https://raw.githubusercontent.com/lengockhoa/UnicDB/main/scripts/install-UnicDB.sh | bash`
   User machines are non-dev machines (no repo, no Node, no build). The script pulls the `.vsix`
   from the **latest GitHub Release**. Therefore: a fix is NOT shipped until a GitHub release
-  exists (version bump + tag + `vsdb-<version>.vsix` asset). "Merged to main" ≠ shipped.
+  exists (version bump + tag + `UnicDB-<version>.vsix` asset). "Merged to main" ≠ shipped.
   After installing, the user must reload the VS Code window.
 
 ## Known Bugs & Root Causes

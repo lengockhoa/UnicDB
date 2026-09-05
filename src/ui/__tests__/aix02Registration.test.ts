@@ -122,7 +122,7 @@ describe("workspace_write gating + card detail", () => {
       await tool.execute({
         path: "a.txt",
         newContent: "v1\n",
-        __vsdbExpectedOld: card1!.snapshot,
+        __UnicDBExpectedOld: card1!.snapshot,
       }),
     );
     expect(r1).toEqual({ applied: false, reason: "stale-preview", detail: "a.txt" });
@@ -131,7 +131,7 @@ describe("workspace_write gating + card detail", () => {
       await tool.execute({
         path: "a.txt",
         newContent: "v2\n",
-        __vsdbExpectedOld: card2!.snapshot,
+        __UnicDBExpectedOld: card2!.snapshot,
       }),
     );
     expect(r2.applied).toBe(true);
@@ -150,11 +150,11 @@ describe("workspace_write gating + card detail", () => {
       },
     });
     const ok = JSON.parse(
-      await tool.execute({ path: "a.txt", newContent: "new\n", __vsdbExpectedOld: "old\n" }),
+      await tool.execute({ path: "a.txt", newContent: "new\n", __UnicDBExpectedOld: "old\n" }),
     );
     expect(ok.applied).toBe(true);
     const raced = JSON.parse(
-      await tool.execute({ path: "a.txt", newContent: "new2\n", __vsdbExpectedOld: "old\n" }),
+      await tool.execute({ path: "a.txt", newContent: "new2\n", __UnicDBExpectedOld: "old\n" }),
     );
     expect(raced.applied).toBe(false);
     expect(raced.reason).toBe("write-failed");
@@ -175,12 +175,12 @@ describe("workspace_write gating + card detail", () => {
     };
     const tool = createFileOpsTool(deps);
     const res = JSON.parse(
-      await tool.execute({ path: "a.txt", newContent: "new\n", __vsdbExpectedOld: "old\n" }),
+      await tool.execute({ path: "a.txt", newContent: "new\n", __UnicDBExpectedOld: "old\n" }),
     );
     current = "changed elsewhere\n";
     // Re-execute with the SAME bound snapshot after the file changed → refused.
     const stale = JSON.parse(
-      await tool.execute({ path: "a.txt", newContent: "new\n", __vsdbExpectedOld: "old\n" }),
+      await tool.execute({ path: "a.txt", newContent: "new\n", __UnicDBExpectedOld: "old\n" }),
     );
     expect(stale.applied).toBe(false);
     expect(stale.reason).toBe("stale-preview");

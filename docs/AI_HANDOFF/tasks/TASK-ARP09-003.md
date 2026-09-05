@@ -7,26 +7,26 @@
 
 ## Goal
 
-Wire the lazy, redacted `VSDB` Output Channel into `src/extension.ts`: a module-level lazy `createOutputChannel("VSDB")` with a bounded pending-buffer, `vsdb.diagnostics.show` (reveal) and `vsdb.diagnostics.clear` commands (registered + contributed in package.json), lifecycle/connection/AI summary lines at the REAL existing seams, exactly-once dispose in `deactivate()` (ARP-02 sentinel byte-untouched), and mandatory privacy byte-scan pins proving no raw secret/SQL/connection config ever reaches the channel.
+Wire the lazy, redacted `UnicDB` Output Channel into `src/extension.ts`: a module-level lazy `createOutputChannel("UnicDB")` with a bounded pending-buffer, `UnicDB.diagnostics.show` (reveal) and `UnicDB.diagnostics.clear` commands (registered + contributed in package.json), lifecycle/connection/AI summary lines at the REAL existing seams, exactly-once dispose in `deactivate()` (ARP-02 sentinel byte-untouched), and mandatory privacy byte-scan pins proving no raw secret/SQL/connection config ever reaches the channel.
 
 ## Target Files
 
-- `src/extension.ts` — (1) module state near `deactivating` (`94`)/singletons (`95-114`): `let diagOutputChannel: vscode.OutputChannel | null = null` + bounded `diagPendingLines` (max 100, drop-oldest) + `ensureDiagChannel()` (lazy create + flush) + `logDiagnostic()` (formats via 001's `logLine`; routing: if channel exists → appendLine; else if a REAL diagnostic write (any non-lifecycle line, or lifecycle `warn`/`error`) → `ensureDiagChannel()` creates the channel exactly once, flushes pending, then appends; else the activate-end lifecycle `info` line → buffer only; no-op after deactivate) + `getDiagChannel()` (flush + return for reveal). (2) Lifecycle line at `activate()` end (`1047-1054`) — buffered, does NOT create the channel; `deactivating` line at `deactivate()` start (`1056`). (3) Connection: one new subscription `mgr.onDidChangeActive((cfg) => logDiagnostic("connection","info", cfg ? "connection changed" : "connection closed"))` — NEVER the config; optionally `onDidChangeRecoveryStatus` (status text only). (4) AI lines at existing seams: `commandOpenAiChat` panel build (`1177-1230`) and/or the `vsdb.ai.exportTrace`/`vsdb.ai.clearTrace`/`vsdb.ai.showPolicy` handlers (`676-690`, `1468-1576`) — engine/command names only. (5) Register `vsdb.diagnostics.show`/`vsdb.diagnostics.clear`. (6) Deactivate: after `consolePanel` dispose (`1075-1076`), `diagOutputChannel?.dispose(); diagOutputChannel = null;` — exactly once, additive.
+- `src/extension.ts` — (1) module state near `deactivating` (`94`)/singletons (`95-114`): `let diagOutputChannel: vscode.OutputChannel | null = null` + bounded `diagPendingLines` (max 100, drop-oldest) + `ensureDiagChannel()` (lazy create + flush) + `logDiagnostic()` (formats via 001's `logLine`; routing: if channel exists → appendLine; else if a REAL diagnostic write (any non-lifecycle line, or lifecycle `warn`/`error`) → `ensureDiagChannel()` creates the channel exactly once, flushes pending, then appends; else the activate-end lifecycle `info` line → buffer only; no-op after deactivate) + `getDiagChannel()` (flush + return for reveal). (2) Lifecycle line at `activate()` end (`1047-1054`) — buffered, does NOT create the channel; `deactivating` line at `deactivate()` start (`1056`). (3) Connection: one new subscription `mgr.onDidChangeActive((cfg) => logDiagnostic("connection","info", cfg ? "connection changed" : "connection closed"))` — NEVER the config; optionally `onDidChangeRecoveryStatus` (status text only). (4) AI lines at existing seams: `commandOpenAiChat` panel build (`1177-1230`) and/or the `UnicDB.ai.exportTrace`/`UnicDB.ai.clearTrace`/`UnicDB.ai.showPolicy` handlers (`676-690`, `1468-1576`) — engine/command names only. (5) Register `UnicDB.diagnostics.show`/`UnicDB.diagnostics.clear`. (6) Deactivate: after `consolePanel` dispose (`1075-1076`), `diagOutputChannel?.dispose(); diagOutputChannel = null;` — exactly once, additive.
 - `src/extension.test.ts` — extend the `vi.mock("vscode", ...)` mock (line 70) with `window.createOutputChannel` returning a recording fake `OutputChannel` (`appendLine`/`show`/`reveal`/`clear`/`dispose` call records); add the test cases below.
-- `package.json` — contributes.commands: add `vsdb.diagnostics.show` ("VSDB: Show Diagnostics") and `vsdb.diagnostics.clear` ("VSDB: Clear Diagnostics"); activationEvents: add `onCommand:vsdb.diagnostics.show` and `onCommand:vsdb.diagnostics.clear`. Do NOT touch scripts (002 owns them in wave 1) or configuration (deliberately no verbosity setting).
+- `package.json` — contributes.commands: add `UnicDB.diagnostics.show` ("UnicDB: Show Diagnostics") and `UnicDB.diagnostics.clear` ("UnicDB: Clear Diagnostics"); activationEvents: add `onCommand:UnicDB.diagnostics.show` and `onCommand:UnicDB.diagnostics.clear`. Do NOT touch scripts (002 owns them in wave 1) or configuration (deliberately no verbosity setting).
 
 ## Test Cases (REQUIRED — TDD)
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 17 | happy | plain `activate()` (lifecycle line buffered, channel NOT created) then the first REAL diagnostic write — a `mgr.onDidChangeActive` event fires | `createOutputChannel` called exactly once, triggered BY the real write (create-on-first-real-write), not by plain activation; captured lines start with the flushed buffered `[lifecycle] [info] VSDB activated` line then a `[connection]` line | mock emits one active-change |
-| 18 | happy | invoke `vsdb.diagnostics.show` | channel created lazily (if absent) and `show()`/`reveal()` called | no prior diagnostics |
-| 19 | happy | invoke `vsdb.diagnostics.clear` | `clear()` called on the channel | channel exists |
+| 17 | happy | plain `activate()` (lifecycle line buffered, channel NOT created) then the first REAL diagnostic write — a `mgr.onDidChangeActive` event fires | `createOutputChannel` called exactly once, triggered BY the real write (create-on-first-real-write), not by plain activation; captured lines start with the flushed buffered `[lifecycle] [info] UnicDB activated` line then a `[connection]` line | mock emits one active-change |
+| 18 | happy | invoke `UnicDB.diagnostics.show` | channel created lazily (if absent) and `show()`/`reveal()` called | no prior diagnostics |
+| 19 | happy | invoke `UnicDB.diagnostics.clear` | `clear()` called on the channel | channel exists |
 | 20 | edge (lazy-create) | `activate()` with NO events/commands | `createOutputChannel` called ZERO times (strict pin) | empty activation |
 | 21 | edge (privacy byte-scan) | connection event near a config with `password:"s3cr3t-p4ss"`; a bearer-shaped and an SQL fixture fragment are passed to the seam's vicinity | every captured channel line lacks `s3cr3t-p4ss`, `Bearer `, `Basic `, opaque long runs (≥24 chars), and the SQL fixture text; the connection handler received NO config object | captured appendLine history inspected |
 | 22 | edge (exactly-once dispose) | `deactivate()` then a post-deactivate `logDiagnostic` | channel `dispose()` called exactly once; post-deactivate call → no create, no append | call records |
 | 23 | regression | ARP-02 sentinel preserved | existing deactivate-sentinel tests (in-flight `runStatements` continuation after deactivate short-circuits panel writes) stay green; deactivate ordering additive only | unchanged existing tests |
-| 24 | happy | invoke `vsdb.ai.exportTrace` (or `vsdb.ai.clearTrace` / open the AI panel) | a captured `[ai]`-category line appears | command invoked on mock |
+| 24 | happy | invoke `UnicDB.ai.exportTrace` (or `UnicDB.ai.clearTrace` / open the AI panel) | a captured `[ai]`-category line appears | command invoked on mock |
 
 ## Test Files
 
@@ -43,7 +43,7 @@ npx vitest run src/extension.test.ts
 ## Acceptance Criteria
 
 - [ ] Channel is LAZY: zero `createOutputChannel` on plain activation (pin #20); created exactly once on the first real diagnostic write or command invocation (create-on-first-real-write, pin #17), never on the buffered lifecycle line alone.
-- [ ] `vsdb.diagnostics.show` reveals and `vsdb.diagnostics.clear` clears; both registered and contributed in package.json.
+- [ ] `UnicDB.diagnostics.show` reveals and `UnicDB.diagnostics.clear` clears; both registered and contributed in package.json.
 - [ ] Lifecycle + connection + AI summary lines land at the real seams; the connection handler never receives the config; `logDiagnostic` no-ops after deactivate.
 - [ ] Exactly-once channel dispose in `deactivate()`; ARP-02 sentinel (`deactivating`) byte-untouched; existing ARP-02 tests stay green.
 - [ ] Byte-scan pins hold: no fixture password / `Bearer `/`Basic `/long-run / SQL text in any captured channel line.
@@ -58,7 +58,7 @@ npx vitest run src/extension.test.ts
 ## Interfaces
 
 - Consumes: `logLine`/`DiagCategory`/`DiagSeverity`/`MAX_DIAG_LINE_CHARS` from `src/core/diagnostics.ts` (001); `mgr.onDidChangeActive: vscode.Event<ConnectionConfig | null>` (connectionManager.ts:87) and `mgr.onDidChangeRecoveryStatus: vscode.Event<ConnectionRecoveryStatus>` (connectionManager.ts:91) — existing events; existing AI command registration sites (`extension.ts:676-690`).
-- Produces: module-level `logDiagnostic(category, severity, message, correlationId?)` (host helper, lazy channel + pending flush, no-op after deactivate); commands `vsdb.diagnostics.show` / `vsdb.diagnostics.clear`; package.json command contributions + activationEvents. 004 (wave 2) greps these call sites to prove no unredacted write path exists.
+- Produces: module-level `logDiagnostic(category, severity, message, correlationId?)` (host helper, lazy channel + pending flush, no-op after deactivate); commands `UnicDB.diagnostics.show` / `UnicDB.diagnostics.clear`; package.json command contributions + activationEvents. 004 (wave 2) greps these call sites to prove no unredacted write path exists.
 
 ---
 
@@ -69,14 +69,14 @@ npx vitest run src/extension.test.ts
 Cases 17-24 from the task table are implemented in `src/extension.test.ts` as
 the `TASK-ARP09-003 — lazy redacted Output Channel wiring` describe block.
 
-- **#17 (happy / lazy-create pin)**: activate normally (no events, no commands) → `createOutputChannel` NEVER called (pin #20 holds in the same activation). Spy `ConnectionManager.prototype.onDidChangeActive` to capture the listener registered by the host, then fire it with a fake `ConnectionConfig` literal. After the fire, `state.createdOutputChannels.length === 1` and the channel name is `"VSDB"`. The captured `appendLine` history starts with a flushed `[…] [lifecycle] [info] VSDB activated` line, followed by a `[…] [connection] [info] connection changed` line. Every captured line matches `/^\[\d{4}-\d{2}-\d{2}T/`.
-- **#18 (happy / show)**: activate, then invoke `vsdb.diagnostics.show`. The channel is created lazily (if absent) and `show()` is called exactly once.
-- **#19 (happy / clear)**: activate, drive a real diagnostic write (fire the captured `onDidChangeActive` listener), then invoke `vsdb.diagnostics.clear`. `clear()` is called exactly once.
+- **#17 (happy / lazy-create pin)**: activate normally (no events, no commands) → `createOutputChannel` NEVER called (pin #20 holds in the same activation). Spy `ConnectionManager.prototype.onDidChangeActive` to capture the listener registered by the host, then fire it with a fake `ConnectionConfig` literal. After the fire, `state.createdOutputChannels.length === 1` and the channel name is `"UnicDB"`. The captured `appendLine` history starts with a flushed `[…] [lifecycle] [info] UnicDB activated` line, followed by a `[…] [connection] [info] connection changed` line. Every captured line matches `/^\[\d{4}-\d{2}-\d{2}T/`.
+- **#18 (happy / show)**: activate, then invoke `UnicDB.diagnostics.show`. The channel is created lazily (if absent) and `show()` is called exactly once.
+- **#19 (happy / clear)**: activate, drive a real diagnostic write (fire the captured `onDidChangeActive` listener), then invoke `UnicDB.diagnostics.clear`. `clear()` is called exactly once.
 - **#20 (edge / strict pin)**: `activate(ctx)` with no events and no commands → `state.createdOutputChannels.length === 0`. Captured channel output is empty.
-- **#21 (edge / privacy byte-scan)**: fire the captured `onDidChangeActive` listener with a fake `ConnectionConfig` literal carrying `password: "s3cr3t-p4ss"`, `token: "s3cr3t-t0k"`, and a SQL fixture fragment `SELECT * FROM secret_table WHERE password = 's3cr3t-p4ss'`. Drive the `vsdb.diagnostics.show` command AFTER the fire (so the channel exists and is flushed). Every captured `appendLine` argument must contain NONE of: `s3cr3t-p4ss`, `s3cr3t-t0k`, `Bearer `, `Basic `, an opaque ≥24-char run, or the SQL fixture text. The connection handler in extension.ts must receive NO `ConnectionConfig` literal in its log line (the message is the literal `"connection changed"` / `"connection closed"` — proves the config is never appended).
+- **#21 (edge / privacy byte-scan)**: fire the captured `onDidChangeActive` listener with a fake `ConnectionConfig` literal carrying `password: "s3cr3t-p4ss"`, `token: "s3cr3t-t0k"`, and a SQL fixture fragment `SELECT * FROM secret_table WHERE password = 's3cr3t-p4ss'`. Drive the `UnicDB.diagnostics.show` command AFTER the fire (so the channel exists and is flushed). Every captured `appendLine` argument must contain NONE of: `s3cr3t-p4ss`, `s3cr3t-t0k`, `Bearer `, `Basic `, an opaque ≥24-char run, or the SQL fixture text. The connection handler in extension.ts must receive NO `ConnectionConfig` literal in its log line (the message is the literal `"connection changed"` / `"connection closed"` — proves the config is never appended).
 - **#22 (edge / exactly-once dispose)**: activate, drive a real write so the channel is created, then call `deactivate()`. The captured channel's `dispose()` is called exactly once. A post-deactivate `logDiagnostic("general", "info", "after-deactivate")` call → NO new `createOutputChannel`, NO new `appendLine`, NO second `dispose()`.
 - **#23 (regression / ARP-02)**: the existing `TASK-ARP02-004` describe block (Gap #1 + #2 + Regression #4) keeps the deactivate sentinel and ordering intact. No modifications to the ARP-02 listeners; the additive dispose in `deactivate()` runs AFTER `consolePanel?.dispose()` and BEFORE the rest of teardown completes.
-- **#24 (happy / AI summary)**: activate, drive a write to create the channel, then invoke `vsdb.ai.showPolicy` (which now logs `logDiagnostic("ai", "info", "policy reported")`). The captured `appendLine` history contains a `[…] [ai] [info] policy reported` line.
+- **#24 (happy / AI summary)**: activate, drive a write to create the channel, then invoke `UnicDB.ai.showPolicy` (which now logs `logDiagnostic("ai", "info", "policy reported")`). The captured `appendLine` history contains a `[…] [ai] [info] policy reported` line.
 
 Privacy invariant is a defense-in-depth byte-scan at the channel boundary: any
 seam that ever appends a raw `ConnectionConfig` or SQL fragment would surface
@@ -98,13 +98,13 @@ STATUS: DONE
 EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic-code
 EXECUTOR_SUBAGENT: feature-implementer
-SUMMARY: Wired the lazy redacted VSDB Output Channel in src/extension.ts
+SUMMARY: Wired the lazy redacted UnicDB Output Channel in src/extension.ts
   (module-level `logDiagnostic` + `ensureDiagChannel`/`getDiagChannel`,
   bounded pending buffer for the activate-end lifecycle line, create-on-
   first-real-write, exactly-once dispose in deactivate, ARP-02 sentinel
-  byte-untouched). Registered vsdb.diagnostics.show / .clear commands
+  byte-untouched). Registered UnicDB.diagnostics.show / .clear commands
   with matching activationEvents. Added an [ai] summary line at the
-  vsdb.ai.showPolicy handler. All 8 TASK-ARP09-003 cases pass and the
+  UnicDB.ai.showPolicy handler. All 8 TASK-ARP09-003 cases pass and the
   full extension.test.ts (109 tests) stays green.
 TEST_PLAN_FOLLOWED: inline (see Discussion §Test Plan)
 FILES_CHANGED:
@@ -118,8 +118,8 @@ FILES_CHANGED:
     deactivate). Subscribed mgr.onDidChangeActive with a (cfg) =>
     logDiagnostic("connection","info", cfg ? "connection changed" :
     "connection closed") listener (config NEVER appended; privacy
-    pin). Registered vsdb.diagnostics.show / .clear commands.
-    Buffered "VSDB activated" lifecycle info at activate end. Added
+    pin). Registered UnicDB.diagnostics.show / .clear commands.
+    Buffered "UnicDB activated" lifecycle info at activate end. Added
     an [ai] summary line in commandShowPolicy. Disposed
     diagOutputChannel exactly once at the end of deactivate()
     (additive, after consolePanel dispose; nulls the singleton +
@@ -136,10 +136,10 @@ FILES_CHANGED:
     vi.doMock("./core/connectionManager") pattern (parity with
     TASK-AIX07-003 / TASK-ARP07-004) to capture the live manager
     and fire its real _onDidChangeActiveEmitter from the test.
-  - package.json: contributes.commands gains vsdb.diagnostics.show
-    ("VSDB: Show Diagnostics") and vsdb.diagnostics.clear
-    ("VSDB: Clear Diagnostics"); activationEvents gains
-    onCommand:vsdb.diagnostics.show and onCommand:vsdb.diagnostics.
+  - package.json: contributes.commands gains UnicDB.diagnostics.show
+    ("UnicDB: Show Diagnostics") and UnicDB.diagnostics.clear
+    ("UnicDB: Clear Diagnostics"); activationEvents gains
+    onCommand:UnicDB.diagnostics.show and onCommand:UnicDB.diagnostics.
     clear. scripts section byte-identical (ARP-09-002 owns it).
 TESTS_ADDED:
   - src/extension.test.ts > TASK-ARP09-003 — lazy redacted Output
@@ -148,10 +148,10 @@ TESTS_ADDED:
       creates ZERO output channels
     - #17 happy/lazy-create: first real diagnostic write (fire
       onDidChangeActive) creates the channel exactly once with name
-      'VSDB' and flushes the pending lifecycle line
-    - #18 happy/show: invoking vsdb.diagnostics.show creates the
+      'UnicDB' and flushes the pending lifecycle line
+    - #18 happy/show: invoking UnicDB.diagnostics.show creates the
       channel lazily and calls show()
-    - #19 happy/clear: invoking vsdb.diagnostics.clear calls
+    - #19 happy/clear: invoking UnicDB.diagnostics.clear calls
       clear() on the channel
     - #21 privacy byte-scan: connection event with secret + bearer
       + SQL fixture near the seam → channel output contains none of
@@ -159,15 +159,15 @@ TESTS_ADDED:
     - #22 exactly-once dispose: deactivate() calls dispose() exactly
       once; post-deactivate logDiagnostic is a no-op (no create, no
       append, no second dispose)
-    - #24 happy/AI summary: invoking vsdb.ai.showPolicy appends an
+    - #24 happy/AI summary: invoking UnicDB.ai.showPolicy appends an
       [ai]-category line to the channel
-    - package.json contributes vsdb.diagnostics.show +
-      vsdb.diagnostics.clear with activationEvents
+    - package.json contributes UnicDB.diagnostics.show +
+      UnicDB.diagnostics.clear with activationEvents
 VERIFICATION:
   command: npx vitest run src/extension.test.ts -t "TASK-ARP09-003"
   result: 8 passed | 0 failed | 101 skipped (109 total)
   output_excerpt: |
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp09-003
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-arp09-003
     ✓ src/extension.test.ts  (109 tests | 101 skipped) 107ms
     Test Files  1 passed (1)
     Tests  8 passed | 101 skipped (109)
@@ -197,7 +197,7 @@ VERIFICATION:
   result: 7 failed | 1 passed (#20 strict-pin passed vacuously
           because no implementation exists; the other 7 failed with
           createOutputChannel never called and
-          vsdb.diagnostics.show/.clear not registered).
+          UnicDB.diagnostics.show/.clear not registered).
 ISSUES:
   - Test #21 originally asserted `secret_table` did not survive in the
     formatter output, but `redact()` only scrubs secret-shaped strings
@@ -205,7 +205,7 @@ ISSUES:
     names are not secrets. The assertion was narrowed to the
     secret-shaped substring `password = 's3cr3t-p4ss'` (which
     correctly collapses to `password<redacted>`).
-  - One-line AI summary: scoped to `vsdb.ai.showPolicy` only this
+  - One-line AI summary: scoped to `UnicDB.ai.showPolicy` only this
     cycle (engine/command names only). The other per-agent-run
     completion seam lives in `aiChatPanel.ts`, which is outside this
     task's roadmap file set. `logDiagnostic` is exported from
@@ -228,7 +228,7 @@ EXECUTOR_MODEL: unic-code
 VERIFICATION_RERUN:
   command: npx vitest run src/extension.test.ts src/ai/__tests__/trace.test.ts src/__tests__/releaseVerify.test.ts src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit && npm run compile
   result: 170 pass / 0 fail (extension 109, trace 41, releaseVerify 10, releaseHygiene 10); tsc exit 0; esbuild exit 0
-TEST_PLAN_COVERAGE: all-followed — cases 17-24 implemented with real assertions. #20 truly pins zero createOutputChannel on plain activate (state.createdOutputChannels.length === 0 AND empty capture). #17 proves create-on-first-real-write via the live manager emitter (exactly once, name "VSDB", flushed lifecycle line first). #21 drives password/bearer/SQL fixtures through the REAL seam plus the formatter and byte-scans every captured line. #22 pins exactly-once dispose + post-deactivate no-op. RED_OUTPUT is real (7 failed | 1 passed pre-implementation, with concrete failure reasons). 118/118 pin holds (109 extension + 9 diagnostics, both re-run fresh).
+TEST_PLAN_COVERAGE: all-followed — cases 17-24 implemented with real assertions. #20 truly pins zero createOutputChannel on plain activate (state.createdOutputChannels.length === 0 AND empty capture). #17 proves create-on-first-real-write via the live manager emitter (exactly once, name "UnicDB", flushed lifecycle line first). #21 drives password/bearer/SQL fixtures through the REAL seam plus the formatter and byte-scans every captured line. #22 pins exactly-once dispose + post-deactivate no-op. RED_OUTPUT is real (7 failed | 1 passed pre-implementation, with concrete failure reasons). 118/118 pin holds (109 extension + 9 diagnostics, both re-run fresh).
 FINDINGS:
   critical:
     - none

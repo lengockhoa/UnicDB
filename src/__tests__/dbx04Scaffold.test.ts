@@ -1,5 +1,5 @@
 // src/__tests__/dbx04Scaffold.test.ts
-// DBX-04 scaffold — manifest entry for vsdb.relationshipExplorer plus the
+// DBX-04 scaffold — manifest entry for UnicDB.relationshipExplorer plus the
 // hygiene guards: pure ER modules stay vscode-free and the diagram webview
 // stays CSP-clean (no raw-HTML injection APIs).
 
@@ -22,12 +22,12 @@ function readJson<T>(relPath: string): T {
 describe("DBX-04 scaffold — package.json", () => {
   const pkg = readJson<PackageJson>("package.json");
 
-  it("vsdb.relationshipExplorer is declared with category VSDB + icon", () => {
+  it("UnicDB.relationshipExplorer is declared with category UnicDB + icon", () => {
     const cmd = pkg.contributes.commands.find(
-      (c) => c.command === "vsdb.relationshipExplorer",
+      (c) => c.command === "UnicDB.relationshipExplorer",
     );
     expect(cmd).toBeDefined();
-    expect(cmd?.category).toBe("VSDB");
+    expect(cmd?.category).toBe("UnicDB");
     expect(cmd?.icon).toBeTruthy();
   });
 });

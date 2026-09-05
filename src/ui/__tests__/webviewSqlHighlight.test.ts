@@ -4,7 +4,7 @@
 // into jsdom, stubs acquireVsCodeApi + ResizeObserver + matchMedia, then
 // dispatches a `state` message with status:"error" and drives the Messages
 // tab to assert the colorized SQL render:
-//   - `pre.vsdb-msg-sql` contains >= 1 `span.vsdb-sql-tok-keyword`
+//   - `pre.UnicDB-msg-sql` contains >= 1 `span.UnicDB-sql-tok-keyword`
 //   - its textContent equals the original SQL (no chars dropped/duplicated)
 //
 // If dist/webview.js is missing the tests are skipped with an explanatory
@@ -66,7 +66,7 @@ beforeAll(() => {
 const distPath = resolve(process.cwd(), "dist", "webview.js");
 const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -79,16 +79,16 @@ function loadBundle(): {
       "dist/webview.js missing — run `npm run compile` before this test",
     );
   }
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-webview"></div>';
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
   (0, eval)(bundleSrc);
@@ -124,14 +124,14 @@ describeIfBundle("webview/main.ts bundle — TASK-003 SQL coloring (case 8)", ()
     });
 
     // Click the Messages tab to render the messages panel.
-    const tabs = Array.from(root.querySelectorAll(".vsdb-tab"));
+    const tabs = Array.from(root.querySelectorAll(".UnicDB-tab"));
     const msgTab = tabs.find((t) => (t.textContent ?? "").startsWith("Messages"));
     expect(msgTab).toBeTruthy();
     (msgTab as HTMLButtonElement).click();
 
-    const pre = root.querySelector("pre.vsdb-msg-sql");
+    const pre = root.querySelector("pre.UnicDB-msg-sql");
     expect(pre).toBeTruthy();
-    const keywords = pre!.querySelectorAll("span.vsdb-sql-tok-keyword");
+    const keywords = pre!.querySelectorAll("span.UnicDB-sql-tok-keyword");
     expect(keywords.length).toBeGreaterThanOrEqual(1);
     expect(pre!.textContent).toBe(sql);
   });

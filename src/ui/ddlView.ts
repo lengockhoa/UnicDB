@@ -1,5 +1,5 @@
 // src/ui/ddlView.ts
-// TASK-AF-002 — vsdb-ddl: virtual document provider for "Open DDL" affordances.
+// TASK-AF-002 — UnicDB-ddl: virtual document provider for "Open DDL" affordances.
 //
 // DataGrip parity: a user can right-click a view / routine / trigger in the
 // Schema Explorer and ask "Open DDL". We resolve the DDL via the active
@@ -7,24 +7,24 @@
 // DECLARES the `objectDdl` capability (DBX-08); adapters without that
 // declaration receive a fallback document explaining that object DDL is not
 // supported. DDL text is cached per URI and exposed through a
-// `vscode.TextDocumentContentProvider` on the URI scheme `vsdb-ddl:`.
+// `vscode.TextDocumentContentProvider` on the URI scheme `UnicDB-ddl:`.
 // Documents are read-only by construction (URI scheme is not a filesystem
-// path) and refreshable via `vsdb.refreshDdl`.
+// path) and refreshable via `UnicDB.refreshDdl`.
 //
 // Surfaces:
 //   - `DdlViewProvider` — owns the per-URI cache + the `provideTextDocumentContent` impl.
 //   - `openDdl(provider, node)` — populates the cache for `node` and opens
 //      the resulting virtual document in a column beside the tree.
 //   - `registerDdlView(mgr, disposables)` — extension-side wiring: registers
-//      the content provider for `vsdb-ddl` + commands `vsdb.openDdl` (arg:
-//      VsdbNode) + `vsdb.refreshDdl` (no arg).
+//      the content provider for `UnicDB-ddl` + commands `UnicDB.openDdl` (arg:
+//      UnicDBNode) + `UnicDB.refreshDdl` (no arg).
 import * as vscode from "vscode";
 import type { ConnectionManager } from "../core/connectionManager";
 import type { DbAdapter } from "../adapters/types";
 import { hasAdapterCapability } from "../adapters/types";
-import type { VsdbNode } from "./schemaTree";
+import type { UnicDBNode } from "./schemaTree";
 
-const SCHEME = "vsdb-ddl";
+const SCHEME = "UnicDB-ddl";
 const UNSUPPORTED_DDL_DOC = `Object DDL is not supported by this connection's database
 
 "Open DDL" requires the active adapter to declare the \`objectDdl\`
@@ -38,7 +38,7 @@ const UNAVAILABLE_DDL_DOC = `Object DDL is unavailable
 The active adapter declares the \`objectDdl\` capability but does not
 expose a working DDL retrieval implementation. This is an internal
 contract violation — no DDL can be shown for this object.`;
-const ERROR_DOC_PREFIX = `-- vsdb-ddl: failed to load DDL\n-- `;
+const ERROR_DOC_PREFIX = `-- UnicDB-ddl: failed to load DDL\n-- `;
 const ERROR_DOC_SUFFIX = `\n\n(The above error was reported by the catalog
 introspection. The view, routine, or trigger may have been dropped, or you
 may lack permission to read its definition.)`;
@@ -56,7 +56,7 @@ export interface DdlViewProvider extends vscode.TextDocumentContentProvider {
    * Resolve DDL for `node` and open a virtual document in Beside column.
    * `node.contextValue` must be one of: "view" | "routine" | "trigger".
    */
-  openFor(node: VsdbNode): Promise<void>;
+  openFor(node: UnicDBNode): Promise<void>;
 
   /**
    * Drop the cached entry for `uri` and notify VS Code that the underlying
@@ -102,7 +102,7 @@ export class DdlViewProviderImpl implements DdlViewProvider {
     this.cache.delete(uri.toString());
   }
 
-  async openFor(node: VsdbNode): Promise<void> {
+  async openFor(node: UnicDBNode): Promise<void> {
     const kind = nodeKind(node);
     const uri = buildDdlUri(node);
     const text = await this.resolveDdl(node, kind);
@@ -121,7 +121,7 @@ export class DdlViewProviderImpl implements DdlViewProvider {
    * defensive unavailable document, no TypeError. Rejection → friendly
    * error document, no exception escapes.
    */
-  private async resolveDdl(node: VsdbNode, kind: DdlKind): Promise<string> {
+  private async resolveDdl(node: UnicDBNode, kind: DdlKind): Promise<string> {
     const conn = node.meta?.connection;
     if (!conn) {
       return `${ERROR_DOC_PREFIX}no active connection bound to this node.\n`;
@@ -154,7 +154,7 @@ function errorDocument(context: string, err: unknown): string {
   return `${ERROR_DOC_PREFIX}${context}: ${message}${ERROR_DOC_SUFFIX}`;
 }
 
-function nodeKind(node: VsdbNode): DdlKind {
+function nodeKind(node: UnicDBNode): DdlKind {
   if (node.contextValue === "view") return "view";
   if (node.contextValue === "routine") return "routine";
   if (node.contextValue === "trigger") return "trigger";
@@ -163,16 +163,16 @@ function nodeKind(node: VsdbNode): DdlKind {
   // keeps runtime failures explicit instead of silently accepting other
   // kinds.
   throw new Error(
-    `vsdb.openDdl: unsupported contextValue "${node.contextValue}" (expected view|routine|trigger)`,
+    `UnicDB.openDdl: unsupported contextValue "${node.contextValue}" (expected view|routine|trigger)`,
   );
 }
 
 /**
- * Build the canonical `vsdb-ddl:` URI for `node`. Path component encodes
+ * Build the canonical `UnicDB-ddl:` URI for `node`. Path component encodes
  * (kind, schema, name) so the document title in VS Code's tab bar is
  * readable (e.g. `view/public.v_active`).
  */
-export function buildDdlUri(node: VsdbNode): vscode.Uri {
+export function buildDdlUri(node: UnicDBNode): vscode.Uri {
   const kind = node.contextValue === "view"
     || node.contextValue === "routine"
     || node.contextValue === "trigger"
@@ -190,7 +190,7 @@ export function buildDdlUri(node: VsdbNode): vscode.Uri {
  */
 export async function openDdl(
   provider: DdlViewProvider,
-  node: VsdbNode,
+  node: UnicDBNode,
 ): Promise<void> {
   await provider.openFor(node);
 }
@@ -200,8 +200,8 @@ export async function openDdl(
  * pushes all disposables so `context.subscriptions` cleanup tears them down
  * on extension deactivation.
  *
- *   - `vsdb.openDdl` (arg: VsdbNode) — populates cache + opens document.
- *   - `vsdb.refreshDdl` (no arg) — refresh every URI currently shown.
+ *   - `UnicDB.openDdl` (arg: UnicDBNode) — populates cache + opens document.
+ *   - `UnicDB.refreshDdl` (no arg) — refresh every URI currently shown.
  *
  * The `disposables` array is mutated in-place so callers can simply push
  * each returned disposable to `context.subscriptions`.
@@ -216,8 +216,8 @@ export function registerDdlView(
   );
   disposables.push(
     vscode.commands.registerCommand(
-      "vsdb.openDdl",
-      async (node?: VsdbNode) => {
+      "UnicDB.openDdl",
+      async (node?: UnicDBNode) => {
         if (!node) return;
         if (
           node.contextValue !== "view"
@@ -231,7 +231,7 @@ export function registerDdlView(
     ),
   );
   disposables.push(
-    vscode.commands.registerCommand("vsdb.refreshDdl", async () => {
+    vscode.commands.registerCommand("UnicDB.refreshDdl", async () => {
       // Iterate every cached URI and ask VS Code to re-fetch.
       for (const uriStr of provider.cache.keys()) {
         provider.refreshUri(vscode.Uri.parse(uriStr));

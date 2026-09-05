@@ -66,7 +66,7 @@ EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic-code
 EXECUTOR_SUBAGENT: feature-implementer
 RED_OUTPUT: |
-  RUN v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-rlx-002
+  RUN v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-rlx-002
    ❯ src/ui/__tests__/schemaCache.test.ts  (9 tests | 3 failed) 208ms
      ❯ ... TASK-RLX-002 single-flight coalescing > #1 concurrent stale getTables(schema) coalesce into one adapter call
        → expected "spy" to be called 1 times, but got 2 times
@@ -90,7 +90,7 @@ Verification Output: |
    Start at  21:09:30
    Duration  208ms
   $ npm run typecheck
-  > vsdb@1.26.0 typecheck
+  > UnicDB@1.26.0 typecheck
   > tsc --noEmit
   (exit 0, no errors)
   Regression net (7 dependent files): 44 passed (44) — schemaCache, sqlCatalog,

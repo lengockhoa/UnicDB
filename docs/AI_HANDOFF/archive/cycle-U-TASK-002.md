@@ -124,7 +124,7 @@ $ npm test
    Duration  9.34s
 
 $ npm run typecheck
-> vsdb@1.6.3 typecheck
+> UnicDB@1.6.3 typecheck
 > tsc --noEmit
 (exit 0, clean)
 ```

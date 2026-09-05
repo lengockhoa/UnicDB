@@ -57,7 +57,7 @@ async function buildMessages(
 //    registry.register(createExportStructureTool(this.options.adapterFactory));
 //    (import from "../ai/tools/schemaTools")
 // 6. System prompt: context !== "" →
-//    `You are VSDB's AI assistant. Help the user explore and query their database.\n\nDatabase structure (DDL):\n${context}\n\nYou can call the export_structure tool for the complete structure when truncated.`
+//    `You are UnicDB's AI assistant. Help the user explore and query their database.\n\nDatabase structure (DDL):\n${context}\n\nYou can call the export_structure tool for the complete structure when truncated.`
 //    context === "" → keep the existing prompt (current line ~139).
 ```
 
@@ -70,7 +70,7 @@ New import: `createExportStructureTool` from `../ai/tools/schemaTools`; REMOVE t
 | 1 | unit | multi-schema PG: context contains tables from every schema + views | system message contains `Database structure (DDL):`, `CREATE TABLE public.users`, `CREATE TABLE sales.deals`, `-- View structure: public.v_users` | fake adapter: listSchemas→[public,sales], listTables/listViews/listColumns mock; assert via deps.complete spy catching ProviderRequest.messages[0] |
 | 2 | happy | E2E: system prompt has DDL → final model answer | fake fetch call 1 returns a text answer; request body messages[0] contains `CREATE TABLE public.users`; assistant bubble posted + done | pattern aiChatE2e.test.ts makeDepsWithFetch + fake adapter with data |
 | 3 | edge | budget cut at block boundary (injected, review #2) | inject `{contextBudgetChars: 2000}` via opts; DB with many tables → context ≤ 2000 + footer `-- (+N more objects omitted — call export_structure for full context)`; every `CREATE TABLE` block ends intact at `);` — does NOT touch the production constant 12_000 | fake adapter with many tables, buildMessages(..., {contextBudgetChars:2000}) |
-| 4 | edge | no active connection → old prompt | factory resolves null → system prompt === `"You are VSDB's AI assistant. Help the user explore and query their database."` (no "Database structure"), messages still [system,...history,user] | factory null |
+| 4 | edge | no active connection → old prompt | factory resolves null → system prompt === `"You are UnicDB's AI assistant. Help the user explore and query their database."` (no "Database structure"), messages still [system,...history,user] | factory null |
 | 5 | edge | 1 schema introspection throws → skip that schema | listTables("sales") rejects with Error, "public" OK → context has public tables, does NOT have sales tables, does not throw | per-schema reject mock |
 | 6 | regression | existing E2E tool-loop is NOT broken + export_structure is registered | existing "E2E happy 2-step" test still passes; add an assertion: the request tools array contains the def `{name:"export_structure"}` | existing 2-step fake fetch |
 | 7 | edge | single table DDL > budget (oversize block, review #4) | inject `{contextBudgetChars: 300}` + table DDL ~800 chars → first block kept whole (exceeds budget), omitted-count correct, context NOT empty, NO half-cut CREATE TABLE block | fake adapter: 1 large table + 1 small table |
@@ -205,13 +205,13 @@ NEXT: ready for re-review (cycle R, fix round 1 — task-002)
 ### RED output (paste from `vitest run` on pre-fix code, before applying the fix):
 ```
  ❯ src/ui/__tests__/aiChatPanel.test.ts > AiChatPanel — buildMessages full-DB context > #R1 listColumns throws for a discovered table: that table is RETAINED with columns:[] (no drop)
-   → expected 'You are VSDB\'s AI assistant. Help th…' to contain 'CREATE TABLE public.broken'
+   → expected 'You are UnicDB\'s AI assistant. Help th…' to contain 'CREATE TABLE public.broken'
 
  - Expected
  + Received
 
  - CREATE TABLE public.broken
- + You are VSDB's AI assistant. Help the user explore and query their database.
+ + You are UnicDB's AI assistant. Help the user explore and query their database.
  +
  + Database structure (DDL):
  + -- Database structure (1 schemas, 1 tables, 0 views)
@@ -259,7 +259,7 @@ NEXT: ready for re-review (cycle R, fix round 2 — task-002; final round per as
   AssertionError: expected 100027 to be 28 // Object.is equality
 
  #7 (broke first-block-oversize rule):
-  AssertionError: expected 'You are VSDB\'s AI assistant. Help th…' to contain 'CREATE TABLE public.huge'
+  AssertionError: expected 'You are UnicDB\'s AI assistant. Help th…' to contain 'CREATE TABLE public.huge'
 ```
 After fix the same tests pass; production code was restored from a known-good backup after each RED check, and the final state has zero diff in `src/ui/aiChatPanel.ts` (`git diff` empty for that file).
 NOTES: Model isolation passed: executor unic-code differs from reviewer unic/unic-smart. Per the assignment, this is the final round — reviewer R2's test-coverage gaps for #3 and #7 are now closed with hard assertions (positive footer-presence + exact omitted count for the budget-fit case; explicit omitted-count + size-math justification for the oversize-block case).

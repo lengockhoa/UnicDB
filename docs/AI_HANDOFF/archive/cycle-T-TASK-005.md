@@ -298,15 +298,15 @@ Commands section):
   command: npm run test:integration  (live-DB verification — explicitly separate from the
     per-task gate per the task file, run for completeness against Acceptance Criteria's
     "green on a live Postgres" line)
-  result: 4 files skipped, 27 tests skipped — 0 run. `VSDB_IT` env var is unset (tests self-gate
-    on `process.env.VSDB_IT === "1"`), and the fixture port these tests target (Postgres 5433,
+  result: 4 files skipped, 27 tests skipped — 0 run. `UnicDB_IT` env var is unset (tests self-gate
+    on `process.env.UnicDB_IT === "1"`), and the fixture port these tests target (Postgres 5433,
     MSSQL 1434) is not reachable in this sandbox (port 5433 closed; only an unrelated port-5432
     Postgres was reachable, not the docker-compose fixture these tests expect). This is an
     out-of-repo blocker (no live DB fixture available in this environment), not a code defect —
     documented per Handoff-mode rule rather than silently skipped.
 
 ISSUES: `npm run test:integration` could not be exercised live in this sandbox (no reachable
-docker-compose DB fixture, `VSDB_IT` unset) — this is explicitly listed in the task file as
+docker-compose DB fixture, `UnicDB_IT` unset) — this is explicitly listed in the task file as
 separate from the per-task verification gate, but is called out here since the Acceptance
 Criteria checklist also references it. All other Acceptance Criteria checkboxes are satisfied:
 one named exported helper (`shouldUseCursor`) covers all D5 cases; `listColumns` (Postgres) is

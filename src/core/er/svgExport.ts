@@ -29,7 +29,7 @@ export function renderErSvg(graph: ErGraph, layout: LayoutResult, title: string)
   );
   parts.push(`<title>${esc(title)}</title>`);
   parts.push(
-    `<style>text{font:${FONT};fill:var(--vsdb-fg,#ddd)} .box{fill:var(--vsdb-box,#252526);stroke:var(--vsdb-edge,#888)} .wire{stroke:var(--vsdb-edge,#888);stroke-width:1.5}</style>`,
+    `<style>text{font:${FONT};fill:var(--UnicDB-fg,#ddd)} .box{fill:var(--UnicDB-box,#252526);stroke:var(--UnicDB-edge,#888)} .wire{stroke:var(--UnicDB-edge,#888);stroke-width:1.5}</style>`,
   );
 
   // Edges first (under the boxes), id order from buildErGraph.

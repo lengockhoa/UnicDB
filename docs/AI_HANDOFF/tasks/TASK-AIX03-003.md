@@ -27,8 +27,8 @@ decision, and a SHAPE-ONLY outcome (never row bytes).
    {type: "tool_result"; tool: string; status: "ok" | "failed" | "denied";
    summary: string} — added to the host-message union.
 4. `webview/aiChatPanelMain.ts`: `case "tool_result"` → appendToolResult()
-   DOM-only card (textContent): class vsdb-chat-tool-result +
-   vsdb-chat-tool-result-<status>; single compact line (no markdown).
+   DOM-only card (textContent): class UnicDB-chat-tool-result +
+   UnicDB-chat-tool-result-<status>; single compact line (no markdown).
 
 ## Acceptance
 

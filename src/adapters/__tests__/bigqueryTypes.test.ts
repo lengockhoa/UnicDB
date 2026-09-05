@@ -33,7 +33,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const JOB_REF = {
-  projectId: "vsdb-it",
+  projectId: "UnicDB-it",
   location: "US",
   jobId: "job_abc",
 } as const;
@@ -63,7 +63,7 @@ describe("TASK-BQ00-002 BigQuery boundary types", () => {
     // jobRef deep-equal verbatim — proves the mapper does not synthesize
     // a new reference or drop fields.
     expect(page.jobRef).toEqual({
-      projectId: "vsdb-it",
+      projectId: "UnicDB-it",
       location: "US",
       jobId: "job_abc",
     });

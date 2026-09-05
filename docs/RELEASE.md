@@ -1,4 +1,4 @@
-# Release procedure — VSDB
+# Release procedure — UnicDB
 
 This document is the canonical release runbook. Follow it verbatim from a
 clean working tree on the release commit. The release is a local artifact
@@ -37,8 +37,8 @@ npm run compile
 bash scripts/build.sh
 ```
 
-The package name follows the pattern `dist/vsdb-<version>.vsix` (e.g.
-`dist/vsdb-1.6.8.vsix`).
+The package name follows the pattern `dist/UnicDB-<version>.vsix` (e.g.
+`dist/UnicDB-1.6.8.vsix`).
 
 ## Artifact assertions
 
@@ -46,7 +46,7 @@ Inspect the produced artifact. Every line below must hold.
 
 ```bash
 # List contents.
-unzip -l dist/vsdb-<version>.vsix
+unzip -l dist/UnicDB-<version>.vsix
 
 # Expected included paths (observed for v1.6.8; do not pin exact byte counts):
 #   extension/dist/extension.js
@@ -57,29 +57,29 @@ unzip -l dist/vsdb-<version>.vsix
 #   extension/dist/schemaForm.js
 #   extension/dist/newTableForm.js
 #   extension/dist/aiSettingsForm.js
-#   extension/media/vsdb.svg
+#   extension/media/UnicDB.svg
 #   extension/media/icon.png
 #   extension/readme.md
 #   extension/LICENSE.txt
 #   extension/changelog.md
 #   extension/package.json
-#   extension/syntaxes/vsdb-sql-injection.tmLanguage.json
+#   extension/syntaxes/UnicDB-sql-injection.tmLanguage.json
 #   extension.vsixmanifest
 
 # Forbidden patterns (must produce NO matches):
-unzip -l dist/vsdb-<version>.vsix | grep -E '(^|/)src/'        # source
-unzip -l dist/vsdb-<version>.vsix | grep -E '(^|/)node_modules/' # deps
-unzip -l dist/vsdb-<version>.vsix | grep -E '(^|/)tests/'       # tests
-unzip -l dist/vsdb-<version>.vsix | grep -E '(^|/)docs/'        # docs
-unzip -l dist/vsdb-<version>.vsix | grep -E '(^|/)webview/'     # raw TS
-unzip -l dist/vsdb-<version>.vsix | grep -E '\.map$'            # source maps
+unzip -l dist/UnicDB-<version>.vsix | grep -E '(^|/)src/'        # source
+unzip -l dist/UnicDB-<version>.vsix | grep -E '(^|/)node_modules/' # deps
+unzip -l dist/UnicDB-<version>.vsix | grep -E '(^|/)tests/'       # tests
+unzip -l dist/UnicDB-<version>.vsix | grep -E '(^|/)docs/'        # docs
+unzip -l dist/UnicDB-<version>.vsix | grep -E '(^|/)webview/'     # raw TS
+unzip -l dist/UnicDB-<version>.vsix | grep -E '\.map$'            # source maps
 
 # Verify embedded package.json metadata.
-unzip -p dist/vsdb-<version>.vsix extension/package.json | grep -E '"version"|"license"|"repository"'
+unzip -p dist/UnicDB-<version>.vsix extension/package.json | grep -E '"version"|"license"|"repository"'
 ```
 
 If any forbidden path matches, add the missing rule to `.vscodeignore`,
-delete the artifact (`rm dist/vsdb-<version>.vsix`), and re-run
+delete the artifact (`rm dist/UnicDB-<version>.vsix`), and re-run
 `bash scripts/build.sh`.
 
 ## Local install (smoke)
@@ -88,7 +88,7 @@ Use the repo's installer in `--dry-run` mode to validate the file without
 actually loading VS Code:
 
 ```bash
-bash scripts/install-vsdb.sh --local dist/vsdb-<version>.vsix --dry-run
+bash scripts/install-UnicDB.sh --local dist/UnicDB-<version>.vsix --dry-run
 ```
 
 For a real install, drop `--dry-run` — the script will hand the file to
@@ -98,7 +98,7 @@ For a real install, drop `--dry-run` — the script will hand the file to
 Users install ONLY via the one-liner on non-dev machines (no repo, no Node):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lengockhoa/VSDB/main/scripts/install-vsdb.sh | bash
+curl -fsSL https://raw.githubusercontent.com/lengockhoa/UnicDB/main/scripts/install-UnicDB.sh | bash
 ```
 
 It downloads the `.vsix` from the **latest GitHub Release**. So the runbook above is not
@@ -110,17 +110,17 @@ user-visible behavior must finish with:
 #    (releaseHygiene.test.ts FAILS the build if root version drifts):
 npm install --package-lock-only
 
-# 2. Full pipeline: npm ci → typecheck → tests → compile → package dist/vsdb-<ver>.vsix
+# 2. Full pipeline: npm ci → typecheck → tests → compile → package dist/UnicDB-<ver>.vsix
 bash scripts/build.sh
 
 # 3. Sanity-check the artifact before publishing (must print 0):
-unzip -p dist/vsdb-<version>.vsix extension/dist/extension.js | grep -c "<regression-marker>"
+unzip -p dist/UnicDB-<version>.vsix extension/dist/extension.js | grep -c "<regression-marker>"
 
 # 4. Commit, tag, push, publish with the vsix attached:
 git add package.json package-lock.json CHANGELOG.md
 git commit -m "release: v<version>"
 git tag v<version> && git push origin main v<version>
-gh release create v<version> dist/vsdb-<version>.vsix --title "v<version>" --notes "<summary>"
+gh release create v<version> dist/UnicDB-<version>.vsix --title "v<version>" --notes "<summary>"
 ```
 
 Then tell the user to re-run the one-liner and reload the VS Code window
@@ -151,7 +151,7 @@ git tag v<version>             # tag already pushed alongside main above
 git push origin v<version>     # triggers .github/workflows/publish.yml
 ```
 
-The Marketplace listing (`lengockhoa.vsdb`) updates within ~5–10 minutes.
+The Marketplace listing (`lengockhoa.UnicDB`) updates within ~5–10 minutes.
 Use **Actions → Publish to VS Code Marketplace → Run workflow** to retry a
 failed run without re-pushing the tag.
 

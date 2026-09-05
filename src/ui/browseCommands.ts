@@ -8,8 +8,8 @@
 //   - `buildBrowseSelect(driver, schema, table)` — pure per-dialect SELECT builder
 //     using identifier-appropriate quoting + doubling (pg: ", mysql: `, mssql: []).
 //     Empty schema → unqualified form (`"t"`, `` `t` ``, `[t]`).
-//   - `registerBrowseCommands(deps)` — registers `vsdb.browseTableData` command
-//     against the schema-tree node argument contract: receives the whole VsdbNode
+//   - `registerBrowseCommands(deps)` — registers `UnicDB.browseTableData` command
+//     against the schema-tree node argument contract: receives the whole UnicDBNode
 //     (with `.meta`) as `arguments[0]`, aligns the active connection if needed,
 //     drives `runner.run → panel.render` with the standard busy/run/render
 //     pipeline (no `confirmDangerousStatements` — generated SELECT, never
@@ -131,10 +131,10 @@ async function maybeGetAdapter(
 }
 
 /**
- * Register the `vsdb.browseTableData` command.
+ * Register the `UnicDB.browseTableData` command.
  *
  * Steps:
- *  1. Resolve the VsdbNode arg (palette fallback → showInformationMessage).
+ *  1. Resolve the UnicDBNode arg (palette fallback → showInformationMessage).
  *  2. Align the active connection if the node's conn differs.
  *  3. Build the per-dialect SELECT.
  *  4. TASK-007: apply qualifyKeywordTables via the active adapter
@@ -145,12 +145,12 @@ async function maybeGetAdapter(
 export function registerBrowseCommands(deps: RegisterBrowseDeps): void {
   const { mgr, runner, panel } = deps;
   vscode.commands.registerCommand(
-    "vsdb.browseTableData",
+    "UnicDB.browseTableData",
     async (arg?: unknown) => {
       const resolved = resolveBrowseNode(arg);
       if (!resolved) {
         void vscode.window.showInformationMessage(
-          "VSDB: Browse Table Data — open a table node from the schema tree.",
+          "UnicDB: Browse Table Data — open a table node from the schema tree.",
         );
         return;
       }
@@ -191,7 +191,7 @@ export function registerBrowseCommands(deps: RegisterBrowseDeps): void {
         panel.render(results, header);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        void vscode.window.showErrorMessage(`VSDB browseTableData failed: ${msg}`);
+        void vscode.window.showErrorMessage(`UnicDB browseTableData failed: ${msg}`);
       } finally {
         panel.setBusy(false);
       }

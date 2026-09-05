@@ -68,7 +68,7 @@ Concretely:
 | Happy | qualified UPDATE | `buildSaveStatements("postgres", "orders", …, {schema:"analytics"})` → `UPDATE "analytics"."orders" SET …` |
 | Happy | unqualified UPDATE unchanged | no schema ⇒ `UPDATE "orders" SET …` (no leading dot) |
 | Edge (quoting) | mixed case | `quoteIdent('createdAt','postgres')` → `"createdAt"`; `quoteIdent('a"b','postgres')` → `"a""b"` |
-| Edge (boundary) | all-DEFAULT insert | every value `{__vsdb_default__:true}` ⇒ exactly `INSERT INTO "public"."t" DEFAULT VALUES` |
+| Edge (boundary) | all-DEFAULT insert | every value `{__UnicDB_default__:true}` ⇒ exactly `INSERT INTO "public"."t" DEFAULT VALUES` |
 | Edge (boundary) | partial-DEFAULT insert | 3 cols, col 2 default ⇒ column list has 2 entries, col 2 absent |
 | Edge (ordering) | remapped row | `serverIndexByRowId = Map([[4,3]])` ⇒ WHERE built from `serverRows[3]` |
 | Edge (malformed) | negative colIndex | marker at `colIndex:-1` never produces `skipped unknown col index`; no `columns[-1]` read |
@@ -132,8 +132,8 @@ none
 
 ```ts
 export interface EditEntry { rowId: number; colIndex: number; value: unknown; }
-export interface NewRowMarker { __vsdb_new_row__: true; __rowId: number; values: unknown[]; }
-export interface DeleteRowMarker { __vsdb_deleted__: true; __rowId: number; }
+export interface NewRowMarker { __UnicDB_new_row__: true; __rowId: number; values: unknown[]; }
+export interface DeleteRowMarker { __UnicDB_deleted__: true; __rowId: number; }
 export interface ParsedFrom { schema?: string; table: string; }
 ```
 
@@ -169,7 +169,7 @@ export interface SaveStatementsOk {
   skippedRows?: ReadonlyArray<{ rowId: number; reason: string }>;
 }
 
-export interface DefaultValueMarker { __vsdb_default__: true }
+export interface DefaultValueMarker { __UnicDB_default__: true }
 export function isDefaultValueMarker(v: unknown): v is DefaultValueMarker;
 export function quoteIdent(name: string, dialect: Dialect): string; // pg now quotes
 

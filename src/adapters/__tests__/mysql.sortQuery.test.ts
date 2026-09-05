@@ -2,7 +2,7 @@
 //
 // TASK-005 — unit tests cho getTableSortQuery (MySQL dialect) — pure SQL
 // composition, không cần mock mysql2: hàm nhận (originalSql, whereFromBar,
-// column, direction) và trả về chuỗi SQL wrapped trong subquery `vsdb_sort`
+// column, direction) và trả về chuỗi SQL wrapped trong subquery `UnicDB_sort`
 // với ORDER BY trên backtick-quoted identifier (injection-safe qua
 // `quoteIdent`). Importing MySqlAdapter's module is safe because `mysql2` is
 // only imported, never connected. Mirrors mssql.sortQuery.test.ts case-for-
@@ -14,7 +14,7 @@ describe("getTableSortQuery (mysql)", () => {
   // Case 1 — unit (happy): basic sort wraps in a subquery with backtick quoting
   it("basic sort wraps in a subquery with backtick quoting", () => {
     expect(getTableSortQuery("SELECT 1", "", "name", "ASC")).toBe(
-      "SELECT * FROM (SELECT 1) vsdb_sort ORDER BY `name` ASC",
+      "SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY `name` ASC",
     );
   });
 
@@ -22,10 +22,10 @@ describe("getTableSortQuery (mysql)", () => {
   it("WHERE from the requery bar is applied to the OUTER query", () => {
     const sql = getTableSortQuery("SELECT * FROM t", "age > 18", "name", "ASC");
     expect(sql).toBe(
-      "SELECT * FROM (SELECT * FROM t) vsdb_sort WHERE age > 18 ORDER BY `name` ASC",
+      "SELECT * FROM (SELECT * FROM t) UnicDB_sort WHERE age > 18 ORDER BY `name` ASC",
     );
     // the inner SQL is verbatim inside the subquery
-    expect(sql).toContain("(SELECT * FROM t) vsdb_sort");
+    expect(sql).toContain("(SELECT * FROM t) UnicDB_sort");
   });
 
   // Case 3 — unit (happy): DESC direction is emitted
@@ -40,7 +40,7 @@ describe("getTableSortQuery (mysql)", () => {
   it("backtick inside a column name is doubled and stays one identifier", () => {
     const sql = getTableSortQuery("SELECT 1", "", "n`; DROP TABLE x--", "ASC");
     expect(sql).toBe(
-      "SELECT * FROM (SELECT 1) vsdb_sort ORDER BY `n``; DROP TABLE x--` ASC",
+      "SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY `n``; DROP TABLE x--` ASC",
     );
   });
 
@@ -59,7 +59,7 @@ describe("getTableSortQuery (mysql)", () => {
   // Case 6 — edge (empty inputs): empty originalSql and empty where produce no stray WHERE
   it("empty originalSql and empty where produce no stray WHERE", () => {
     const sql = getTableSortQuery("", "", "n", "ASC");
-    expect(sql).toBe("SELECT * FROM () vsdb_sort ORDER BY `n` ASC");
+    expect(sql).toBe("SELECT * FROM () UnicDB_sort ORDER BY `n` ASC");
     expect(sql).not.toMatch(/\bWHERE\b/);
   });
 

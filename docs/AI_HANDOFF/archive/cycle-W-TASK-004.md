@@ -37,16 +37,16 @@ ordered tiebreaker (or no tiebreaker when any PK component is not projected).
 
 | `msg` shape (after `parseOrderBy(orderBy, dialect)` succeeds) | Compose with | Alias |
 |---|---|---|
-| `dialect === null` | `composeRequery(sql, where, orderBy)` — **unchanged** | `vsdb_sub` |
-| no `filters`, no `offset`, **0 terms** | `composeRequery(sql, where, "")` — **unchanged** | `vsdb_sub` |
-| no `filters`, no `offset`, **1 term, no `nulls`** | `composeSortQuery(dialect, sql, where, col, dir)` — **unchanged cycle-V path, keeps its quoting** | `vsdb_sort` |
-| no `filters`, no `offset`, **≥2 terms, or 1 term with `nulls`** | new multi-term wrap (below) | `vsdb_sub` |
-| `filters` or `offset` present | `buildPagedQueryTerms(...)` | `vsdb_page` |
+| `dialect === null` | `composeRequery(sql, where, orderBy)` — **unchanged** | `UnicDB_sub` |
+| no `filters`, no `offset`, **0 terms** | `composeRequery(sql, where, "")` — **unchanged** | `UnicDB_sub` |
+| no `filters`, no `offset`, **1 term, no `nulls`** | `composeSortQuery(dialect, sql, where, col, dir)` — **unchanged cycle-V path, keeps its quoting** | `UnicDB_sort` |
+| no `filters`, no `offset`, **≥2 terms, or 1 term with `nulls`** | new multi-term wrap (below) | `UnicDB_sub` |
+| `filters` or `offset` present | `buildPagedQueryTerms(...)` | `UnicDB_page` |
 
-Multi-term wrap, exact shape (alias matches `composeRequery`'s existing `vsdb_sub`):
+Multi-term wrap, exact shape (alias matches `composeRequery`'s existing `UnicDB_sub`):
 
 ```
-SELECT * FROM (<sql, trailing ; stripped>) AS vsdb_sub[ WHERE <where.trim()>] ORDER BY <buildOrderByClause(terms, dialect)>
+SELECT * FROM (<sql, trailing ; stripped>) AS UnicDB_sub[ WHERE <where.trim()>] ORDER BY <buildOrderByClause(terms, dialect)>
 ```
 
 No LIMIT/OFFSET on this path — `msg.offset` is absent by construction. An ORDER BY already
@@ -61,15 +61,15 @@ detection.
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | integration (happy) | `requestDistinctValues` runs the DISTINCT SQL | `runSql` called once with a string containing `SELECT DISTINCT "name"` and `vsdb_distinct` | postgres panel, statement 0 |
+| 1 | integration (happy) | `requestDistinctValues` runs the DISTINCT SQL | `runSql` called once with a string containing `SELECT DISTINCT "name"` and `UnicDB_distinct` | postgres panel, statement 0 |
 | 2 | integration (happy) | the reply reaches the webview | a posted message `{type:"distinctValues", index:0, column:"name", values:["a","b"], truncated:false}` | runner returns rows `[["a"],["b"]]` |
 | 3 | edge (cache) | a second request for the same column runs no SQL | `runSql` call count still 1; a second `distinctValues` message IS still posted | same request twice |
 | 4 | edge (invalidation) | a new `render()` for that index clears the cache | after re-render, the same request runs `runSql` again | statement replaced |
 | 5 | edge (permission/driver error) | a failing DISTINCT query degrades, never throws | posted message has `error` non-empty and `values: []`; no unhandled rejection; panel still responsive | `runSql` rejects with `permission denied` |
 | 6 | edge (no connection) | no dialect ⇒ no SQL, explicit error reply | `runSql` not called; posted `distinctValues` carries the request's `index` / `column` and an `error` | `saveContext.getDriver()` returns `null` |
 | 6b | edge (concurrency) | late DISTINCT response for a replaced statement is dropped | request `{index:0,column:"name"}`, call `render()`/replacement requery for statement 0 before the deferred old `runSql` resolves, then resolve it: **no** `distinctValues` `postMessage` occurs for the old response and the replacement cache stays empty (a next request runs SQL); the captured response identity remains old `index:0,column:"name"` and is rejected against current statement generation | deferred runner promise for statement 0, then replacement at same index |
-| 7 | integration (happy) | multi-term ORDER BY uses the PINNED `AS vsdb_sub` wrapper | composed SQL `=== 'SELECT * FROM (SELECT id FROM t) AS vsdb_sub ORDER BY "a" ASC, "b" DESC'` — exact string via `toBe`, alias `AS vsdb_sub`, no LIMIT/OFFSET | `requery` with `orderBy: "a, b DESC"`, no filters, no offset, postgres, sql `SELECT id FROM t` |
-| 8 | integration (happy) | same wrapper on mssql + with a bar WHERE | `=== 'SELECT * FROM (SELECT id FROM t) AS vsdb_sub ORDER BY [a] ASC, [b] DESC'`; and with `where: "id > 0"` → `… AS vsdb_sub WHERE id > 0 ORDER BY [a] ASC, [b] DESC` | same, mssql |
+| 7 | integration (happy) | multi-term ORDER BY uses the PINNED `AS UnicDB_sub` wrapper | composed SQL `=== 'SELECT * FROM (SELECT id FROM t) AS UnicDB_sub ORDER BY "a" ASC, "b" DESC'` — exact string via `toBe`, alias `AS UnicDB_sub`, no LIMIT/OFFSET | `requery` with `orderBy: "a, b DESC"`, no filters, no offset, postgres, sql `SELECT id FROM t` |
+| 8 | integration (happy) | same wrapper on mssql + with a bar WHERE | `=== 'SELECT * FROM (SELECT id FROM t) AS UnicDB_sub ORDER BY [a] ASC, [b] DESC'`; and with `where: "id > 0"` → `… AS UnicDB_sub WHERE id > 0 ORDER BY [a] ASC, [b] DESC` | same, mssql |
 | 8b | edge (identifier charset) | active-dialect quoted colId round-trips; mismatched style rejects | postgres `orderBy: '"First Name" ASC'` composes `ORDER BY "First Name" ASC` and runs SQL; postgres with `` `First Name` ASC `` runs no SQL and surfaces the standard parse error | quoted input from TASK-003 + mismatched quote input |
 | 8c | edge (dialect capability) | `NULLS` native vs rejected | postgres `orderBy: "a NULLS LAST"` → SQL contains `ORDER BY "a" ASC NULLS LAST`; mysql and mssql → `runSql` NOT called, `showErrorMessage` called with a message matching `/NULLS/i` | one case per dialect |
 | 9 | regression (behaviour change) | an expression is REJECTED, not passed through | `runSql` NOT called; an error is surfaced (`showErrorMessage` called) — RED against today's pass-through | `orderBy: "lower(name)"` |
@@ -115,12 +115,12 @@ known pre-existing flake under the full suite (passes in isolation) — not a cy
       cycle V — asserted with `toBe` against a live `composeRequery` / `buildPagedQuery` call,
       not a pasted string. These are the only byte-identity claims in this cycle; do not add a
       `toBe(composeRequery(...))` assertion to the single-term sort path: that path composes via
-      `composeSortQuery` (`vsdb_sort`, quoted) and `composeRequery` emits `vsdb_sub` unquoted, so
+      `composeSortQuery` (`UnicDB_sort`, quoted) and `composeRequery` emits `UnicDB_sub` unquoted, so
       such an assertion would revert cycle V's dialect quoting and break
       `resultsPanelServerFilter.test.ts:556-571` (case 15). See `PLAN.md` §7.
 - [ ] `composeRequerySql` dispatches exactly per the table in §Target Files: the single-bare-term
       path still goes through `composeSortQuery` unchanged, and the multi-term path emits the
-      pinned `AS vsdb_sub` wrapper with no LIMIT/OFFSET. (cases 7, 8, 10)
+      pinned `AS UnicDB_sub` wrapper with no LIMIT/OFFSET. (cases 7, 8, 10)
 - [ ] DISTINCT replies echo the captured request `index` and `column`; a completion whose
       statement identity/generation no longer matches current statement index is dropped before
       both cache write and `postMessage`. (case 6b)
@@ -234,7 +234,7 @@ schemaForm-bundle test needs dist/ present.)
 Status: PASS
 Note:
 - Deliberate test change (Discussion note 1): resultsPanelServerFilter.test.ts
-  case 16 rewritten in place — "a, b DESC" now asserts the parsed `AS vsdb_sub`
+  case 16 rewritten in place — "a, b DESC" now asserts the parsed `AS UnicDB_sub`
   wrapper; "lower(name)" and "1" now assert rejection (no runSql +
   showErrorMessage). Case 15 (:556-571 area) untouched and green.
 - Accepted limitation restated (Discussion note 6 / PLAN §2 out-of-scope,
@@ -269,7 +269,7 @@ Note:
    reviewer will check that the behaviour change was intentional and matches `PLAN.md` §3.1.
 2. **Rejection must be visible and must run nothing.** Follow the existing error style in
    `handleRequery`: `vscode.window.showErrorMessage` plus the synthetic error `StatementResult`
-   so the webview shows it in the `vsdb-error` placeholder. Silently falling back to
+   so the webview shows it in the `UnicDB-error` placeholder. Silently falling back to
    `composeRequery` reintroduces exactly the bug this cycle is closing.
 3. **Full-PK tiebreaker source, in order:** `tableByStatement.get(index)` →
    `listPkColumns(schema, table)` → compare **every** PK name against `r.result?.columns`. Preserve

@@ -6,14 +6,14 @@
 // acquireVsCodeApi + ResizeObserver + matchMedia, dispatches a state message,
 // then exercises:
 //
-//  - 1) cell edit (cellValueChanged path) → grid cell carries `vsdb-cell-dirty`
-//  - 2) add row → row carries `vsdb-row-new`; delete row → row carries
-//       `vsdb-row-deleted`; styles.css has `.vsdb-row-deleted { text-decoration:
+//  - 1) cell edit (cellValueChanged path) → grid cell carries `UnicDB-cell-dirty`
+//  - 2) add row → row carries `UnicDB-row-new`; delete row → row carries
+//       `UnicDB-row-deleted`; styles.css has `.UnicDB-row-deleted { text-decoration:
 //       line-through; opacity: .6 }`
 //  - 3) commit when 0 dirty → no saveEdits posted (no-op guard)
 //  - 4) commit 1 row errors → rowErrors banner shows error, errored row keeps
 //       dirty state, other rows' dirty cleared
-//  - 5) saveResult ok → editState cleared (new baseline), no vsdb-cell-dirty
+//  - 5) saveResult ok → editState cleared (new baseline), no UnicDB-cell-dirty
 //       remains on any cell
 //
 // If dist/webview.js is missing, tests are skipped with an explanatory message.
@@ -53,11 +53,11 @@ interface EditStateHandle {
   snapshot: () => Array<{ rowId: number; colIndex: number; value: unknown }>;
 }
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
-interface VsdbDebug {
+interface UnicDBDebug {
   gridApi?: GridApi;
   editState?: EditStateHandle;
   commit?: () => void;
@@ -71,14 +71,14 @@ interface VsdbDebug {
   ) => void;
 }
 
-function vsdbApi(): VsdbDebug | null {
+function UnicDBApi(): UnicDBDebug | null {
   if (typeof window === "undefined") return null;
-  const maybe = (window as unknown as { __vsdb?: VsdbDebug }).__vsdb;
+  const maybe = (window as unknown as { __UnicDB?: UnicDBDebug }).__UnicDB;
   return maybe ?? null;
 }
 
 function getEditState(): EditStateHandle | null {
-  return vsdbApi()?.editState ?? null;
+  return UnicDBApi()?.editState ?? null;
 }
 
 function getSimulateEdit():
@@ -89,7 +89,7 @@ function getSimulateEdit():
       oldValue: unknown,
     ) => void)
   | null {
-  return vsdbApi()?.simulateCellEdit ?? null;
+  return UnicDBApi()?.simulateCellEdit ?? null;
 }
 
 beforeAll(() => {
@@ -135,16 +135,16 @@ function loadBundle(): {
     );
   }
 
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-webview"></div>';
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
   (0, eval)(bundleSrc);
@@ -194,9 +194,9 @@ const itIfBundle = it.runIf(bundleSrc !== null);
 const describeIfBundle = describe.runIf(bundleSrc !== null);
 
 describeIfBundle("webview/main.ts bundle (TASK-007)", () => {
-  // ---- #1: cell edit → cell has vsdb-cell-dirty ----------------------------
+  // ---- #1: cell edit → cell has UnicDB-cell-dirty ----------------------------
   itIfBundle(
-    "1. cell edit applies vsdb-cell-dirty to the edited cell element",
+    "1. cell edit applies UnicDB-cell-dirty to the edited cell element",
     async () => {
       const { root } = loadBundle();
       void root;
@@ -219,7 +219,7 @@ describeIfBundle("webview/main.ts bundle (TASK-007)", () => {
       // data cells with class `ag-cell` and a `col-id="<colId>"` attribute
       // (colId === field when no explicit colId is set). The dirty class
       // is appended to the cell's classList by `cellClassRules`.
-      const grid = vsdbApi()!.gridApi!;
+      const grid = UnicDBApi()!.gridApi!;
       expect(grid).toBeTruthy();
       const node = grid.getRowNode("0");
       expect(node).toBeTruthy();
@@ -228,7 +228,7 @@ describeIfBundle("webview/main.ts bundle (TASK-007)", () => {
       // grid host for any element matching `[col-id=name]` whose row
       // index corresponds to rowId 0.
       const gridHost = document.querySelector(
-        ".vsdb-grid-host",
+        ".UnicDB-grid-host",
       ) as HTMLDivElement | null;
       expect(gridHost).toBeTruthy();
       // AG Grid v36 renders rows as `role="row"` with cells
@@ -239,33 +239,33 @@ describeIfBundle("webview/main.ts bundle (TASK-007)", () => {
       );
       expect(cells.length).toBeGreaterThanOrEqual(1);
       const editedCell = cells[0] as HTMLElement;
-      expect(editedCell.classList.contains("vsdb-cell-dirty")).toBe(true);
+      expect(editedCell.classList.contains("UnicDB-cell-dirty")).toBe(true);
     },
   );
 
-  // ---- #2: add row → vsdb-row-new; delete row → vsdb-row-deleted + line-through
+  // ---- #2: add row → UnicDB-row-new; delete row → UnicDB-row-deleted + line-through
   itIfBundle(
-    "2. add row → vsdb-row-new; delete row → vsdb-row-deleted with line-through CSS",
+    "2. add row → UnicDB-row-new; delete row → UnicDB-row-deleted with line-through CSS",
     async () => {
       const { root } = loadBundle();
       void root;
       dispatchState(threeRowsState());
       await flushGridEvents();
 
-      const api = vsdbApi()!;
+      const api = UnicDBApi()!;
       const grid = api.gridApi!;
       expect(typeof api.addRow).toBe("function");
       expect(typeof api.deleteRow).toBe("function");
 
-      // Add row → new row's element carries vsdb-row-new.
+      // Add row → new row's element carries UnicDB-row-new.
       api.addRow!();
       await flushGridEvents();
 
       const gridHost = document.querySelector(
-        ".vsdb-grid-host",
+        ".UnicDB-grid-host",
       ) as HTMLDivElement | null;
       expect(gridHost).toBeTruthy();
-      const newRowEls = gridHost!.querySelectorAll(".vsdb-row-new");
+      const newRowEls = gridHost!.querySelectorAll(".UnicDB-row-new");
       expect(newRowEls.length).toBe(1);
 
       // Delete row → focus the first server row (rowId=0), call deleteRow.
@@ -277,18 +277,18 @@ describeIfBundle("webview/main.ts bundle (TASK-007)", () => {
       api.deleteRow!();
       await flushGridEvents();
 
-      const deletedRowEls = gridHost!.querySelectorAll(".vsdb-row-deleted");
+      const deletedRowEls = gridHost!.querySelectorAll(".UnicDB-row-deleted");
       expect(deletedRowEls.length).toBe(1);
 
-      // The styles.css source must contain the `.vsdb-row-deleted` rule
+      // The styles.css source must contain the `.UnicDB-row-deleted` rule
       // with `line-through` — the regression assertion that the CSS
       // class actually paints strikethrough.
       const stylesPath = resolve(process.cwd(), "webview", "styles.css");
       const styles = readFileSync(stylesPath, "utf8");
       // Loose match: rule body must contain line-through. AG Grid
-      // generates a `.ag-row` parent so the rule may be on `.vsdb-row-deleted
+      // generates a `.ag-row` parent so the rule may be on `.UnicDB-row-deleted
       // .ag-cell` per the task spec snippet.
-      expect(styles).toMatch(/\.vsdb-row-deleted[^}]*line-through/s);
+      expect(styles).toMatch(/\.UnicDB-row-deleted[^}]*line-through/s);
       expect(styles).toMatch(/opacity:\s*(?:\.6|0\.6)/);
     },
   );
@@ -301,7 +301,7 @@ describeIfBundle("webview/main.ts bundle (TASK-007)", () => {
 
     expect(getEditState()!.dirtyCount).toBe(0);
     received.length = 0;
-    vsdbApi()!.commit!();
+    UnicDBApi()!.commit!();
     await flushGridEvents();
 
     const saveMsgs = received.filter((m) => m.type === "saveEdits");
@@ -342,13 +342,13 @@ describeIfBundle("webview/main.ts bundle (TASK-007)", () => {
       await flushGridEvents();
 
       // Banner must include the per-row error text.
-      const banner = document.querySelector(".vsdb-save-banner");
+      const banner = document.querySelector(".UnicDB-save-banner");
       expect(banner).toBeTruthy();
       expect(banner!.textContent ?? "").toMatch(/row\s*1/i);
       expect(banner!.textContent ?? "").toMatch(/duplicate key/);
       // Banner is visible (no hidden class).
       const hidden =
-        banner!.classList.contains("vsdb-hidden") ||
+        banner!.classList.contains("UnicDB-hidden") ||
         banner!.getAttribute("hidden") !== null;
       expect(hidden).toBe(false);
 
@@ -363,9 +363,9 @@ describeIfBundle("webview/main.ts bundle (TASK-007)", () => {
     },
   );
 
-  // ---- #5: saveResult ok → editState cleared, no vsdb-cell-dirty remains ---
+  // ---- #5: saveResult ok → editState cleared, no UnicDB-cell-dirty remains ---
   itIfBundle(
-    "5. saveResult ok → editState cleared (new baseline), no cell carries vsdb-cell-dirty",
+    "5. saveResult ok → editState cleared (new baseline), no cell carries UnicDB-cell-dirty",
     async () => {
       const { root } = loadBundle();
       void root;
@@ -381,11 +381,11 @@ describeIfBundle("webview/main.ts bundle (TASK-007)", () => {
       expect(editState!.dirtyCount).toBe(2);
 
       const gridHost = document.querySelector(
-        ".vsdb-grid-host",
+        ".UnicDB-grid-host",
       ) as HTMLDivElement | null;
       expect(gridHost).toBeTruthy();
-      // Pre-condition: at least one cell carries vsdb-cell-dirty.
-      const dirtyBefore = gridHost!.querySelectorAll(".vsdb-cell-dirty");
+      // Pre-condition: at least one cell carries UnicDB-cell-dirty.
+      const dirtyBefore = gridHost!.querySelectorAll(".UnicDB-cell-dirty");
       expect(dirtyBefore.length).toBeGreaterThanOrEqual(1);
 
       // Host returns ok:true (no rowErrors) — full success.
@@ -397,7 +397,7 @@ describeIfBundle("webview/main.ts bundle (TASK-007)", () => {
       // After clear, AG Grid must re-render and strip the dirty class.
       // (The grid applies cellClassRules from editState; with editState
       // empty, no cell should match.)
-      const dirtyAfter = gridHost!.querySelectorAll(".vsdb-cell-dirty");
+      const dirtyAfter = gridHost!.querySelectorAll(".UnicDB-cell-dirty");
       expect(dirtyAfter.length).toBe(0);
     },
   );
@@ -412,22 +412,22 @@ interface UndoStackHandle {
   undoDepth: number;
   clear(): void;
 }
-interface VsdbDebugUndo extends VsdbDebug {
+interface UnicDBDebugUndo extends UnicDBDebug {
   undoStack?: UndoStackHandle;
   undo?: () => void;
   redo?: () => void;
   redoBtn?: HTMLButtonElement;
   undoBtn?: HTMLButtonElement;
 }
-function undoApi(): VsdbDebugUndo | null {
-  return vsdbApi() as VsdbDebugUndo | null;
+function undoApi(): UnicDBDebugUndo | null {
+  return UnicDBApi() as UnicDBDebugUndo | null;
 }
 function getUndoStack(): UndoStackHandle | null {
   return undoApi()?.undoStack ?? null;
 }
 describeIfBundle("webview/main.ts bundle (TASK-008 undo/redo wiring)", () => {
   itIfBundle(
-    "6. cell edit → Cmd+Z reverts the cell + strips vsdb-cell-dirty; stack tracks the action",
+    "6. cell edit → Cmd+Z reverts the cell + strips UnicDB-cell-dirty; stack tracks the action",
     async () => {
       const { root } = loadBundle();
       void root;
@@ -454,11 +454,11 @@ describeIfBundle("webview/main.ts bundle (TASK-008 undo/redo wiring)", () => {
       expect(debug.undoBtn!.disabled).toBe(false);
 
       const gridHost = document.querySelector(
-        ".vsdb-grid-host",
+        ".UnicDB-grid-host",
       ) as HTMLDivElement | null;
       expect(gridHost).toBeTruthy();
       const cellsBefore = gridHost!.querySelectorAll(
-        '.ag-row[row-index="0"] [col-id="name"].vsdb-cell-dirty',
+        '.ag-row[row-index="0"] [col-id="name"].UnicDB-cell-dirty',
       );
       expect(cellsBefore.length).toBeGreaterThanOrEqual(1);
 
@@ -478,7 +478,7 @@ describeIfBundle("webview/main.ts bundle (TASK-008 undo/redo wiring)", () => {
       expect(debug.redoBtn!.disabled).toBe(false);
 
       const cellsAfter = gridHost!.querySelectorAll(
-        '.ag-row[row-index="0"] [col-id="name"].vsdb-cell-dirty',
+        '.ag-row[row-index="0"] [col-id="name"].UnicDB-cell-dirty',
       );
       expect(cellsAfter.length).toBe(0);
 

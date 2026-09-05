@@ -1,32 +1,32 @@
 {
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
-  "name": "VSDB SQL injection",
-  "scopeName": "source.sql.vsdb",
+  "name": "UnicDB SQL injection",
+  "scopeName": "source.sql.UnicDB",
   "injectionSelector": "L:source.sql",
   "patterns": [
     {
       "comment": "PostgreSQL ILIKE (and NOT ILIKE). Keywords matched in uppercase conventional form; kept JS/Oniguruma-dual-compatible so the no-empty-match regression test can construct each regex with new RegExp().",
-      "name": "keyword.other.vsdb.sql",
+      "name": "keyword.other.UnicDB.sql",
       "match": "\\b(?:NOT\\s+)?ILIKE\\b"
     },
     {
       "comment": "PostgreSQL RETURNING clause keyword.",
-      "name": "keyword.other.vsdb.sql",
+      "name": "keyword.other.UnicDB.sql",
       "match": "\\bRETURNING\\b"
     },
     {
       "comment": "PostgreSQL MATERIALIZED VIEW keyword.",
-      "name": "keyword.other.vsdb.sql",
+      "name": "keyword.other.UnicDB.sql",
       "match": "\\bMATERIALIZED\\b"
     },
     {
       "comment": "T-SQL TOP (SELECT TOP n).",
-      "name": "keyword.other.vsdb.sql",
+      "name": "keyword.other.UnicDB.sql",
       "match": "\\bTOP\\b"
     },
     {
       "comment": "T-SQL / standard OFFSET … FETCH … ROWS ONLY paging clause keywords.",
-      "name": "keyword.other.vsdb.sql",
+      "name": "keyword.other.UnicDB.sql",
       "match": "\\b(?:OFFSET|FETCH|NEXT|ROWS|ONLY)\\b"
     },
     {
@@ -40,8 +40,8 @@
       "match": "`[^`]*`"
     },
     {
-      "comment": "Generic SQL function call — a bare identifier directly followed by a parenthesis. Emits the entity.name.function.vsdb.sql scope TASK-003's webview tokenizer mirrors for visual consistency.",
-      "name": "entity.name.function.vsdb.sql",
+      "comment": "Generic SQL function call — a bare identifier directly followed by a parenthesis. Emits the entity.name.function.UnicDB.sql scope TASK-003's webview tokenizer mirrors for visual consistency.",
+      "name": "entity.name.function.UnicDB.sql",
       "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b(?=\\s*\\()"
     }
   ]

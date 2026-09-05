@@ -201,7 +201,7 @@ TEST_PLAN_COVERAGE: all-followed (4/4 cases, each at both the webview-bundle and
   - Case 3 (regression/edit): bundle `#3a` prechecks from `existing.manualCommit===true` and
     Save retains true; `#3b` legacy record (field omitted) initializes unchecked, stays editable
     (name/host/port prefill asserted), saves explicit `false`; host `#3` drives
-    `vsdb.editConnection` with a legacy stored config and asserts the `editConnection` patch
+    `UnicDB.editConnection` with a legacy stored config and asserts the `editConnection` patch
     carries `manualCommit:true`.
   - Case 4 (protocol symmetry): bundle `#4` posts `{type:"test", manualCommit:true}`; host test
     confirms the field is accepted and the existing factory/`testResult` behavior is retained.
@@ -209,7 +209,7 @@ TEST_PLAN_COVERAGE: all-followed (4/4 cases, each at both the webview-bundle and
 
 ACCEPTANCE CRITERIA — verified independently:
   - [x] Checkbox rendered in both modes using the existing pattern:
-        `webview/connectionFormMain.ts:174-177` uses `class="vsdb-form-check"`, the same class
+        `webview/connectionFormMain.ts:174-177` uses `class="UnicDB-form-check"`, the same class
         as the adjacent `useSsl` box (`:159-161`) and `aiSettingsFormMain.ts:220`; the class is
         defined at `webview/styles.css:464`. It sits AFTER the `</div>` closing `#sslPanel`
         (`:173`), so `updateSslVisibility()` (`:98-105`, which only touches `#sslPanel` and

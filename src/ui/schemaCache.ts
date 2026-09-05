@@ -7,7 +7,7 @@
 //   - Entry còn fresh (age < ttlMs) → trả cached, KHÔNG gọi adapter.
 //   - Entry hết hạn → thử refresh; nếu adapter lỗi → trả stale data (không
 //     throw — completion phải never-crash), nếu chưa từng có cache → [].
-//   - `invalidate()` xoá toàn bộ entry (vsdb.refreshSchema command).
+//   - `invalidate()` xoá toàn bộ entry (UnicDB.refreshSchema command).
 //
 // vscode-free: chỉ phụ thuộc adapter types → test thuần Node, không cần mock.
 

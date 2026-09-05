@@ -513,8 +513,8 @@ export function composeKeysetQuery(
   const orderBy = buildOrderByClause(allOrderedTerms, dialect);
   const sql =
     dialect === "mssql"
-      ? `SELECT TOP ${limit} * FROM (${innerSql}) vsdb_page WHERE ${predicateWhere} ORDER BY ${orderBy}`
-      : `SELECT * FROM (${innerSql}) vsdb_page WHERE ${predicateWhere} ORDER BY ${orderBy} LIMIT ${limit}`;
+      ? `SELECT TOP ${limit} * FROM (${innerSql}) UnicDB_page WHERE ${predicateWhere} ORDER BY ${orderBy}`
+      : `SELECT * FROM (${innerSql}) UnicDB_page WHERE ${predicateWhere} ORDER BY ${orderBy} LIMIT ${limit}`;
   return {
     sql,
     ...(hiddenColumns ? { hiddenColumns } : {}),

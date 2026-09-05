@@ -14,7 +14,7 @@ Reviewer: unic-smart (cycle reviewer)
      (assert `$1`/`$2` present and identifier fragments absent).
    - Exports present: validateNewName, analyzeUsage, the 4 SQL builders,
      buildRenamePlan.
-   - package.json: `vsdb.renameTable` + `vsdb.renameColumn` declared in
+   - package.json: `UnicDB.renameTable` + `UnicDB.renameColumn` declared in
      contributes.commands.
 2. CHANGELOG.md `## [1.23.0]` section + compare link v1.22.0...v1.23.0.
 3. README.md bullet after the AIX-03 bullet.

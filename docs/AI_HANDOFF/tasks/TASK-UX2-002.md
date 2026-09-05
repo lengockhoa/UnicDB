@@ -99,14 +99,14 @@ npm test webview/__tests__/mainTabTitle.test.ts
 **RED phase** (test file created, `tabTitle` module not yet implemented):
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-002
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/UX2-002
 
  ❯ webview/__tests__/mainTabTitle.test.ts  (0 test)
 
 ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
 
  FAIL  webview/__tests__/mainTabTitle.test.ts [ webview/__tests__/mainTabTitle.test.ts ]
-Error: Failed to load url ../tabTitle (resolved id: ../tabTitle) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-002/webview/__tests__/mainTabTitle.test.ts. Does the file exist?
+Error: Failed to load url ../tabTitle (resolved id: ../tabTitle) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/UX2-002/webview/__tests__/mainTabTitle.test.ts. Does the file exist?
  ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
 
 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
@@ -120,7 +120,7 @@ RED confirmed — module not yet implemented.
 **GREEN phase** (`webview/tabTitle.ts` implemented with the spec contract):
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-002
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/UX2-002
 
  ✓ webview/__tests__/mainTabTitle.test.ts  (7 tests) 1ms
 
@@ -166,8 +166,8 @@ The 5 failing test files are pre-existing `aiChatPanel*` tests with `spawnSync /
 **Pre-existing test updates** (assertions updated to match the new spec — these were testing the OLD label format that the spec replaces, so they are intentional, not regressions):
 
 - `src/ui/__tests__/webviewPerTableTabs.test.ts` — assertions now check `Run N · <hint>` instead of `Statement N`; long label test (3) now expects verbatim rendering (the 40-char + "..." truncation was removed by the spec); fallback tests (2, 5) use empty-sql fixtures to reach the Stmt M fallback path.
-- `src/ui/__tests__/webviewBundle.test.ts` — test #1 and #7 add a click on tab[0] after the state dispatch because the new auto-open Messages behaviour makes the Messages tab the initially-active tab whenever any error row is present. Test #7's `.vsdb-error` selector updated to `.vsdb-ddl-card-error-text` (the TASK-UX1-010 surface that replaces the legacy error display).
-- `src/ui/__tests__/webviewResultLimit.test.ts` — test #5's `⌀` cancelled badge assertion replaced with the new spec: `tabBadge` returns `""` for non-error statuses (no `⌀`/`✗`/`⚠`); the `.vsdb-tab-cancelled` CSS class is still applied.
+- `src/ui/__tests__/webviewBundle.test.ts` — test #1 and #7 add a click on tab[0] after the state dispatch because the new auto-open Messages behaviour makes the Messages tab the initially-active tab whenever any error row is present. Test #7's `.UnicDB-error` selector updated to `.UnicDB-ddl-card-error-text` (the TASK-UX1-010 surface that replaces the legacy error display).
+- `src/ui/__tests__/webviewResultLimit.test.ts` — test #5's `⌀` cancelled badge assertion replaced with the new spec: `tabBadge` returns `""` for non-error statuses (no `⌀`/`✗`/`⚠`); the `.UnicDB-tab-cancelled` CSS class is still applied.
 - `tests/webviewMultiRunTabs.test.ts` — the "stamped entries" test asserts the new `Run N · <hint>` contract (sql/label/Stmt M paths).
 
 ### Test Plan Followed
@@ -201,7 +201,7 @@ FINDINGS:
     - webview/tabTitle.ts:38-41 — the `(r.label && ...) || (r.sql && ...) || "failed"` idiom evaluates `r.label.length` twice and reads slightly non-obviously; a plain `if/else` chain would be clearer. Pure + allocation-free as required by the acceptance criteria (single slice per call, no per-render allocations — `rebuildTabs` at webview/main.ts:1133 calls it once per tab render).
     - webview/__tests__/mainTabTitle.test.ts:24-25 — test 1's expectation string ends with a trailing space (`"CREATE TABLE public.customers "`) because char 30 of the SQL is a space; the comment documents this, but the spec table (§Test Cases #1) shows the trailing "…" as an ellipsis metaphor. Behavior matches the spec's `slice(0,30)` contract; noting the cosmetic divergence for the record.
 NEXT_STATUS_FOR_INDEX: approved
-NOTES: Auto-open wiring is correctly placed AFTER the loadMore clamp (webview/main.ts:3661-3675) so the Messages slot index survives; guarded by `results.length > prevLen` so re-renders of an already-erroring set never bounce the user back to Messages. tabTitle/tabBadge are pure structural helpers with no DOM/deps (webview/tabTitle.ts). Synthetic row (status:"error", sql:"(connection)", no kind) routes to the error card via classifyPanelKind's status-first check (src/ui/ddlStatusCard.ts:64-65). Pre-existing test updates are intentional spec alignment (old `Run N · Stmt M`/40-char-truncation assertions replaced per the new contract); the removed `⌀`/`✗` badge glyphs are covered by the updated webviewResultLimit test #5 and `.vsdb-tab-error`/`.vsdb-tab-cancelled` CSS classes remain.
+NOTES: Auto-open wiring is correctly placed AFTER the loadMore clamp (webview/main.ts:3661-3675) so the Messages slot index survives; guarded by `results.length > prevLen` so re-renders of an already-erroring set never bounce the user back to Messages. tabTitle/tabBadge are pure structural helpers with no DOM/deps (webview/tabTitle.ts). Synthetic row (status:"error", sql:"(connection)", no kind) routes to the error card via classifyPanelKind's status-first check (src/ui/ddlStatusCard.ts:64-65). Pre-existing test updates are intentional spec alignment (old `Run N · Stmt M`/40-char-truncation assertions replaced per the new contract); the removed `⌀`/`✗` badge glyphs are covered by the updated webviewResultLimit test #5 and `.UnicDB-tab-error`/`.UnicDB-tab-cancelled` CSS classes remain.
 
 ## Reviewer Verdict
 

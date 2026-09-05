@@ -84,7 +84,7 @@ EXECUTOR_SUBAGENT: -
 SUMMARY: Added src/__tests__/releaseVerify.test.ts as the 003-RED contract test. The file compiles under tsc, is discovered by `npx vitest run`, and currently fails RED (8/9 cases) because neither the new package.json verify:* keys nor scripts/verify-release.sh exist yet in this worktree — that is the expected in-wave state.
 TEST_PLAN_FOLLOWED: inline (task file §"Test Cases" — 9 cases, exact describe "verify-release.sh")
 FILES_CHANGED:
-  - /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-dx01-003/src/__tests__/releaseVerify.test.ts (new, 9 cases)
+  - /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-dx01-003/src/__tests__/releaseVerify.test.ts (new, 9 cases)
 TESTS_ADDED:
   - src/__tests__/releaseVerify.test.ts:
     1. "prints PASS per stage and final OK on all-zero exit"

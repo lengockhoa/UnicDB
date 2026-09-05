@@ -49,13 +49,13 @@ type BatchWaiter = {
  * TASK-006 — server-side column sort as pure SQL composition (T-SQL dialect).
  *
  * Mirrors `getTableSortQuery` (src/adapters/postgres.ts) exactly: same 4-arg
- * signature, same `vsdb_sort` subquery wrap, same ASC/DESC whitelist — but
+ * signature, same `UnicDB_sort` subquery wrap, same ASC/DESC whitelist — but
  * identifiers are quoted with T-SQL `[…]` brackets (embedded `]` doubled)
  * instead of Postgres double quotes, and the emitted `ORDER BY` is exactly
  * what T-SQL `OFFSET/FETCH` paging can attach to (see `buildPagedQuery`).
  *
  *   getTableSortQuery("SELECT * FROM t WHERE id>5", "", "name", "ASC")
- *     → SELECT * FROM (SELECT * FROM t WHERE id>5) vsdb_sort ORDER BY [name] ASC
+ *     → SELECT * FROM (SELECT * FROM t WHERE id>5) UnicDB_sort ORDER BY [name] ASC
  *
  * Injection safety: `column` is emitted as a single bracket-quoted identifier
  * (`]` doubled per T-SQL rules via `quoteIdent`), so a payload like
@@ -79,7 +79,7 @@ export function getTableSortQuery(
   const whereClause = whereFromBar.trim().length
     ? ` WHERE ${whereFromBar.trim()}`
     : "";
-  return `SELECT * FROM (${inner}) vsdb_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`;
+  return `SELECT * FROM (${inner}) UnicDB_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`;
 }
 
 /** SQL Server adapter. SELECTs are collected from tedious request row events. */

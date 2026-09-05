@@ -50,7 +50,7 @@ interface SaveResultMsg {
 
 type HostMsg = InitMsg | TestResultMsg | SavedMsg | SaveResultMsg;
 
-const root = document.getElementById("vsdb-root") as HTMLDivElement;
+const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
 interface State {
   settings: {
@@ -168,10 +168,10 @@ function setBusy(busy: boolean): void {
   if (status) {
     status.textContent = busy ? "Testing connection…" : (state.lastStatus?.message ?? "");
     status.className = busy
-      ? "vsdb-form-status busy"
+      ? "UnicDB-form-status busy"
       : state.lastStatus
-        ? `vsdb-form-status ${state.lastStatus.ok ? "ok" : "err"}`
-        : "vsdb-form-status";
+        ? `UnicDB-form-status ${state.lastStatus.ok ? "ok" : "err"}`
+        : "UnicDB-form-status";
   }
 }
 
@@ -180,7 +180,7 @@ function setStatus(ok: boolean, message: string): void {
   const status = document.getElementById("status");
   if (status) {
     status.textContent = message;
-    status.className = `vsdb-form-status ${ok ? "ok" : "err"}`;
+    status.className = `UnicDB-form-status ${ok ? "ok" : "err"}`;
   }
 }
 
@@ -224,17 +224,17 @@ function modelBlock(role: Role, label: string, defaultVision: boolean, opts: { p
   const placeholder = opts.placeholder ?? "gpt-4o-mini";
   const showVision = opts.showVision ?? true;
   const visionHtml = showVision
-    ? `<div class="vsdb-field">
-          <label class="vsdb-form-check">
+    ? `<div class="UnicDB-field">
+          <label class="UnicDB-form-check">
             <input id="vision${id}" type="checkbox"${defaultVision ? " checked" : ""} /> Vision-capable
           </label>
         </div>`
     : "";
   return `
-    <div class="vsdb-form-section">
+    <div class="UnicDB-form-section">
       <h3>${label} model</h3>
-      <div class="vsdb-row">
-        <div class="vsdb-field grow">
+      <div class="UnicDB-row">
+        <div class="UnicDB-field grow">
           <label for="model${id}">Model ID <span class="req">*</span></label>
           <input id="model${id}" type="text" placeholder="${escapeHtml(placeholder)}" />
         </div>
@@ -246,15 +246,15 @@ function modelBlock(role: Role, label: string, defaultVision: boolean, opts: { p
 function render(): void {
   root.innerHTML = `
   <h2>AI Settings</h2>
-  <p class="vsdb-form-help">Configure your OpenAI-compatible backend. The API key is stored in VS Code SecretStorage; this form only ever <em>writes</em> it.</p>
+  <p class="UnicDB-form-help">Configure your OpenAI-compatible backend. The API key is stored in VS Code SecretStorage; this form only ever <em>writes</em> it.</p>
 
-  <div class="vsdb-form-section">
-    <div class="vsdb-row">
-      <div class="vsdb-field grow">
+  <div class="UnicDB-form-section">
+    <div class="UnicDB-row">
+      <div class="UnicDB-field grow">
         <label for="baseUrl">Base URL <span class="req">*</span></label>
         <input id="baseUrl" type="text" placeholder="https://api.openai.com/v1" />
       </div>
-      <div class="vsdb-field">
+      <div class="UnicDB-field">
         <label for="method">Method</label>
         <select id="method">
           <option value="responses">responses</option>
@@ -262,12 +262,12 @@ function render(): void {
         </select>
       </div>
     </div>
-    <div class="vsdb-row">
-      <div class="vsdb-field">
+    <div class="UnicDB-row">
+      <div class="UnicDB-field">
         <label for="timeoutMs">Timeout (ms) <span class="req">*</span></label>
         <input id="timeoutMs" type="number" min="1000" max="600000" step="1000" value="60000" />
       </div>
-      <div class="vsdb-field">
+      <div class="UnicDB-field">
         <label for="maxSteps">Max steps <span class="req">*</span></label>
         <input id="maxSteps" type="number" min="1" max="100" step="1" value="12" />
       </div>
@@ -280,22 +280,22 @@ function render(): void {
 
 
 
-  <div class="vsdb-form-section">
+  <div class="UnicDB-form-section">
     <h3>API key</h3>
-    <div class="vsdb-row">
-      <div class="vsdb-field grow">
+    <div class="UnicDB-row">
+      <div class="UnicDB-field grow">
         <label for="apiKey">API key</label>
         <input id="apiKey" type="password" autocomplete="off" />
       </div>
     </div>
   </div>
 
-  <ul id="errors" class="vsdb-form-errors"></ul>
-  <div id="status" class="vsdb-form-status"></div>
-  <div class="vsdb-form-actions">
+  <ul id="errors" class="UnicDB-form-errors"></ul>
+  <div id="status" class="UnicDB-form-status"></div>
+  <div class="UnicDB-form-actions">
     <button id="cancelBtn">Cancel</button>
     <button id="testBtn">Test</button>
-    <button id="saveBtn" class="vsdb-form-primary">Save</button>
+    <button id="saveBtn" class="UnicDB-form-primary">Save</button>
   </div>`;
 
   // Wire change handlers — live-validate on every edit.
@@ -354,7 +354,7 @@ function applyInit(msg: InitMsg): void {
   const status = document.getElementById("status");
   if (status) {
     status.textContent = "";
-    status.className = "vsdb-form-status";
+    status.className = "UnicDB-form-status";
   }
   refreshOkButton(validateSettings(state.settings));
 }

@@ -143,7 +143,7 @@ Command 1 — `npx vitest run src/core/__tests__/connectionManager.test.ts`:
 
 Command 2 — `npm run typecheck`:
 ```
-> vsdb@1.39.0 typecheck
+> UnicDB@1.39.0 typecheck
 > tsc --noEmit
 ```
 (exit 0, no errors)

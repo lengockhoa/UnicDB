@@ -1,5 +1,5 @@
 # docker/docker-compose.yml
-# 3 services test cho VSDB: postgres, mysql, mssql.
+# 3 services test cho UnicDB: postgres, mysql, mssql.
 # TASK-003 tạo đầy đủ NGAY TỪ ĐẦU để TASK-004/005/006 reuse mà không sửa file này.
 #
 # Khởi động:
@@ -12,61 +12,61 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: vsdb-postgres
+    container_name: UnicDB-postgres
     environment:
-      POSTGRES_USER: vsdb
-      POSTGRES_PASSWORD: vsdb
-      POSTGRES_DB: vsdb
+      POSTGRES_USER: UnicDB
+      POSTGRES_PASSWORD: UnicDB
+      POSTGRES_DB: UnicDB
     ports:
       - "5433:5432"
     volumes:
-      - vsdb_pg_data:/var/lib/postgresql/data
+      - UnicDB_pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vsdb -d vsdb"]
+      test: ["CMD-SHELL", "pg_isready -U UnicDB -d UnicDB"]
       interval: 3s
       timeout: 5s
       retries: 20
 
   mysql:
     image: mysql:8
-    container_name: vsdb-mysql
+    container_name: UnicDB-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: vsdb
-      MYSQL_DATABASE: vsdb
+      MYSQL_ROOT_PASSWORD: UnicDB
+      MYSQL_DATABASE: UnicDB
     ports:
       - "3307:3306"
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
     volumes:
-      - vsdb_mysql_data:/var/lib/mysql
+      - UnicDB_mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-pvsdb"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-pUnicDB"]
       interval: 5s
       timeout: 5s
       retries: 30
 
   mssql:
     image: mcr.microsoft.com/mssql/server:2022-latest
-    container_name: vsdb-mssql
+    container_name: UnicDB-mssql
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "VsdbPass123!"
+      MSSQL_SA_PASSWORD: "UnicDBPass123!"
       MSSQL_PID: "Developer"
     ports:
       - "1434:1433"
     volumes:
-      - vsdb_mssql_data:/var/opt/mssql
+      - UnicDB_mssql_data:/var/opt/mssql
     healthcheck:
       test:
         - "CMD-SHELL"
-        - "/opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1 -U sa -P 'VsdbPass123!' -C -No -Q 'SELECT 1' || exit 1"
+        - "/opt/mssql-tools18/bin/sqlcmd -S 127.0.0.1 -U sa -P 'UnicDBPass123!' -C -No -Q 'SELECT 1' || exit 1"
       interval: 5s
       timeout: 5s
       retries: 30
       start_period: 30s
 
 volumes:
-  vsdb_pg_data:
-  vsdb_mysql_data:
-  vsdb_mssql_data:
+  UnicDB_pg_data:
+  UnicDB_mysql_data:
+  UnicDB_mssql_data:

@@ -90,7 +90,7 @@ function coerceForDataType(dataType: string): ColumnMapping["type"] {
 
 /**
  * Run the full import flow for one already-read file content.
- * Command handlers for `vsdb.importCsv` / `vsdb.importJson` call this
+ * Command handlers for `UnicDB.importCsv` / `UnicDB.importJson` call this
  * after the user picks a file.
  */
 export async function runImport(
@@ -160,7 +160,7 @@ export async function openImportWizard(
 ): Promise<ImportWizardResult | undefined> {
   const adapter = await ctx.getAdapter();
   if (adapter === undefined) {
-    void vscode.window.showErrorMessage("VSDB import: connect to PostgreSQL first");
+    void vscode.window.showErrorMessage("UnicDB import: connect to PostgreSQL first");
     return undefined;
   }
   const target = await pickTable(adapter);

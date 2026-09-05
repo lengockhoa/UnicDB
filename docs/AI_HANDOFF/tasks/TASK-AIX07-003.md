@@ -13,8 +13,8 @@ Apply the central policy to both AI Chat engine funnels and expose a narrow comm
 ## Target Files
 
 - `src/ui/aiChatPanel.ts` — consume TASK-AIX07-001 policy at shared context/registry funnels on builtin and OMP/MCP paths; obtain policy admission before `resolveMentionsForTurn(...)` at lines 1469-1472 can introspect DB objects or read mention files; expose a copy-safe all-turn trace snapshot for the host while retaining `dumpTrace(turnId: string): unknown` and `clearTrace(): void`.
-- `src/extension.ts` — derive effective policy from `vscode.workspace.isTrusted`, raw configured `vsdb.ai.engine` preference, and the existing `resolveEngine(...)` choice (whose valid `EngineChoice.engine` is the effective route); register `vsdb.ai.showPolicy`, `vsdb.ai.exportTrace`, and `vsdb.ai.clearTrace`; use save dialog plus `workspace.fs.writeFile` only after policy allows export.
-- `package.json` — contribute the three `vsdb.ai.*` commands and set extension version to `1.28.0` without changing the `^1.75.0` VS Code engine floor.
+- `src/extension.ts` — derive effective policy from `vscode.workspace.isTrusted`, raw configured `UnicDB.ai.engine` preference, and the existing `resolveEngine(...)` choice (whose valid `EngineChoice.engine` is the effective route); register `UnicDB.ai.showPolicy`, `UnicDB.ai.exportTrace`, and `UnicDB.ai.clearTrace`; use save dialog plus `workspace.fs.writeFile` only after policy allows export.
+- `package.json` — contribute the three `UnicDB.ai.*` commands and set extension version to `1.28.0` without changing the `^1.75.0` VS Code engine floor.
 - `src/ui/__tests__/aiChatPanelPolicy.test.ts` (new) — mocked-host TDD coverage that denied policy omits sensitive context and sensitive registrations in builtin and OMP/MCP setup, gates mention expansion before DB/file reads, and byte-scans captured webview/outbound observability for secret-shaped strings.
 - `src/extension.test.ts` — command registration and trusted/untrusted export/clear/policy command wiring tests using its existing VS Code mock harness.
 - `src/__tests__/extensionConfigExport.test.ts` — retain or strengthen the existing no-API-key export/config regression lock while manifest/command integration changes.
@@ -29,7 +29,7 @@ Apply the central policy to both AI Chat engine funnels and expose a narrow comm
 | 3 | edge — permission/order of operations | `denied policy gates mention expansion before DB or file content is read` | On both engine modes, policy denial occurs before `resolveMentionsForTurn(...)`: adapter factory/introspection and workspace-file-read spies have zero calls, no resolved mention block is included in captured outbound messages, and generic chat still completes. | Untrusted/denied policy, prompt with object and file mention tokens, adapter and `readFile` spies seeded with credential sentinels. |
 | 4 | edge — wire privacy | `captured panel wire and observability surfaces contain no secret-shaped strings` | Aggregate every captured webview frame plus outbound builtin/OMP request or event-observability string, including denial/mention cases with distinct sentinel fixtures; it contains none of the sentinel values and does not match `/api[_-]?key|secret|password|token|authorization|cookie|bearer|basic/i`. | Panel mock harness for builtin and OMP/MCP routes, messages/events seeded with API-key, password, token, and authorization/cookie sentinels. |
 | 5 | edge — invalid/migration | `invalid configured value or invalid resolver denies export before side effects` | Notice is shown and neither `showSaveDialog` nor `workspace.fs.writeFile` is called. | Trusted workspace with raw legacy engine setting; then an absent/invalid resolver choice. |
-| 6 | edge — lifecycle | `export or clear without an active AI panel is a safe no-op` | A concrete VSDB notice is shown; no save/write happens and no exception escapes. | Extension activated without opening AI Chat. |
+| 6 | edge — lifecycle | `export or clear without an active AI panel is a safe no-op` | A concrete UnicDB notice is shown; no save/write happens and no exception escapes. | Extension activated without opening AI Chat. |
 | 7 | regression | `configuration exports and stored AI settings remain secret-safe` | Existing sentinel API key remains absent from YAML/command output and `AiConfigStore` legacy/missing-engine plus SecretStorage tests stay green. | Existing `extensionConfigExport.test.ts` and `config.test.ts` fixtures. |
 
 Write the focused integration tests first and record actual RED output before implementation. Implement only after TASK-AIX07-001 and TASK-AIX07-002 are GREEN; then re-run the complete command block.
@@ -60,7 +60,7 @@ npm run compile
 ## Acceptance Criteria
 
 - [ ] The host derives one effective policy from the real `vscode.workspace.isTrusted`, raw configured `ai.engine` preference, and existing `resolveEngine(...)` result; a valid `EngineChoice.engine` supplies the effective route, so valid configured `builtin` plus resolver-selected OMP remains admitted; panel funnels consume it rather than duplicating per-tool filtering.
-- [ ] Trusted valid resolver configuration exposes a user-invokable `vsdb.ai.showPolicy` summary and permits export/clear against the active panel trace only.
+- [ ] Trusted valid resolver configuration exposes a user-invokable `UnicDB.ai.showPolicy` summary and permits export/clear against the active panel trace only.
 - [ ] Untrusted, unknown/migrated configured state, or absent/invalid resolver state supplies no sensitive context/tools and denies export before a picker or filesystem write.
 - [ ] Policy admission gates mention expansion before `resolveMentionsForTurn(...)` can call adapter introspection or workspace-file reads; denied mention context cannot reach an outbound message.
 - [ ] Aggregated captured webview frames and outbound builtin/OMP observability surfaces contain neither supplied credential sentinels nor `apiKey`, `api_key`, `secret`, `password`, token, `Authorization`, `Cookie`, bearer, or basic secret-shaped strings.
@@ -78,7 +78,7 @@ npm run compile
 ## Interfaces
 
 - Consumes: TASK-AIX07-001 `resolvePolicy(input): EffectivePolicy`; TASK-AIX07-002 `TraceRecorder.dumpAll(): readonly TraceDump[]` and its pure audit serializer; current `resolveEngine(input: { detection: OmpDetection; config: unknown | null }): EngineChoice` where `EngineChoice.engine` is the effective route (independent of the valid raw configured preference); current `AiChatPanel.dumpTrace(turnId: string): unknown`; current `AiChatPanel.clearTrace(): void`.
-- Produces: contributed/registered commands `vsdb.ai.showPolicy`, `vsdb.ai.exportTrace`, and `vsdb.ai.clearTrace`; policy-gated context/tool registration and pre-read mention-expansion admission on both panel engine paths; a host-readable all-turn trace snapshot used only by the export command.
+- Produces: contributed/registered commands `UnicDB.ai.showPolicy`, `UnicDB.ai.exportTrace`, and `UnicDB.ai.clearTrace`; policy-gated context/tool registration and pre-read mention-expansion admission on both panel engine paths; a host-readable all-turn trace snapshot used only by the export command.
 
 ---
 
@@ -102,8 +102,8 @@ Do not alter `src/ai/provider.ts`, existing provider request headers, or `resolv
 `npx vitest run src/ui/__tests__/aiChatPanelPolicy.test.ts src/extension.test.ts`:
 
 ```
- FAIL  src/extension.test.ts > TASK-003 — vsdb.createSchema extension wiring > npm run compile emits dist/schemaForm.js (esbuild config wired)
- FAIL  src/extension.test.ts > TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host integration > registers all three vsdb.ai.* commands on activate
+ FAIL  src/extension.test.ts > TASK-003 — UnicDB.createSchema extension wiring > npm run compile emits dist/schemaForm.js (esbuild config wired)
+ FAIL  src/extension.test.ts > TASK-AIX07-003 — UnicDB.ai.showPolicy / exportTrace / clearTrace host integration > registers all three UnicDB.ai.* commands on activate
  FAIL  src/extension.test.ts > TASK-AIX07-003 — ... > #1 happy — trusted + valid configured + valid resolver → ...
  FAIL  src/extension.test.ts > TASK-AIX07-003 — ... > #2 — valid configured builtin + resolver omp → still admitted (locked decision #2)
  FAIL  src/extension.test.ts > TASK-AIX07-003 — ... > #3 — denied policy (untrusted workspace) gates export BEFORE showSaveDialog and writeFile
@@ -151,16 +151,16 @@ renaming the fixture table to `vault_items` before implementation.
   copy-safe snapshot delegates to `TraceRecorder.dumpAll()`;
   `dumpTrace(turnId)` and `clearTrace()` retained.
 - `src/extension.ts`: `deriveEffectivePolicy()` = live
-  `vscode.workspace.isTrusted` + raw `vsdb.ai.engine` +
+  `vscode.workspace.isTrusted` + raw `UnicDB.ai.engine` +
   `detectOmp()`/`loadConfig()`/`resolveEngine()` → `resolvePolicy`.
-  `vsdb.ai.showPolicy` (info summary, no side effects), `vsdb.ai.exportTrace`
+  `UnicDB.ai.showPolicy` (info summary, no side effects), `UnicDB.ai.exportTrace`
   (denied → notice BEFORE `showSaveDialog`/`fs.writeFile`; no panel →
   concrete notice; else save dialog + `workspace.fs.writeFile` of
-  `serializeAuditExport(panel.dumpAll())` only), `vsdb.ai.clearTrace`
+  `serializeAuditExport(panel.dumpAll())` only), `UnicDB.ai.clearTrace`
   (panel `clearTrace()` or concrete notice). `commandOpenAiChat` now also
   feeds the raw configured engine into the panel. provider.ts, request
   headers, and `resolveEngine()` fallback behavior untouched.
-- `package.json`: three `vsdb.ai.*` commands contributed with icons
+- `package.json`: three `UnicDB.ai.*` commands contributed with icons
   (`$(shield)`/`$(export)`/`$(clear-all)` — scaffold test pins every
   command icon), activationEvents added, version 1.28.0, engines.vscode
   unchanged `^1.75.0`. `package-lock.json` root + packages[""] version

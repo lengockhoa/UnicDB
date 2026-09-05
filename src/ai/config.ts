@@ -13,8 +13,8 @@ import {
   type AiConfig,
 } from "./settings";
 
-export const KEY_AI_SETTINGS = "vsdb.ai.settings";
-export const KEY_AI_API_KEY = "vsdb.ai.apiKey";
+export const KEY_AI_SETTINGS = "UnicDB.ai.settings";
+export const KEY_AI_API_KEY = "UnicDB.ai.apiKey";
 
 export class AiConfigStore {
   private readonly ctx: vscode.ExtensionContext;

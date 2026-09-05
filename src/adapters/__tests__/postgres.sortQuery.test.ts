@@ -2,7 +2,7 @@
 //
 // Unit tests cho getTableSortQuery (TASK-003) — pure SQL composition, không
 // cần mock pg: hàm nhận (originalSql, whereFromBar, column, direction) và
-// trả về chuỗi SQL wrapped trong subquery `vsdb_sort` với ORDER BY trên
+// trả về chuỗi SQL wrapped trong subquery `UnicDB_sort` với ORDER BY trên
 // quoted identifier (injection-safe).
 import { describe, it, expect } from "vitest";
 import { getTableSortQuery } from "../postgres";
@@ -11,7 +11,7 @@ describe("getTableSortQuery", () => {
   // Case 1 — unit: basic sort
   it("getTableSortQuery basic sort", () => {
     expect(getTableSortQuery("SELECT 1", "", "name", "ASC")).toBe(
-      'SELECT * FROM (SELECT 1) vsdb_sort ORDER BY "name" ASC',
+      'SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY "name" ASC',
     );
   });
 
@@ -51,7 +51,7 @@ describe("getTableSortQuery", () => {
   it("getTableSortQuery empty originalSql", () => {
     const sql = getTableSortQuery("", "", "name", "ASC");
     expect(typeof sql).toBe("string");
-    expect(sql).toContain("vsdb_sort");
+    expect(sql).toContain("UnicDB_sort");
     expect(sql).toContain('ORDER BY "name"');
   });
 
@@ -59,6 +59,6 @@ describe("getTableSortQuery", () => {
   it("getTableSortQuery preserves original SQL", () => {
     const original = "SELECT * FROM t WHERE id>5";
     const sql = getTableSortQuery(original, "", "name", "ASC");
-    expect(sql).toContain(`(${original}) vsdb_sort`);
+    expect(sql).toContain(`(${original}) UnicDB_sort`);
   });
 });

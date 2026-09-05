@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/build.sh — Maintainer build pipeline for VSDB.
+# scripts/build.sh — Maintainer build pipeline for UnicDB.
 # TASK-008: npm ci → compile → test → package vsix → print path.
 # Idempotent: safe to re-run; cleans dist/ before package.
 
@@ -33,14 +33,14 @@ npx @vscode/vsce package --no-dependencies -o dist/ >"${VSCE_LOG}" 2>&1 || {
   exit 1
 }
 
-# vsce prints: " DONE  Packaged: dist/vsdb-<version>.vsix (<n> files, <size>)"
+# vsce prints: " DONE  Packaged: dist/UnicDB-<version>.vsix (<n> files, <size>)"
 # Parse "<path>" after the literal "Packaged: " prefix.
 VSIX_PATH="$(grep -oE 'Packaged: [^ ]+\.vsix' "${VSCE_LOG}" | head -n1 | sed -E 's/^Packaged:[[:space:]]+//' || true)"
 
 # Belt-and-braces fallback: construct expected path from package.json version.
 if [[ -z "${VSIX_PATH}" || ! -f "${VSIX_PATH}" ]]; then
   PKG_VERSION="$(node -p "require('./package.json').version" 2>/dev/null || echo 0.0.0)"
-  CANDIDATE="dist/vsdb-${PKG_VERSION}.vsix"
+  CANDIDATE="dist/UnicDB-${PKG_VERSION}.vsix"
   if [[ -f "${CANDIDATE}" ]]; then
     VSIX_PATH="${CANDIDATE}"
   fi
@@ -61,4 +61,4 @@ echo "  vsix: ${VSIX_ABS}"
 echo "  size: ${VSIX_BYTES} bytes"
 echo
 echo "Install with:"
-echo "  bash scripts/install-vsdb.sh --local ${VSIX_ABS}"
+echo "  bash scripts/install-UnicDB.sh --local ${VSIX_ABS}"

@@ -12,7 +12,7 @@
 import { redact, type TraceDump } from "./trace";
 
 /** Stable schema marker for the serialized envelope. */
-export const AUDIT_EXPORT_SCHEMA = "vsdb.ai.audit-export";
+export const AUDIT_EXPORT_SCHEMA = "UnicDB.ai.audit-export";
 
 /** Envelope schema version (bump on breaking shape changes). */
 export const AUDIT_EXPORT_VERSION = 1;

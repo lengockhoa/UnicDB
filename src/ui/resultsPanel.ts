@@ -130,7 +130,7 @@ export class ResultsPanel {
    *  a vertical split under the active editor, "beside" is classic
    *  side-by-side, "top" opens a vertical split above the active editor
    *  (R8a opt-in). Null until the next show() CREATE resolves it from the
-   *  explicit option or the vsdb.resultsPlacement setting (whitelisted;
+   *  explicit option or the UnicDB.resultsPlacement setting (whitelisted;
    *  unknown → "below") — resolved fresh per creation, never cached, so a
    *  dispose+recreate picks up the latest setting while a LIVE panel is
    *  never moved. */
@@ -219,12 +219,12 @@ export class ResultsPanel {
     this.runner = options.runner;
     this.saveContext = options.saveContext ?? null;
     this.viewColumn = options.viewColumn ?? vscode.ViewColumn.Beside;
-    this.title = options.title ?? "VSDB Results";
+    this.title = options.title ?? "UnicDB Results";
     this.resultsPlacement = options.resultsPlacement ?? null;
   }
 
   /**
-   * AI-001 — đọc setting `vsdb.resultsPlacement` ("below" | "beside" | "top")
+   * AI-001 — đọc setting `UnicDB.resultsPlacement` ("below" | "beside" | "top")
    * lúc CREATE panel. Whitelist: giá trị lạ → "below", không bao giờ
    * throw (partial vscode mock / host lạ cũng an toàn). Không cache —
    * dispose + recreate áp dụng setting mới nhất; panel đang sống thì
@@ -232,7 +232,7 @@ export class ResultsPanel {
    *
    * TASK-UX1-006 (R8a) — `top` is the new opt-in value. The default-config
    * first-open still lands at `below` (R8a's P2.5 YAGNI guard) — only an
-   * explicit `vsdb.resultsPlacement: "top"` flips the panel up.
+   * explicit `UnicDB.resultsPlacement: "top"` flips the panel up.
    */
   private static readPlacementSetting(): "below" | "beside" | "top" {
     try {
@@ -245,7 +245,7 @@ export class ResultsPanel {
       ) {
         return "below";
       }
-      const cfg = workspace.getConfiguration("vsdb");
+      const cfg = workspace.getConfiguration("UnicDB");
       if (!cfg || typeof cfg !== "object" || !("get" in cfg)) {
         return "below";
       }
@@ -286,7 +286,7 @@ export class ResultsPanel {
       return;
     }
     this.panel = vscode.window.createWebviewPanel(
-      "vsdb.results",
+      "UnicDB.results",
       this.title,
       this.viewColumn,
       {
@@ -527,7 +527,7 @@ export class ResultsPanel {
           (err: unknown) => {
             const m = err instanceof Error ? err.message : String(err);
             // eslint-disable-next-line no-console
-            console.error("[vsdb] postMessage rejected:", m);
+            console.error("[UnicDB] postMessage rejected:", m);
             void vscode.window.showErrorMessage(`Results panel postMessage failed: ${m}`);
           },
         );
@@ -536,7 +536,7 @@ export class ResultsPanel {
       // synchronous throw (vd structured clone BigInt không bị Thenable catch).
       const m = err instanceof Error ? err.message : String(err);
       // eslint-disable-next-line no-console
-      console.error("[vsdb] postMessage sync throw:", m);
+      console.error("[UnicDB] postMessage sync throw:", m);
       void vscode.window.showErrorMessage(`Results panel postMessage failed: ${m}`);
     }
   }
@@ -742,7 +742,7 @@ export class ResultsPanel {
       if (this.isStaleSession(epoch)) return;
       const m = err instanceof Error ? err.message : String(err);
       void vscode.window.showErrorMessage(
-        `VSDB: refreshing after transaction close failed: ${m}`,
+        `UnicDB: refreshing after transaction close failed: ${m}`,
       );
     }
   }
@@ -1262,7 +1262,7 @@ export class ResultsPanel {
     // called `ctid` is data, not a row address). The resolver runs ONCE
     // at save time, ONLY for the specific dirty rowIds that actually
     // need a ctid (UPDATE cell edit or DELETE marker); pure INSERT rows
-    // (only `__vsdb_new_row__` markers) are excluded.
+    // (only `__UnicDB_new_row__` markers) are excluded.
     let ctidByRowId: ReadonlyMap<number, string> | undefined;
     const rowIdsNeedingCtid: number[] = [];
     if (driver === "postgres" && pkColumns.length === 0) {
@@ -1285,7 +1285,7 @@ export class ResultsPanel {
         if (
           typeof v === "object" &&
           v !== null &&
-          (v as Record<string, unknown>)["__vsdb_new_row__"] === true
+          (v as Record<string, unknown>)["__UnicDB_new_row__"] === true
         ) {
           insertRowIds.add(e.rowId);
         }
@@ -1651,7 +1651,7 @@ export class ResultsPanel {
    *
    * Errors are surfaced as a host-side notification AND as a synthetic
    * error StatementResult so the webview shows the error in the existing
-   * `vsdb-error` placeholder (no new banner needed).
+   * `UnicDB-error` placeholder (no new banner needed).
    *
    * Cancel-during-requery is treated like cancel-during-loadMore: the
    * runner reports `cancelled` and we re-post the previous state silently
@@ -1807,9 +1807,9 @@ export class ResultsPanel {
    *  - Empty ORDER BY, filter-less requery: `composeRequery(sql, where, "")`
    *    — byte-identical to cycle V.
    *  - Single bare term (no NULLS), filter-less, no offset: cycle-V
-   *    `composeSortQuery` path with its own quoting and `vsdb_sort` alias.
+   *    `composeSortQuery` path with its own quoting and `UnicDB_sort` alias.
    *  - ≥2 terms (or 1 term with NULLS), filter-less, no offset: multi-term
-   *    wrap `SELECT * FROM (<stripped sql>) AS vsdb_sub[ WHERE …] ORDER BY
+   *    wrap `SELECT * FROM (<stripped sql>) AS UnicDB_sub[ WHERE …] ORDER BY
    *    <buildOrderByClause(terms, dialect)>` — no LIMIT/OFFSET.
    *  - `filters` or `offset` present: the paging lane. Two sub-lanes:
    *      · legacy — cycle-W `buildPagedQueryTerms(pkTiebreakers)` when the
@@ -1865,7 +1865,7 @@ export class ResultsPanel {
       const inner = r.sql.replace(/\s*;\s*$/, "").trim();
       const whereClause = where.trim().length ? ` WHERE ${where.trim()}` : "";
       return {
-        sql: `SELECT * FROM (${inner}) AS vsdb_sub${whereClause} ORDER BY ${buildOrderByClause(terms, dialect)}`,
+        sql: `SELECT * FROM (${inner}) AS UnicDB_sub${whereClause} ORDER BY ${buildOrderByClause(terms, dialect)}`,
       };
     }
 
@@ -1915,7 +1915,7 @@ export class ResultsPanel {
     const r = this.lastResults[index];
     if (!r) {
       void vscode.window.showErrorMessage(
-        `VSDB: requery failed — no statement at index ${index}.`,
+        `UnicDB: requery failed — no statement at index ${index}.`,
       );
       return;
     }
@@ -1940,7 +1940,7 @@ export class ResultsPanel {
     const parsed = dialect ? parseOrderBy(orderBy, dialect) : null;
     if (parsed && !parsed.ok) {
       void vscode.window.showErrorMessage(
-        `VSDB: invalid ORDER BY — ${parsed.error}`,
+        `UnicDB: invalid ORDER BY — ${parsed.error}`,
       );
       const next = this.lastResults.slice();
       next[index] = {
@@ -2187,7 +2187,7 @@ export class ResultsPanel {
       if (!cancelled) {
         if (seq !== this.requerySeq) return;
         const m = err instanceof Error ? err.message : String(err);
-        void vscode.window.showErrorMessage(`VSDB requery failed: ${m}`);
+        void vscode.window.showErrorMessage(`UnicDB requery failed: ${m}`);
         // Surface as a per-statement error so the webview grid shows the
         // existing error placeholder instead of the stale result. On an
         // append failure the ORIGINAL rows are preserved (no row loss) —
@@ -2384,8 +2384,8 @@ export class ResultsPanel {
   <title>${escapeHtml(this.title)}</title>
 </head>
 <body>
-  <div id="vsdb-root" class="vsdb-webview">
-    <div class="vsdb-loading">Loading results…</div>
+  <div id="UnicDB-root" class="UnicDB-webview">
+    <div class="UnicDB-loading">Loading results…</div>
   </div>
   <script src="${scriptUri}"></script>
 </body>

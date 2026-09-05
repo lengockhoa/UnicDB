@@ -102,7 +102,7 @@ Verification Output:
 
 Command 1: npm test src/ui/__tests__/resultsGridModelExport.test.ts  (after implementation)
 
-     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001
+     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-001
      OK   src/ui/__tests__/resultsGridModelExport.test.ts  (46 tests) 270ms
 
     Test Files  1 passed (1)
@@ -128,7 +128,7 @@ per instructions `npm run compile` was run once, then the suite retried)
 
 Command 3: npm run typecheck
 
-    > vsdb@1.6.3 typecheck
+    > UnicDB@1.6.3 typecheck
     > tsc --noEmit
     (no output, exit code 0)
 

@@ -2,17 +2,17 @@
 
 - Status: **Accepted** (gating ARP-05 — this ADR must land before any source change in the cycle; TASK-ARP05-001/002/003 implement within it and append their measured probe evidence here, TASK-ARP05-004 reads the host-message conclusion)
 - Date: 2026-09-02
-- Deciders: VSDB maintainers (recorded in `docs/AI_HANDOFF/PLAN.md` §1–§3, cycle ARP-05 commissioning brief; source roadmap `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-05)
+- Deciders: UnicDB maintainers (recorded in `docs/AI_HANDOFF/PLAN.md` §1–§3, cycle ARP-05 commissioning brief; source roadmap `docs/plans/2026-09-01-UnicDB-additive-roadmap.md` §ARP-05)
 - Scope: `src/adapters/postgres.ts`, `src/adapters/mysql.ts`, `src/adapters/mssql.ts` (documentation of existing behavior; this ADR changes no source)
 
 ## 1. Context and problem
 
-VSDB's three database adapters have **intentionally divergent** timeout, pool,
+UnicDB's three database adapters have **intentionally divergent** timeout, pool,
 streaming, and cancellation policies. They were each tuned in earlier cycles
 (TASK-002 atomic batches, TASK-005 UTC + stream settle, CRITICAL #1–#4 cursor
 fixes, TASK-RLX02-001/002 cancel seams), but the values were never written
 down as one support contract. The roadmap flags exactly this
-(`docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-05: "These may be
+(`docs/plans/2026-09-01-UnicDB-additive-roadmap.md` §ARP-05: "These may be
 correct, but they are not a common support contract.").
 
 Consequences of the missing contract:
@@ -84,7 +84,7 @@ Summary matrix — each cell is elaborated with exact citations in §2.1–§2.6
   `beginTransaction` → statements → `commit`, any failure `rollback()`s and
   rethrows, `release()` happens exactly once in `finally` (`src/adapters/mysql.ts:242-304`,
   TASK-002 comment at `:242-252`). `multipleStatements: false` (`:167`) means
-  VSDB splits scripts itself; the atomicity is VSDB-orchestrated, not
+  UnicDB splits scripts itself; the atomicity is UnicDB-orchestrated, not
   server-side.
 - **MSSQL.** Every execution funnels through `execute` →
   `this.enqueue(() => this.runRequest(...))` (`src/adapters/mssql.ts:567-572`).
@@ -152,7 +152,7 @@ Summary matrix — each cell is elaborated with exact citations in §2.1–§2.6
 - **PostgreSQL.** One shared `pg.Pool`, `max: 4` (`PG_POOL_MAX`,
   `src/adapters/postgres.ts:107`, applied `:305-314`). pg-pool opens slots
   **on demand** (`:303-304`: "pg-pool only opens slots on demand"), so idle
-  VSDB connections cost nothing; each extra slot is one additional TCP+auth
+  UnicDB connections cost nothing; each extra slot is one additional TCP+auth
   handshake (~ms).
 - **MySQL.** One shared pool with `connectionLimit: 1`,
   `waitForConnections: true`, `queueLimit: 0` (`src/adapters/mysql.ts:155-157`).
@@ -191,7 +191,7 @@ Summary matrix — each cell is elaborated with exact citations in §2.1–§2.6
 **Wave-0 scope note.** §2 documents the *static* contract from source. The
 **measured** finite-failure behavior of each path — slow connect, occupied
 pool, cancelled stream, broken socket per driver (roadmap wave-0 acceptance,
-`docs/plans/2026-09-01-vsdb-additive-roadmap.md:263`) — is produced by the
+`docs/plans/2026-09-01-UnicDB-additive-roadmap.md:263`) — is produced by the
 wave-1 probes and appended to §7 by TASK-ARP05-001/002/003. This ADR does not
 pre-fill those measurements.
 
@@ -327,7 +327,7 @@ in §7 measure *failure surfaces*, they do not license retry machinery.
   (`mysql.ts:88-92,250-252`). The sanctioned fix for MySQL's queue wait is a
   **bounded acquire** (§4), not more connections.
 - **Dependency-heavy circuit breakers.** Rejected: roadmap §ARP-05 "Out"
-  (`docs/plans/2026-09-01-vsdb-additive-roadmap.md:248`). A new stateful
+  (`docs/plans/2026-09-01-UnicDB-additive-roadmap.md:248`). A new stateful
   dependency to bound failures that §5 already bounds with driver-native
   timers adds supply-chain and state-machine risk for no SLO gain.
 - **Automatic mutation/transaction/cursor replay.** Rejected: roadmap §ARP-05

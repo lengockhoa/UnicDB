@@ -68,14 +68,14 @@ EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: bao-sonnet
 EXECUTOR_SUBAGENT: feature-implementer
 RED_OUTPUT: |
-  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-001
 
    ❯ src/ui/__tests__/consolePanelMessages.test.ts  (0 test)
 
   ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
 
    FAIL  src/ui/__tests__/consolePanelMessages.test.ts [ src/ui/__tests__/consolePanelMessages.test.ts ]
-  Error: Failed to load url ../consolePanelMessages (resolved id: ../consolePanelMessages) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001/src/ui/__tests__/consolePanelMessages.test.ts. Does the file exist?
+  Error: Failed to load url ../consolePanelMessages (resolved id: ../consolePanelMessages) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-001/src/ui/__tests__/consolePanelMessages.test.ts. Does the file exist?
    ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
 
   ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
@@ -85,7 +85,7 @@ RED_OUTPUT: |
 Verification Output: |
   Command 1: npx vitest run src/ui/__tests__/consolePanelMessages.test.ts
 
-   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001
+   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-001
 
    ✓ src/ui/__tests__/consolePanelMessages.test.ts  (6 tests) 1ms
 
@@ -94,7 +94,7 @@ Verification Output: |
 
   Command 2: npm run typecheck
 
-  > vsdb@1.6.8 typecheck
+  > UnicDB@1.6.8 typecheck
   > tsc --noEmit
 
   (exit code 0, no errors)

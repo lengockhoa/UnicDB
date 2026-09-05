@@ -79,7 +79,7 @@ npm run typecheck
 Command: `npx vitest run src/ai/__tests__/schemaContextResolver.test.ts`
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp07-003
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-arp07-003
 
  ❯ src/ai/__tests__/schemaContextResolver.test.ts  (15 tests | 2 failed) 1116ms
    ❯ src/ai/__tests__/schemaContextResolver.test.ts > schemaContextCache — invalidate during in-flight hydration (ARP-07) > does NOT commit an entry for a hydration invalidated mid-flight (next resolve re-hydrates)
@@ -134,7 +134,7 @@ returns gated stale data for call 1 and immediate fresh data for call 2+.
 Command: `npm test src/ai/__tests__/schemaContextResolver.test.ts` (worktree)
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp07-003
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-arp07-003
 
  ✓ src/ai/__tests__/schemaContextResolver.test.ts  (15 tests) 162ms
 
@@ -147,7 +147,7 @@ Command: `npm test src/ai/__tests__/schemaContextResolver.test.ts` (worktree)
 Command: `npm run typecheck`
 
 ```
-> vsdb@1.42.0 typecheck
+> UnicDB@1.42.0 typecheck
 > tsc --noEmit
 
 (no errors, exit 0)

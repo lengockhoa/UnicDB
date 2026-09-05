@@ -104,9 +104,9 @@ command: `npm run typecheck && npx vitest run src/ai/__tests__/provider.test.ts 
 result: typecheck exit 0; 33/33 tests pass (21 provider + 12 agent), 0 fail
 output_excerpt:
 ```
-> vsdb@1.5.1 typecheck
+> UnicDB@1.5.1 typecheck
 > tsc --noEmit
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
  ✓ src/ai/__tests__/agent.test.ts  (12 tests) 5ms
  ✓ src/ai/__tests__/provider.test.ts  (21 tests) 9ms
  Test Files  2 passed (2)
@@ -183,7 +183,7 @@ command: `npm run typecheck && npx vitest run src/ai/__tests__/provider.test.ts 
 result: typecheck exit 0; 35/35 tests pass (0 fail) — fresh re-run PASS (33 previous + 2 new regression tests)
 output_excerpt:
 ```
-> vsdb@1.5.1 typecheck
+> UnicDB@1.5.1 typecheck
 > tsc --noEmit
  ✓ src/ai/__tests__/agent.test.ts  (12 tests) 5ms
  ✓ src/ai/__tests__/provider.test.ts  (23 tests) 8ms

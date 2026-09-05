@@ -121,10 +121,10 @@ VERIFICATION:
   command: npm run typecheck && npx vitest run src/ai/omp/__tests__/acp.test.ts
   result: 14 pass / 0 fail / exit 0
   output_excerpt: |
-    > vsdb@1.5.1 typecheck
+    > UnicDB@1.5.1 typecheck
     > tsc --noEmit
     ===
-     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
      ✓ src/ai/omp/__tests__/acp.test.ts  (14 tests) 4ms
      Test Files  1 passed (1)
           Tests  14 passed (14)

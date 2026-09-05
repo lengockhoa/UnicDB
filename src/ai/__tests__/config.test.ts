@@ -97,8 +97,8 @@ function validSettings(): AiSettings {
 
 describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
   beforeEach(() => {
-    expect(KEY_AI_SETTINGS).toBe("vsdb.ai.settings");
-    expect(KEY_AI_API_KEY).toBe("vsdb.ai.apiKey");
+    expect(KEY_AI_SETTINGS).toBe("UnicDB.ai.settings");
+    expect(KEY_AI_API_KEY).toBe("UnicDB.ai.apiKey");
   });
 
   it("Test #8 — save → load round-trip", async () => {
@@ -110,11 +110,11 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
     expect(loaded).toEqual({ ...s, apiKey: "sk-1" });
 
     // Secret stored under exactly the canonical key.
-    expect(secrets.has("vsdb.ai.apiKey")).toBe(true);
-    expect(await secrets.get("vsdb.ai.apiKey")).toBe("sk-1");
+    expect(secrets.has("UnicDB.ai.apiKey")).toBe(true);
+    expect(await secrets.get("UnicDB.ai.apiKey")).toBe("sk-1");
 
     // Settings stored under exactly the canonical key — and apiKey NOT leaked.
-    const stored = global.get<unknown>("vsdb.ai.settings");
+    const stored = global.get<unknown>("UnicDB.ai.settings");
     expect(stored).toBeDefined();
     const obj = stored as Record<string, unknown>;
     expect(obj.apiKey).toBeUndefined();
@@ -147,7 +147,7 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
     // Secret was rejected → nothing went in.
     expect(secrets._raw().size).toBe(0);
     // Critical: settings MUST NOT be persisted (secret-first ordering).
-    expect(global.get("vsdb.ai.settings")).toBeUndefined();
+    expect(global.get("UnicDB.ai.settings")).toBeUndefined();
   });
 
   it("Test #11 — unconfigured: loadConfig null, loadSettings null, loadApiKey undefined", async () => {
@@ -166,13 +166,13 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
     expect((await store.loadConfig())!.apiKey).toBe("k1");
 
     // Mutate secret store bên ngoài (simulate secret rotation / different code path).
-    await secrets.store("vsdb.ai.apiKey", "k2");
+    await secrets.store("UnicDB.ai.apiKey", "k2");
     const after = await store.loadConfig();
     expect(after).not.toBeNull();
     expect(after!.apiKey).toBe("k2"); // reading FRESH, no stale cache.
 
     // Corrupt settings JSON: ghi raw string bị hỏng vào globalState.
-    global._setRaw("vsdb.ai.settings", "{oops");
+    global._setRaw("UnicDB.ai.settings", "{oops");
     expect(await store.loadSettings()).toBeNull();
   });
 
@@ -215,7 +215,7 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
       },
       // engine intentionally absent (legacy shape)
     };
-    global._setRaw("vsdb.ai.settings", legacy);
+    global._setRaw("UnicDB.ai.settings", legacy);
     const loaded = await store.loadSettings();
     expect(loaded).not.toBeNull();
     expect(loaded!.engine).toBe("builtin");

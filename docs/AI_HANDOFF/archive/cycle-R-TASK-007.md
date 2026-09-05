@@ -12,23 +12,23 @@ Excel-like grid: an edited cell changes colour (highlight vs original); a new ro
 ## Target Files
 
 - `webview/main.ts` — cellClassRules/getRowClass read editState + row markers; full commit handler (per-row errors, refresh, clear highlights); disable AG Grid built-in undo once TASK-008's unified stack lands (not touched in this task beyond a hook comment).
-- `webview/styles.css` — add `.vsdb-cell-dirty`, `.vsdb-row-new`, `.vsdb-row-deleted` (highlight + strikethrough).
+- `webview/styles.css` — add `.UnicDB-cell-dirty`, `.UnicDB-row-new`, `.UnicDB-row-deleted` (highlight + strikethrough).
 - `src/ui/__tests__/resultsGridModelEdit.test.ts` — append describe (#3, #4 pure-logic qua EditState).
 - `tests/webviewEditHighlight.test.ts` (NEW) — jsdom test of the webview rendering the highlight + commit flow (esbuild-transform + jsdom pattern, as in aiChatPanelWebview.test.ts:24-37).
 
 ## Spec
 
-1. **Dirty highlight**: AG Grid `cellClassRules` or a cellValueChanged handler adds/removes the `vsdb-cell-dirty` class on the cell (`params.colDef.field` + rowId inside editState). Revert (legacy undo path / TASK-008) → remove the class. Commit success → clear everything (`editState.clear()` already exists + `refreshGrid` applies a rowRenderer refresh).
-2. **New-row highlight**: a row carrying `__vsdb_new_row__` → `getRowClass` returns `vsdb-row-new` (pale green background). After commit success + refresh: the row becomes a normal row (with the new rowId/ctid from the DB).
-3. **Deleted-row highlight**: a row with a dirty entry carrying a DeleteRowMarker (`markDirty rowId, 0, {__vsdb_deleted__:...}` — main.ts:1734 already exists) → `getRowClass` returns `vsdb-row-deleted` + the CSS rule `text-decoration: line-through; opacity: .6`.
+1. **Dirty highlight**: AG Grid `cellClassRules` or a cellValueChanged handler adds/removes the `UnicDB-cell-dirty` class on the cell (`params.colDef.field` + rowId inside editState). Revert (legacy undo path / TASK-008) → remove the class. Commit success → clear everything (`editState.clear()` already exists + `refreshGrid` applies a rowRenderer refresh).
+2. **New-row highlight**: a row carrying `__UnicDB_new_row__` → `getRowClass` returns `UnicDB-row-new` (pale green background). After commit success + refresh: the row becomes a normal row (with the new rowId/ctid from the DB).
+3. **Deleted-row highlight**: a row with a dirty entry carrying a DeleteRowMarker (`markDirty rowId, 0, {__UnicDB_deleted__:...}` — main.ts:1734 already exists) → `getRowClass` returns `UnicDB-row-deleted` + the CSS rule `text-decoration: line-through; opacity: .6`.
 4. **Commit flow** (main.ts commit handler + host saveEdits): saveEdits batch is already posted. Additional behaviour: on saveResult ok → requery the table (post a requery message OR have the host re-run the original query — pick whichever fits the existing flow, record the choice in the report) → `editState.clear()` + refresh cells (highlights disappear). saveResult carries per-row errors (read the existing saveResult payload shape — if the host does NOT yet send per-row errors, add an optional payload field `rowErrors?: Array<{rowId: number; error: string}>`, both sides in lockstep since they share the repo) → banner lists the errors; the failing rows keep their dirty highlight.
 5. **No-op guard**: 0 dirty → do NOT post `saveEdits` (existing behaviour — preserve + lock with a test).
 
 CSS (styles.css):
 ```css
-.vsdb-cell-dirty { background: var(--vsdb-dirty-bg, rgba(255,166,0,.25)) !important; }
-.vsdb-row-new .ag-cell { background: rgba(60,170,255,.12); }
-.vsdb-row-deleted .ag-cell { text-decoration: line-through; opacity: .6; }
+.UnicDB-cell-dirty { background: var(--UnicDB-dirty-bg, rgba(255,166,0,.25)) !important; }
+.UnicDB-row-new .ag-cell { background: rgba(60,170,255,.12); }
+.UnicDB-row-deleted .ag-cell { text-decoration: line-through; opacity: .6; }
 ```
 (Keep the var() fallback — both the VS Code dark and light themes read it correctly.)
 
@@ -36,11 +36,11 @@ CSS (styles.css):
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | happy | edit cell → cell has class vsdb-cell-dirty | jsdom: dispatch cellValueChanged (or call the handler) → the cell element's classList contains `vsdb-cell-dirty` | NEW webview jsdom harness test file |
-| 2 | happy | add row → row class vsdb-row-new; delete row → vsdb-row-deleted + line-through CSS rule exists | getRowClass / DOM class assertion; styles.css parsed and contains the selector `.vsdb-row-deleted` with `line-through` | jsdom + read styles.css |
+| 1 | happy | edit cell → cell has class UnicDB-cell-dirty | jsdom: dispatch cellValueChanged (or call the handler) → the cell element's classList contains `UnicDB-cell-dirty` | NEW webview jsdom harness test file |
+| 2 | happy | add row → row class UnicDB-row-new; delete row → UnicDB-row-deleted + line-through CSS rule exists | getRowClass / DOM class assertion; styles.css parsed and contains the selector `.UnicDB-row-deleted` with `line-through` | jsdom + read styles.css |
 | 3 | edge | commit with 0 dirty → no-op | does NOT postMessage `saveEdits` (spy on postMessage) | editState empty |
 | 4 | edge | commit 1 row errors → rowErrors banner + failing row keeps dirty, OK rows cleared | saveResult `{ok:true, rowErrors:[{rowId:1,error:"..."}]}` → banner text contains the error; row 1's cell keeps the dirty class; other rows lose it | jsdom-faked saveResult message |
-| 5 | regression | saveResult ok → refresh + clear highlights (new baseline) | after saveResult ok: editState.dirtyCount===0; no cell keeps the vsdb-cell-dirty class; grid re-query was posted | jsdom |
+| 5 | regression | saveResult ok → refresh + clear highlights (new baseline) | after saveResult ok: editState.dirtyCount===0; no cell keeps the UnicDB-cell-dirty class; grid re-query was posted | jsdom |
 | 6 | regression | buildSaveStatements INSERT/DELETE markers (already present) still pass | existing saveStatementsInline tests pass untouched | full file |
 
 ## Test Files
@@ -69,7 +69,7 @@ Mapping note (review #3): the `saveStatements` module lives under `src/core/save
 ## Interfaces
 
 - Consumes: `EditState` (markDirty/undo/clear/snapshot — src/ui/resultsGridModel.ts:655+); NewRowMarker/DeleteRowMarker (src/core/saveStatements.ts:41-52); commit handler + makeIconButton toolbar (webview/main.ts:512-546); saveEdits/saveResult message flow.
-- Produces: (a) CSS classes `vsdb-cell-dirty`/`vsdb-row-new`/`vsdb-row-deleted` in webview/styles.css; (b) saveResult payload extension `rowErrors?: Array<{rowId:number; error:string}>` (host + webview in lockstep — TASK-006 does NOT touch the payload); (c) commit-complete contract: saveResult ok ⇒ editState.clear() + re-query. TASK-008 (undo stack) consumes (a)+(c).
+- Produces: (a) CSS classes `UnicDB-cell-dirty`/`UnicDB-row-new`/`UnicDB-row-deleted` in webview/styles.css; (b) saveResult payload extension `rowErrors?: Array<{rowId:number; error:string}>` (host + webview in lockstep — TASK-006 does NOT touch the payload); (c) commit-complete contract: saveResult ok ⇒ editState.clear() + re-query. TASK-008 (undo stack) consumes (a)+(c).
 
 ---
 
@@ -97,7 +97,7 @@ FILES_CHANGED:
   - src/ui/messages.ts: SaveResultMessage: added `rowErrors?: Array<{rowId:number; error:string}>` field.
   - src/ui/resultsGridModel.ts: EditState: added `isCellDirty`, `isRowNew`, `isRowDeleted`, `clearExceptRowIds` + helper `isRowMarker`.
   - webview/main.ts: SaveResultMsg mirror; renderGrid baseCols gained `cellClassRules` reading editState; createGrid gained `getRowClass` reading isRowNew/isRowDeleted; onCellValueChangedHandler / onAddRowClick / onDeleteRowClick refresh rows/cells after edit so highlights render live; handleSaveResult handles `rowErrors` (per-row keep + banner with row ids + clear highlight on success).
-  - webview/styles.css: added `.vsdb-cell-dirty` (orange bg), `.vsdb-row-new .ag-cell` (light blue bg), `.vsdb-row-deleted .ag-cell` (line-through + opacity 0.6).
+  - webview/styles.css: added `.UnicDB-cell-dirty` (orange bg), `.UnicDB-row-new .ag-cell` (light blue bg), `.UnicDB-row-deleted .ag-cell` (line-through + opacity 0.6).
   - src/ui/__tests__/resultsGridModelEdit.test.ts: appended 3 new describe blocks (clearExceptRowIds, row markers, isCellDirty) — 8 new tests.
   - tests/webviewEditHighlight.test.ts (NEW): 5 tests covering cell-dirty class, row-new/row-deleted classes with CSS line-through, no-op commit, rowErrors banner + keep errored dirty, saveResult ok clears highlights.
 TESTS_ADDED:
@@ -115,7 +115,7 @@ VERIFICATION:
   command2: npx tsc --noEmit
   result2: exit 0 (clean)
   regression: webviewSaveEdits.test.ts (4) + webviewEdit.test.ts (14) + resultsGridModel* (111) all pass — no regressions.
-ISSUES: EditState.clearExceptRowIds had to snapshot keys into an array before deleting (Map spec leaves iteration undefined after delete — same pattern as ArrayList). getRowClass doesn't re-evaluate on `refreshCells`; `onAddRowClick` now marks dirty BEFORE applyTransaction (so first render picks up `vsdb-row-new`), `onDeleteRowClick` uses `redrawRows` (not refreshCells) for the row-level class.
+ISSUES: EditState.clearExceptRowIds had to snapshot keys into an array before deleting (Map spec leaves iteration undefined after delete — same pattern as ArrayList). getRowClass doesn't re-evaluate on `refreshCells`; `onAddRowClick` now marks dirty BEFORE applyTransaction (so first render picks up `UnicDB-row-new`), `onDeleteRowClick` uses `redrawRows` (not refreshCells) for the row-level class.
 HANDOFF_TO_REVIEWER: yes — wave-2 batch A. Disjoint with T2/T4 (those touched different files per wave plan).
 NEXT: ready for review. TASK-008 (unified undo stack) will consume `EditState.isCellDirty` + the marker predicates (no API change needed).
 

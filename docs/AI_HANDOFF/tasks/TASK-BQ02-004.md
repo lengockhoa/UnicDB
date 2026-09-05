@@ -15,7 +15,7 @@ selections only, per RULES.md test-selection policy).
 
 ## Target Files
 
-- `CHANGELOG.md` — new `## [1.49.0] — 2026-09-03` heading at the top, Added/Changed entries in the existing house style (see the `[1.48.0]` block: file paths in backticks, test counts, explicit frozen-surface and non-goals notes). Entries cover: real resource enumeration on `BigQueryAdapter` (datasets as schemas, tables/views/columns/estimates from client metadata), the preview builder + `vsdb.browseTableData` bigquery arm (bounded LIMIT 100/1000), explorer wiring (bigquery icon, `bigquery@<billingProject>` tooltip, dataset-not-schema labeling, zero row-count queries). Explicitly list the deferrals (no paged grid/BQ-03, `listRoutineParams` still unimplemented, no new command ids, no new dependencies).
+- `CHANGELOG.md` — new `## [1.49.0] — 2026-09-03` heading at the top, Added/Changed entries in the existing house style (see the `[1.48.0]` block: file paths in backticks, test counts, explicit frozen-surface and non-goals notes). Entries cover: real resource enumeration on `BigQueryAdapter` (datasets as schemas, tables/views/columns/estimates from client metadata), the preview builder + `UnicDB.browseTableData` bigquery arm (bounded LIMIT 100/1000), explorer wiring (bigquery icon, `bigquery@<billingProject>` tooltip, dataset-not-schema labeling, zero row-count queries). Explicitly list the deferrals (no paged grid/BQ-03, `listRoutineParams` still unimplemented, no new command ids, no new dependencies).
 - `package.json` — `version: "1.48.0"` → `"1.49.0"`. NOTHING else changes (no dep, no script, no contributes).
 
 ## Test Cases (REQUIRED — TDD)

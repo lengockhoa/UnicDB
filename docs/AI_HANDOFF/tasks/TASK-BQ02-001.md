@@ -127,7 +127,7 @@ EXECUTOR_MODEL: unic-code
 EXECUTOR_SUBAGENT: feature-implementer
 RED_OUTPUT:
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq02-001
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq02-001
  ✓ src/adapters/__tests__/bigquery.test.ts > TASK-BQ02-001 BigQueryAdapter — listColumns > 5. malformed field falls back to dataType:'' and nullable:true
 NotImplementedError: Driver "bigquery" is not implemented yet (TASK-004 will add it).
  ❯ BigQueryAdapter.listColumns src/adapters/bigquery.ts:282:11
@@ -180,7 +180,7 @@ $ npx vitest run src/adapters/__tests__/bigquery.test.ts
    Duration  246ms
 
 $ npm run typecheck
-> vsdb@1.48.0 typecheck
+> UnicDB@1.48.0 typecheck
 > tsc --noEmit
 (exit 0, no output)
 

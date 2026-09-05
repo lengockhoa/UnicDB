@@ -179,7 +179,7 @@ $ npx vitest run src/ai/tools/__tests__/readonlySqlParser.test.ts
       Tests  60 passed (60)
 
 $ npm run typecheck
-> vsdb@1.41.0 typecheck
+> UnicDB@1.41.0 typecheck
 > tsc --noEmit
 exit 0
 

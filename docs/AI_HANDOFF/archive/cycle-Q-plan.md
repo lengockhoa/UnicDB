@@ -39,19 +39,19 @@ identifiers — only when they resolve to an actual table; never blind rewriting
 JS object literal `{ schema, table: <name>, <col>: this.workingObj.<col>, … }` (key stays
 `table` for all three kinds; columns from introspection).
 
-**(H) AI Chat toolbar icon**: add `vsdb.aiChat` to the schema-tree view/title navigation menu,
-directly after `vsdb.openAiSettings` (command already exists with `$(comment-discussion)` icon).
+**(H) AI Chat toolbar icon**: add `UnicDB.aiChat` to the schema-tree view/title navigation menu,
+directly after `UnicDB.openAiSettings` (command already exists with `$(comment-discussion)` icon).
 
 Success = all eight land in one cycle with repo patterns, scoped suites green, typecheck clean,
 `npm run compile` builds all webview entries.
 
 ## §2 Scope
 
-**A**: `TreeItem.command` on `table` AND `view` nodes → new `vsdb.browseTableData`; new module
+**A**: `TreeItem.command` on `table` AND `view` nodes → new `UnicDB.browseTableData`; new module
 `src/ui/browseCommands.ts`; `extension.ts` registration; `package.json` entries.
 
 **B**: new form pair `src/ui/schemaForm.ts` + `webview/schemaFormMain.ts` + esbuild entry;
-command `vsdb.createSchema` in `tableCommands.ts`; context-menu items (connection + schema
+command `UnicDB.createSchema` in `tableCommands.ts`; context-menu items (connection + schema
 nodes); `SchemaTreeProvider.findSchemaNode` + `revealSchemaNode`.
 
 **C**: `webview/newTableFormMain.ts` only — Type `<select>` [varchar|numeric|boolean], default
@@ -61,7 +61,7 @@ auto-fill with override tracking, edit-mode nearest-3 mapping preserving the rea
 styles.css` only if a spacing rule needs adjusting.
 
 **E**: new module `src/ui/sampleDataAi.ts` (prompt builder + INSERT validator + orchestration);
-`src/ui/tableCommands.ts` — replace the body of the existing `vsdb.generateSampleData` command
+`src/ui/tableCommands.ts` — replace the body of the existing `UnicDB.generateSampleData` command
 (menu entry already exists in package.json; no manifest change needed). Postgres-only, like the
 current implementation.
 
@@ -69,7 +69,7 @@ current implementation.
 `isPgReservedKeyword`); applied at `runStatements` in `src/extension.ts` (editor + CodeLens
 submit paths) and the browse flow — NOT inside `splitStatements` semantics.
 
-**G**: new pure builder `src/ui/postmanPayload.ts` + command `vsdb.postmanPayload` in
+**G**: new pure builder `src/ui/postmanPayload.ts` + command `UnicDB.postmanPayload` in
 `tableCommands.ts`; new adapter method `listRoutineParams` (types + postgres impl; mysql/mssql
 throw `NotImplementedError`); package.json menu on `viewItem == table | view | routine`.
 
@@ -121,7 +121,7 @@ Rejected: exporting `runStatements` from extension.ts (ui importing entry file).
 `buildBrowseSelect` (all 3 drivers — mysql/mssql route single SELECTs through streaming batched
 handles): pg `"s"."t"` (`"` doubled), mysql backticks (doubled), mssql brackets (`]` doubled);
 empty schema → unqualified; no trailing `;`. **No initial LIMIT** — QueryRunner batches (pg
-cursor, mysql/mssql streaming), initial batch = `vsdb.batchSize` (default 500), Load More wired;
+cursor, mysql/mssql streaming), initial batch = `UnicDB.batchSize` (default 500), Load More wired;
 a hard LIMIT would break Load More. QueryRunner binds to ACTIVE → non-active node switches
 active first. Copy stays on the context menu (replacement, not coexistence).
 
@@ -135,7 +135,7 @@ subset (~120 / ~90). Webview bundles are self-contained (`newTableFormMain.ts` r
 interfaces — no src imports), so no shared-type refactor; message unions stay inline in the host
 module. esbuild: one `schemaFormConfig` block (per-form precedent).
 
-`vsdb.createSchema` in `registerTableCommands` (`COMMAND_TITLE.createSchema = "Create Schema"`):
+`UnicDB.createSchema` in `registerTableCommands` (`COMMAND_TITLE.createSchema = "Create Schema"`):
 resolve target conn (node `meta.connection` → that conn; else `mgr.getActive()`; none → info),
 `guardPostgres`, open `SchemaForm` with `listSchemaNames()` (via `adapter.listSchemas(true)`)
 and `runDdl(sql, name)` → `adapter.runQuery(sql)`. OK → `tree.refresh()` →
@@ -185,7 +185,7 @@ Verified DOM (`webview/main.ts`): root order `header`, `toolbar`, `tabs`, `panel
 `gridHost` (first child → directly under toolbar/tabs, above the table). Move the bar
 construction block above `gridHost` creation; persistence semantics (never recreated, values
 read on click) unchanged; `saveBanner` stays above the footer; footer stays bottom. CSS: adjust
-`.vsdb-requery-bar` spacing only if the relocation needs it. Rejected: moving the bar to `root`
+`.UnicDB-requery-bar` spacing only if the relocation needs it. Rejected: moving the bar to `root`
 between toolbar and tabs — it must show/hide with the grid panel (gridWrap visibility governs it;
 empty-state hides the bar for free, matching the existing "renders WHEN the grid is active"
 test).
@@ -195,11 +195,11 @@ test).
 Current implementation (verified, `tableCommands.ts` L289-356): InputBox "Number of rows"
 default 10, clamp 0..1000, `introspectTable` → `rowsToSpec` → deterministic
 `generateSampleInserts` → untitled SQL doc; never executes. **Replacement** (same command id
-`vsdb.generateSampleData`, same existing menu entry):
+`UnicDB.generateSampleData`, same existing menu entry):
 
 1. Guards: `resolveTableNode` → `guardPostgres` (unchanged contract).
 2. AI config: `new AiConfigStore(context).loadConfig()` → null → info message + `executeCommand
-   ("vsdb.openAiSettings")` (existing unconfigured pattern from `commandOpenAiChat`).
+   ("UnicDB.openAiSettings")` (existing unconfigured pattern from `commandOpenAiChat`).
 3. N: keep the InputBox UX (default 10); clamp **1..100** (AI cost cap — documented decision;
    the old 1000 cap is dropped for the AI path).
 4. Columns: `introspectTable` (existing helper) → build insertable list: exclude `id_<table>`
@@ -221,7 +221,7 @@ default 10, clamp 0..1000, `introspectTable` → `rowsToSpec` → deterministic
 8. Execute: single `adapter.runQuery(statements.join("\n"))` — node-postgres simple-query
    protocol runs multi-statement strings in an implicit transaction that rolls back on error →
    all-or-nothing without explicit BEGIN/COMMIT (documented; matches `runDdl` plumbing).
-9. Summary: `showInformationMessage("VSDB: inserted <N> sample rows into <schema>.<table>")`;
+9. Summary: `showInformationMessage("UnicDB: inserted <N> sample rows into <schema>.<table>")`;
    failure → `showErrorMessage("Generate Sample Data failed: <msg>")` (guard contract).
 
 New module `src/ui/sampleDataAi.ts` holds the pure functions + orchestration
@@ -252,8 +252,8 @@ that legitimately resolve via search_path (`FROM users` → sales.users) are nev
 Documented in TASK-007.
 
 **Choke point (Round-1 review finding 1)**: the transform is applied in `runStatements` in
-`src/extension.ts` (~L450 — the single submit path for editor `vsdb.runQuery` L433 AND CodeLens
-`vsdb.runStatement` L447) and in the browse flow (`src/ui/browseCommands.ts`, wave 1). This
+`src/extension.ts` (~L450 — the single submit path for editor `UnicDB.runQuery` L433 AND CodeLens
+`UnicDB.runStatement` L447) and in the browse flow (`src/ui/browseCommands.ts`, wave 1). This
 covers the reported editor-executed `SELECT * FROM order;` case. TASK-007 therefore owns
 `src/extension.ts` + `src/extension.test.ts` (post-003) and adds a runStatement-path test.
 Never inside the splitter. Executor first confirms the diagnosis with a live adapter run and
@@ -262,7 +262,7 @@ already accepts the statement).
 
 ### G — Postman Payload
 
-Right-click table/view/routine → `vsdb.postmanPayload` → clipboard gets a JS object literal:
+Right-click table/view/routine → `UnicDB.postmanPayload` → clipboard gets a JS object literal:
 `{ schema: "s", table: "name", <col>: this.workingObj.<col>, … }` — the key stays `table` for
 all three kinds (user requirement).
 
@@ -283,10 +283,10 @@ is always valid. Reserved JS words (e.g. `default`, `class`) are quoted too.
 
 ### H — AI Chat toolbar icon
 
-`package.json` view/title: insert `{ "command": "vsdb.aiChat", "when": "view ==
-vsdb.schemaTree", "group": "navigation" }` directly AFTER the `vsdb.openAiSettings` entry
+`package.json` view/title: insert `{ "command": "UnicDB.aiChat", "when": "view ==
+UnicDB.schemaTree", "group": "navigation" }` directly AFTER the `UnicDB.openAiSettings` entry
 (verified block ~L293-297). Command + activationEvent + icon `$(comment-discussion)` already
-exist (contributes.commands has vsdb.aiChat with icon; activationEvents L56) — this is a pure
+exist (contributes.commands has UnicDB.aiChat with icon; activationEvents L56) — this is a pure
 menu-insert plus the `src/scaffold.test.ts` toolbar-order assertion update (currently asserts
 index 3 = openAiSettings, index 4 = clearFilter — becomes 3 = openAiSettings, 4 = aiChat,
 5 = clearFilter).
@@ -310,7 +310,7 @@ index 3 = openAiSettings, index 4 = clearFilter — becomes 3 = openAiSettings, 
 | B edge (driver) | mysql/mssql connection node | info "Create Schema: PostgreSQL connections only", form never opens |
 | B edge (no connection) | palette, no active | info message, no form |
 | B edge (error path) | runDdl rejects | "Create Schema failed: …", no refresh/reveal |
-| B wiring | menu + registration + bundle | context entry when `viewItem == connection \|\| viewItem == schema`; `registeredCommands.has("vsdb.createSchema")`; `dist/schemaForm.js` builds |
+| B wiring | menu + registration + bundle | context entry when `viewItem == connection \|\| viewItem == schema`; `registeredCommands.has("UnicDB.createSchema")`; `dist/schemaForm.js` builds |
 | C happy | dropdown renders | `#colType` is `<select>` with exactly [varchar, numeric, boolean]; new column → varchar selected |
 | C happy | default auto-fill + refresh | add → Default `''`; numeric → `0`; boolean → `FALSE`; preview shows matching `DEFAULT` |
 | C edge (override) | manual default then type change | default keeps user value |
@@ -322,12 +322,12 @@ index 3 = openAiSettings, index 4 = clearFilter — becomes 3 = openAiSettings, 
 | E happy | prompt + parse round-trip | `parseInsertStatements` of N well-formed `INSERT INTO "s"."t" …` returns exactly N statements |
 | E happy | end-to-end flow | configured AI (work model) + table with insertable cols → provider called with `modelId === cfg.models.work.modelId`, runQuery called once with joined inserts, info summary "inserted N sample rows" |
 | E edge (malformed SQL) | output contains a `DELETE`/bare `SELECT`/wrong table | parse rejects ALL → error message, `runQuery` NOT called (no partial insert) |
-| E edge (config missing) | `loadConfig()` → null | info message + `vsdb.openAiSettings` executed; no provider call |
+| E edge (config missing) | `loadConfig()` → null | info message + `UnicDB.openAiSettings` executed; no provider call |
 | E edge (nothing to generate) | table with only `id_<t>` + `created_at` | info "nothing to generate"; no provider call |
 | E unit | column exclusion | `id_users`, `ID_USERS`, `created_at`, `nextval` default column all excluded; `name`, `status` kept |
 | E edge (boundary) | N cap | input 500 → clamped to 100; input 0/non-numeric → info, no run |
 | F regression happy | unqualified keyword table | `SELECT * FROM order;` with `order` in listTables → `SELECT * FROM "public"."order";`, still one statement — RED against current code |
-| F regression (editor path) | runStatement with keyword table | invoking `vsdb.runStatement` (CodeLens path) with `SELECT * FROM order;` → `runner.run` receives the TRANSFORMED sql `"public"."order"` — RED before fix |
+| F regression (editor path) | runStatement with keyword table | invoking `UnicDB.runStatement` (CodeLens path) with `SELECT * FROM order;` → `runner.run` receives the TRANSFORMED sql `"public"."order"` — RED before fix |
 | F edge | qualified/quoted/non-table/CTE | `prd.order`, `"order"`, `SELECT 1 FROM t ORDER BY x`, CTE named `order`, typo `oder` → all unchanged |
 | F edge (search_path collision) | `order` exists in public AND sales | rewrite still `"public"."order"` — keyword-unqualified NEVER resolves today (parse error), so no silent retarget; non-keyword `users` in both → untouched (search_path semantics preserved) |
 | F edge (keyword non-table) | `isPgReservedKeyword("user")` but no `user` table | unchanged (membership in listTables required) |
@@ -386,7 +386,7 @@ explicitly.** Package manager: npm.
       quoted, non-table keyword usages, CTE shadows, and unknown identifiers untouched. — TASK-007
 - [ ] G: Postman Payload copies the exact JS literal for table/view/routine (key `table` always);
       0-column and weird-identifier cases emit valid JS; non-postgres routines refused. — TASK-008
-- [ ] H: `vsdb.aiChat` appears in view/title navigation directly after `vsdb.openAiSettings`;
+- [ ] H: `UnicDB.aiChat` appears in view/title navigation directly after `UnicDB.openAiSettings`;
       scaffold toolbar-order assertion updated; command opens the existing panel. — TASK-009
 - [ ] `npm run typecheck` clean; scoped vitest files green; full `npm test` green at cycle
       boundary; `npm run compile` builds all webview entries incl. new `dist/schemaForm.js`.

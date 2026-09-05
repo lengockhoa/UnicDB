@@ -47,7 +47,7 @@ npx vitest run src/adapters/__tests__/bigquery.test.ts src/adapters/__tests__/bi
 ## Acceptance Criteria
 
 - [ ] Every test in §Test Cases passes; the new file exits 0.
-- [ ] `runQuery` creates a job with `useLegacySql: false` by default; an explicit override option is honored but never set by VSDB UI.
+- [ ] `runQuery` creates a job with `useLegacySql: false` by default; an explicit override option is honored but never set by UnicDB UI.
 - [ ] The MVP gate rejects multi-statement and write/DDL input with a precise `"not in BigQuery MVP"` message; positive read-only control passes.
 - [ ] Cancel targets only the active job (exactly-once, right jobId); cancel-after-done is a no-op; a later job is never cancelled.
 - [ ] `BigQueryJobError` never carries raw credentials or the full SQL text.
@@ -92,7 +92,7 @@ EXECUTOR_SUBAGENT: feature-implementer
 RED_OUTPUT:
 ```
 $ npx vitest run src/adapters/__tests__/bigqueryJobs.test.ts
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq03-001
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq03-001
 
  FAIL  src/adapters/__tests__/bigqueryJobs.test.ts > TASK-BQ03-001 assertSingleReadOnlyGoogleSql — pure MVP SQL gate > rejects multi-statement input
 AssertionError: expected true to be false // Object.is equality
@@ -121,13 +121,13 @@ RED confirmed: 28 of 29 tests failed before implementation. Failures fell into t
 Verification Output:
 ```
 $ npx vitest run src/adapters/__tests__/bigqueryJobs.test.ts
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq03-001
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq03-001
  ✓ src/adapters/__tests__/bigqueryJobs.test.ts  (29 tests) 9ms
  Test Files  1 passed (1)
       Tests  29 passed (29)
 
 $ npm run typecheck
-> vsdb@1.49.0 typecheck
+> UnicDB@1.49.0 typecheck
 > tsc --noEmit
 (exit 0)
 
@@ -170,7 +170,7 @@ EXECUTOR_MODEL: unic-code
 RED_OUTPUT:
 ```
 $ npx vitest run src/adapters/__tests__/bigqueryJobs.test.ts
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/r45-bq03-001
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/r45-bq03-001
 
  ❯ src/adapters/__tests__/bigqueryJobs.test.ts  (32 tests | 3 failed) 22ms
    ❯ cancelActiveQuery during first-fetch window > cancelActiveQuery() targets the in-flight job while the initial getQueryResults is hanging
@@ -187,13 +187,13 @@ $ npx vitest run src/adapters/__tests__/bigqueryJobs.test.ts
 Verification Output:
 ```
 $ npx vitest run src/adapters/__tests__/bigqueryJobs.test.ts
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/r45-bq03-001
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/r45-bq03-001
  ✓ src/adapters/__tests__/bigqueryJobs.test.ts  (32 tests) 29ms
  Test Files  1 passed (1)
       Tests  32 passed (32)
 
 $ npm run typecheck
-> vsdb@1.49.0 typecheck
+> UnicDB@1.49.0 typecheck
 > tsc --noEmit
 (exit 0)
 

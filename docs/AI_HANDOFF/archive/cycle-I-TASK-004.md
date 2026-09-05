@@ -11,7 +11,7 @@ DataGrip-style designer dialog: webview (left COLUMNS (n)/KEYS (n) lists with +,
 ## Spec
 **Messages** (`newTableFormMessages.ts`, mirror connectionFormMessages.ts): `NewTableFormInit {type:"init"; mode:"create"|"modify"; schema; originalTableName?; spec: TableSpec; loadError?}` · `NewTableFormReady` · `NewTableFormSpecChanged {type:"specChanged"; spec; tableChanged?}` · `NewTableFormCancel` · `NewTableFormSubmit {type:"submit"; spec}` (webview union = those 4); host: `NewTableFormPreview {type:"preview"; sql; errors}`.
 **Host** (`newTableForm.ts`): `NewTableFormOptions {extensionUri; mode; schema; originalTableName?; loadSpec(): Promise<TableSpec>; runDdl(sql): Promise<void>}` · `class NewTableForm { constructor(options); show(): void; dispose(): void }`.
-- Panel `"vsdb.newTableForm"`, title `New Table` | `Modify — ${schema}.${table}`, CSP + script `dist/newTableForm.js` (mirror ConnectionForm.buildHtml 176-203), reveal on re-show (37-39), dispose pattern (69-74).
+- Panel `"UnicDB.newTableForm"`, title `New Table` | `Modify — ${schema}.${table}`, CSP + script `dist/newTableForm.js` (mirror ConnectionForm.buildHtml 176-203), reveal on re-show (37-39), dispose pattern (69-74).
 - `ready` → modify: `await loadSpec()` (catch → init with `loadError` + empty spec); create: init `{name:"table_name",schema,columns:defaultColumnSpecs("table_name"),keys:[]}`.
 - `specChanged` → SYNCHRONOUS preview (pure fns only): create → `specErrors` + `generateCreateTable` (skip generator when errors → sql ""); modify → `diffTable` vs loaded original (sql = statements.join("\n")). Post `{type:"preview",sql,errors}`; keep `lastPreviewSql` — `submit` runs `runDdl(lastPreviewSql)`; success → dispose; reject → do NOT dispose, post preview `{sql:"", errors:[err.message]}` (dialog stays open).
 - `cancel` → dispose. Escape (webview keydown) → cancel message.
@@ -84,7 +84,7 @@ FILES_CHANGED:
   - src/ui/newTableFormMessages.ts: new — typed protocol (init/ready/specChanged/cancel/submit/preview)
   - src/ui/newTableForm.ts: new — host class NewTableForm + Options (extensionUri, mode, schema, originalTableName?, loadSpec?, runDdl)
   - webview/newTableFormMain.ts: new — designer webview (left COLUMNS/KEYS sections + +−↑↓ toolbar, right edit pane, bottom `<pre id="sql-preview">` + errors + Cancel/OK, table-name input + syncIdColumn rename tracking, Escape → cancel)
-  - webview/styles.css: append TASK-004 designer CSS rules (.vsdb-designer, .vsdb-designer-section, .vsdb-designer-edit, .vsdb-designer-toolbar, #sql-preview, .vsdb-designer-errors, .vsdb-designer-actions, .vsdb-designer-load-error)
+  - webview/styles.css: append TASK-004 designer CSS rules (.UnicDB-designer, .UnicDB-designer-section, .UnicDB-designer-edit, .UnicDB-designer-toolbar, #sql-preview, .UnicDB-designer-errors, .UnicDB-designer-actions, .UnicDB-designer-load-error)
   - esbuild.js: add newTableFormConfig → dist/newTableForm.js (webview entry) + wire into run() (watch + build)
   - src/ui/__tests__/newTableForm.test.ts: new — 8 host tests (mirror connectionForm.test.ts pattern: vscode mock, panel + handler capture, condition polling)
   - src/ui/__tests__/newTableFormBundle.test.ts: new — 5 jsdom bundle tests after `npm run compile` (describeIfBundle guard), dispatches `init` MessageEvent to bundle

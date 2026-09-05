@@ -17,26 +17,26 @@ describe("helpGrid registry (pure)", () => {
       expect(c.title.length).toBeGreaterThan(0);
       expect(c.blurb.length).toBeGreaterThan(0);
       expect(c.icon.startsWith("$(")).toBe(true);
-      expect(c.commandId.startsWith("vsdb.") || c.commandId.startsWith("workbench."))
+      expect(c.commandId.startsWith("UnicDB.") || c.commandId.startsWith("workbench."))
         .toBe(true);
     }
   });
 
   it("filters out cards whose command id is not registered", () => {
     const all = allHelpCardCommandIds();
-    // Register only the first 4 vsdb.* commands; every other card whose
-    // commandId starts with `vsdb.` is dropped. The workbench.* card
+    // Register only the first 4 UnicDB.* commands; every other card whose
+    // commandId starts with `UnicDB.` is dropped. The workbench.* card
     // (`workbench.action.openSettings`) survives because the registry
     // accepts workbench.* by prefix regardless of the supplied set.
     const registeredSet = new Set<string>(
-      all.filter((id) => id.startsWith("vsdb.")).slice(0, 4),
+      all.filter((id) => id.startsWith("UnicDB.")).slice(0, 4),
     );
     const cards = helpCardRegistry(registeredSet);
     const cmdIds = cards.map((c) => c.commandId);
-    // Exactly 4 vsdb.* + 1 workbench.* = 5 cards.
+    // Exactly 4 UnicDB.* + 1 workbench.* = 5 cards.
     expect(cmdIds.length).toBe(5);
-    const vsdbSurvivors = cmdIds.filter((id) => id.startsWith("vsdb."));
-    expect(vsdbSurvivors.length).toBe(4);
+    const UnicDBSurvivors = cmdIds.filter((id) => id.startsWith("UnicDB."));
+    expect(UnicDBSurvivors.length).toBe(4);
     expect(cmdIds).toContain("workbench.action.openSettings");
     for (const c of cards) {
       expect(
@@ -50,15 +50,15 @@ describe("helpGrid registry (pure)", () => {
     // the extension's registeredCommandIds set — the registry must still
     // surface it so users can navigate to settings from the help grid.
     const registeredSet = new Set<string>([
-      "vsdb.openConsole",
-      "vsdb.runQuery",
+      "UnicDB.openConsole",
+      "UnicDB.runQuery",
     ]);
     const cards = helpCardRegistry(registeredSet);
     const cmdIds = cards.map((c) => c.commandId);
     expect(cmdIds).toContain("workbench.action.openSettings");
   });
 
-  it("drops cards when the registered set is empty (no vsdb.* registered)", () => {
+  it("drops cards when the registered set is empty (no UnicDB.* registered)", () => {
     const cards = helpCardRegistry(new Set());
     // workbench.* cards still pass through, so the result is non-empty.
     const cmdIds = cards.map((c) => c.commandId);
@@ -68,14 +68,14 @@ describe("helpGrid registry (pure)", () => {
   it("canonical inventory is stable (ids match the shipped cards)", () => {
     // Pin the names so a stray rename in the registry fails this test.
     const ids = allHelpCardCommandIds();
-    expect(ids).toContain("vsdb.openConsole");
-    expect(ids).toContain("vsdb.openConsoleForObject");
-    expect(ids).toContain("vsdb.runQuery");
-    expect(ids).toContain("vsdb.refreshSchema");
-    expect(ids).toContain("vsdb.browseTableData");
-    expect(ids).toContain("vsdb.generateSelect");
-    expect(ids).toContain("vsdb.aiChat");
-    expect(ids).toContain("vsdb.manageConnections");
+    expect(ids).toContain("UnicDB.openConsole");
+    expect(ids).toContain("UnicDB.openConsoleForObject");
+    expect(ids).toContain("UnicDB.runQuery");
+    expect(ids).toContain("UnicDB.refreshSchema");
+    expect(ids).toContain("UnicDB.browseTableData");
+    expect(ids).toContain("UnicDB.generateSelect");
+    expect(ids).toContain("UnicDB.aiChat");
+    expect(ids).toContain("UnicDB.manageConnections");
     expect(ids).toContain("workbench.action.openSettings");
     // No duplicates.
     expect(new Set(ids).size).toBe(ids.length);

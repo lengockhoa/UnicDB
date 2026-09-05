@@ -1,4 +1,4 @@
-# TASK-001 — browseCommands module: buildBrowseSelect + vsdb.browseTableData
+# TASK-001 — browseCommands module: buildBrowseSelect + UnicDB.browseTableData
 
 - Status: `ready`
 - Owner: `-`
@@ -8,7 +8,7 @@
 ## Goal
 
 New module `src/ui/browseCommands.ts` exporting a pure per-dialect SELECT builder and the
-`vsdb.browseTableData` command registration that resolves a schema-tree node, aligns the active
+`UnicDB.browseTableData` command registration that resolves a schema-tree node, aligns the active
 connection, and drives the existing QueryRunner → ResultsPanel pipeline (busy → run → render).
 
 ## Target Files
@@ -61,8 +61,8 @@ test; typecheck is the repo's static gate. No lint script exists — N/A.)
 ## Interfaces
 
 - Consumes: `ConnectionManager` (`getActive(): ConnectionConfig \| null`, `setActive(id: string): Promise<void>`, `listConnections(): ConnectionConfig[]`), `QueryRunner.run(statements: ParsedStatement[], onUpdate: (r: StatementResult[]) => void): Promise<StatementResult[]>` (src/core/queryRunner.ts), `ResultsPanel.render(results: StatementResult[], header: string): void` / `setBusy(b: boolean): void` (src/ui/resultsPanel.ts), `type ConnectionConfig` incl. `driver: "postgres"|"mysql"|"mssql"` and `id: string`.
-- Produces: `buildBrowseSelect(driver: ConnectionConfig["driver"], schema: string, table: string): string`; `registerBrowseCommands(deps: { mgr: ConnectionManager; runner: QueryRunner; panel: ResultsPanel }): void` registering command id `vsdb.browseTableData`, invoked as `(node?: { meta?: { connection?: ConnectionConfig; schema?: string; objectName?: string } })`. TASK-002 consumes both.
-- Node argument contract: the schemaTree passes the whole `VsdbNode` (has `.meta`) as `arguments[0]`.
+- Produces: `buildBrowseSelect(driver: ConnectionConfig["driver"], schema: string, table: string): string`; `registerBrowseCommands(deps: { mgr: ConnectionManager; runner: QueryRunner; panel: ResultsPanel }): void` registering command id `UnicDB.browseTableData`, invoked as `(node?: { meta?: { connection?: ConnectionConfig; schema?: string; objectName?: string } })`. TASK-002 consumes both.
+- Node argument contract: the schemaTree passes the whole `UnicDBNode` (has `.meta`) as `arguments[0]`.
 
 ---
 
@@ -84,7 +84,7 @@ STATUS: DONE
 EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic-code
 EXECUTOR_SUBAGENT: W1-T001
-SUMMARY: Implemented `src/ui/browseCommands.ts` exporting `buildBrowseSelect` (per-dialect pg/mysql/mssql quoting, empty-schema unqualified form, no trailing `;`) and `registerBrowseCommands` wiring `vsdb.browseTableData` (resolve node → align active conn → setBusy(true) → runner.run with `{text, start: 0, end}` ParsedStatement → render onUpdate + final → finally setBusy(false); palette fallback shows information message and never calls runner.run). 9/9 cases pass.
+SUMMARY: Implemented `src/ui/browseCommands.ts` exporting `buildBrowseSelect` (per-dialect pg/mysql/mssql quoting, empty-schema unqualified form, no trailing `;`) and `registerBrowseCommands` wiring `UnicDB.browseTableData` (resolve node → align active conn → setBusy(true) → runner.run with `{text, start: 0, end}` ParsedStatement → render onUpdate + final → finally setBusy(false); palette fallback shows information message and never calls runner.run). 9/9 cases pass.
 TEST_PLAN_FOLLOWED: task §4 (all 9 cases implemented in `src/ui/__tests__/browseCommands.test.ts`)
 FILES_CHANGED:
   - src/ui/browseCommands.ts: new — buildBrowseSelect + registerBrowseCommands
@@ -96,7 +96,7 @@ VERIFICATION:
   result: 9 pass / 0 fail; typecheck exit 0
   output_excerpt: |
     RED (test against missing module — captured before src/ui/browseCommands.ts existed):
-      RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001
+      RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-001
        ❯ src/ui/__tests__/browseCommands.test.ts  (0 test)
        ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
        FAIL  src/ui/__tests__/browseCommands.test.ts
@@ -105,12 +105,12 @@ VERIFICATION:
        Test Files  1 failed (1) | Tests  no tests
 
     GREEN (after implementation):
-      RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-001
+      RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-001
        ✓ src/ui/__tests__/browseCommands.test.ts  (9 tests) 4ms
        Test Files  1 passed (1) | Tests  9 passed (9)
 
     typecheck:
-      > vsdb@1.6.0 typecheck
+      > UnicDB@1.6.0 typecheck
       > tsc --noEmit
       (exit 0, no output)
 ISSUES: Two mid-flight deviations from initial spec reading:
@@ -130,7 +130,7 @@ VERIFICATION_RERUN:
 TEST_PLAN_COVERAGE: all-followed — 9/9 required cases present, real expect() in each; RED_OUTPUT is genuine module-not-found failure output (matches task's defined RED form)
 FINDINGS:
   critical:
-    - none in TASK-001's slice. (Known regression — vsdb.browseTableData has NO `icon` in package.json, breaking src/scaffold.test.ts:126 — is TASK-002's: wave-2 commit 5add346 added that entry; TASK-001 touched only its two Target Files. Assigned to TASK-002's verdict, not this one.)
+    - none in TASK-001's slice. (Known regression — UnicDB.browseTableData has NO `icon` in package.json, breaking src/scaffold.test.ts:126 — is TASK-002's: wave-2 commit 5add346 added that entry; TASK-001 touched only its two Target Files. Assigned to TASK-002's verdict, not this one.)
   important:
     - none
   minor:

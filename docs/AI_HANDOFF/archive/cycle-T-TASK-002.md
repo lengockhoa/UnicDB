@@ -85,7 +85,7 @@ npm test -- src/ui/__tests__/webviewBundle.test.ts
 - [ ] `renderGrid` gains a third branch (same statement, same row count, values differ) that
       swaps `rowData`; the reset and append-delta branches are unchanged.
 - [ ] Add Row and its redo path both emit `values: unknown[]` of exactly `columns.length`, using
-      `{__vsdb_default__: true}` for untouched cells — never `""`.
+      `{__UnicDB_default__: true}` for untouched cells — never `""`.
 - [ ] Markers use named constants `MARKER_COL_INSERT = -1` / `MARKER_COL_DELETE = -2`, **declared
       locally in `webview/main.ts`** (see Interfaces — do not import them from
       `src/core/saveStatements.ts` this wave), never literal `0`.
@@ -113,7 +113,7 @@ pin the values with a test; TASK-001 pins the identical values on the host side:
 const MARKER_COL_INSERT = -1;
 const MARKER_COL_DELETE = -2;
 // emitted for untouched new-row cells; plain literal, survives structured cloning
-const DEFAULT_CELL = { __vsdb_default__: true } as const;
+const DEFAULT_CELL = { __UnicDB_default__: true } as const;
 ```
 
 **Produces** (`src/ui/messages.ts`):

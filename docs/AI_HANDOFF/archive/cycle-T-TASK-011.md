@@ -272,7 +272,7 @@ empirically for the `AiChatPanelEngine.version` field; documented below).
   error:"disk full"}` into the compiled webview bundle, asserts `#status` renders the error text
   with an `err` class.
 - `src/extension.test.ts`: added a file-wide hoisted `detectOmp` mock (default `not-installed`,
-  reset in a top-level `beforeEach`) so the ~50 pre-existing `vsdb.aiChat`-invoking tests stay
+  reset in a top-level `beforeEach`) so the ~50 pre-existing `UnicDB.aiChat`-invoking tests stay
   deterministic now that `commandOpenAiChat` shells out for real. Added
   `describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + resolveEngine()")`
   (Happy: omp ok + no config → panel constructed with `engineVersion`, no interstitial;
@@ -281,7 +281,7 @@ empirically for the `AiChatPanelEngine.version` field; documented below).
   because the file statically imports `extension.ts` once — without the reset the second test's
   `if (aiChatPanel) { show(); return; }` guard short-circuits before ever calling `detectOmp()`).
   Added `#3 D1` test in the existing `describe("TASK-007 — runStatement rewrites reserved-keyword
-  tables...")` block: a 2-statement `vsdb.runQuery` selection-mode run asserts `listTables` is
+  tables...")` block: a 2-statement `UnicDB.runQuery` selection-mode run asserts `listTables` is
   called exactly once, not once per statement.
 
 ### RED_OUTPUT (representative excerpts — full reverts done via `git show HEAD:<path> > <path>`,
@@ -291,7 +291,7 @@ restored via `cp` from `/tmp/task011-green-backup/` after capture)
 ```
 ❯ TASK-011 (B3) ... Happy — omp detected + ok, NO ai config saved → panel opens directly, no config interstitial
   AssertionError: expected "spy" to not be called at all, but actually been called 1 times
-  Received: 1st spy call: [ "VSDB: Configure AI settings first." ]
+  Received: 1st spy call: [ "UnicDB: Configure AI settings first." ]
 
 ❯ TASK-007 ... #3 D1: multi-statement run reuses ONE cache — listTables called once (not once per statement)
   AssertionError: expected "spy" to be called 1 times, but got 2 times

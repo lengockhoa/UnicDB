@@ -3,9 +3,9 @@
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Status:** Additive roadmap only — do not modify or replace `docs/AI_HANDOFF` artifacts, including the active RLX-02 cycle.  
-**Goal:** Add a safe, Application Default Credentials (ADC)-based Google BigQuery provider so a VSDB user can connect, browse BigQuery resources, run GoogleSQL, and work with result data in the existing grid as naturally as a spreadsheet.  
-**Architecture:** BigQuery is a new provider boundary rather than a partial PostgreSQL imitation. It must bridge BigQuery's asynchronous, location-bound query jobs and paged result API into VSDB's existing `DbAdapter`/`QueryRunner`/`ResultsPanel` contracts without loading an entire result set into extension-host memory. The MVP is read/query/view/export only; write workflows are a later, separately approved product decision.  
-**Tech Stack:** TypeScript 5.4, VS Code extension API, existing VSDB adapter/UI architecture, `@google-cloud/bigquery`, Google Application Default Credentials, Vitest, npm.
+**Goal:** Add a safe, Application Default Credentials (ADC)-based Google BigQuery provider so a UnicDB user can connect, browse BigQuery resources, run GoogleSQL, and work with result data in the existing grid as naturally as a spreadsheet.  
+**Architecture:** BigQuery is a new provider boundary rather than a partial PostgreSQL imitation. It must bridge BigQuery's asynchronous, location-bound query jobs and paged result API into UnicDB's existing `DbAdapter`/`QueryRunner`/`ResultsPanel` contracts without loading an entire result set into extension-host memory. The MVP is read/query/view/export only; write workflows are a later, separately approved product decision.  
+**Tech Stack:** TypeScript 5.4, VS Code extension API, existing UnicDB adapter/UI architecture, `@google-cloud/bigquery`, Google Application Default Credentials, Vitest, npm.
 
 ---
 
@@ -20,16 +20,16 @@ Recorded planning decisions:
 
 ### MVP success path
 
-1. The user authenticates outside VSDB through ADC, normally with `gcloud auth application-default login` for local development.
-2. VSDB offers a BigQuery connection that stores only non-secret connection metadata: display name, billing/target project, optional location preference, and query safety settings. It never imports or stores service-account JSON, OAuth refresh tokens, or private keys in phase one.
+1. The user authenticates outside UnicDB through ADC, normally with `gcloud auth application-default login` for local development.
+2. UnicDB offers a BigQuery connection that stores only non-secret connection metadata: display name, billing/target project, optional location preference, and query safety settings. It never imports or stores service-account JSON, OAuth refresh tokens, or private keys in phase one.
 3. Connection test clearly distinguishes missing ADC, inaccessible project, missing BigQuery API/quota/billing permissions, and a location mismatch without exposing credentials.
 4. The explorer lazily lists accessible BigQuery resources: project → dataset → table/view; routines and models may be visible as non-actionable metadata nodes.
-5. The user opens a table preview or runs GoogleSQL; VSDB creates/tracks a BigQuery job, renders completed data in the current Results grid, supports incremental Load More, copy, and bounded CSV/JSONL export.
+5. The user opens a table preview or runs GoogleSQL; UnicDB creates/tracks a BigQuery job, renders completed data in the current Results grid, supports incremental Load More, copy, and bounded CSV/JSONL export.
 6. A query has an explicit billing project and location, a configurable `maximumBytesBilled` policy, clear pending/running/cancelled/error state, and a confirmation boundary for non-read-only SQL.
 
 ## 2. Evidence and external constraints
 
-### Current VSDB integration seams
+### Current UnicDB integration seams
 
 | Seam | Relevance to BigQuery | Planning implication |
 |---|---|---|
@@ -44,7 +44,7 @@ Recorded planning decisions:
 
 - The official Node client is `@google-cloud/bigquery`; its normal ADC-compatible startup is `new BigQuery()` without embedding application credentials.
 - Local ADC setup is distinct from normal CLI login; the user can prepare local client-library credentials with `gcloud auth application-default login`.
-- BigQuery query results are paged; continuation is represented by a `pageToken`, and `jobs.getQueryResults` normally has a 20 MB response limit. VSDB must treat each result fetch as a bounded page, not a complete result set.
+- BigQuery query results are paged; continuation is represented by a `pageToken`, and `jobs.getQueryResults` normally has a 20 MB response limit. UnicDB must treat each result fetch as a bounded page, not a complete result set.
 - BigQuery work is job based and location sensitive. The connection/profile must keep the billing project and query location explicit rather than silently retrying in another location.
 - `maximumBytesBilled` can reject a query whose pre-execution estimate exceeds the configured cap. It is a guardrail, not an exact cost guarantee; estimates for clustered tables can be conservative.
 - BigQuery supports resource types beyond relational tables: datasets, views, routines, models, partitioned/clustering metadata, jobs, query plans, Information Schema, and time travel. These should be delivered after the connection/query/grid foundation.
@@ -64,7 +64,7 @@ Recorded planning decisions:
 - [Google Cloud: time travel](https://docs.cloud.google.com/bigquery/docs/time-travel)
 - [Google Cloud: query execution plan](https://docs.cloud.google.com/bigquery/docs/query-plan-explanation)
 
-Claims about the Node-client pagination method names, package version compatibility, job cancellation return shape, and exact VSDB grid continuation mapping must be validated against the package version selected in BQ-00 before production code is written.
+Claims about the Node-client pagination method names, package version compatibility, job cancellation return shape, and exact UnicDB grid continuation mapping must be validated against the package version selected in BQ-00 before production code is written.
 
 ## 3. Product boundaries and decisions
 
@@ -114,7 +114,7 @@ BQ-00 feasibility contract
 
 **Priority:** P0. This is a mandatory planning/measurement cycle, not an end-user feature release.
 
-**Objective:** Prove the selected `@google-cloud/bigquery` version works in the VS Code extension bundle and map its job/page APIs into a minimal VSDB adapter without modifying existing drivers.
+**Objective:** Prove the selected `@google-cloud/bigquery` version works in the VS Code extension bundle and map its job/page APIs into a minimal UnicDB adapter without modifying existing drivers.
 
 **Candidate files:**
 - `package.json`, `package-lock.json`
@@ -172,7 +172,7 @@ BQ-00 feasibility contract
 - [ ] A connection created through the UI uses ADC externally and persists only safe metadata.
 - [ ] Connection test names the failing class and remediation, including `gcloud auth application-default login` only where appropriate.
 - [ ] Existing PostgreSQL/MySQL/MSSQL form behavior and SecretStorage tests remain unchanged.
-- [ ] Manual smoke covers Windows/macOS/Linux environments supported by VSDB with a restricted test project.
+- [ ] Manual smoke covers Windows/macOS/Linux environments supported by UnicDB with a restricted test project.
 
 ### BQ-02 — BigQuery explorer and table preview
 
@@ -206,7 +206,7 @@ BQ-00 feasibility contract
 
 **Priority:** P0. Depends on BQ-01 and BQ-02; coordinate only after RLX-02 has shipped because it touches shared query lifecycle concepts.
 
-**Objective:** Run one GoogleSQL statement as a BigQuery job and render it in VSDB Results without losing job identity, query location, cancellation status or page continuation.
+**Objective:** Run one GoogleSQL statement as a BigQuery job and render it in UnicDB Results without losing job identity, query location, cancellation status or page continuation.
 
 **Candidate files:**
 - `src/adapters/bigquery.ts`
@@ -244,7 +244,7 @@ BQ-00 feasibility contract
 
 **Priority:** P1. Depends on BQ-03 and the retained-result memory budget direction.
 
-**Objective:** Turn the grid into a useful analyst workspace without turning VSDB into an unbounded warehouse downloader.
+**Objective:** Turn the grid into a useful analyst workspace without turning UnicDB into an unbounded warehouse downloader.
 
 **Candidate files:**
 - `src/ui/resultsPanel.ts`
@@ -357,7 +357,7 @@ Before connection testing, document the customer's required permissions for the 
 
 Minimum design principles:
 
-- ADC identity is external to VSDB; VSDB reads no JSON key file and stores no bearer token.
+- ADC identity is external to UnicDB; UnicDB reads no JSON key file and stores no bearer token.
 - Separate ability to create/query jobs in the billing project from ability to read dataset metadata/data.
 - Use a least-privilege test project/dataset for integration tests.
 - Keep project IDs, job IDs, locations and error categories useful but redact Authorization headers, environment paths, ADC source details, raw SQL and result cells from diagnostics by default.
@@ -455,7 +455,7 @@ The production-quality integration lane requires a separately administered Googl
 1. Create a **dedicated test billing project** with a budget alert and a deliberately small per-query bytes policy. It must not contain customer, employee, staging or production data.
 2. Create one controlled dataset in an approved location and seed synthetic tables for: flat rows, nested/repeated values, partitioned table, clustered table, view, empty table, denied dataset/resource and a slow/cancellable query fixture.
 3. Grant the CI identity and approved release tester only the least privileges verified necessary to enumerate the fixture, create/query/cancel jobs in the test billing project and read selected data. Do not grant owner/editor broadly as a shortcut.
-4. Test config fails before any API call unless `VSDB_BIGQUERY_TEST_PROJECT`, fixture dataset, location and an explicit `VSDB_BIGQUERY_INTEGRATION=1` opt-in are all present. It must reject project IDs that are not in a protected approved-test allowlist.
+4. Test config fails before any API call unless `UnicDB_BIGQUERY_TEST_PROJECT`, fixture dataset, location and an explicit `UnicDB_BIGQUERY_INTEGRATION=1` opt-in are all present. It must reject project IDs that are not in a protected approved-test allowlist.
 5. Run integration serially or with unique labels/run IDs so cleanup can identify only its own jobs/tables. Apply `maximumBytesBilled` to every billed test and dry-run before expensive query cases.
 6. The suite polls only within bounded deadlines and reports timeout as a failure with redacted job metadata. It never retries a DDL/DML or query automatically.
 7. `afterAll` deletes only run-owned temporary fixtures. A scheduled/operational janitor separately deletes labelled stale fixtures; release is blocked when cleanup cannot be confirmed.
@@ -464,7 +464,7 @@ The production-quality integration lane requires a separately administered Googl
 
 A reviewer must independently verify these items against source, package contents and fresh test results before every BigQuery production release:
 
-- [ ] ADC is obtained only by the official client-library chain; VSDB never parses/stores service-account JSON, refresh tokens, access tokens or passwords for BigQuery.
+- [ ] ADC is obtained only by the official client-library chain; UnicDB never parses/stores service-account JSON, refresh tokens, access tokens or passwords for BigQuery.
 - [ ] Connection state, Memento/global storage, diagnostics, trace, telemetry-like data, exports and test snapshots contain no credential material.
 - [ ] Billing project, target project and location have explicit user-visible values and cannot be silently substituted after review/preflight.
 - [ ] Project/table identifiers are sent through documented client parameters or a proven quote/validation builder; no string interpolation can inject arbitrary job configuration.
@@ -491,7 +491,7 @@ npm run compile
 npm test
 
 # 4. Isolated, explicitly opted-in GCP test lane only.
-VSDB_BIGQUERY_INTEGRATION=1 npm run test:integration
+UnicDB_BIGQUERY_INTEGRATION=1 npm run test:integration
 
 # 5. Produce the candidate package only after all preceding checks pass.
 npm run package -- --no-dependencies
@@ -508,7 +508,7 @@ The final package-audit task must use a committed, portable checker rather than 
 |---|---|---|
 | First use without ADC | Clear local setup guidance; no crash, secret prompt or saved broken credential. | Screen recording or repeatable smoke notes on each supported OS. |
 | Valid least-privilege ADC | Connect/test/browse/query works only for allowed project/dataset. | Controlled-project run with redacted job ID and location. |
-| Billing project/location mistake | Actionable error names the safe field to correct; VSDB does not retry elsewhere. | Negative integration test plus manual check. |
+| Billing project/location mistake | Actionable error names the safe field to correct; UnicDB does not retry elsewhere. | Negative integration test plus manual check. |
 | Cost cap rejection | No billed live job; user sees estimate/cap outcome and can adjust policy deliberately. | Dry-run/live-policy test and billing-project audit evidence. |
 | Large result/export | UI remains responsive; Load More/export is bounded and cancellable. | Controlled large synthetic fixture and memory/late-cancel test. |
 | Network/process interruption | Terminal state is surfaced; no stale result appears after reconnect/switch/reopen. | Fault-injection contract test and manual smoke. |
@@ -559,6 +559,6 @@ Release artifacts required before market delivery:
 - [x] Creates a new standalone BigQuery roadmap only; does not modify RLX-02 or historical handoffs.
 - [x] Prioritizes ADC connection and Excel-like query/view/paging/copy/export before BigQuery breadth.
 - [x] Keeps BigQuery-native concepts explicit: billing project, location, asynchronous jobs, page tokens, dry runs, bytes caps, partitions/clustering, time travel, query plan and models/routines.
-- [x] Separates confirmed platform constraints from Node-client/VSDB integration experiments.
+- [x] Separates confirmed platform constraints from Node-client/UnicDB integration experiments.
 - [x] Names candidate implementation and test files, task waves, acceptance checks, review gates and real verification commands.
 - [x] Defers edit/DML and credential import until independently planned and reviewed.

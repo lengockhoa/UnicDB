@@ -1,5 +1,5 @@
 // src/ui/__tests__/ddlView.test.ts
-// TASK-AF-002 — vsdb-ddl: virtual document content provider.
+// TASK-AF-002 — UnicDB-ddl: virtual document content provider.
 // Tests 7-9 from TASK-AF-002 §Test Cases.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ConnectionConfig } from "../../config/types";
@@ -84,8 +84,8 @@ function makeCfg(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
     driver: overrides.driver ?? "postgres",
     host: overrides.host ?? "127.0.0.1",
     port: overrides.port ?? 5432,
-    user: overrides.user ?? "vsdb",
-    database: overrides.database ?? "vsdb",
+    user: overrides.user ?? "UnicDB",
+    database: overrides.database ?? "UnicDB",
     ...overrides,
   };
 }
@@ -128,7 +128,7 @@ function makeMgr(adapter: unknown, opts: AdapterLookup = {}) {
   };
 }
 
-describe("DdlViewProvider — TASK-AF-002 vsdb-ddl virtual document", () => {
+describe("DdlViewProvider — TASK-AF-002 UnicDB-ddl virtual document", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.providers.clear();
@@ -329,14 +329,14 @@ describe("registerDdlView — extension-side wiring", () => {
     state.workspaceEdits = [];
   });
 
-  it("registers provider for vsdb-ddl + openDdl + refreshDdl commands", () => {
+  it("registers provider for UnicDB-ddl + openDdl + refreshDdl commands", () => {
     const adapter = makeAdapter();
     const mgr = makeMgr(adapter);
     const disposables: { dispose: () => void }[] = [];
     registerDdlView(mgr as never, disposables);
-    expect(state.providers.has("vsdb-ddl")).toBe(true);
-    expect(state.registeredCommands.has("vsdb.openDdl")).toBe(true);
-    expect(state.registeredCommands.has("vsdb.refreshDdl")).toBe(true);
+    expect(state.providers.has("UnicDB-ddl")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.openDdl")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.refreshDdl")).toBe(true);
     for (const d of disposables) d.dispose();
   });
 
@@ -356,14 +356,14 @@ describe("registerDdlView — extension-side wiring", () => {
     await openDdl(provider, node as never);
 
     const uriKey = Array.from(provider.cache.keys())[0];
-    provider.refreshUri({ toString: () => uriKey, scheme: "vsdb-ddl", path: "", query: "" } as never);
+    provider.refreshUri({ toString: () => uriKey, scheme: "UnicDB-ddl", path: "", query: "" } as never);
 
     // After refreshUri, cache cleared → provideTextDocumentContent returns "".
-    const p = state.providers.get("vsdb-ddl")!;
+    const p = state.providers.get("UnicDB-ddl")!;
     const content = await p.provideTextDocumentContent({ toString: () => uriKey });
     expect(content).toBe("");
 
-    const refresh = state.registeredCommands.get("vsdb.refreshDdl");
+    const refresh = state.registeredCommands.get("UnicDB.refreshDdl");
     expect(typeof refresh).toBe("function");
     await (refresh as () => Promise<void>)();
     for (const d of disposables) d.dispose();

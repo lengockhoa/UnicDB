@@ -1,13 +1,13 @@
-# ADR 0001 — SSH Host-Key Identity Policy for the VSDB Tunnel
+# ADR 0001 — SSH Host-Key Identity Policy for the UnicDB Tunnel
 
 - Status: **Accepted** (gating ARP-04 — this ADR must land before any source change in the cycle; TASK-ARP04-001, -002, -003 implement it, -004 verifies no new user-facing surface)
 - Date: 2026-09-02
-- Deciders: VSDB maintainers (recorded in `docs/AI_HANDOFF/PLAN.md` §3, cycle ARP-04 commissioning brief)
+- Deciders: UnicDB maintainers (recorded in `docs/AI_HANDOFF/PLAN.md` §3, cycle ARP-04 commissioning brief)
 - Scope: `src/core/sshTunnel.ts` (`buildTunnelArgs`, `TunnelConfig`), `src/core/sshTunnelManager.ts` (`listeningPids`, readiness proof)
 
 ## 1. Context and threat model
 
-VSDB reaches remote PostgreSQL through a local SSH port-forward spawned by
+UnicDB reaches remote PostgreSQL through a local SSH port-forward spawned by
 `SshTunnelManager`. Two identity questions exist and must not be conflated:
 
 1. **Remote identity — "who is the bastion I am about to feed credentials to?"**
@@ -40,7 +40,7 @@ socket-table tools:
 
 Tool unavailable, spawn error, or 2 s timeout ⇒ empty PID set ⇒ fail closed.
 
-The ssh binary itself is **whatever OpenSSH the platform provides** — VSDB
+The ssh binary itself is **whatever OpenSSH the platform provides** — UnicDB
 does not bundle one:
 
 - **macOS**: system OpenSSH (`/usr/bin/ssh`), Apple-maintained; default
@@ -71,7 +71,7 @@ Verified against source (cite: `src/core/sshTunnel.ts:116-132`):
 - `-o BatchMode=yes` disables all interactive prompting. Consequence for an
   **unknown or changed host key**: ssh cannot fall through to the interactive
   TOFU (trust-on-first-use) prompt; the connection **fails closed** at connect.
-  So today VSDB already never silently accepts a first-contact key — but only
+  So today UnicDB already never silently accepts a first-contact key — but only
   as a *side effect* of BatchMode.
 - Host-key trust resolution is therefore **implicit**: ssh consults the user's
   `~/.ssh/known_hosts` plus the system default store and the binary's
@@ -79,7 +79,7 @@ Verified against source (cite: `src/core/sshTunnel.ts:116-132`):
   `~/.ssh/config` and `/etc/ssh/ssh_config`.
 - Risk: because the policy is emergent, a platform/binary/config whose
   effective default drifts to `no`/`off` would **silently accept unknown
-  hosts** with no source-level guard in VSDB. A default of `ask` merely
+  hosts** with no source-level guard in UnicDB. A default of `ask` merely
   degrades to a BatchMode connect failure. Nothing in the argv protects
   against that drift.
 - Readiness proof recap: listener debug line + `listeningPids` PID-identity
@@ -102,7 +102,7 @@ Effects:
   policy statement.
 - **Trust store stays the user's.** With no `UserKnownHostsFile` option, ssh
   keeps using the user's `~/.ssh/known_hosts` + system defaults. There is no
-  VSDB-owned key file, no first-connect regression for anyone who has already
+  UnicDB-owned key file, no first-connect regression for anyone who has already
   trusted their bastion, and no secret-persistence adjacency to wire.
 - **Stricter-ness, stated precisely.** For the common case this is **not
   stricter**: a user who already trusts the bastion has the key in
@@ -112,7 +112,7 @@ Effects:
 - **Config-override nuance (intended fail-closed change).** An OpenSSH `-o`
   command-line option **overrides `~/.ssh/config`**. A user who deliberately
   set `StrictHostKeyChecking=no`/`ask` for the bastion in their config will
-  now fail. This is **intended**: VSDB will not tunnel DB traffic through a
+  now fail. This is **intended**: UnicDB will not tunnel DB traffic through a
   host the user has configured to check loosely, even when the user asked ssh
   to. Documented here as deliberate; it must appear in release notes for the
   release carrying ARP-04.
@@ -130,7 +130,7 @@ Effects:
 
 ## 5. Rejected alternatives
 
-- **(a) `accept-new` + VSDB-managed `known_hosts` TOFU pinning store.**
+- **(a) `accept-new` + UnicDB-managed `known_hosts` TOFU pinning store.**
   First connect would silently write a host key the user never approved
   (TOFU), which is a cross-user migration surprise for anyone sharing a
   machine/image, and the store needs form/persistence wiring (wave-4 scope)
@@ -140,7 +140,7 @@ Effects:
   same scope reasons; recorded as the documented **upgrade path** if a
   stronger identity claim is ever required. Any future adoption goes through a
   new ADR.
-- **(c) Any `accept` / `none` relaxation.** **Prohibited by charter** — VSDB
+- **(c) Any `accept` / `none` relaxation.** **Prohibited by charter** — UnicDB
   never disables or weakens host-key checking. The argv-level guarantee
   (TASK-ARP04-001) exists so no future change can smuggle one in.
 

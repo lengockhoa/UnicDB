@@ -3,7 +3,7 @@
 // The single default-deny source of truth for: effective AI provider route,
 // sensitive context classes, tool classes, audit-export permission, excluded
 // workspace paths, and the user-visible governance notice. Host code
-// (TASK-AIX07-003: AiChatPanel funnels, vsdb.ai.* commands) consumes these
+// (TASK-AIX07-003: AiChatPanel funnels, UnicDB.ai.* commands) consumes these
 // decisions; it must NOT re-derive policy per tool.
 //
 // Purity contract (pinned by policy.test.ts): no `vscode`, no filesystem, no
@@ -25,12 +25,12 @@
 //     mutating its returned decision object cannot corrupt default-deny for
 //     any later resolution (pinned by the mutation-guard tests).
 //   - Capability denial keeps the resolver route observable (`provider`) so
-//     `vsdb.ai.showPolicy` can still report the effective provider; only a
+//     `UnicDB.ai.showPolicy` can still report the effective provider; only a
 //     missing/invalid resolver choice leaves `provider` null.
 import type { AiEngine } from "./settings";
 import type { EngineChoice } from "./engineChoice";
 
-/** Raw user preference (`vsdb.ai.engine`) as read from configuration —
+/** Raw user preference (`UnicDB.ai.engine`) as read from configuration —
  * deliberately `unknown` because migrated/corrupted values must reach this
  * module un-trusted and be rejected here. */
 export type ConfiguredEngineInput = unknown;
@@ -54,7 +54,7 @@ export interface PolicyToolDecision {
 }
 
 /** Effective, resolved AI governance posture — consumed by panel funnels
- * and `vsdb.ai.*` commands without duplicating any policy rule. */
+ * and `UnicDB.ai.*` commands without duplicating any policy rule. */
 export interface EffectivePolicy {
   /** Effective provider derived from the valid `EngineChoice.engine`; null
    * only when the resolver choice itself is missing/invalid. Remains
@@ -67,7 +67,7 @@ export interface EffectivePolicy {
   /** Whether the redacted in-memory trace may be exported (default deny). */
   auditExportAllowed: boolean;
   /** "" when fully allowed; otherwise a stable, non-empty, user-visible
-   * denial notice ("VSDB AI policy: …"). */
+   * denial notice ("UnicDB AI policy: …"). */
   notice: string;
 }
 
@@ -75,7 +75,7 @@ export interface EffectivePolicy {
 export interface PolicyInput {
   /** VS Code workspace-trust state (AIX-02 seam). */
   workspaceTrusted: boolean;
-  /** Raw `vsdb.ai.engine` preference value, un-validated. */
+  /** Raw `UnicDB.ai.engine` preference value, un-validated. */
   configuredEngine: ConfiguredEngineInput;
   /** Output of `resolveEngine()` — or null/invalid when unavailable. */
   resolvedEngine: EngineChoice | null;
@@ -166,7 +166,7 @@ export function resolvePolicy(input: PolicyInput): EffectivePolicy {
     context: DENIED_CONTEXT,
     tools: DENIED_TOOLS,
     auditExportAllowed: false,
-    notice: `VSDB AI policy: sensitive AI capabilities are unavailable — ${reasons.join("; ")}. Check VSDB: Open AI Settings and workspace trust.`,
+    notice: `UnicDB AI policy: sensitive AI capabilities are unavailable — ${reasons.join("; ")}. Check UnicDB: Open AI Settings and workspace trust.`,
   };
 }
 
@@ -194,8 +194,8 @@ export function isExcludedWorkspacePath(relativePath: string): boolean {
     if (seg === ".git") {
       return true;
     }
-    // Generated AI configuration: exactly .vscode/vsdb-ai-config.yml.
-    if (seg === ".vscode" && segments[i + 1] === "vsdb-ai-config.yml") {
+    // Generated AI configuration: exactly .vscode/UnicDB-ai-config.yml.
+    if (seg === ".vscode" && segments[i + 1] === "UnicDB-ai-config.yml") {
       return true;
     }
   }

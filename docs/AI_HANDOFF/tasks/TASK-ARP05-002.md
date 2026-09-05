@@ -133,7 +133,7 @@ RED_OUTPUT (step 1, base 0dd021e == 65b9c4f content for mysql.ts):
 
 ```
 $ npx vitest run src/adapters/__tests__/mysqlQueueBound.test.ts
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp05-002
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-arp05-002
 
  ❯ src/adapters/__tests__/mysqlQueueBound.test.ts  (5 tests | 2 failed) 2047ms
    ❯ ... > case 2a: pool factory options include acquireTimeout = the injected POOL_ACQUIRE_TIMEOUT_MS

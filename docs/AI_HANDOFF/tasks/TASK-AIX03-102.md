@@ -20,7 +20,7 @@ existing OMP `session/new` lifecycle invariant.
   own its subscription, and fail-close an in-flight turn on `recovering` or
   `failed`.
 - `src/extension.ts` — thread the activation-scoped `mgr` (created at line
-  207) through the `vsdb.aiChat` registration at lines 628–632 into
+  207) through the `UnicDB.aiChat` registration at lines 628–632 into
   `commandOpenAiChat(aiStore, adapterFactory, aiChatDeps, mgr)`, then at the
   verified panel construction site, lines 1132–1163 (grep:
   `rg -n -C 8 "new AiChatPanel|commandOpenAiChat|onDidChangeRecoveryStatus" src/extension.ts` → `1132: aiChatPanel = new AiChatPanel({`), pass
@@ -38,7 +38,7 @@ existing OMP `session/new` lifecycle invariant.
 | 2b | edge (recovery/no-op) | `recovered` status arrives after `recovering` | NO new cancellation, NO visible-state mutation, NO error message bubble is posted; the panel's prior error-state remains exactly as it was. Matches plan §4 no-op requirement. | recovery fake emits `{ connectionId:"c1", state:"recovered", attempt:2, maxAttempts:2 }` after a `recovering`; capture all panel side-effect channels |
 | 3 | edge (recovery/OMP) | `failed` arrives during an OMP-engine turn | the exact status object reaches the panel listener; `OmpChatEngine.cancel()` is invoked once and the panel posts existing visible `session_state: "error"` without an extra error bubble | OMP fake plus recovery fake emits `{ connectionId:"c1", state:"failed", attempt:2, maxAttempts:2 }` |
 | 4 | edge (listener containment) | recovery listener throws while handling a status | the listener error is swallowed at the panel subscription boundary; event emission does not throw and no malformed/error message reaches the webview | fake event invokes registered callback around a forced panel handler throw |
-| 5 | edge (dispose/re-subscription) | panel dispose releases its recovery subscription; the next host-created panel subscribes anew | old subscription `dispose()` is called exactly once; a later `vsdb.aiChat` construction receives the same `mgr.onDidChangeRecoveryStatus` event reference and registers one fresh listener | extension constructor mock + disposable fake event |
+| 5 | edge (dispose/re-subscription) | panel dispose releases its recovery subscription; the next host-created panel subscribes anew | old subscription `dispose()` is called exactly once; a later `UnicDB.aiChat` construction receives the same `mgr.onDidChangeRecoveryStatus` event reference and registers one fresh listener | extension constructor mock + disposable fake event |
 | 6 | regression (pin) | OMP `send` success leaves no stale session id | after settle, a later `cancel()` sends no `session/cancel` | fake `AcpSession` with `notify` spy |
 | 7 | regression (pin) | `sessionNew` rejects mid-turn | `onError` fires exactly once; `currentSessionId` is cleared | fake `sessionNew` rejecting |
 

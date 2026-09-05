@@ -167,7 +167,7 @@ VERIFICATION OUTPUT (all run fresh in this turn, in the worktree):
   npm run typecheck                         → exit 0
   npm run compile                           → exit 0
 
-  Regression #4 (RLX-02 await semantics): byte-compared the vsdb.cancelQuery
+  Regression #4 (RLX-02 await semantics): byte-compared the UnicDB.cancelQuery
   block (extension.ts:486-496) against `git show 367cb80:src/extension.ts` —
   byte-identical ("RLX02_BLOCK_BYTE_IDENTICAL"), plus locked by a live test
   proving runner.cancel() is awaited BEFORE panel.setBusy(false).
@@ -204,5 +204,5 @@ Findings:
 - minor (test-plan wording nuance): §4 case 2 describes "mid-run dispose+recreate", but the actual extension-level host gap is the overlap of two invocations on the shared singleton runner (dispose+recreate is the panel epoch's domain, ARP-02.2). The implemented Gap #2 test targets the real manifestation and proves the intended invariant (stale finally never clears the live run's busy) — acceptable adaptation, RED-first output is real.
 - Otherwise none.
 
-NOTES: Model isolation passes (executor unic-code != reviewer unic-smart; config `handoff.reviewer.model` = unic-smart). Verification re-run in worktree: `npx vitest run src/extension.test.ts` 88/88 PASS; `npm run typecheck` exit 0; `npm run compile` exit 0; full `npm test` 2983 passed | 2 skipped (baseline ≥2963). RLX-02 `vsdb.cancelQuery` block byte-identical to base (verified via diff). ownsRun snapshot has no await between snapshot and `runner.run()` so it cannot go stale; busy cannot get stuck true via any runStatements overlap (the owning invocation always runs its finally); no path where ownsRun reports live but the run is stale. deactivating sentinel resets at activate() entry, gates only panel writes (render/setBusy), does NOT suppress DB work or error notifications (catch still toasts), and a stale continuation across a re-activation still closes over the OLD disposed panel object so it cannot render into a recreated panel. Gap #2/#1 tests are deterministic (parked adapter + microtask/macrotask flush), not flaky.
+NOTES: Model isolation passes (executor unic-code != reviewer unic-smart; config `handoff.reviewer.model` = unic-smart). Verification re-run in worktree: `npx vitest run src/extension.test.ts` 88/88 PASS; `npm run typecheck` exit 0; `npm run compile` exit 0; full `npm test` 2983 passed | 2 skipped (baseline ≥2963). RLX-02 `UnicDB.cancelQuery` block byte-identical to base (verified via diff). ownsRun snapshot has no await between snapshot and `runner.run()` so it cannot go stale; busy cannot get stuck true via any runStatements overlap (the owning invocation always runs its finally); no path where ownsRun reports live but the run is stale. deactivating sentinel resets at activate() entry, gates only panel writes (render/setBusy), does NOT suppress DB work or error notifications (catch still toasts), and a stale continuation across a re-activation still closes over the OLD disposed panel object so it cannot render into a recreated panel. Gap #2/#1 tests are deterministic (parked adapter + microtask/macrotask flush), not flaky.
 NEXT_STATUS_FOR_INDEX: approved_minor

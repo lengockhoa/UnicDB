@@ -1,10 +1,10 @@
 /* webview/styles.css — Results Panel webview (TASK-203).
  * VirtualGrid removed; AG Grid Community provides its own table styles.
  * Custom rules retained: layout host/footer, search input, non-grid chrome,
- * Messages tab, Connection Form (shared by vsdb.connectionForm webview).
+ * Messages tab, Connection Form (shared by UnicDB.connectionForm webview).
  */
 
-.vsdb-webview {
+.UnicDB-webview {
   font-family: var(--vscode-font-family, monospace);
   font-size: var(--vscode-font-size, 13px);
   color: var(--vscode-foreground);
@@ -17,7 +17,7 @@
 }
 
 /* --- Header --- */
-.vsdb-header {
+.UnicDB-header {
   font-weight: 600;
   padding: 4px 8px;
   border-bottom: 1px solid var(--vscode-panel-border, #444);
@@ -29,7 +29,7 @@
  * this regex from the source. Removing it would let buttons wrap at narrow
  * widths and the structural guarantee would be lost.
  */
-.vsdb-toolbar {
+.UnicDB-toolbar {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
@@ -38,7 +38,7 @@
   margin-bottom: 8px;
 }
 
-.vsdb-btn {
+.UnicDB-btn {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
   border: 1px solid var(--vscode-button-border, transparent);
@@ -56,36 +56,36 @@
   line-height: 1;
 }
 /* Toolbar buttons: 16×16 inline SVG icons, currentColor. */
-.vsdb-btn svg {
+.UnicDB-btn svg {
   width: 16px;
   height: 16px;
   display: block;
   pointer-events: none;
 }
-.vsdb-btn:hover:not(:disabled) {
+.UnicDB-btn:hover:not(:disabled) {
   background: var(--vscode-button-hoverBackground);
 }
-.vsdb-btn:disabled {
+.UnicDB-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.vsdb-btn-danger {
+.UnicDB-btn-danger {
   background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
   border-color: var(--vscode-inputValidation-errorBorder, #be1100);
   color: var(--vscode-inputValidation-errorForeground, #f48771);
 }
 
 /* TASK-009 — explicit controls appear only during an open manual transaction. */
-.vsdb-transaction-controls {
+.UnicDB-transaction-controls {
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
-.vsdb-transaction-commit {
+.UnicDB-transaction-commit {
   background: var(--vscode-testing-iconPassed, #388a34);
   color: var(--vscode-button-foreground, #fff);
 }
-.vsdb-transaction-rollback {
+.UnicDB-transaction-rollback {
   background: var(--vscode-inputValidation-warningBackground, #5a4a1d);
   color: var(--vscode-inputValidation-warningForeground, #fff2a8);
 }
@@ -93,7 +93,7 @@
 /* Group divider between query│edit and edit│export. 1px wide vertical
  * rule that respects the current foreground color at low opacity so it
  * reads as a separator in both light and dark themes. */
-.vsdb-toolbar-sep {
+.UnicDB-toolbar-sep {
   width: 1px;
   align-self: stretch;
   margin: 2px 2px;
@@ -104,7 +104,7 @@
 
 /* Export format <select> + Header checkbox: compact height so they line
  * up with the 24-26px icon buttons. */
-.vsdb-export-format {
+.UnicDB-export-format {
   min-height: 24px;
   padding: 2px 4px;
   background: var(--vscode-input-background);
@@ -115,14 +115,14 @@
   font-family: inherit;
   flex-shrink: 0;
 }
-.vsdb-export-header {
+.UnicDB-export-header {
   margin: 0;
   flex-shrink: 0;
 }
 
 /* --- Search input (AG Grid quick filter) — flex 0 1 180px so it shrinks
  * to 120px min while icon buttons stay fixed. */
-.vsdb-search-input {
+.UnicDB-search-input {
   flex: 0 1 180px;
   min-width: 120px;
   padding: 3px 6px;
@@ -133,19 +133,19 @@
   font-family: inherit;
   font-size: 13px;
 }
-.vsdb-search-input:focus {
+.UnicDB-search-input:focus {
   outline: 1px solid var(--vscode-focusBorder);
 }
 
 /* --- Tabs --- */
-.vsdb-tabs {
+.UnicDB-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 2px;
   border-bottom: 1px solid var(--vscode-panel-border, #444);
   margin-bottom: 8px;
 }
-.vsdb-tab {
+.UnicDB-tab {
   background: var(--vscode-tab-inactiveBackground, transparent);
   color: var(--vscode-tab-inactiveForeground);
   border: 1px solid transparent;
@@ -163,20 +163,20 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.vsdb-tab-active {
+.UnicDB-tab-active {
   background: var(--vscode-tab-activeBackground);
   color: var(--vscode-tab-activeForeground);
   border-color: var(--vscode-panel-border, #444);
 }
-.vsdb-tab-error {
+.UnicDB-tab-error {
   color: var(--vscode-errorForeground, #f48771);
 }
-.vsdb-tab-cancelled {
+.UnicDB-tab-cancelled {
   color: var(--vscode-disabledForeground, #888);
   text-decoration: line-through;
 }
 /* TASK-UX3-001 — × close button (hidden by default, visible on hover/focus) */
-.vsdb-tab-close {
+.UnicDB-tab-close {
   display: none;
   margin-left: 6px;
   padding: 0 4px;
@@ -188,18 +188,18 @@
   line-height: 1;
   border-radius: 3px;
 }
-.vsdb-tab:hover .vsdb-tab-close,
-.vsdb-tab:focus-within .vsdb-tab-close {
+.UnicDB-tab:hover .UnicDB-tab-close,
+.UnicDB-tab:focus-within .UnicDB-tab-close {
   display: inline-block;
 }
-.vsdb-tab-close:hover {
+.UnicDB-tab-close:hover {
   background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
 }
-.vsdb-tab-close:focus {
+.UnicDB-tab-close:focus {
   outline: 1px solid var(--vscode-focusBorder);
 }
 /* TASK-UX3-001 — right-click context menu (inline webview-rendered) */
-.vsdb-tab-menu {
+.UnicDB-tab-menu {
   position: absolute;
   z-index: 1000;
   list-style: none;
@@ -212,18 +212,18 @@
   box-shadow: 0 2px 8px rgba(0,0,0,0.3);
   font-size: 0.9em;
 }
-.vsdb-tab-menu-item {
+.UnicDB-tab-menu-item {
   padding: 4px 12px;
   cursor: pointer;
   color: var(--vscode-menu-foreground, #cccccc);
 }
-.vsdb-tab-menu-item:hover {
+.UnicDB-tab-menu-item:hover {
   background: var(--vscode-menu-selectionBackground, #094771);
   color: var(--vscode-menu-selectionForeground, #ffffff);
 }
 
 /* Content area below the tab strip: fills remaining height and hosts the grid. */
-.vsdb-panel {
+.UnicDB-panel {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -231,18 +231,18 @@
 }
 
 /* --- AG Grid host (kept from VirtualGrid era; AG Grid renders inside) --- */
-.vsdb-grid-host {
+.UnicDB-grid-host {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* TASK-004 — anchoring context for the .vsdb-value-viewer overlay. */
+  /* TASK-004 — anchoring context for the .UnicDB-value-viewer overlay. */
   position: relative;
 }
 
 /* Host div of the grid (JS Theming API manages the theme class itself) —
  * must fill remaining host height (flex child of column host). */
-.vsdb-grid-host .vsdb-ag-host {
+.UnicDB-grid-host .UnicDB-ag-host {
   flex: 1;
   min-height: 0;
 }
@@ -251,7 +251,7 @@
  * main.ts (themeQuartz.withParams); these vars are still honored because the
  * generated theme stylesheet derives row/header height from them.
  */
-.vsdb-ag-host {
+.UnicDB-ag-host {
   --ag-row-height: 28px;
   --ag-header-height: 28px;
   --ag-grid-size: 4px;
@@ -263,8 +263,8 @@
  * themes. border-color alone does not render — must also set border-style and
  * border-width so the border actually appears.
  */
-.vsdb-ag-host input.ag-input-field-input,
-.vsdb-ag-host textarea.ag-input-field-input {
+.UnicDB-ag-host input.ag-input-field-input,
+.UnicDB-ag-host textarea.ag-input-field-input {
   background-color: var(--vscode-input-background, #2b2b2b);
   color: var(--vscode-input-foreground, #cccccc);
   border-color: var(--vscode-input-border, #3c3c3c);
@@ -273,7 +273,7 @@
 }
 
 /* --- Footer (kept from VirtualGrid era) --- */
-.vsdb-grid-footer {
+.UnicDB-grid-footer {
   padding: 4px 8px;
   border-top: 1px solid var(--vscode-panel-border, #444);
   background: var(--vscode-statusBarBackground, #007acc);
@@ -283,29 +283,29 @@
 }
 
 /* --- Empty / error --- */
-.vsdb-empty {
+.UnicDB-empty {
   padding: 16px;
   color: var(--vscode-disabledForeground, #888);
   text-align: center;
 }
 /* TASK-UX3-001 — friendly empty state when no tabs (was generic "No results yet") */
-.vsdb-empty-state {
+.UnicDB-empty-state {
   padding: 32px 16px;
   color: var(--vscode-disabledForeground, #888);
   text-align: center;
   font-size: 0.95em;
 }
-.vsdb-empty-state-icon {
+.UnicDB-empty-state-icon {
   font-size: 1.5em;
   display: block;
   margin-bottom: 8px;
   opacity: 0.6;
 }
-.vsdb-loading {
+.UnicDB-loading {
   padding: 16px;
   color: var(--vscode-disabledForeground, #888);
 }
-.vsdb-error {
+.UnicDB-error {
   padding: 12px;
   background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
   color: var(--vscode-inputValidation-errorForeground, #f48771);
@@ -313,7 +313,7 @@
   border-radius: 2px;
   margin: 8px;
 }
-.vsdb-ok-message {
+.UnicDB-ok-message {
   padding: 12px 16px;
   margin: 12px;
   background: var(--vscode-inputValidation-infoBackground, #063b49);
@@ -324,7 +324,7 @@
 }
 
 /* TASK-503 — save banner (errors / no_pk warnings). */
-.vsdb-save-banner {
+.UnicDB-save-banner {
   padding: 8px 12px;
   margin: 0 8px;
   background: var(--vscode-inputValidation-warningBackground, #5a1d1d);
@@ -335,12 +335,12 @@
   font-size: 0.95em;
   white-space: pre-wrap;
 }
-.vsdb-save-banner.vsdb-hidden { display: none; }
+.UnicDB-save-banner.UnicDB-hidden { display: none; }
 
 /* TASK-005 / A19 — "Retry failed rows" button inside the save banner
  * (partial save failure). Inline after the banner text; compact and
  * theme-aware so it reads as an action, not more error copy. */
-.vsdb-save-banner .vsdb-save-retry {
+.UnicDB-save-banner .UnicDB-save-retry {
   display: inline-block;
   margin-left: 12px;
   padding: 1px 10px;
@@ -355,55 +355,55 @@
   vertical-align: middle;
   white-space: nowrap;
 }
-.vsdb-save-banner .vsdb-save-retry:hover {
+.UnicDB-save-banner .UnicDB-save-retry:hover {
   background: var(--vscode-button-hoverBackground, #1177bb);
 }
-.vsdb-save-banner .vsdb-save-retry:focus-visible {
+.UnicDB-save-banner .UnicDB-save-retry:focus-visible {
   outline: 1px solid var(--vscode-focusBorder, #007fd4);
   outline-offset: 1px;
 }
 
 /* TASK-007 — Excel-style edit highlights.
- * - cellClassRules drives `vsdb-cell-dirty` per cell from EditState.
- * - getRowClass drives `vsdb-row-new` / `vsdb-row-deleted` per row.
+ * - cellClassRules drives `UnicDB-cell-dirty` per cell from EditState.
+ * - getRowClass drives `UnicDB-row-new` / `UnicDB-row-deleted` per row.
  * var() fallbacks so the rules render in both VS Code dark/light themes
  * (AG Grid's JS Theming API may paint over CSS variables — !important
  * beats the element-level vars the theme uses). */
-.vsdb-cell-dirty {
-  background: var(--vsdb-dirty-bg, rgba(255, 166, 0, 0.25)) !important;
+.UnicDB-cell-dirty {
+  background: var(--UnicDB-dirty-bg, rgba(255, 166, 0, 0.25)) !important;
 }
-.vsdb-row-new .ag-cell {
+.UnicDB-row-new .ag-cell {
   background: rgba(60, 170, 255, 0.12);
 }
-.vsdb-row-deleted .ag-cell {
+.UnicDB-row-deleted .ag-cell {
   text-decoration: line-through;
   opacity: 0.6;
 }
 
 /* --- Messages tab --- */
-.vsdb-messages {
+.UnicDB-messages {
   flex: 1;
   overflow: auto;
   padding: 8px;
 }
-.vsdb-msg-card {
+.UnicDB-msg-card {
   border: 1px solid var(--vscode-panel-border, #444);
   border-radius: 4px;
   margin-bottom: 8px;
   padding: 8px;
   background: var(--vscode-editor-background);
 }
-.vsdb-msg-error {
+.UnicDB-msg-error {
   border-color: var(--vscode-inputValidation-errorBorder, #be1100);
 }
-.vsdb-msg-cancelled {
+.UnicDB-msg-cancelled {
   opacity: 0.6;
 }
-.vsdb-msg-title {
+.UnicDB-msg-title {
   font-weight: 600;
   margin-bottom: 4px;
 }
-.vsdb-msg-sql {
+.UnicDB-msg-sql {
   font-family: var(--vscode-editor-font-family, monospace);
   background: var(--vscode-textCodeBlock-background, #1e1e1e);
   padding: 4px 8px;
@@ -412,11 +412,11 @@
   overflow-x: auto;
   margin: 4px 0;
 }
-.vsdb-msg-meta {
+.UnicDB-msg-meta {
   color: var(--vscode-descriptionForeground, #888);
   font-size: 0.9em;
 }
-.vsdb-msg-error-text {
+.UnicDB-msg-error-text {
   color: var(--vscode-errorForeground, #f48771);
   margin-top: 4px;
   white-space: pre-wrap;
@@ -426,77 +426,77 @@
    Only var(--vscode-…) theme colors — no hardcoded hex — so the palette
    tracks the user's light/dark/high-contrast theme. Nested var() fallbacks
    resolve to the editor foreground when a theme omits the richer symbol
-   color. Applies wherever a .vsdb-sql-tok-* span appears (Results Messages
+   color. Applies wherever a .UnicDB-sql-tok-* span appears (Results Messages
    tab and AI-chat ```sql blocks). */
-.vsdb-sql-tok-keyword {
+.UnicDB-sql-tok-keyword {
   color: var(
     --vscode-symbolIcon-keywordForeground,
     var(--vscode-textLink-foreground, var(--vscode-editor-foreground))
   );
 }
-.vsdb-sql-tok-string {
+.UnicDB-sql-tok-string {
   color: var(
     --vscode-symbolIcon-stringForeground,
     var(--vscode-textPreformat-foreground, var(--vscode-editor-foreground))
   );
 }
-.vsdb-sql-tok-number {
+.UnicDB-sql-tok-number {
   color: var(--vscode-symbolIcon-numberForeground, var(--vscode-editor-foreground));
 }
-.vsdb-sql-tok-comment {
+.UnicDB-sql-tok-comment {
   color: var(
     --vscode-symbolIcon-operatorForeground,
     var(--vscode-descriptionForeground, var(--vscode-editor-foreground))
   );
 }
-.vsdb-sql-tok-ident {
+.UnicDB-sql-tok-ident {
   color: var(--vscode-editor-foreground);
 }
-.vsdb-sql-tok-punct {
+.UnicDB-sql-tok-punct {
   color: var(--vscode-editor-foreground);
 }
 
-/* --- Connection Form (vsdb.connectionForm webview) --- */
-.vsdb-form-body {
+/* --- Connection Form (UnicDB.connectionForm webview) --- */
+.UnicDB-form-body {
   padding: 16px 24px;
 }
 
-.vsdb-form h2 {
+.UnicDB-form h2 {
   margin: 0 0 14px;
   font-size: 15px;
   font-weight: 600;
 }
 
-.vsdb-form .req {
+.UnicDB-form .req {
   color: var(--vscode-errorForeground, #f48771);
 }
 
-.vsdb-row {
+.UnicDB-row {
   display: flex;
   gap: 12px;
   margin-bottom: 2px;
 }
 
-.vsdb-field {
+.UnicDB-field {
   display: grid;
   gap: 3px;
   min-width: 100px;
 }
 
-.vsdb-field.grow {
+.UnicDB-field.grow {
   flex: 1;
 }
 
-.vsdb-field label,
-.vsdb-form-ssl label,
-.vsdb-form-mode {
+.UnicDB-field label,
+.UnicDB-form-ssl label,
+.UnicDB-form-mode {
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
   margin-top: 6px;
 }
 
-.vsdb-form input,
-.vsdb-form select {
+.UnicDB-form input,
+.UnicDB-form select {
   width: 100%;
   box-sizing: border-box;
   padding: 4px 6px;
@@ -508,19 +508,19 @@
   font-size: 13px;
 }
 
-.vsdb-form input:focus,
-.vsdb-form select:focus {
+.UnicDB-form input:focus,
+.UnicDB-form select:focus {
   outline: 1px solid var(--vscode-focusBorder);
 }
 
-.vsdb-form-mode {
+.UnicDB-form-mode {
   display: grid;
   gap: 4px;
   margin-top: 8px;
   max-width: 360px;
 }
 
-.vsdb-form-check {
+.UnicDB-form-check {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -528,18 +528,18 @@
   cursor: pointer;
 }
 
-.vsdb-form-check input {
+.UnicDB-form-check input {
   width: auto !important;
 }
 
-.vsdb-form-ssl {
+.UnicDB-form-ssl {
   border-left: 2px solid var(--vscode-input-border, #3c3c3c);
   padding-left: 12px;
   margin-top: 8px;
   max-width: 640px;
 }
 
-.vsdb-file-row {
+.UnicDB-file-row {
   display: grid;
   grid-template-columns: 140px 1fr auto;
   gap: 6px;
@@ -547,7 +547,7 @@
   margin-top: 8px;
 }
 
-.vsdb-form-pick {
+.UnicDB-form-pick {
   padding: 4px 10px;
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
@@ -557,33 +557,33 @@
   white-space: nowrap;
 }
 
-.vsdb-form-status {
+.UnicDB-form-status {
   min-height: 20px;
   margin-top: 12px;
   font-size: 12px;
 }
 
-.vsdb-form-status.ok {
+.UnicDB-form-status.ok {
   color: var(--vscode-testing-iconPassed, #73c991);
 }
 
-.vsdb-form-status.err {
+.UnicDB-form-status.err {
   color: var(--vscode-errorForeground, #f48771);
 }
 
-.vsdb-form-status.busy {
+.UnicDB-form-status.busy {
   color: var(--vscode-descriptionForeground);
   opacity: 0.8;
 }
 
-.vsdb-form-actions {
+.UnicDB-form-actions {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
   margin-top: 16px;
 }
 
-.vsdb-form-actions button {
+.UnicDB-form-actions button {
   padding: 5px 16px;
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
@@ -592,12 +592,12 @@
   cursor: pointer;
 }
 
-.vsdb-form-actions button:disabled {
+.UnicDB-form-actions button:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.vsdb-form-actions .vsdb-form-primary {
+.UnicDB-form-actions .UnicDB-form-primary {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
 }
@@ -608,10 +608,10 @@
  * entries with `display:none` set by the search filter stay visible (no
  * class rules to honour the toggle), the count cell loses its right-align,
  * and the panel has no scroll / hover affordances. The grid renders the
- * .vsdb-setfilter root inside its popup chrome; we only style from the
+ * .UnicDB-setfilter root inside its popup chrome; we only style from the
  * component's own classes down.
  */
-.vsdb-setfilter {
+.UnicDB-setfilter {
   display: flex;
   flex-direction: column;
   min-width: 240px;
@@ -621,12 +621,12 @@
   background: var(--vscode-editor-background, #1e1e1e);
 }
 
-.vsdb-setfilter-search-row {
+.UnicDB-setfilter-search-row {
   padding: 6px 8px;
   border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
 }
 
-.vsdb-setfilter-search {
+.UnicDB-setfilter-search {
   width: 100%;
   padding: 4px 6px;
   background: var(--vscode-input-background, #2b2b2b);
@@ -636,7 +636,7 @@
   box-sizing: border-box;
 }
 
-.vsdb-setfilter-selectall-row {
+.UnicDB-setfilter-selectall-row {
   /* TASK-UX1-005 (R5) — same flex scaffold + block padding as the entry rows
    * below so the Select All checkbox x-position matches the item
    * checkboxes. The inner <label> flex container had produced a different
@@ -650,7 +650,7 @@
   user-select: none;
 }
 
-.vsdb-setfilter-selectall-label {
+.UnicDB-setfilter-selectall-label {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -660,7 +660,7 @@
   min-width: 0;
 }
 
-.vsdb-setfilter-list {
+.UnicDB-setfilter-list {
   flex: 1 1 auto;
   overflow-y: auto;
   min-height: 0;
@@ -669,7 +669,7 @@
    * only governs the visible (unhidden) case. */
 }
 
-.vsdb-setfilter-entry {
+.UnicDB-setfilter-entry {
   display: flex;
   align-items: center;
   padding: 2px 8px;
@@ -678,20 +678,20 @@
   gap: 6px;
 }
 
-.vsdb-setfilter-entry:hover {
+.UnicDB-setfilter-entry:hover {
   background: var(--vscode-list-hoverBackground, #2a2d2e);
 }
 
-.vsdb-setfilter-entry-hidden {
+.UnicDB-setfilter-entry-hidden {
   display: none;
 }
 
-.vsdb-setfilter-entry-checkbox {
+.UnicDB-setfilter-entry-checkbox {
   margin: 0;
   flex: 0 0 auto;
 }
 
-.vsdb-setfilter-label {
+.UnicDB-setfilter-label {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -699,7 +699,7 @@
   white-space: nowrap;
 }
 
-.vsdb-setfilter-count {
+.UnicDB-setfilter-count {
   /* Right-align the count cell within the flex row — same effect as the
    * inline `margin-left:auto` the component also applies so jsdom
    * getComputedStyle returns "auto" without the external stylesheet. */
@@ -708,7 +708,7 @@
   color: var(--vscode-descriptionForeground, #8a8a8a);
 }
 
-.vsdb-setfilter-footer {
+.UnicDB-setfilter-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -716,17 +716,17 @@
   border-top: 1px solid var(--vscode-panel-border, #3c3c3c);
 }
 
-.vsdb-setfilter-status {
+.UnicDB-setfilter-status {
   color: var(--vscode-descriptionForeground, #8a8a8a);
 }
 
-.vsdb-setfilter-footer-right {
+.UnicDB-setfilter-footer-right {
   display: flex;
   gap: 6px;
 }
 
-.vsdb-setfilter-clear,
-.vsdb-setfilter-close {
+.UnicDB-setfilter-clear,
+.UnicDB-setfilter-close {
   padding: 3px 10px;
   background: var(--vscode-button-secondaryBackground, #3a3d41);
   color: var(--vscode-button-secondaryForeground, #cccccc);
@@ -736,8 +736,8 @@
   font-size: 12px;
 }
 
-.vsdb-setfilter-clear:hover,
-.vsdb-setfilter-close:hover {
+.UnicDB-setfilter-clear:hover,
+.UnicDB-setfilter-close:hover {
   background: var(--vscode-button-secondaryHoverBackground, #45494e);
 }
 
@@ -745,7 +745,7 @@
  * DataGrip-style 2-column layout: left COLUMNS/KEYS sections with toolbar,
  * right edit pane, bottom SQL preview + error list.
  */
-.vsdb-designer {
+.UnicDB-designer {
   display: grid;
   grid-template-columns: 220px 1fr;
   grid-template-rows: auto auto 1fr auto auto;
@@ -753,19 +753,19 @@
   min-height: 360px;
 }
 
-.vsdb-designer-header {
+.UnicDB-designer-header {
   grid-column: 1 / -1;
   display: flex;
   gap: 8px;
   align-items: center;
 }
 
-.vsdb-designer-header label {
+.UnicDB-designer-header label {
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
 }
 
-.vsdb-designer-sections {
+.UnicDB-designer-sections {
   grid-row: 2 / span 3;
   display: flex;
   flex-direction: column;
@@ -773,7 +773,7 @@
   min-width: 0;
 }
 
-.vsdb-designer-section {
+.UnicDB-designer-section {
   border: 1px solid var(--vscode-panel-border, #444);
   border-radius: 2px;
   display: flex;
@@ -781,7 +781,7 @@
   min-height: 0;
 }
 
-.vsdb-designer-section-title {
+.UnicDB-designer-section-title {
   padding: 4px 8px;
   font-size: 11px;
   font-weight: 600;
@@ -791,7 +791,7 @@
   letter-spacing: 0.04em;
 }
 
-.vsdb-designer-section ul {
+.UnicDB-designer-section ul {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -800,7 +800,7 @@
   min-height: 60px;
 }
 
-.vsdb-designer-section li {
+.UnicDB-designer-section li {
   padding: 4px 8px;
   cursor: pointer;
   font-size: 12px;
@@ -809,32 +809,32 @@
   gap: 6px;
 }
 
-.vsdb-designer-section li:hover {
+.UnicDB-designer-section li:hover {
   background: var(--vscode-list-hoverBackground, #2a2d2e);
 }
 
-.vsdb-designer-section li.selected {
+.UnicDB-designer-section li.selected {
   background: var(--vscode-list-activeSelectionBackground, #094771);
   color: var(--vscode-list-activeSelectionForeground, #fff);
 }
 
-.vsdb-designer-item-name {
+.UnicDB-designer-item-name {
   font-weight: 500;
 }
 
-.vsdb-designer-item-meta {
+.UnicDB-designer-item-meta {
   color: var(--vscode-descriptionForeground, #888);
   font-size: 11px;
 }
 
-.vsdb-designer-toolbar {
+.UnicDB-designer-toolbar {
   display: flex;
   gap: 2px;
   padding: 4px;
   border-top: 1px solid var(--vscode-panel-border, #444);
 }
 
-.vsdb-designer-toolbar button {
+.UnicDB-designer-toolbar button {
   padding: 2px 6px;
   font-size: 12px;
   background: var(--vscode-button-secondaryBackground, #3a3d41);
@@ -844,12 +844,12 @@
   cursor: pointer;
 }
 
-.vsdb-designer-toolbar button:disabled {
+.UnicDB-designer-toolbar button:disabled {
   opacity: 0.4;
   cursor: default;
 }
 
-.vsdb-designer-edit {
+.UnicDB-designer-edit {
   grid-row: 2 / span 3;
   border: 1px solid var(--vscode-panel-border, #444);
   border-radius: 2px;
@@ -857,17 +857,17 @@
   min-height: 280px;
 }
 
-.vsdb-designer-edit h3 {
+.UnicDB-designer-edit h3 {
   margin: 0 0 8px;
   font-size: 13px;
 }
 
-.vsdb-designer-edit .vsdb-field {
+.UnicDB-designer-edit .UnicDB-field {
   margin-bottom: 8px;
 }
 
-.vsdb-designer-edit input[type="text"],
-.vsdb-designer-edit select {
+.UnicDB-designer-edit input[type="text"],
+.UnicDB-designer-edit select {
   width: 100%;
   box-sizing: border-box;
   padding: 4px 6px;
@@ -879,11 +879,11 @@
   font-size: 13px;
 }
 
-.vsdb-designer-edit input[type="checkbox"] {
+.UnicDB-designer-edit input[type="checkbox"] {
   margin-right: 6px;
 }
 
-.vsdb-designer-placeholder {
+.UnicDB-designer-placeholder {
   color: var(--vscode-descriptionForeground, #888);
   font-style: italic;
   padding: 16px;
@@ -906,26 +906,26 @@
   max-height: 180px;
 }
 
-.vsdb-designer-errors {
+.UnicDB-designer-errors {
   grid-column: 1 / -1;
   color: var(--vscode-errorForeground, #f48771);
   font-size: 12px;
   min-height: 0;
 }
 
-.vsdb-designer-errors ul {
+.UnicDB-designer-errors ul {
   margin: 4px 0 0 16px;
   padding: 0;
 }
 
-.vsdb-designer-actions {
+.UnicDB-designer-actions {
   grid-column: 1 / -1;
   display: flex;
   gap: 8px;
   justify-content: flex-end;
 }
 
-.vsdb-designer-actions button {
+.UnicDB-designer-actions button {
   padding: 5px 16px;
   background: var(--vscode-button-secondaryBackground, #3a3d41);
   color: var(--vscode-button-secondaryForeground, #cccccc);
@@ -934,17 +934,17 @@
   cursor: pointer;
 }
 
-.vsdb-designer-actions button:disabled {
+.UnicDB-designer-actions button:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.vsdb-designer-actions .vsdb-form-primary {
+.UnicDB-designer-actions .UnicDB-form-primary {
   background: var(--vscode-button-background);
   color: var(--vscode-button-foreground);
 }
 
-.vsdb-designer-load-error {
+.UnicDB-designer-load-error {
   background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
   border: 1px solid var(--vscode-inputValidation-errorBorder, #be1100);
   color: var(--vscode-errorForeground, #f48771);
@@ -954,7 +954,7 @@
   margin-bottom: 8px;
 }
 
-.vsdb-chat {
+.UnicDB-chat {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -962,7 +962,7 @@
 }
 
 /* AI chat panel — engine banner + bubbles */
-.vsdb-chat-engine {
+.UnicDB-chat-engine {
   padding: 4px 8px;
   margin-bottom: 8px;
   font-size: 12px;
@@ -970,13 +970,13 @@
   background: var(--vscode-editorWidgetBackground, #252526);
   color: var(--vscode-foreground, #cccccc);
 }
-.vsdb-chat-engine-omp {
+.UnicDB-chat-engine-omp {
   border-left: 3px solid var(--vscode-textLink-foreground, #3794ff);
 }
-.vsdb-chat-engine-builtin {
+.UnicDB-chat-engine-builtin {
   border-left: 3px solid var(--vscode-inputValidation-warningBorder, #cca700);
 }
-.vsdb-chat-thread {
+.UnicDB-chat-thread {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -985,7 +985,7 @@
   min-height: 0;
   overflow-y: auto;
 }
-.vsdb-chat-bubble {
+.UnicDB-chat-bubble {
   padding: 6px 10px;
   border-radius: 6px;
   max-width: 95%;
@@ -995,42 +995,42 @@
   word-wrap: break-word;
   /* TASK-UX1-009 (R11): break long SQL/code lines at the panel edge
    * instead of escaping the right edge of the chat column. Anchored on the
-   * existing .vsdb-chat-bubble block — APPEND-ONLY on UX1-008's contract.
+   * existing .UnicDB-chat-bubble block — APPEND-ONLY on UX1-008's contract.
    * `overflow-wrap: anywhere` (vs `break-word`) breaks the line at ANY
    * character if needed, so unbroken SQL identifiers still wrap. */
   overflow-wrap: anywhere;
 }
-.vsdb-chat-user {
+.UnicDB-chat-user {
   align-self: flex-end;
   background: var(--vscode-button-background, #0e639c);
   color: var(--vscode-button-foreground, #ffffff);
 }
-.vsdb-chat-assistant {
+.UnicDB-chat-assistant {
   align-self: flex-start;
   padding-left: 12px;
   background: var(--vscode-editorWidgetBackground, #252526);
   color: var(--vscode-foreground, #cccccc);
 }
-.vsdb-chat-assistant.vsdb-chat-streaming {
+.UnicDB-chat-assistant.UnicDB-chat-streaming {
   white-space: pre-wrap;
 }
-.vsdb-chat-step {
+.UnicDB-chat-step {
   align-self: flex-start;
   font-size: 11px;
   color: var(--vscode-descriptionForeground, #8c8c8c);
   font-style: italic;
 }
-.vsdb-chat-error {
+.UnicDB-chat-error {
   align-self: flex-start;
   background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
   color: var(--vscode-errorForeground, #f48771);
 }
-.vsdb-chat-input {
+.UnicDB-chat-input {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.vsdb-chat-input textarea {
+.UnicDB-chat-input textarea {
   resize: vertical;
   min-height: 60px;
   font-family: inherit;
@@ -1039,12 +1039,12 @@
   border: 1px solid var(--vscode-input-border, #3c3c3c);
   padding: 6px;
 }
-.vsdb-chat-actions {
+.UnicDB-chat-actions {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
 }
-.vsdb-chat-actions button {
+.UnicDB-chat-actions button {
   /* TASK-AG-001: icon-only buttons — square tile around a 16×16 glyph. */
   width: 28px;
   height: 28px;
@@ -1058,30 +1058,30 @@
   border-radius: 2px;
   cursor: pointer;
 }
-.vsdb-chat-actions button svg {
+.UnicDB-chat-actions button svg {
   width: 16px;
   height: 16px;
   display: block;
   pointer-events: none;
 }
-.vsdb-chat-actions button:hover:not(:disabled) {
-  background: var(--vsdb-input-hover-bg);
+.UnicDB-chat-actions button:hover:not(:disabled) {
+  background: var(--UnicDB-input-hover-bg);
 }
-.vsdb-chat-actions button:disabled {
+.UnicDB-chat-actions button:disabled {
   opacity: 0.5;
   cursor: default;
 }
-.vsdb-chat-actions button:focus-visible {
+.UnicDB-chat-actions button:focus-visible {
   outline: 1px solid var(--vscode-focusBorder, #007acc);
   outline-offset: 1px;
 }
-.vsdb-chat-primary {
+.UnicDB-chat-primary {
   background: var(--vscode-button-background, #0e639c) !important;
   color: var(--vscode-button-foreground, #ffffff) !important;
 }
 
 /* --- Permission card (TASK-001) --- */
-.vsdb-chat-permission {
+.UnicDB-chat-permission {
   border: 1px solid var(--vscode-panel-border, #444);
   padding: 8px;
   margin: 4px 0;
@@ -1090,23 +1090,23 @@
   flex-direction: column;
   gap: 4px;
 }
-.vsdb-chat-permission-header {
+.UnicDB-chat-permission-header {
   font-weight: 600;
   color: var(--vscode-foreground);
 }
-.vsdb-chat-permission-tool-id,
-.vsdb-chat-permission-tool-name {
+.UnicDB-chat-permission-tool-id,
+.UnicDB-chat-permission-tool-name {
   font-size: 11px;
   color: var(--vscode-descriptionForeground, #8c8c8c);
   font-family: var(--vscode-editor-font-family, monospace);
 }
-.vsdb-chat-permission-tool-detail {
+.UnicDB-chat-permission-tool-detail {
   font-size: 12px;
   color: var(--vscode-foreground);
   white-space: pre-wrap;
   word-break: break-word;
 }
-.vsdb-chat-permission-tool-detail pre {
+.UnicDB-chat-permission-tool-detail pre {
   margin: 4px 0 0;
   padding: 6px;
   background: var(--vscode-textCodeBlock-background, #1e1e1e);
@@ -1116,7 +1116,7 @@
   max-height: 240px;
   overflow: auto;
 }
-.vsdb-chat-permission-actions {
+.UnicDB-chat-permission-actions {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
@@ -1130,10 +1130,10 @@
  * icon-only buttons sit at a different height than the inputs.
  *
  * Color rules follow the existing --vscode-* variable pattern used by
- * .vsdb-btn and the input-field rules above, so the bar respects both
+ * .UnicDB-btn and the input-field rules above, so the bar respects both
  * light and dark VS Code themes.
  */
-.vsdb-requery-bar {
+.UnicDB-requery-bar {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1141,7 +1141,7 @@
   background: var(--vscode-editorWidget-background, transparent);
   border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
 }
-.vsdb-requery-label {
+.UnicDB-requery-label {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1149,7 +1149,7 @@
   color: var(--vscode-foreground, #cccccc);
   line-height: 26px;
 }
-.vsdb-requery-input {
+.UnicDB-requery-input {
   height: 26px;
   line-height: 24px;
   box-sizing: border-box;
@@ -1160,23 +1160,23 @@
   border: 1px solid var(--vscode-input-border, #3c3c3c);
   border-radius: 2px;
 }
-.vsdb-requery-input:focus {
+.UnicDB-requery-input:focus {
   outline: 1px solid var(--vscode-focusBorder, #007fd4);
   border-color: var(--vscode-focusBorder, #007fd4);
 }
-.vsdb-requery-input.vsdb-requery-where {
+.UnicDB-requery-input.UnicDB-requery-where {
   flex: 1 1 40%;
 }
-.vsdb-requery-input.vsdb-requery-order {
+.UnicDB-requery-input.UnicDB-requery-order {
   flex: 0 1 28%;
 }
-button.vsdb-requery-run,
-button.vsdb-requery-clear {
+button.UnicDB-requery-run,
+button.UnicDB-requery-clear {
   height: 26px;
   flex: 0 0 auto;
 }
-button.vsdb-requery-run:disabled,
-button.vsdb-requery-clear:disabled {
+button.UnicDB-requery-run:disabled,
+button.UnicDB-requery-clear:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -1189,8 +1189,8 @@ button.vsdb-requery-clear:disabled {
  *
  * Right edge: count cell already uses margin-left:auto (TASK-602).
  */
-.vsdb-setfilter-selectall-row,
-.vsdb-setfilter-entry {
+.UnicDB-setfilter-selectall-row,
+.UnicDB-setfilter-entry {
   padding-left: 8px;
 }
 
@@ -1200,7 +1200,7 @@ button.vsdb-requery-clear:disabled {
  * is attached by the cellRenderer in webview/main.ts; the underlying row
  * data keeps the real null (display-only change).
  */
-.vsdb-null {
+.UnicDB-null {
   font-style: italic;
   color: var(--vscode-descriptionForeground, #888);
 }
@@ -1212,7 +1212,7 @@ button.vsdb-requery-clear:disabled {
  * the grid panel; main.ts positions it near the clicked cell when a
  * usable rect exists.
  */
-.vsdb-value-viewer {
+.UnicDB-value-viewer {
   position: absolute;
   left: 24px;
   bottom: 48px;
@@ -1238,7 +1238,7 @@ button.vsdb-requery-clear:disabled {
  * Emitted into dist/webview.css via main.ts's existing `import "./styles.css"`
  * — TASK-003 links that asset; there is no second CSS pipeline.
  */
-.vsdb-console {
+.UnicDB-console {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1246,12 +1246,12 @@ button.vsdb-requery-clear:disabled {
   height: 100%;
   box-sizing: border-box;
 }
-.vsdb-console-toolbar {
+.UnicDB-console-toolbar {
   display: flex;
   gap: 6px;
   align-items: center;
 }
-.vsdb-console-toolbar button {
+.UnicDB-console-toolbar button {
   padding: 4px 12px;
   background: var(--vscode-button-secondaryBackground, #3a3d41);
   color: var(--vscode-button-secondaryForeground, #cccccc);
@@ -1259,11 +1259,11 @@ button.vsdb-requery-clear:disabled {
   border-radius: 2px;
   cursor: pointer;
 }
-.vsdb-console-primary {
+.UnicDB-console-primary {
   background: var(--vscode-button-background, #0e639c) !important;
   color: var(--vscode-button-foreground, #ffffff) !important;
 }
-.vsdb-console-editor {
+.UnicDB-console-editor {
   flex: 1;
   resize: vertical;
   min-height: 120px;
@@ -1274,7 +1274,7 @@ button.vsdb-requery-clear:disabled {
   border: 1px solid var(--vscode-input-border, #3c3c3c);
   padding: 6px;
 }
-.vsdb-console-contextmenu {
+.UnicDB-console-contextmenu {
   position: absolute;
   z-index: 70;
   min-width: 160px;
@@ -1284,7 +1284,7 @@ button.vsdb-requery-clear:disabled {
   background: var(--vscode-editorWidget-background, #252526);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
-.vsdb-console-context-item {
+.UnicDB-console-context-item {
   display: block;
   width: 100%;
   text-align: left;
@@ -1295,19 +1295,19 @@ button.vsdb-requery-clear:disabled {
   cursor: pointer;
   font-size: 12px;
 }
-.vsdb-console-context-item:hover {
+.UnicDB-console-context-item:hover {
   background: var(--vscode-menu-selectionBackground, var(--vscode-button-background, #0e639c));
   color: var(--vscode-menu-selectionForeground, var(--vscode-button-foreground, #ffffff));
 }
 /* --- TASK-AF-004: SQL Console v2 tabs + history + plan pane ---------------- */
-.vsdb-console-tabs {
+.UnicDB-console-tabs {
   display: flex;
   gap: 2px;
   align-items: stretch;
   overflow-x: auto;
   border-bottom: 1px solid var(--vscode-panel-border, #444);
 }
-.vsdb-console-tab {
+.UnicDB-console-tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1319,14 +1319,14 @@ button.vsdb-requery-clear:disabled {
   cursor: pointer;
   white-space: nowrap;
 }
-.vsdb-console-tab:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
-.vsdb-console-tab-active {
+.UnicDB-console-tab:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
+.UnicDB-console-tab-active {
   border-bottom-color: var(--vscode-focusBorder, #007acc);
   background: var(--vscode-editor-background, #1e1e1e);
 }
-.vsdb-console-tab-close { opacity: .7; font-size: 13px; }
-.vsdb-console-tab-close:hover { opacity: 1; }
-.vsdb-console-plan {
+.UnicDB-console-tab-close { opacity: .7; font-size: 13px; }
+.UnicDB-console-tab-close:hover { opacity: 1; }
+.UnicDB-console-plan {
   margin: 0;
   padding: 8px;
   min-height: 60px;
@@ -1339,23 +1339,23 @@ button.vsdb-requery-clear:disabled {
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: var(--vscode-editor-font-size, 12px);
 }
-.vsdb-console-history { display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow: auto; }
-.vsdb-console-history-item { text-align: left; padding: 4px 8px; border: 0; background: transparent; color: var(--vscode-foreground, #ccc); cursor: pointer; white-space: pre-wrap; }
-.vsdb-console-history-item:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
+.UnicDB-console-history { display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow: auto; }
+.UnicDB-console-history-item { text-align: left; padding: 4px 8px; border: 0; background: transparent; color: var(--vscode-foreground, #ccc); cursor: pointer; white-space: pre-wrap; }
+.UnicDB-console-history-item:hover { background: var(--vscode-list-hoverBackground, #2a2d2e); }
 
 /* --- TASK-003: chat layout shell + resume picker + mention dropdown ----------
  * CSS-first styles so TASK-002 (resume picker) and TASK-005 (mention dropdown)
  * can populate the DOM and rely on these class hooks without a parallel
- * stylesheet. Mirrors the .vsdb-chat-permission card pattern (1px solid
+ * stylesheet. Mirrors the .UnicDB-chat-permission card pattern (1px solid
  * border, --vscode-editorWidget-background, padding, flex column).
  */
-.vsdb-chat-resume-picker {
+.UnicDB-chat-resume-picker {
   display: flex;
   flex-direction: column;
   gap: 4px;
   margin-bottom: 8px;
 }
-.vsdb-chat-resume-card {
+.UnicDB-chat-resume-card {
   border: 1px solid var(--vscode-panel-border, #444);
   padding: 8px;
   margin: 4px 0;
@@ -1364,7 +1364,7 @@ button.vsdb-requery-clear:disabled {
   flex-direction: column;
   gap: 4px;
 }
-.vsdb-chat-resume-row {
+.UnicDB-chat-resume-row {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1373,27 +1373,27 @@ button.vsdb-requery-clear:disabled {
   border-radius: 2px;
   cursor: pointer;
 }
-.vsdb-chat-resume-row:hover {
+.UnicDB-chat-resume-row:hover {
   background: var(--vscode-list-hoverBackground, #2a2d2e);
   border-color: var(--vscode-panel-border, #444);
 }
-.vsdb-chat-resume-row.vsdb-chat-resume-row-active {
+.UnicDB-chat-resume-row.UnicDB-chat-resume-row-active {
   background: var(--vscode-list-activeSelectionBackground, #094771);
   color: var(--vscode-list-activeSelectionForeground, #ffffff);
 }
-.vsdb-chat-resume-label {
+.UnicDB-chat-resume-label {
   font-weight: 600;
   color: var(--vscode-foreground);
   font-size: 12px;
 }
-.vsdb-chat-resume-detail {
+.UnicDB-chat-resume-detail {
   font-size: 11px;
   color: var(--vscode-descriptionForeground, #8c8c8c);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.vsdb-chat-slash-dropdown {
+.UnicDB-chat-slash-dropdown {
   position: absolute;
   z-index: 71;
   min-width: 180px;
@@ -1406,7 +1406,7 @@ button.vsdb-requery-clear:disabled {
   display: flex;
   flex-direction: column;
 }
-.vsdb-chat-slash-row {
+.UnicDB-chat-slash-row {
   border: 0;
   padding: 5px 12px;
   text-align: left;
@@ -1414,19 +1414,19 @@ button.vsdb-requery-clear:disabled {
   background: transparent;
   color: var(--vscode-foreground, #cccccc);
 }
-.vsdb-chat-slash-row:hover,
-.vsdb-chat-slash-row:focus {
+.UnicDB-chat-slash-row:hover,
+.UnicDB-chat-slash-row:focus {
   background: var(--vscode-list-activeSelectionBackground, #094771);
   color: var(--vscode-list-activeSelectionForeground, #ffffff);
 }
-.vsdb-chat-local-notice {
+.UnicDB-chat-local-notice {
   align-self: flex-start;
   color: var(--vscode-descriptionForeground, #8c8c8c);
   font-size: 12px;
   white-space: pre-wrap;
 }
 
-.vsdb-chat-mention-dropdown {
+.UnicDB-chat-mention-dropdown {
   position: absolute;
   z-index: 70;
   min-width: 220px;
@@ -1439,7 +1439,7 @@ button.vsdb-requery-clear:disabled {
   display: flex;
   flex-direction: column;
 }
-.vsdb-chat-mention-row {
+.UnicDB-chat-mention-row {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1448,15 +1448,15 @@ button.vsdb-requery-clear:disabled {
   font-size: 12px;
   color: var(--vscode-foreground, #cccccc);
 }
-.vsdb-chat-mention-row:hover {
+.UnicDB-chat-mention-row:hover {
   background: var(--vscode-menu-selectionBackground, var(--vscode-button-background, #0e639c));
   color: var(--vscode-menu-selectionForeground, var(--vscode-button-foreground, #ffffff));
 }
-.vsdb-chat-mention-row.vsdb-chat-mention-row-active {
+.UnicDB-chat-mention-row.UnicDB-chat-mention-row-active {
   background: var(--vscode-list-activeSelectionBackground, #094771);
   color: var(--vscode-list-activeSelectionForeground, #ffffff);
 }
-.vsdb-chat-mention-kind {
+.UnicDB-chat-mention-kind {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -1469,11 +1469,11 @@ button.vsdb-requery-clear:disabled {
 
 
 /* --- TASK-003 fix-round-1: height-chain (CRITICAL) --- */
-/* The chat webview body MUST establish a real height chain so .vsdb-chat
+/* The chat webview body MUST establish a real height chain so .UnicDB-chat
  * { height:100% } resolves against the viewport, not auto. Only this body
- * class gets the rule — .vsdb-form-body (shared by connectionForm etc.) is
+ * class gets the rule — .UnicDB-form-body (shared by connectionForm etc.) is
  * left untouched so other forms keep their natural document flow. */
-body.vsdb-chat-body {
+body.UnicDB-chat-body {
   height: 100vh;
   margin: 0;
   padding: 0;
@@ -1481,10 +1481,10 @@ body.vsdb-chat-body {
 }
 
 /* --- TASK-003 fix-round-1: TASK-002 affordance styles (IMPORTANT) --- */
-/* All scoped under .vsdb-chat to avoid leaking into other webviews. Patterns
- * mirror the .vsdb-chat-permission card (1px solid border +
+/* All scoped under .UnicDB-chat to avoid leaking into other webviews. Patterns
+ * mirror the .UnicDB-chat-permission card (1px solid border +
  * --vscode-editorWidget-background) for consistency. */
-.vsdb-chat-thinking {
+.UnicDB-chat-thinking {
   border: 1px solid var(--vscode-panel-border, #444);
   background: var(--vscode-editorWidget-background, #252526);
   border-radius: 3px;
@@ -1493,18 +1493,18 @@ body.vsdb-chat-body {
   font-size: 12px;
   color: var(--vscode-foreground, #cccccc);
 }
-.vsdb-chat-thinking > summary {
+.UnicDB-chat-thinking > summary {
   cursor: pointer;
   font-weight: 600;
   color: var(--vscode-descriptionForeground, #8c8c8c);
   outline: none;
   user-select: none;
 }
-.vsdb-chat-thinking[open] > summary {
+.UnicDB-chat-thinking[open] > summary {
   margin-bottom: 4px;
   color: var(--vscode-foreground, #cccccc);
 }
-.vsdb-chat-thinking-body {
+.UnicDB-chat-thinking-body {
   padding: 4px 0 0;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -1512,7 +1512,7 @@ body.vsdb-chat-body {
   color: var(--vscode-foreground, #cccccc);
 }
 
-.vsdb-chat-jump {
+.UnicDB-chat-jump {
   position: absolute;
   bottom: 80px;
   right: 16px;
@@ -1526,12 +1526,12 @@ body.vsdb-chat-body {
   cursor: pointer;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
 }
-.vsdb-chat-jump:hover {
+.UnicDB-chat-jump:hover {
   background: var(--vscode-button-background, #0e639c);
   color: var(--vscode-button-foreground, #ffffff);
 }
 
-.vsdb-md-copy {
+.UnicDB-md-copy {
   font-size: 11px;
   padding: 2px 6px;
   margin-left: 8px;
@@ -1542,13 +1542,13 @@ body.vsdb-chat-body {
   color: var(--vscode-foreground, #cccccc);
   font-family: var(--vscode-editor-font-family, monospace);
 }
-.vsdb-md-copy:hover {
+.UnicDB-md-copy:hover {
   background: var(--vscode-button-background, #0e639c);
   color: var(--vscode-button-foreground, #ffffff);
   border-color: var(--vscode-button-background, #0e639c);
 }
 
-.vsdb-chat-queued {
+.UnicDB-chat-queued {
   display: inline-block;
   margin-left: 6px;
   width: 6px;
@@ -1556,29 +1556,29 @@ body.vsdb-chat-body {
   border-radius: 50%;
   background: var(--vscode-descriptionForeground, #8c8c8c);
   vertical-align: middle;
-  animation: vsdb-chat-queued-pulse 1.2s ease-in-out infinite;
+  animation: UnicDB-chat-queued-pulse 1.2s ease-in-out infinite;
 }
-@keyframes vsdb-chat-queued-pulse {
+@keyframes UnicDB-chat-queued-pulse {
   0%, 100% { opacity: 0.3; }
   50% { opacity: 1; }
 }
 
 /* Caret lives on the streaming bubble (TASK-002 used
- * ensureStreamingCaret -> <span class="vsdb-chat-caret">). The glyph is set
+ * ensureStreamingCaret -> <span class="UnicDB-chat-caret">). The glyph is set
  * via JS (textContent = U+258D), so we only style layout + blink. */
-.vsdb-chat-caret {
+.UnicDB-chat-caret {
   display: inline;
   margin-left: 1px;
   font-family: var(--vscode-editor-font-family, monospace);
-  animation: vsdb-chat-caret-blink 1s steps(2, end) infinite;
+  animation: UnicDB-chat-caret-blink 1s steps(2, end) infinite;
 }
-@keyframes vsdb-chat-caret-blink {
+@keyframes UnicDB-chat-caret-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
 
 /* #regenerateBtn is now an icon tile (TASK-AG-001); the shared
- * .vsdb-chat-actions button rules size and style it — no per-ID override
+ * .UnicDB-chat-actions button rules size and style it — no per-ID override
  * remains. */
 
 /* --- TASK-003 cycle AB — image-attach strip + button + warning + dark theme --
@@ -1588,18 +1588,18 @@ body.vsdb-chat-body {
  * without hardcoded hex.
  *
  * Token rationale:
- *   --vsdb-warning-bg/fg/border : amber notice (oversize, count-cap, mime-mismatch)
- *   --vsdb-overlay-bg           : translucent backdrop (future re-use)
- *   --vsdb-input-hover-bg       : generic input hover surface (composer strip hover)
- *   --vsdb-error-bg             : error surface (attach-blocked reason)
+ *   --UnicDB-warning-bg/fg/border : amber notice (oversize, count-cap, mime-mismatch)
+ *   --UnicDB-overlay-bg           : translucent backdrop (future re-use)
+ *   --UnicDB-input-hover-bg       : generic input hover surface (composer strip hover)
+ *   --UnicDB-error-bg             : error surface (attach-blocked reason)
  */
 :root {
-  --vsdb-warning-bg: var(--vscode-inputValidation-warningBackground, #5a4a00);
-  --vsdb-warning-fg: var(--vscode-inputValidation-warningForeground, #ffcc00);
-  --vsdb-warning-border: var(--vscode-inputValidation-warningBorder, #cca700);
-  --vsdb-overlay-bg: var(--vscode-widget-shadow, rgba(0, 0, 0, 0.4));
-  --vsdb-input-hover-bg: var(--vscode-list-hoverBackground, #2a2d2e);
-  --vsdb-error-bg: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+  --UnicDB-warning-bg: var(--vscode-inputValidation-warningBackground, #5a4a00);
+  --UnicDB-warning-fg: var(--vscode-inputValidation-warningForeground, #ffcc00);
+  --UnicDB-warning-border: var(--vscode-inputValidation-warningBorder, #cca700);
+  --UnicDB-overlay-bg: var(--vscode-widget-shadow, rgba(0, 0, 0, 0.4));
+  --UnicDB-input-hover-bg: var(--vscode-list-hoverBackground, #2a2d2e);
+  --UnicDB-error-bg: var(--vscode-inputValidation-errorBackground, #5a1d1d);
 }
 
 [data-theme="dark"] {
@@ -1608,18 +1608,18 @@ body.vsdb-chat-body {
    * in its dark theme. Fallbacks inside :root already point at --vscode-*,
    * which itself tracks the theme — these overrides sharpen contrast for the
    * AI chat surface in particular. */
-  --vsdb-warning-bg: var(--vscode-inputValidation-warningBackground, #5a4a00);
-  --vsdb-warning-fg: var(--vscode-inputValidation-warningForeground, #ffcc00);
-  --vsdb-warning-border: var(--vscode-inputValidation-warningBorder, #cca700);
-  --vsdb-overlay-bg: var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
-  --vsdb-input-hover-bg: var(--vscode-list-hoverBackground, #2a2d2e);
-  --vsdb-error-bg: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+  --UnicDB-warning-bg: var(--vscode-inputValidation-warningBackground, #5a4a00);
+  --UnicDB-warning-fg: var(--vscode-inputValidation-warningForeground, #ffcc00);
+  --UnicDB-warning-border: var(--vscode-inputValidation-warningBorder, #cca700);
+  --UnicDB-overlay-bg: var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
+  --UnicDB-input-hover-bg: var(--vscode-list-hoverBackground, #2a2d2e);
+  --UnicDB-error-bg: var(--vscode-inputValidation-errorBackground, #5a1d1d);
 }
 
 /* Attach button — small icon-only control that sits next to the Send button.
- * Mirrors the .vsdb-chat-actions button pattern but stays compact: 24×24 hit
+ * Mirrors the .UnicDB-chat-actions button pattern but stays compact: 24×24 hit
  * target, transparent background, currentColor glyph. */
-.vsdb-chat-attach-btn {
+.UnicDB-chat-attach-btn {
   width: 28px;
   height: 28px;
   padding: 0;
@@ -1632,14 +1632,14 @@ body.vsdb-chat-body {
   align-items: center;
   justify-content: center;
 }
-.vsdb-chat-attach-btn:hover:not(:disabled) {
-  background: var(--vsdb-input-hover-bg);
+.UnicDB-chat-attach-btn:hover:not(:disabled) {
+  background: var(--UnicDB-input-hover-bg);
 }
-.vsdb-chat-attach-btn:disabled {
+.UnicDB-chat-attach-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.vsdb-chat-attach-btn:focus-visible {
+.UnicDB-chat-attach-btn:focus-visible {
   outline: 1px solid var(--vscode-focusBorder, #007acc);
   outline-offset: 1px;
 }
@@ -1647,7 +1647,7 @@ body.vsdb-chat-body {
 /* Attachment strip — horizontal scroll row above the textarea. 56×56 thumbs,
  * 8px gap, capped at 80px row height so it never pushes the composer out of
  * view; the composer column still pins to the bottom per the cycle-AA lock. */
-.vsdb-chat-attachments {
+.UnicDB-chat-attachments {
   display: flex;
   gap: 8px;
   overflow-x: auto;
@@ -1655,7 +1655,7 @@ body.vsdb-chat-body {
   max-height: 80px;
   padding: 4px 0;
 }
-.vsdb-chat-thumb {
+.UnicDB-chat-thumb {
   position: relative;
   width: 56px;
   height: 56px;
@@ -1665,7 +1665,7 @@ body.vsdb-chat-body {
   overflow: hidden;
   background: var(--vscode-editorWidget-background, #252526);
 }
-.vsdb-chat-thumb img {
+.UnicDB-chat-thumb img {
   display: block;
   width: 100%;
   height: 100%;
@@ -1673,7 +1673,7 @@ body.vsdb-chat-body {
 }
 /* Per-thumbnail remove "×" — absolute overlay anchored to the thumb's
  * top-right. Compact (16×16), high contrast against the image underneath. */
-.vsdb-chat-thumb-remove {
+.UnicDB-chat-thumb-remove {
   position: absolute;
   top: 2px;
   right: 2px;
@@ -1682,25 +1682,25 @@ body.vsdb-chat-body {
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: var(--vsdb-overlay-bg);
+  background: var(--UnicDB-overlay-bg);
   color: var(--vscode-button-foreground, #ffffff);
   font-size: 11px;
   line-height: 14px;
   text-align: center;
   cursor: pointer;
 }
-.vsdb-chat-thumb-remove:hover {
-  background: var(--vsdb-error-bg);
+.UnicDB-chat-thumb-remove:hover {
+  background: var(--UnicDB-error-bg);
 }
 
 /* Amber notice bubble — surfaces oversize / overcount / wrong-mime /
- * vision-unsupported errors. Lives below the strip, inside .vsdb-chat-input. */
-.vsdb-chat-attach-warning {
+ * vision-unsupported errors. Lives below the strip, inside .UnicDB-chat-input. */
+.UnicDB-chat-attach-warning {
   padding: 6px 10px;
-  border: 1px solid var(--vsdb-warning-border);
+  border: 1px solid var(--UnicDB-warning-border);
   border-radius: 4px;
-  background: var(--vsdb-warning-bg);
-  color: var(--vsdb-warning-fg);
+  background: var(--UnicDB-warning-bg);
+  color: var(--UnicDB-warning-fg);
   font-size: 12px;
   display: flex;
   align-items: center;
@@ -1709,16 +1709,16 @@ body.vsdb-chat-body {
 
 /* --- TASK-UX1-010 — DDL/DML status card (R12) ---
  * Cards replace the (empty) grid for non-SELECT statements. The
- * `.vsdb-ddl-*` family is APPEND-ONLY and disjoint from `.vsdb-chat-*`
- * (UX1-008) and `.vsdb-setfilter-*` (UX1-005). Style mirrors the existing
- *   vsdb-msg-* card family in the Messages view so the visual language
+ * `.UnicDB-ddl-*` family is APPEND-ONLY and disjoint from `.UnicDB-chat-*`
+ * (UX1-008) and `.UnicDB-setfilter-*` (UX1-005). Style mirrors the existing
+ *   UnicDB-msg-* card family in the Messages view so the visual language
  *   stays consistent. */
-.vsdb-ddl-card {
+.UnicDB-ddl-card {
   margin: 12px;
   padding: 12px 14px;
-  border: 1px solid var(--vsdb-overlay-bg, #2a2a2a);
+  border: 1px solid var(--UnicDB-overlay-bg, #2a2a2a);
   border-radius: 6px;
-  background: var(--vsdb-overlay-bg, #1a1a1a);
+  background: var(--UnicDB-overlay-bg, #1a1a1a);
   color: var(--vscode-editor-foreground, #d4d4d4);
   font-family: var(--vscode-font-family, monospace);
   font-size: 13px;
@@ -1727,32 +1727,32 @@ body.vsdb-chat-body {
   flex-direction: column;
   gap: 6px;
 }
-.vsdb-ddl-card-success {
+.UnicDB-ddl-card-success {
   border-left: 3px solid var(--vscode-gitDecoration-addedResourceForeground, #4ec9b0);
 }
-.vsdb-ddl-card-error {
-  border-left: 3px solid var(--vsdb-error-bg, #f48771);
-  background: var(--vsdb-error-bg-soft, #2d1f1f);
+.UnicDB-ddl-card-error {
+  border-left: 3px solid var(--UnicDB-error-bg, #f48771);
+  background: var(--UnicDB-error-bg-soft, #2d1f1f);
 }
-.vsdb-ddl-card-title {
+.UnicDB-ddl-card-title {
   font-weight: 600;
   font-size: 13px;
 }
-.vsdb-ddl-card-success .vsdb-ddl-card-title {
+.UnicDB-ddl-card-success .UnicDB-ddl-card-title {
   color: var(--vscode-gitDecoration-addedResourceForeground, #4ec9b0);
 }
-.vsdb-ddl-card-error .vsdb-ddl-card-title {
-  color: var(--vsdb-error-fg, #f48771);
+.UnicDB-ddl-card-error .UnicDB-ddl-card-title {
+  color: var(--UnicDB-error-fg, #f48771);
 }
-.vsdb-ddl-card-meta {
+.UnicDB-ddl-card-meta {
   font-size: 12px;
   color: var(--vscode-descriptionForeground, #969696);
 }
-.vsdb-ddl-card-sql {
+.UnicDB-ddl-card-sql {
   margin: 4px 0;
   padding: 8px 10px;
-  background: var(--vsdb-overlay-bg, #0e0e0e);
-  border: 1px solid var(--vsdb-overlay-bg, #2a2a2a);
+  background: var(--UnicDB-overlay-bg, #0e0e0e);
+  border: 1px solid var(--UnicDB-overlay-bg, #2a2a2a);
   border-radius: 4px;
   font-family: var(--vscode-editorFontFamily, monospace);
   font-size: 12px;
@@ -1760,19 +1760,19 @@ body.vsdb-chat-body {
   word-break: break-word;
   overflow-x: auto;
 }
-.vsdb-ddl-card-error-text {
+.UnicDB-ddl-card-error-text {
   margin-top: 4px;
   padding: 8px 10px;
-  border: 1px solid var(--vsdb-error-bg, #f48771);
+  border: 1px solid var(--UnicDB-error-bg, #f48771);
   border-radius: 4px;
   background: rgba(244, 135, 113, 0.08);
-  color: var(--vsdb-error-fg, #f48771);
+  color: var(--UnicDB-error-fg, #f48771);
   font-family: var(--vscode-editorFontFamily, monospace);
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;
 }
-.vsdb-ddl-card-hint {
+.UnicDB-ddl-card-hint {
   font-size: 12px;
   font-style: italic;
   color: var(--vscode-descriptionForeground, #969696);
@@ -1786,7 +1786,7 @@ body.vsdb-chat-body {
  * pipeline). Selectors are disjoint from UX1-008 (chat bubble / caret /
  * assistant), UX1-005 (set-filter family), and UX1-010 (DDL card family)
  * — APPEND-ONLY on the chat region. */
-.vsdb-chat-thinking-row {
+.UnicDB-chat-thinking-row {
   align-self: flex-start;
   display: flex;
   align-items: center;
@@ -1797,22 +1797,22 @@ body.vsdb-chat-body {
   font-style: italic;
   color: var(--vscode-descriptionForeground, #8c8c8c);
 }
-.vsdb-chat-thinking-spinner {
+.UnicDB-chat-thinking-spinner {
   display: inline-block;
   width: 12px;
   height: 12px;
   border: 2px solid var(--vscode-descriptionForeground, #8c8c8c);
   border-top-color: transparent;
   border-radius: 50%;
-  animation: vsdb-chat-thinking-spin 0.9s linear infinite;
+  animation: UnicDB-chat-thinking-spin 0.9s linear infinite;
 }
-.vsdb-chat-thinking-label {
+.UnicDB-chat-thinking-label {
   /* Resolved only as a hook for future per-row overrides. No rules
    * needed today — keep the selector declared so a sibling rule can be
    * added without re-scanning the cascade order. */
   white-space: pre-wrap;
 }
-@keyframes vsdb-chat-thinking-spin {
+@keyframes UnicDB-chat-thinking-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }

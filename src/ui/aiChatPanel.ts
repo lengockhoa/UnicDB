@@ -113,7 +113,7 @@ import type { ConnectionRecoveryStatus } from "../core/connectionManager";
 
  import { buildPermissionToolInfo } from "./permissionDetail";
  
- const PANEL_ID = "vsdb.aiChatPanel";
+ const PANEL_ID = "UnicDB.aiChatPanel";
 
  const SCHEMA_CONTEXT_BUDGET = 12_000; // chars (tăng từ 8000)
  const SCHEMA_CONTEXT_TABLE_LIMIT = 200; // objects (tăng từ 30)
@@ -123,7 +123,7 @@ import type { ConnectionRecoveryStatus } from "../core/connectionManager";
  * `context.schema` — identical base text to formatSystemPrompt's
  * no-context branch, but NO adapter introspection ever runs. */
 const GENERIC_SYSTEM_PROMPT =
-  "You are VSDB's AI assistant. Help the user explore and query their database.";
+  "You are UnicDB's AI assistant. Help the user explore and query their database.";
 
 // ============================================================================
 // TASK-005 — @-mention references (DB objects + workspace files)
@@ -592,7 +592,7 @@ export interface AiChatPanelOptions {
    * Cycle AE TASK-003 — when the engine is "omp", the chat panel
    * delegates `handleSend` to `OmpChatEngine.send(text, events)` instead
    * of the raw ACP session/prompt path. Wire `createOmpChatEngine()` in
-   * `extension.ts` when `vsdb.ai.engine === "omp"`. When this is absent
+   * `extension.ts` when `UnicDB.ai.engine === "omp"`. When this is absent
    * (default), the panel keeps the existing raw ACP path used by cycle
    * AB's tests — opt-in by host.
    */
@@ -614,7 +614,7 @@ export interface AiChatPanelOptions {
    */
   isWorkspaceTrusted?: () => Promise<boolean> | boolean;
   /**
-   * AIX-07 — raw `vsdb.ai.engine` preference value, un-validated. Fed to
+   * AIX-07 — raw `UnicDB.ai.engine` preference value, un-validated. Fed to
    * `resolvePolicy` as the `configuredEngine` input. Absent → "builtin"
    * (the manifest default), which keeps hosts/tests without a config
    * concept on the pre-AIX-07 admitted path.
@@ -868,7 +868,7 @@ function summarizeDbToolArgs(args: Record<string, unknown>): string {
  *
  * `formatSystemPrompt` is the single source of truth for the system prompt
  * content. Both `buildMessages` (chat runtime, builtin + ACP engines) and
- * `extensionConfigExport.emitVsdbAiConfig` (OMP config emitter) call it.
+ * `extensionConfigExport.emitUnicDBAiConfig` (OMP config emitter) call it.
  * Same factory + history + opts → identical byte output. Test pins the
  * equality against `buildMessages`'s first element so the privacy invariant
  * (cycle AA: DDL-only, no row bytes) survives the refactor unchanged.
@@ -1018,8 +1018,8 @@ export async function formatSystemPrompt(
     context = "";
   }
   return context.length === 0
-    ? "You are VSDB's AI assistant. Help the user explore and query their database."
-    : `You are VSDB's AI assistant. Help the user explore and query their database.\n\nDatabase structure (DDL):\n${context}\n\nYou can call the export_structure tool for the complete structure when truncated.`;
+    ? "You are UnicDB's AI assistant. Help the user explore and query their database."
+    : `You are UnicDB's AI assistant. Help the user explore and query their database.\n\nDatabase structure (DDL):\n${context}\n\nYou can call the export_structure tool for the complete structure when truncated.`;
 }
 
 /**
@@ -1283,7 +1283,7 @@ export class AiChatPanel {
    */
   private torndown = false;
   /** AIX-01: panel-scoped grounding toggle (webview `grounding_toggle`).
-   * `undefined` = untouched — the host config `vsdb.ai.grounding` decides.
+   * `undefined` = untouched — the host config `UnicDB.ai.grounding` decides.
    * `false` = user disabled in THIS panel instance (no persistence);
    * `true` re-enables within the same panel session. */
   private groundingPanelEnabled: boolean | undefined = undefined;
@@ -1359,7 +1359,7 @@ export class AiChatPanel {
    *
    * Inputs: the host-supplied policy override (when the extension host
    * already derived one), else the workspace-trust probe + the raw
-   * `vsdb.ai.engine` preference. The resolver route is carried by the
+   * `UnicDB.ai.engine` preference. The resolver route is carried by the
    * panel's own construction: `options.acp` present ⇒ the host resolved
    * the omp route (valid `EngineChoice.engine`), absent ⇒ builtin. This
    * mirrors — never re-derives — `resolveEngine()`'s decision.
@@ -1402,7 +1402,7 @@ export class AiChatPanel {
     this.torndown = false;
     this.panel = vscode.window.createWebviewPanel(
       PANEL_ID,
-      "VSDB AI Chat",
+      "UnicDB AI Chat",
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
@@ -1470,7 +1470,7 @@ export class AiChatPanel {
     }
     this.panel = null;
     // TASK-AIX03-102 — release the owned recovery-status subscription
-    // exactly once. A later vsdb.aiChat invocation constructs a fresh
+    // exactly once. A later UnicDB.aiChat invocation constructs a fresh
     // panel that subscribes anew against the same host event.
     if (this.recoverySub !== null) {
       this.recoverySub.dispose();
@@ -1534,7 +1534,7 @@ export class AiChatPanel {
         return;
       case "grounding_toggle":
         // AIX-01: panel-scoped opt-in. No persistence — a fresh panel
-        // re-reads `vsdb.ai.grounding`. Re-posting the state lets the
+        // re-reads `UnicDB.ai.grounding`. Re-posting the state lets the
         // webview render/remove the chips immediately.
         this.groundingPanelEnabled = msg.enabled;
         this.post({
@@ -1588,7 +1588,7 @@ export class AiChatPanel {
     }
     try {
       await vscode.workspace
-        .getConfiguration("vsdb")
+        .getConfiguration("UnicDB")
         .update("ai.engine", target, vscode.ConfigurationTarget.Global);
     } catch {
       this.post({ type: "error", message: "Could not save the engine selection." });
@@ -1941,7 +1941,7 @@ export class AiChatPanel {
           this.dbToolGate.wrap(fileOps, {
             describe: async (args) => {
               const p = await createFileOpsPreview(fileOpsDeps)(args);
-              return p ? { detail: p.card, bindArgs: { __vsdbExpectedOld: p.snapshot } } : undefined;
+              return p ? { detail: p.card, bindArgs: { __UnicDBExpectedOld: p.snapshot } } : undefined;
             },
             deniedResult: fileOpsDeniedEnvelope,
           }),
@@ -2113,7 +2113,7 @@ export class AiChatPanel {
       // case is a thin wrapper around the string).
       const enriched =
         message === "AI is not configured"
-          ? "AI is not configured — open VSDB: Open AI Settings to configure baseUrl/model/API key"
+          ? "AI is not configured — open UnicDB: Open AI Settings to configure baseUrl/model/API key"
           : message;
       this.post({ type: "error", message: enriched });
     } finally {
@@ -2139,14 +2139,14 @@ export class AiChatPanel {
   /**
    * Cycle AE TASK-003 — OmpChatEngine routing.
    *
-   * When `vsdb.ai.engine === "omp"` and the host wired an `OmpChatEngine`,
+   * When `UnicDB.ai.engine === "omp"` and the host wired an `OmpChatEngine`,
    * handleSend delegates here. The engine owns session/prompt, the
    * HostMcp bridge, and the ACP notification forwarder. The panel's only
    * job is to wire the event callbacks back to the webview's
    * `{type:"delta"|"step"|"error"|"done"}` messages and to enforce the
    * mid-turn fallback contract: if the engine's `send()` rejects (process
    * crash / connection lost), the panel posts ONE error bubble, flips the
-   * engine to "builtin" in `vsdb.ai.engine` so subsequent turns run on
+   * engine to "builtin" in `UnicDB.ai.engine` so subsequent turns run on
    * the builtin engine, and resolves. The next `handleSend` will read the
    * flipped value from config and dispatch to the builtin path on its
    * own — no caller-side bookkeeping required.
@@ -2317,7 +2317,7 @@ export class AiChatPanel {
    * AIX-07: copy-safe snapshot of EVERY retained turn, oldest first.
    * Read-only for the caller — mutating the returned dumps cannot reach
    * recorder internals (each dump's events array is a copy). Consumed by
-   * the host's `vsdb.ai.exportTrace` command to build the redacted audit
+   * the host's `UnicDB.ai.exportTrace` command to build the redacted audit
    * envelope; nothing else reads it and nothing is persisted here.
    */
   dumpAll(): readonly TraceDump[] {
@@ -2419,7 +2419,7 @@ export class AiChatPanel {
   }
 
   /**
-   * Cycle AE TASK-003 §5 — flip the user's `vsdb.ai.engine` setting back
+   * Cycle AE TASK-003 §5 — flip the user's `UnicDB.ai.engine` setting back
    * to "builtin" so the next handleSend reads the flipped value and routes
    * to the builtin engine. Best-effort: silently swallows any config-store
    * rejection so a failed workspace write never bubbles a second error
@@ -2429,7 +2429,7 @@ export class AiChatPanel {
   private async flipEngineToBuiltinInSettings(): Promise<void> {
     try {
       await vscode.workspace
-        .getConfiguration("vsdb")
+        .getConfiguration("UnicDB")
         .update("ai.engine", "builtin", vscode.ConfigurationTarget.Global);
     } catch {
       /* best-effort */
@@ -2698,7 +2698,7 @@ export class AiChatPanel {
           this.dbToolGate.wrap(fileOps, {
             describe: async (args) => {
               const p = await createFileOpsPreview(fileOpsDeps)(args);
-              return p ? { detail: p.card, bindArgs: { __vsdbExpectedOld: p.snapshot } } : undefined;
+              return p ? { detail: p.card, bindArgs: { __UnicDBExpectedOld: p.snapshot } } : undefined;
             },
             deniedResult: fileOpsDeniedEnvelope,
           }),
@@ -3883,10 +3883,10 @@ export class AiChatPanel {
       <meta charset="UTF-8" />
       <meta http-equiv="Content-Security-Policy" content="${csp}" />
       <link rel="stylesheet" href="${styleUri}" />
-      <title>VSDB AI Chat</title>
+      <title>UnicDB AI Chat</title>
     </head>
-    <body class="vsdb-form-body vsdb-chat-body">
-      <div id="vsdb-root" class="vsdb-chat"></div>
+    <body class="UnicDB-form-body UnicDB-chat-body">
+      <div id="UnicDB-root" class="UnicDB-chat"></div>
       <script src="${scriptUri}"></script>
     </body>
     </html>`;

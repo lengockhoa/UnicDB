@@ -83,26 +83,26 @@ describe("scaffold", () => {
     expect(pkg.contributes.commands.length).toBeGreaterThanOrEqual(10);
 
     const requiredCommands = [
-      "vsdb.addConnection",
-      "vsdb.editConnection",
-      "vsdb.deleteConnection",
-      "vsdb.selectConnection",
-      "vsdb.runQuery",
-      "vsdb.cancelQuery",
-      "vsdb.generateSelect",
-      "vsdb.copyQualifiedName",
-      "vsdb.refreshSchema",
-      "vsdb.runStatement",
+      "UnicDB.addConnection",
+      "UnicDB.editConnection",
+      "UnicDB.deleteConnection",
+      "UnicDB.selectConnection",
+      "UnicDB.runQuery",
+      "UnicDB.cancelQuery",
+      "UnicDB.generateSelect",
+      "UnicDB.copyQualifiedName",
+      "UnicDB.refreshSchema",
+      "UnicDB.runStatement",
     ];
     const commandIds = pkg.contributes.commands.map((c: { command: string }) => c.command);
     for (const cmd of requiredCommands) {
       expect(commandIds).toContain(cmd);
     }
 
-    // keybindings có cmd+enter & ctrl+enter → vsdb.runQuery (when editorTextFocus && resourceLangId == sql)
+    // keybindings có cmd+enter & ctrl+enter → UnicDB.runQuery (when editorTextFocus && resourceLangId == sql)
     expect(Array.isArray(pkg.contributes.keybindings)).toBe(true);
     const runKeybindings = pkg.contributes.keybindings.filter(
-      (k: { command: string }) => k.command === "vsdb.runQuery",
+      (k: { command: string }) => k.command === "UnicDB.runQuery",
     );
     expect(runKeybindings.length).toBeGreaterThanOrEqual(2);
     const mac = runKeybindings.find((k: { mac?: string }) => k.mac === "cmd+enter");
@@ -111,14 +111,14 @@ describe("scaffold", () => {
     expect(win).toBeTruthy();
 
     // viewsContainers.activitybar PHẢI tồn tại — regression v1.2.1: mất key này
-    // → mất icon VSDB trên Activity Bar sau reload window.
+    // → mất icon UnicDB trên Activity Bar sau reload window.
     const activitybar = pkg.contributes.viewsContainers?.activitybar;
     expect(activitybar, "viewsContainers.activitybar must exist").toBeTruthy();
-    expect(activitybar[0].id).toBe("vsdb");
-    expect(activitybar[0].icon).toBe("media/vsdb.svg");
+    expect(activitybar[0].id).toBe("UnicDB");
+    expect(activitybar[0].icon).toBe("media/UnicDB.svg");
 
-    // views.vsdb.schemaTree
-    expect(pkg.contributes.views.vsdb).toBeTruthy();
+    // views.UnicDB.schemaTree
+    expect(pkg.contributes.views.UnicDB).toBeTruthy();
 
     // DataGrip-style: mọi command có icon; view/title chỉ icon (navigation group),
     // refresh đứng trước add để toolbar không đổi chỗ khi connection xuất hiện.
@@ -131,32 +131,32 @@ describe("scaffold", () => {
     // Toolbar order: refresh, add connection, filter, AI settings (1.6.x),
     // AI chat (TASK-009), clear-filter (chỉ hiện khi filter active — luôn cuối,
     // vị trí ổn định khi connection/filter state xuất hiện).
-    expect(viewTitle[0].command).toBe("vsdb.refreshSchema");
-    expect(viewTitle[1].command).toBe("vsdb.addConnection");
-    expect(viewTitle[2].command).toBe("vsdb.filterSchemaTree");
-    expect(viewTitle[3].command).toBe("vsdb.openAiSettings");
-    expect(viewTitle[4].command).toBe("vsdb.aiChat");
-    expect(viewTitle[5].command).toBe("vsdb.clearSchemaTreeFilter");
+    expect(viewTitle[0].command).toBe("UnicDB.refreshSchema");
+    expect(viewTitle[1].command).toBe("UnicDB.addConnection");
+    expect(viewTitle[2].command).toBe("UnicDB.filterSchemaTree");
+    expect(viewTitle[3].command).toBe("UnicDB.openAiSettings");
+    expect(viewTitle[4].command).toBe("UnicDB.aiChat");
+    expect(viewTitle[5].command).toBe("UnicDB.clearSchemaTreeFilter");
 
     // Empty state: viewsWelcome thay cho tree node "No connections" — không còn
     // node placeholder nào trong tree.
     const welcome = pkg.contributes.viewsWelcome?.find(
-      (w: { view: string }) => w.view === "vsdb.schemaTree",
+      (w: { view: string }) => w.view === "UnicDB.schemaTree",
     );
-    expect(welcome?.contents).toContain("command:vsdb.addConnection");
+    expect(welcome?.contents).toContain("command:UnicDB.addConnection");
 
     // configuration
     expect(pkg.contributes.configuration).toBeTruthy();
-    expect(pkg.contributes.configuration.properties["vsdb.showRunLens"]).toBeTruthy();
-    expect(pkg.contributes.configuration.properties["vsdb.showRunLens"].type).toBe("boolean");
-    expect(pkg.contributes.configuration.properties["vsdb.batchSize"]).toBeTruthy();
-    expect(pkg.contributes.configuration.properties["vsdb.batchSize"].type).toBe("number");
+    expect(pkg.contributes.configuration.properties["UnicDB.showRunLens"]).toBeTruthy();
+    expect(pkg.contributes.configuration.properties["UnicDB.showRunLens"].type).toBe("boolean");
+    expect(pkg.contributes.configuration.properties["UnicDB.batchSize"]).toBeTruthy();
+    expect(pkg.contributes.configuration.properties["UnicDB.batchSize"].type).toBe("number");
   });
 
   it("package.json declares hideSystemSchemas setting enabled by default", () => {
     const pkgPath = path.resolve(__dirname, "..", "package.json");
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-    const setting = pkg.contributes.configuration.properties["vsdb.hideSystemSchemas"];
+    const setting = pkg.contributes.configuration.properties["UnicDB.hideSystemSchemas"];
 
     expect(setting).toBeTruthy();
     expect(setting.type).toBe("boolean");
@@ -172,34 +172,34 @@ describe("scaffold", () => {
 
   // ===== TASK-605: Run .sh fix (activation events + shellscript config)  =====
 
-  it("Test #1 (TASK-605) — activationEvents có 'onCommand:vsdb.runScript' và 'onLanguage:shellscript'", () => {
+  it("Test #1 (TASK-605) — activationEvents có 'onCommand:UnicDB.runScript' và 'onLanguage:shellscript'", () => {
     const pkgPath = path.resolve(__dirname, "..", "package.json");
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
     const events: string[] = Array.isArray(pkg.activationEvents) ? pkg.activationEvents : [];
-    expect(events).toContain("onCommand:vsdb.runScript");
+    expect(events).toContain("onCommand:UnicDB.runScript");
     expect(events).toContain("onLanguage:shellscript");
   });
 
-  it("Test #2 (TASK-605) — editor/title menu có vsdb.runScript cho shellscript + command có icon + showRunLensSh config", () => {
+  it("Test #2 (TASK-605) — editor/title menu có UnicDB.runScript cho shellscript + command có icon + showRunLensSh config", () => {
     const pkgPath = path.resolve(__dirname, "..", "package.json");
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
 
     const editorTitle = pkg.contributes?.menus?.["editor/title"] ?? [];
     const runScriptEntry = editorTitle.find(
-      (m: { command: string }) => m.command === "vsdb.runScript",
+      (m: { command: string }) => m.command === "UnicDB.runScript",
     );
-    expect(runScriptEntry, "editor/title menu cần có vsdb.runScript").toBeTruthy();
+    expect(runScriptEntry, "editor/title menu cần có UnicDB.runScript").toBeTruthy();
     expect(runScriptEntry.when).toMatch(/shellscript/);
     expect(runScriptEntry.group).toBe("navigation");
 
     const runScriptCmd = pkg.contributes.commands.find(
-      (c: { command: string }) => c.command === "vsdb.runScript",
+      (c: { command: string }) => c.command === "UnicDB.runScript",
     );
     expect(runScriptCmd).toBeTruthy();
     expect(runScriptCmd.icon).toMatch(/^\$\(/);
 
-    const showRunLensSh = pkg.contributes.configuration?.properties?.["vsdb.showRunLensSh"];
-    expect(showRunLensSh, "vsdb.showRunLensSh config phải tồn tại").toBeTruthy();
+    const showRunLensSh = pkg.contributes.configuration?.properties?.["UnicDB.showRunLensSh"];
+    expect(showRunLensSh, "UnicDB.showRunLensSh config phải tồn tại").toBeTruthy();
     expect(showRunLensSh.type).toBe("boolean");
     expect(showRunLensSh.default).toBe(true);
   });

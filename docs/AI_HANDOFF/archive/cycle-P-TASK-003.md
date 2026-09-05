@@ -20,8 +20,8 @@ NO publishing — no `vsce publish`.
   cycles M–P (ACP engine + permissions + detail, builtin streaming + live tool steps,
   packaging pass); one line per prior version 1.5.1, 1.5.0 from git log
 - `docs/RELEASE.md` — (new) exact steps: `npm test` → `npm run typecheck` → `npm run
-  package` → `unzip -l vsdb-*.vsix` checklist (same assertions as Test Cases below) →
-  install locally via `scripts/install-vsdb.sh --local <vsix> --dry-run` → publish later
+  package` → `unzip -l UnicDB-*.vsix` checklist (same assertions as Test Cases below) →
+  install locally via `scripts/install-UnicDB.sh --local <vsix> --dry-run` → publish later
   (`vsce publish` documented but marked out-of-scope)
 - `.vscodeignore` — expected NO edits (already excludes src/, webview/, tests/, docs/,
   node_modules/, `**/*.map`, agent dirs); if a required entry is missing in the produced
@@ -31,13 +31,13 @@ NO publishing — no `vsce publish`.
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | artifact (happy) | package builds | `npm run package` exit 0; `vsdb-1.6.0.vsix` exists in repo root | clean `npm run compile` via vscode:prepublish |
+| 1 | artifact (happy) | package builds | `npm run package` exit 0; `UnicDB-1.6.0.vsix` exists in repo root | clean `npm run compile` via vscode:prepublish |
 | 2 | edge (exclusion) | no source/test/dev bloat | `unzip -l` output contains NO lines matching `src/`, `node_modules/`, `tests/`, `docs/`, `webview/`, `.map` | artifact from #1 |
 | 3 | edge (inclusion) | runtime assets present | listing contains `dist/extension.js`, `dist/webview.js`, `dist/webview.css`, `dist/aiChatPanel.js`, `media/icon.png`, `README.md`, `LICENSE`, `CHANGELOG.md`, `package.json`, `extension.vsixmanifest` | artifact from #1 |
 | 4 | regression | metadata intact | embedded `package.json` shows `"version":"1.6.0"`, license MIT, repository URL unchanged; `npm run typecheck` exit 0 after edits | post-edit tree |
 
 Verification evidence: paste `unzip -l` filtered output + grep of embedded package.json
-(`unzip -p vsdb-1.6.0.vsix extension/package.json | head`) into Executor Report.
+(`unzip -p UnicDB-1.6.0.vsix extension/package.json | head`) into Executor Report.
 
 ## Test Files
 
@@ -49,7 +49,7 @@ Verification evidence: paste `unzip -l` filtered output + grep of embedded packa
 ## Verification Commands
 
 ```bash
-npm run typecheck && npm run package && unzip -l vsdb-1.6.0.vsix
+npm run typecheck && npm run package && unzip -l UnicDB-1.6.0.vsix
 ```
 
 ## Acceptance Criteria
@@ -67,8 +67,8 @@ npm run typecheck && npm run package && unzip -l vsdb-1.6.0.vsix
 ## Interfaces
 
 - Consumes: `npm run package` / `vscode:prepublish` scripts (`package.json:362-363`),
-  `scripts/install-vsdb.sh --dry-run` (referenced by RELEASE.md only).
-- Produces: `vsdb-1.6.0.vsix` artifact + `docs/RELEASE.md` procedure (documentation only;
+  `scripts/install-UnicDB.sh --dry-run` (referenced by RELEASE.md only).
+- Produces: `UnicDB-1.6.0.vsix` artifact + `docs/RELEASE.md` procedure (documentation only;
   no code symbols).
 
 ---
@@ -89,16 +89,16 @@ STATUS: DONE
 EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic-code
 EXECUTOR_SUBAGENT: -
-SUMMARY: Bumped version 1.5.1→1.6.0; created CHANGELOG.md (Keep-a-Changelog, 1.6.0/1.5.1/1.5.0); created docs/RELEASE.md (typecheck→test→compile→package→artifact assertions→local-install dry-run); added missing vitest.integration-all.config.ts to .vscodeignore; packaged vsdb-1.6.0.vsix (1.55 MB, 15 files, no forbidden paths); metadata audit (repository, license MIT, engines) unchanged.
+SUMMARY: Bumped version 1.5.1→1.6.0; created CHANGELOG.md (Keep-a-Changelog, 1.6.0/1.5.1/1.5.0); created docs/RELEASE.md (typecheck→test→compile→package→artifact assertions→local-install dry-run); added missing vitest.integration-all.config.ts to .vscodeignore; packaged UnicDB-1.6.0.vsix (1.55 MB, 15 files, no forbidden paths); metadata audit (repository, license MIT, engines) unchanged.
 TEST_PLAN_FOLLOWED: task §4 (artifact assertions 1-4)
 FILES_CHANGED:
   - package.json: "version": "1.5.1" → "1.6.0" (single-line; no other keys changed).
   - CHANGELOG.md: (new) Keep-a-Changelog format with [1.6.0] / [1.5.1] / [1.5.0] sections; 1.6.0 entry summarizes cycles M–P (ACP engine + permissions, permission detail sanitizer + collapsible rendering, builtin streaming + live tool steps).
-  - docs/RELEASE.md: (new) exact runbook: typecheck → test → compile → package → unzip -l assertions → install-vsdb.sh --local <vsix> --dry-run; vsce publish documented as out-of-scope.
+  - docs/RELEASE.md: (new) exact runbook: typecheck → test → compile → package → unzip -l assertions → install-UnicDB.sh --local <vsix> --dry-run; vsce publish documented as out-of-scope.
   - .vscodeignore: added `vitest.integration-all.config.ts` (was leaking into the artifact on first package run; first build emitted `extension/vitest.integration-all.config.ts`). Repository URL, license, engines, icon, keywords audited — all already correct, no other changes.
 TESTS_ADDED: N/A — task explicitly sanctions shell-based artifact assertions instead of vitest.
 VERIFICATION:
-  command: npm run typecheck && npm run package && unzip -l vsdb-1.6.0.vsix
+  command: npm run typecheck && npm run package && unzip -l UnicDB-1.6.0.vsix
   result: typecheck exit 0; vsce package exit 0; artifact 1,620,697 bytes
   artifact_listing (filtered, post-ignore-fix):
       2898  extension.vsixmanifest
@@ -106,7 +106,7 @@ VERIFICATION:
      15807  extension/readme.md
       1067  extension/LICENSE.txt
       2523  extension/changelog.md
-      1005  extension/media/vsdb.svg
+      1005  extension/media/UnicDB.svg
        956  extension/media/icon.png
     2300107  extension/dist/webview.js
      18696  extension/dist/webview.css
@@ -116,10 +116,10 @@ VERIFICATION:
      10192  extension/dist/aiSettingsForm.js
      14468  extension/dist/aiChatPanel.js
   exclusion_check (must produce 0 matches):
-      unzip -l vsdb-1.6.0.vsix | grep -E '(^|/)src/|(^|/)node_modules/|(^|/)tests/|(^|/)docs/|(^|/)webview/|\.map$|vitest\.integration-all'
+      unzip -l UnicDB-1.6.0.vsix | grep -E '(^|/)src/|(^|/)node_modules/|(^|/)tests/|(^|/)docs/|(^|/)webview/|\.map$|vitest\.integration-all'
       → no matches (clean)
-  embedded_package_json: {"version":"1.6.0","license":"MIT","repository":{"type":"git","url":"https://github.com/lengockhoa/VSDB"},"engines":{"vscode":"^1.75.0"}}
-  local_install_dry_run: bash scripts/install-vsdb.sh --local vsdb-1.6.0.vsix --dry-run → exit 0, "Using code CLI: /Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+  embedded_package_json: {"version":"1.6.0","license":"MIT","repository":{"type":"git","url":"https://github.com/lengockhoa/UnicDB"},"engines":{"vscode":"^1.75.0"}}
+  local_install_dry_run: bash scripts/install-UnicDB.sh --local UnicDB-1.6.0.vsix --dry-run → exit 0, "Using code CLI: /Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
 ISSUES: First package run shipped `extension/vitest.integration-all.config.ts` because the existing `.vscodeignore` listed `vitest.config.ts` and `vitest.integration.config.ts` but missed the `-all` variant. Fixed in `.vscodeignore`; rebuilt artifact excludes it. No publish attempted (vsce publish is out of scope per task).
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review
@@ -135,7 +135,7 @@ VERDICT: CHANGES-REQUESTED
 REVIEWER_MODEL: unic/unic-smart
 EXECUTOR_MODEL: unic/unic-code
 VERIFICATION_RERUN:
-  command: rm -f vsdb-1.6.0.vsix && npm run package && unzip -l vsdb-1.6.0.vsix (forbidden/required greps, embedded package.json, install-vsdb.sh --local --dry-run)
+  command: rm -f UnicDB-1.6.0.vsix && npm run package && unzip -l UnicDB-1.6.0.vsix (forbidden/required greps, embedded package.json, install-UnicDB.sh --local --dry-run)
   result: PASS — 15 files 1.55 MB; 0 forbidden matches (src//tests//docs//webview//.map/vitest); 10/10 required paths; embedded "version":"1.6.0"/MIT/repo URL; dry-run exit 0; vsix gitignored via *.vsix (artifact correctly out of git)
 TEST_PLAN_COVERAGE: all-followed (assertions 1-4 independently re-verified; .vscodeignore vitest.integration-all.config.ts addition justified and sanctioned by task clause)
 FINDINGS:
@@ -150,7 +150,7 @@ NOTES: Artifact build itself is reproducible and clean — no executor defect in
 ## Executor Report — fix round 1 (orchestrator)
 
 - CHANGELOG 1.6.0 entry now covers cycles I–P (I–L bullets from archive/HISTORY.md facts; v1.5.1 tag sits at cycle H).
-- Rebuilt: `npm run package` exit 0 → vsdb-1.6.0.vsix (15 files, 1.55 MB); 0 forbidden paths (src/, node_modules); embedded extension/changelog.md contains Cycle I–O entries; embedded package.json version 1.6.0.
+- Rebuilt: `npm run package` exit 0 → UnicDB-1.6.0.vsix (15 files, 1.55 MB); 0 forbidden paths (src/, node_modules); embedded extension/changelog.md contains Cycle I–O entries; embedded package.json version 1.6.0.
 
 ## Reviewer Verdict — re-review (fix round 1)
 
@@ -158,7 +158,7 @@ VERDICT: APPROVED
 REVIEWER_MODEL: unic/unic-smart
 EXECUTOR_MODEL: unic/unic-code
 VERIFICATION_RERUN:
-  command: rm -f vsdb-1.6.0.vsix && npm run typecheck && npm run package && unzip -l vsdb-1.6.0.vsix (+ embedded changelog/package.json greps, forbidden-path grep)
+  command: rm -f UnicDB-1.6.0.vsix && npm run typecheck && npm run package && unzip -l UnicDB-1.6.0.vsix (+ embedded changelog/package.json greps, forbidden-path grep)
   result: PASS — typecheck exit 0; vsce package exit 0; 15 files / 1.55 MB; 0 forbidden paths; embedded changelog.md carries Cycle I–O bullets; embedded package.json "version":"1.6.0", "license":"MIT"
 TEST_PLAN_COVERAGE: all-followed (assertions 1–4; prior finding CHANGELOG.md:6-38 resolved — I–L bullets present and factually consistent with archive/HISTORY.md)
 FINDINGS:

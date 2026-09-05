@@ -1,8 +1,8 @@
 // src/config/types.ts
-// Types dùng chung cho VSDB. TASK-002 định nghĩa, TASK-003..007 consume.
+// Types dùng chung cho UnicDB. TASK-002 định nghĩa, TASK-003..007 consume.
 
 /**
- * Driver DB mà VSDB hỗ trợ.
+ * Driver DB mà UnicDB hỗ trợ.
  * - postgres: PostgreSQL (pg)
  * - mysql: MySQL / MariaDB (mysql2)
  * - mssql: SQL Server (tedious)

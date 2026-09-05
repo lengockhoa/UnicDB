@@ -47,7 +47,7 @@ describeIfBuilt("VS Code theme via Theming API (TASK-401 fix round 2)", () => {
 
   itIfBuilt("input rules override UA white inputs on dark themes (host class)", () => {
     const re =
-      /\.vsdb-ag-host\s+input\.ag-input-field-input[\s\S]*?\.vsdb-ag-host\s+textarea\.ag-input-field-input\s*\{([^}]*)\}/;
+      /\.UnicDB-ag-host\s+input\.ag-input-field-input[\s\S]*?\.UnicDB-ag-host\s+textarea\.ag-input-field-input\s*\{([^}]*)\}/;
     const match = css!.match(re);
     expect(match, "input ruleset not found in bundled CSS").not.toBeNull();
     const body = match![1];

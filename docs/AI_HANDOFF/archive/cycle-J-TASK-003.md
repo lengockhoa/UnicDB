@@ -150,14 +150,14 @@ Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 
 **RED (agent.ts absent)** — pasted verbatim:
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-003
 
  ❯ src/ai/__tests__/agent.test.ts  (0 test)
 
 ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
 
  FAIL  src/ai/__tests__/agent.test.ts [ src/ai/__tests__/agent.test.ts ]
-Error: Failed to load url ../agent (resolved id: ../agent) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003/src/ai/__tests__/agent.test.ts. Does the file exist?
+Error: Failed to load url ../agent (resolved id: ../agent) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-003/src/ai/__tests__/agent.test.ts. Does the file exist?
  ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
 
  Test Files  1 failed (1)
@@ -166,7 +166,7 @@ Error: Failed to load url ../agent (resolved id: ../agent) in /Volumes/KHOA_EXTE
 
 **GREEN (after implementing src/ai/agent.ts)** — pasted verbatim:
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-003
 
  ✓ src/ai/__tests__/agent.test.ts  (12 tests) 5ms
 

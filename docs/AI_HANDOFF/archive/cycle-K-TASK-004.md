@@ -1,7 +1,7 @@
 # TASK-004 — Agent↔panel integration + guardrails + README
 
 ## Goal
-Wire `vsdb.aiChat` into extension.ts with real deps (AiConfigStore + createProviderClient + connection-manager adapterFactory), end-to-end test with fake fetch, document the guardrails.
+Wire `UnicDB.aiChat` into extension.ts with real deps (AiConfigStore + createProviderClient + connection-manager adapterFactory), end-to-end test with fake fetch, document the guardrails.
 
 ## Target Files
 - `src/extension.ts` (edit: register the command that creates AiChatPanel with real deps), `src/extension.test.ts` (add wiring tests)
@@ -33,7 +33,7 @@ const adapterFactory: AdapterFactory = async () => { /* connectionManager active
 | 2 | regression | model calls run_sql DROP TABLE | tool returns reject string; runQuery never receives DML |
 | 3 | edge (unconfigured) | loadConfig resolves null | info message + opens the settings form; no crash |
 | 4 | edge (offline) | fake fetch returns 500 | error bubble with ProviderError message (already scrubbed), panel stays alive |
-| 5 | wiring | extension.ts registers vsdb.aiChat | command appears in subscriptions; dispose clean |
+| 5 | wiring | extension.ts registers UnicDB.aiChat | command appears in subscriptions; dispose clean |
 
 ## Test Files
 `src/ui/__tests__/aiChatE2e.test.ts`, `src/extension.test.ts` (additions)
@@ -55,29 +55,29 @@ npm run compile && npx vitest run src/ui/__tests__/aiChatE2e.test.ts src/extensi
 ### RED Output
 
 ```
-FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #5 — vsdb.aiChat is registered in subscriptions after activate()
+FAIL  src/extension.test.ts > TASK-004 — UnicDB.aiChat wiring > Test #5 — UnicDB.aiChat is registered in subscriptions after activate()
 AssertionError: expected false to be true // Object.is equality
  ❯ src/extension.test.ts:960:57
-    960|     expect(state.registeredCommands.has("vsdb.aiChat")).toBe(true);
+    960|     expect(state.registeredCommands.has("UnicDB.aiChat")).toBe(true);
 
-FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #5b — dispose() clean: deactivate() does not throw after calling vsdb.aiChat
+FAIL  src/extension.test.ts > TASK-004 — UnicDB.aiChat wiring > Test #5b — dispose() clean: deactivate() does not throw after calling UnicDB.aiChat
 AssertionError: expected undefined not to be undefined
  ❯ src/extension.test.ts:969:16
     969|     expect(fn).toBeDefined();
 
-FAIL  src/extension.test.ts > TASK-004 — vsdb.aiChat wiring > Test #3 — loadConfig() resolves null → info message + opens AI Settings form; no crash
+FAIL  src/extension.test.ts > TASK-004 — UnicDB.aiChat wiring > Test #3 — loadConfig() resolves null → info message + opens AI Settings form; no crash
 AssertionError: expected undefined not to be undefined
  ❯ src/extension.test.ts:985:16
     985|     expect(fn).toBeDefined();
 ```
 
-3 RED tests in `src/extension.test.ts` confirmed: `vsdb.aiChat` was not registered
+3 RED tests in `src/extension.test.ts` confirmed: `UnicDB.aiChat` was not registered
 in `state.registeredCommands` (extension.ts activate() lacked the wiring).
 
 ### GREEN Output
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
  ✓ src/ui/__tests__/aiChatPanel.test.ts  (9 tests) 5ms
  ✓ src/ui/__tests__/aiChatE2e.test.ts  (3 tests) 5ms
  ✓ src/extension.test.ts  (33 tests) 79ms
@@ -92,12 +92,12 @@ Plus full `src/ai` + `src/ui` sweep (395 tests / 39 files, 5.83s) — all pass.
 unic-code
 
 ### FILES_CHANGED
-- `src/extension.ts` — register `vsdb.aiChat` (spec wiring: `AiConfigStore(ctx)`,
+- `src/extension.ts` — register `UnicDB.aiChat` (spec wiring: `AiConfigStore(ctx)`,
   `createProviderClient` per `complete()`, `adapterFactory` resolves the active
   POSTGRES adapter else null); `commandOpenAiChat` does unconfigured fallback
-  (`loadConfig` null → info + `executeCommand("vsdb.openAiSettings")`); `aiChatPanel`
+  (`loadConfig` null → info + `executeCommand("UnicDB.openAiSettings")`); `aiChatPanel`
   cached/disposed.
-- `src/extension.test.ts` — 3 new tests under `TASK-004 — vsdb.aiChat wiring`:
+- `src/extension.test.ts` — 3 new tests under `TASK-004 — UnicDB.aiChat wiring`:
   Test #5 (registered), Test #5b (deactivate clean), Test #3 (unconfigured fallback).
 - `src/ui/__tests__/aiChatE2e.test.ts` (new) — 3 E2E tests against REAL
   `runAgent` + REAL `createProviderClient({fetch})`: happy 2-step, DML regression
@@ -110,7 +110,7 @@ unic-code
 ### TESTS_ADDED
 - `src/ui/__tests__/aiChatE2e.test.ts` — 3 tests (happy 2-step, DML regression,
   offline 500)
-- `src/extension.test.ts` — 3 tests (TASK-004 — vsdb.aiChat wiring describe)
+- `src/extension.test.ts` — 3 tests (TASK-004 — UnicDB.aiChat wiring describe)
 
 ### VERIFICATION
 - `npm run compile` → success (esbuild, 128ms, dist/* populated)

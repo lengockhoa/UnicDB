@@ -17,7 +17,7 @@ describe("buildDistinctValuesQuery", () => {
     expect(
       buildDistinctValuesQuery("SELECT * FROM t", "name", "postgres", "", 1000),
     ).toBe(
-      `SELECT DISTINCT "name" FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1 LIMIT 1001`,
+      `SELECT DISTINCT "name" FROM (SELECT * FROM t) UnicDB_distinct ORDER BY 1 LIMIT 1001`,
     );
   });
 
@@ -26,7 +26,7 @@ describe("buildDistinctValuesQuery", () => {
     expect(
       buildDistinctValuesQuery("SELECT * FROM t", "name", "mysql", "", 1000),
     ).toBe(
-      "SELECT DISTINCT `name` FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1 LIMIT 1001",
+      "SELECT DISTINCT `name` FROM (SELECT * FROM t) UnicDB_distinct ORDER BY 1 LIMIT 1001",
     );
   });
 
@@ -35,7 +35,7 @@ describe("buildDistinctValuesQuery", () => {
     expect(
       buildDistinctValuesQuery("SELECT * FROM t", "name", "mssql", "", 1000),
     ).toBe(
-      `SELECT DISTINCT TOP (1001) [name] FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1`,
+      `SELECT DISTINCT TOP (1001) [name] FROM (SELECT * FROM t) UnicDB_distinct ORDER BY 1`,
     );
   });
 
@@ -59,7 +59,7 @@ describe("buildDistinctValuesQuery", () => {
     expect(
       buildDistinctValuesQuery("SELECT * FROM t", 'we"ird', "postgres", "", 1000),
     ).toBe(
-      `SELECT DISTINCT "we""ird" FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1 LIMIT 1001`,
+      `SELECT DISTINCT "we""ird" FROM (SELECT * FROM t) UnicDB_distinct ORDER BY 1 LIMIT 1001`,
     );
   });
 
@@ -67,7 +67,7 @@ describe("buildDistinctValuesQuery", () => {
     expect(
       buildDistinctValuesQuery("SELECT * FROM t", "we`ird", "mysql", "", 1000),
     ).toBe(
-      "SELECT DISTINCT `we``ird` FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1 LIMIT 1001",
+      "SELECT DISTINCT `we``ird` FROM (SELECT * FROM t) UnicDB_distinct ORDER BY 1 LIMIT 1001",
     );
   });
 
@@ -75,7 +75,7 @@ describe("buildDistinctValuesQuery", () => {
     expect(
       buildDistinctValuesQuery("SELECT * FROM t", "we]ird", "mssql", "", 1000),
     ).toBe(
-      `SELECT DISTINCT TOP (1001) [we]]ird] FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1`,
+      `SELECT DISTINCT TOP (1001) [we]]ird] FROM (SELECT * FROM t) UnicDB_distinct ORDER BY 1`,
     );
   });
 
@@ -90,7 +90,7 @@ describe("buildDistinctValuesQuery", () => {
         1000,
       ),
     ).toBe(
-      `SELECT DISTINCT "name" FROM (SELECT * FROM analytics.events) vsdb_distinct ORDER BY 1 LIMIT 1001`,
+      `SELECT DISTINCT "name" FROM (SELECT * FROM analytics.events) UnicDB_distinct ORDER BY 1 LIMIT 1001`,
     );
   });
 
@@ -104,7 +104,7 @@ describe("buildDistinctValuesQuery", () => {
         1000,
       ),
     ).toBe(
-      `SELECT DISTINCT TOP (1001) [name] FROM (SELECT * FROM dbo.Events) vsdb_distinct ORDER BY 1`,
+      `SELECT DISTINCT TOP (1001) [name] FROM (SELECT * FROM dbo.Events) UnicDB_distinct ORDER BY 1`,
     );
   });
 
@@ -119,7 +119,7 @@ describe("buildDistinctValuesQuery", () => {
     );
     expect(out).not.toContain(");");
     expect(out).toBe(
-      `SELECT DISTINCT "name" FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1 LIMIT 1001`,
+      `SELECT DISTINCT "name" FROM (SELECT * FROM t) UnicDB_distinct ORDER BY 1 LIMIT 1001`,
     );
     expect(out.split(";").length).toBe(1);
   });
@@ -134,7 +134,7 @@ describe("buildDistinctValuesQuery", () => {
       1000,
     );
     expect(out).toBe(
-      `SELECT DISTINCT "name" FROM (SELECT * FROM t) vsdb_distinct WHERE id > 5 ORDER BY 1 LIMIT 1001`,
+      `SELECT DISTINCT "name" FROM (SELECT * FROM t) UnicDB_distinct WHERE id > 5 ORDER BY 1 LIMIT 1001`,
     );
   });
 
@@ -150,7 +150,7 @@ describe("buildDistinctValuesQuery", () => {
     expect(
       buildDistinctValuesQuery("SELECT * FROM t", "name", "postgres", ""),
     ).toBe(
-      `SELECT DISTINCT "name" FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1 LIMIT ${DISTINCT_VALUES_LIMIT + 1}`,
+      `SELECT DISTINCT "name" FROM (SELECT * FROM t) UnicDB_distinct ORDER BY 1 LIMIT ${DISTINCT_VALUES_LIMIT + 1}`,
     );
   });
 });

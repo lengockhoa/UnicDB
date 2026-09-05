@@ -174,7 +174,7 @@ export function newTabId(): string {
 }
 
 /** Memento key for persisted query history. Capped at 200 entries by the host. */
-export const CONSOLE_HISTORY_KEY = "vsdb.consoleHistory";
+export const CONSOLE_HISTORY_KEY = "UnicDB.consoleHistory";
 
 /** Cap on persisted history entries — the 201st run evicts the oldest. */
 export const CONSOLE_HISTORY_CAP = 200;
@@ -182,7 +182,7 @@ export const CONSOLE_HISTORY_CAP = 200;
 // ---- ARP-08 — Persisted draft model (TASK-ARP08-001) -------------------------
 
 /** Memento key for persisted console drafts (all tabs + active tab). */
-export const CONSOLE_DRAFTS_KEY = "vsdb.consoleDrafts";
+export const CONSOLE_DRAFTS_KEY = "UnicDB.consoleDrafts";
 
 /** Snapshot schema version. `parse` rejects any other value (fail-closed). */
 export const CONSOLE_DRAFT_SNAPSHOT_VERSION = 1;

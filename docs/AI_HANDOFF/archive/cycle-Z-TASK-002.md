@@ -103,7 +103,7 @@ Command 1 — `npm run compile` (worktree root):
   ...
 esbuild: build complete
 ```
-`dist/consolePanel.js` emitted; Console CSS rules (8 `vsdb-console*` matches) confirmed inside `dist/webview.css`. Bundler path edited: `esbuild.js` (repo root) — added `consolePanelConfig` to both the watch context/Promise array and the normal-build Promise array.
+`dist/consolePanel.js` emitted; Console CSS rules (8 `UnicDB-console*` matches) confirmed inside `dist/webview.css`. Bundler path edited: `esbuild.js` (repo root) — added `consolePanelConfig` to both the watch context/Promise array and the normal-build Promise array.
 
 Command 2 — `npx vitest run src/ui/__tests__/consolePanelBundle.test.ts`:
 ```
@@ -114,7 +114,7 @@ Command 2 — `npx vitest run src/ui/__tests__/consolePanelBundle.test.ts`:
 
 Command 3 — `npm run typecheck`:
 ```
-> vsdb@1.6.8 typecheck
+> UnicDB@1.6.8 typecheck
 > tsc --noEmit
 typecheck exit: 0
 ```
@@ -145,7 +145,7 @@ EXECUTOR_SUBAGENT: feature-implementer
 
 Scope kept tight — one implementation file + one test file:
 - `webview/consolePanelMain.ts`: added a document-level capture-phase `keydown` closer (`Escape` → hide, mirroring main.ts's overlay pattern; stopPropagation so the webview host doesn't also process it). Wired `hideContextMenu()` into the Cmd/Ctrl+Enter handler **before** `postRun()`. Click-away close already existed (kept as-is); menu is a singleton via `ensureContextMenu`, now explicitly commented/verified as never stacking.
-- `src/ui/__tests__/consolePanelBundle.test.ts`: added tests #8 (Escape closes open menu; reopen works with exactly one `.vsdb-console-contextmenu` node) and #9 (Ctrl/Cmd+Enter closes menu at execution while still posting runConsole exactly once per keystroke; document-body click closes an open menu without posting; triple right-click yields exactly 1 menu node + 1 context item).
+- `src/ui/__tests__/consolePanelBundle.test.ts`: added tests #8 (Escape closes open menu; reopen works with exactly one `.UnicDB-console-contextmenu` node) and #9 (Ctrl/Cmd+Enter closes menu at execution while still posting runConsole exactly once per keystroke; document-body click closes an open menu without posting; triple right-click yields exactly 1 menu node + 1 context item).
 
 RED_OUTPUT:
 
@@ -164,7 +164,7 @@ AssertionError: expected false to be true // Object.is equality
 
 Both failures are the exact finding (#8 Escape left menu open; #9 shortcut-run left menu open); all 7 pre-existing tests still passed in RED state.
 
-Verification Output (worktree /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002-fix):
+Verification Output (worktree /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-002-fix):
 
 Command 1 — `npm run compile`:
 ```
@@ -183,7 +183,7 @@ All three console suites together (`consolePanelBundle` + `consolePanel` + `cons
 
 Command 3 — `npm run typecheck`:
 ```
-> vsdb@1.6.8 typecheck
+> UnicDB@1.6.8 typecheck
 > tsc --noEmit
 (exit 0, no output = clean)
 ```

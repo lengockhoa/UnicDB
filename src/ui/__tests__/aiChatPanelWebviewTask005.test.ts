@@ -40,7 +40,7 @@ const compiled = execFileSync(
   { encoding: "utf8" },
 ).toString();
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -51,16 +51,16 @@ interface Harness {
 
 function makeHarness(): Harness {
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg: unknown) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi })
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi })
     .acquireVsCodeApi = () => api;
 
   document.body.innerHTML =
-    '<div id="vsdb-root" class="vsdb-form-body"></div>';
+    '<div id="UnicDB-root" class="UnicDB-form-body"></div>';
 
   const originalAdd = window.addEventListener.bind(window);
   let latestMessageHandler: ((ev: MessageEvent) => void) | null = null;
@@ -101,20 +101,20 @@ function sendBtnEl(): HTMLButtonElement {
 }
 
 function mentionDropdown(): HTMLDivElement | null {
-  return document.getElementById("vsdbMentionDropdown") as HTMLDivElement | null;
+  return document.getElementById("UnicDBMentionDropdown") as HTMLDivElement | null;
 }
 
 function mentionRows(): HTMLDivElement[] {
   const dd = mentionDropdown();
   if (!dd) return [];
   return Array.from(
-    dd.querySelectorAll<HTMLDivElement>(".vsdb-chat-mention-row"),
+    dd.querySelectorAll<HTMLDivElement>(".UnicDB-chat-mention-row"),
   );
 }
 
 function activeRow(): HTMLDivElement | null {
   for (const r of mentionRows()) {
-    if (r.classList.contains("vsdb-chat-mention-row-active")) return r;
+    if (r.classList.contains("UnicDB-chat-mention-row-active")) return r;
   }
   return null;
 }
@@ -207,7 +207,7 @@ describe("AiChatPanelWebview — dropdown DOM render (TASK-005 #2)", () => {
     expect(rows[0]?.textContent).toContain("public.users");
   });
 
-  it("#2b first row is initially active (vsdb-chat-mention-row-active)", () => {
+  it("#2b first row is initially active (UnicDB-chat-mention-row-active)", () => {
     const harness = makeHarness();
     harness.dispatch({ type: "init", hasHistory: false });
     const prompt = promptEl();
@@ -390,7 +390,7 @@ describe("AiChatPanelWebview — mention_miss inline notice (TASK-005 #8)", () =
     const harness = makeHarness();
     harness.dispatch({ type: "init", hasHistory: false });
     harness.dispatch({ type: "mention_miss", token: "public.nope" });
-    const miss = document.querySelector(".vsdb-chat-mention-miss");
+    const miss = document.querySelector(".UnicDB-chat-mention-miss");
     expect(miss).not.toBeNull();
     expect(miss?.textContent).toContain("Could not resolve @public.nope");
     expect(miss?.textContent).not.toContain("<script>");

@@ -7,13 +7,13 @@
 
 ## Goal
 
-Add the host-side `ConsolePanel`, register the `VSDB: Open Console` palette command, and route Console messages to the existing SQL execution and ResultsPanel flow. Saving SQL opens an OS save dialog and writes UTF-8 text; closing the panel retains nothing.
+Add the host-side `ConsolePanel`, register the `UnicDB: Open Console` palette command, and route Console messages to the existing SQL execution and ResultsPanel flow. Saving SQL opens an OS save dialog and writes UTF-8 text; closing the panel retains nothing.
 
 ## Target Files
 
 - `src/ui/consolePanel.ts` (new) — standalone `vscode.WebviewPanel` owner with strict CSP HTML, `asWebviewUri` URIs for both `dist/consolePanel.js` and the shared emitted `dist/webview.css`, validated message routing, injected run callback, and `showSaveDialog`/`workspace.fs.writeFile` save implementation.
-- `src/extension.ts` — create one ConsolePanel singleton during activation and register `vsdb.openConsole`; its run callback calls `sqlToRun(sql, { start: 0, end: sql.length }, 0, mgr.getActive()?.driver)` so the entire Console buffer is parsed, then passes all resulting statements to the existing `runStatements(mgr, runner, resultsPanel, statements)` flow.
-- `package.json` — contribute `onCommand:vsdb.openConsole` and `VSDB: Open Console` for Command Palette access only; no menu contribution.
+- `src/extension.ts` — create one ConsolePanel singleton during activation and register `UnicDB.openConsole`; its run callback calls `sqlToRun(sql, { start: 0, end: sql.length }, 0, mgr.getActive()?.driver)` so the entire Console buffer is parsed, then passes all resulting statements to the existing `runStatements(mgr, runner, resultsPanel, statements)` flow.
+- `package.json` — contribute `onCommand:UnicDB.openConsole` and `UnicDB: Open Console` for Command Palette access only; no menu contribution.
 - `src/ui/__tests__/consolePanel.test.ts` (new) — mocked-VS-Code host-panel tests.
 - `src/extension.test.ts` — command-registration and execution-delegation coverage, following the test file mapped to `src/extension.ts`.
 
@@ -21,7 +21,7 @@ Add the host-side `ConsolePanel`, register the `VSDB: Open Console` palette comm
 
 | # | Type | Test Name | Expected | Pre-state / Fixture |
 |---|------|-----------|----------|---------------------|
-| 1 | happy | palette command opens empty styled Console | The contributed `vsdb.openConsole` command calls ConsolePanel `show()` and creates/reveals a `vsdb.console` panel whose HTML references `consolePanel.js` and a `webview.css` `asWebviewUri` stylesheet link under the established local `style-src` CSP. | Mocked extension context and VS Code APIs. |
+| 1 | happy | palette command opens empty styled Console | The contributed `UnicDB.openConsole` command calls ConsolePanel `show()` and creates/reveals a `UnicDB.console` panel whose HTML references `consolePanel.js` and a `webview.css` `asWebviewUri` stylesheet link under the established local `style-src` CSP. | Mocked extension context and VS Code APIs. |
 | 2 | happy | run message executes every statement in the full buffer through shared flow | `{ type: "runConsole", sql: "SELECT 1; SELECT 2" }` calls `sqlToRun(sql, { start: 0, end: sql.length }, 0, activeDriver)` and invokes `runStatements(mgr, runner, resultsPanel, statements)` with both parsed statements in source order, so ResultsPanel receives the existing run flow rather than a grid in Console. | Active connection and mocked runner/results panel. |
 | 3 | edge-cancel | cancelled save is a no-op | A save message followed by `showSaveDialog` returning `undefined` calls neither `workspace.fs.writeFile` nor an error notification. | Textarea SQL and cancelled dialog. |
 | 4 | edge-filesystem | accepted save writes exact UTF-8 text | The dialog receives default URI `console_20260102_030405.sql` and filters `{ SQL: ["sql"], "All Files": ["*"] }`; accepting `/tmp/query.sql` writes the source SQL's UTF-8 bytes to that URI. | Fixed clock and mocked URI/fs. |
@@ -45,7 +45,7 @@ npm run typecheck
 
 ## Acceptance Criteria
 
-- [ ] Command Palette exposes `VSDB: Open Console` through `vsdb.openConsole`, with a matching activation event and no unrequested editor/view menu item.
+- [ ] Command Palette exposes `UnicDB: Open Console` through `UnicDB.openConsole`, with a matching activation event and no unrequested editor/view menu item.
 - [ ] The Console panel is idempotently revealed while live; dispose clears its host reference and reopening starts with empty UI state.
 - [ ] Console execution calls `sqlToRun(sql, { start: 0, end: sql.length }, 0, mgr.getActive()?.driver)` and passes every resulting statement to `runStatements(mgr, runner, resultsPanel, statements)`, retaining existing dangerous-statement confirmation, keyword qualification, runner updates, and ResultsPanel rendering.
 - [ ] Save opens an SQL-filtered OS dialog using the TASK-001 filename helper; accepted saves write UTF-8 SQL and cancellation is a no-op.
@@ -61,7 +61,7 @@ npm run typecheck
 ## Interfaces
 
 - Consumes: `isConsoleToHostMessage(value: unknown): value is ConsoleToHostMessage` and `suggestSaveFileName(date: Date): string` from `src/ui/consolePanelMessages.ts` (TASK-001); browser messages emitted by `dist/consolePanel.js` and Console CSS emitted in `dist/webview.css` (TASK-002); `sqlToRun(sql: string, selection: { start: number; end: number } | undefined, cursorOffset: number, dialect?: SqlDialect): { statements: ParsedStatement[]; mode: "selection" | "cursor" }` from `src/core/statementParser.ts`; and existing `runStatements(mgr, runner, panel, statements)` in `src/extension.ts`.
-- Produces: `vsdb.openConsole` command and a `ConsolePanel` host surface that links the local shared stylesheet and accepts `ConsoleToHostMessage` values. Its run callback delegates valid SQL as the full-buffer call `sqlToRun(sql, { start: 0, end: sql.length }, 0, mgr.getActive()?.driver)`.
+- Produces: `UnicDB.openConsole` command and a `ConsolePanel` host surface that links the local shared stylesheet and accepts `ConsoleToHostMessage` values. Its run callback delegates valid SQL as the full-buffer call `sqlToRun(sql, { start: 0, end: sql.length }, 0, mgr.getActive()?.driver)`.
 
 ---
 
@@ -83,18 +83,18 @@ RED_OUTPUT:
 ❯ src/ui/__tests__/consolePanel.test.ts (0 test)
  FAIL src/ui/__tests__/consolePanel.test.ts
 Error: Failed to load url ../consolePanel (resolved id: ../consolePanel)
-in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-003/src/ui/__tests__/consolePanel.test.ts.
+in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-003/src/ui/__tests__/consolePanel.test.ts.
 Does the file exist?
  Test Files  1 failed (1)
 
-(npx vitest run src/extension.test.ts -t "vsdb.openConsole")
-FAIL ... #C1 registers vsdb.openConsole on activate → TypeError: fn is not a function
-FAIL ... #C3 invoking vsdb.openConsole opens exactly one vsdb.console webview panel
+(npx vitest run src/extension.test.ts -t "UnicDB.openConsole")
+FAIL ... #C1 registers UnicDB.openConsole on activate → TypeError: fn is not a function
+FAIL ... #C3 invoking UnicDB.openConsole opens exactly one UnicDB.console webview panel
 FAIL ... #C4 runConsole message runs the WHOLE buffer...
 FAIL ... #C5 save message with cancelled dialog does not throw and writes nothing
  Tests  5 failed | 63 skipped (68)
 ```
-(`vsdb.openConsole` was unregistered and `src/ui/consolePanel.ts` did not exist —
+(`UnicDB.openConsole` was unregistered and `src/ui/consolePanel.ts` did not exist —
 the expected pre-implementation failure reasons.)
 
 Verification Output:

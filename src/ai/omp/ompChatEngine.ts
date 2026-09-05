@@ -17,7 +17,7 @@
 // through HostMcp.call(name, args) which already wraps the underlying tool in
 // DbToolPermissionGate (T1's hostMcp layer owns that). The host's MCP HTTP
 // bridge is the same shape proven in ACP-TOOLS-research.md:
-//   mcpServers: [{ type: "http", name: "vsdb", url: "http://127.0.0.1:<port>",
+//   mcpServers: [{ type: "http", name: "UnicDB", url: "http://127.0.0.1:<port>",
 //                  headers: [] }]
 //
 // Privacy invariant (cycle AA): this module NEVER embeds the apiKey, the DB
@@ -190,7 +190,7 @@ function mcpServersDescriptor(
   return [
     {
       type: "http",
-      name: "vsdb",
+      name: "UnicDB",
       url: hostMcp.url,
       headers: [],
     },

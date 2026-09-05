@@ -29,7 +29,7 @@ describe("audit export envelope (TASK-AIX07-002)", () => {
       version: number;
       turns: Array<{ turnId: string; truncated: boolean }>;
     };
-    expect(parsed.schema).toBe("vsdb.ai.audit-export");
+    expect(parsed.schema).toBe("UnicDB.ai.audit-export");
     expect(parsed.version).toBe(1);
     expect(parsed.turns.map((t) => t.turnId)).toEqual(["turn-a", "turn-b"]);
     expect(parsed.turns.every((t) => typeof t.truncated === "boolean")).toBe(true);
@@ -109,7 +109,7 @@ describe("audit export envelope (TASK-AIX07-002)", () => {
       version: number;
       turns: Array<{ turnId: string; events: Array<{ payload: unknown }> }>;
     };
-    expect(parsed.schema).toBe("vsdb.ai.audit-export");
+    expect(parsed.schema).toBe("UnicDB.ai.audit-export");
     expect(parsed.version).toBe(1);
     expect(parsed.turns).toHaveLength(1);
     expect(parsed.turns[0]!.turnId).toBe("turn-a");

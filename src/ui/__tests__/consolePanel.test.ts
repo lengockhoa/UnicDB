@@ -1,7 +1,7 @@
 // src/ui/__tests__/consolePanel.test.ts — TASK-003 (cycle Z) host-panel tests.
 //
 // Covers the ConsolePanel host surface wired in this task:
-//   - palette-command path: show() opens exactly one `vsdb.console` webview
+//   - palette-command path: show() opens exactly one `UnicDB.console` webview
 //     whose HTML loads dist/consolePanel.js and links the SHARED emitted
 //     dist/webview.css via asWebviewUri under the established strict CSP
 //     (`style-src ${cspSource} 'unsafe-inline'`) — reviewer finding §3.3.
@@ -143,7 +143,7 @@ async function until(cond: () => boolean): Promise<void> {
 
 function consolePanels(): MockPanel[] {
   return state.panels.filter(
-    (p) => (p as { viewType?: string }).viewType === "vsdb.console",
+    (p) => (p as { viewType?: string }).viewType === "UnicDB.console",
   ) as unknown as MockPanel[];
 }
 
@@ -173,7 +173,7 @@ afterEach(() => {
 //      shared webview.css linked under the established strict CSP.
 // ============================================================================
 describe("ConsolePanel — open (case 1)", () => {
-  it("#1a show() creates a vsdb.console panel whose HTML references consolePanel.js + webview.css stylesheet link under strict CSP", () => {
+  it("#1a show() creates a UnicDB.console panel whose HTML references consolePanel.js + webview.css stylesheet link under strict CSP", () => {
     const panel = new ConsolePanel({ extensionUri: extUri, onRun: vi.fn() });
     panel.show();
 
@@ -182,7 +182,7 @@ describe("ConsolePanel — open (case 1)", () => {
       .mock.calls[0] as unknown as [string, string, unknown, Record<string, unknown>];
     expect(title).toMatch(/Console/i);
     // Established panel options: scripts on, dist local resource root, and
-    // hidden-state retention matching every other VSDB form panel.
+    // hidden-state retention matching every other UnicDB form panel.
     expect(options.enableScripts).toBe(true);
     expect(options.retainContextWhenHidden).toBe(true);
 

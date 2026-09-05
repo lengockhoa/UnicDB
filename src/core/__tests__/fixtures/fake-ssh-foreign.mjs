@@ -5,9 +5,9 @@
 // must defeat: the forward line prints, but listeningPids(port) resolves to
 // the binder, so proveOwnership sees a PID mismatch and must fail closed
 // (SIGKILL the child + reject). The TEST terminates the detached binder via
-// the VSDB_BINDER_PID marker / binder-pid control file and releases the port.
+// the UnicDB_BINDER_PID marker / binder-pid control file and releases the port.
 //
-// Control files (written under $VSDB_TEST_FOREIGN_DIR, set by the test):
+// Control files (written under $UnicDB_TEST_FOREIGN_DIR, set by the test):
 //   child-pid    — this spawned child's PID (the manager's `child.pid`)
 //   binder-pid   — the detached binder's PID, or "0" if it failed to bind
 //   caught-sigterm — written only if this child receives SIGTERM (a SIGKILL
@@ -19,8 +19,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const controlDir =
-  process.env.VSDB_TEST_FOREIGN_DIR ||
-  mkdtempSync(join(tmpdir(), "vsdb-foreign-"));
+  process.env.UnicDB_TEST_FOREIGN_DIR ||
+  mkdtempSync(join(tmpdir(), "UnicDB-foreign-"));
 
 // Parse the manager's `-L 127.0.0.1:<local>:127.0.0.1:<target>` argv.
 const lIdx = process.argv.findIndex((a) => a === "-L");
@@ -74,7 +74,7 @@ for (let i = 0; i < 100; i++) {
 const binderPid = bound ? Number(readFileSync(pidFile, "utf8").trim()) : 0;
 writeFileSync(join(controlDir, "binder-pid"), String(binderPid));
 
-process.stderr.write(`VSDB_BINDER_PID=${binderPid}\n`);
+process.stderr.write(`UnicDB_BINDER_PID=${binderPid}\n`);
 // The exact OpenSSH debug line the manager's readiness scan matches.
 process.stderr.write(
   `Local forwarding listening on 127.0.0.1 port ${localPort}.\n`,

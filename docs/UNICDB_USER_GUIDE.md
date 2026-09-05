@@ -1,14 +1,14 @@
-# Hướng dẫn sử dụng VSDB
+# Hướng dẫn sử dụng UnicDB
 
-> Hướng dẫn toàn bộ các dùng bộ VSDB — VS Code extension cho PostgreSQL /
+> Hướng dẫn toàn bộ các dùng bộ UnicDB — VS Code extension cho PostgreSQL /
 > MySQL / MSSQL / BigQuery.
 
 ## Cài đặt & `ukit install`
 
-Cài đặt VSDB vào VS Code:
+Cài đặt UnicDB vào VS Code:
 
 ```bash
-code --install-extension vsdb-<version>.vsix
+code --install-extension UnicDB-<version>.vsix
 ```
 
 Sau khi cài, extension tự động kích hoạt khi mở workspace có file SQL.
@@ -17,7 +17,7 @@ bấm "Add Connection" trên thanh Schema Explorer.
 
 ## Kết nối
 
-VSDB hỗ trợ 4 driver:
+UnicDB hỗ trợ 4 driver:
 
 - **PostgreSQL** — host, port, user, password, database
 - **MySQL** — host, port, user, password, database
@@ -26,7 +26,7 @@ VSDB hỗ trợ 4 driver:
 - **BigQuery** — ADC (Application Default Credentials), billing project,
   location
 
-Mỗi kết nối được lưu vào `vsdb.connections` globalState. Bạn có thể có
+Mỗi kết nối được lưu vào `UnicDB.connections` globalState. Bạn có thể có
 nhiều connection cùng lúc; "active connection" là connection đang hiển
 thị trong Schema Explorer.
 
@@ -79,8 +79,8 @@ execute).
 
 Kết quả trả về hiển thị trong grid. Tùy chỉnh placement:
 
-- `vsdb.resultsPlacement` — `below` (mặc định) / `beside` / `top`
-- Đổi bằng cách mở Settings (Ctrl+,) → search "vsdb.resultsPlacement"
+- `UnicDB.resultsPlacement` — `below` (mặc định) / `beside` / `top`
+- Đổi bằng cách mở Settings (Ctrl+,) → search "UnicDB.resultsPlacement"
 
 ### DDL/DML status card (R12)
 
@@ -114,17 +114,17 @@ tùy chỉnh). Tính năng:
 ## Settings hub (R8b)
 
 Bấm icon ⚙️ (settings gear) trên title bar của Schema Explorer để mở
-VS Code Settings filtered to VSDB. Các setting VSDB hiện có:
+VS Code Settings filtered to UnicDB. Các setting UnicDB hiện có:
 
-- `vsdb.resultsPlacement` — `below` / `beside` / `top`
-- `vsdb.aiChatEngine` — chọn engine
-- `vsdb.aiChatModel` — model cụ thể
+- `UnicDB.resultsPlacement` — `below` / `beside` / `top`
+- `UnicDB.aiChatEngine` — chọn engine
+- `UnicDB.aiChatModel` — model cụ thể
 - (các setting khác xuất hiện khi extension thêm)
 
 ## User Guide (R2)
 
 Bấm icon 📖 (book) trên title bar của Schema Explorer để mở file
-này (`docs/VSDB_USER_GUIDE.md`) trong Markdown preview.
+này (`docs/UnicDB_USER_GUIDE.md`) trong Markdown preview.
 
 ## Schema Refresh (R13)
 
@@ -158,7 +158,7 @@ tree refresh.
 - **Schema tree rỗng** — bấm refresh (hoặc chạy 1 query DDL/DML)
 - **Console không mở** — bấm chuột phải vào table bất kỳ → Open Console
   for Object
-- **AI Chat không phản hồi** — kiểm tra `vsdb.aiChatEngine` +
+- **AI Chat không phản hồi** — kiểm tra `UnicDB.aiChatEngine` +
   credentials của provider
 
 ## Thông tin thêm

@@ -134,7 +134,7 @@ Command 2 — regression lane:
 
 Command 3 — `npm run typecheck`:
 ```
-> vsdb@1.6.6 typecheck
+> UnicDB@1.6.6 typecheck
 > tsc --noEmit
 EXIT=0
 ```

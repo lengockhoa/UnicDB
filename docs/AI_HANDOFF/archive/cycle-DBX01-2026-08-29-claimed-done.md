@@ -21,10 +21,10 @@ PostgreSQL only. The cycle must not introduce cross-connection copy or any new a
 - A new `src/ui/importWizard.ts` host wrapper that opens the webview, wires the existing `ConnectionManager` adapter, and reports progress into the existing results panel.
 - A new `src/ui/formView.ts` and corresponding webview (extending the existing `resultsPanel` webview with a "Form" toggle) that renders a single row as a labeled form; large JSON values render in a `vscode.TextDocumentContentProvider` (full-fidelity read-only) with a side "Edit" affordance.
 - Wire 4 new commands into `package.json` + `extension.ts`:
-  - `vsdb.importCsv` (idempotent: opens the import wizard)
-  - `vsdb.importJson`
-  - `vsdb.openFormView` (toggles form view on the active results tab)
-  - `vsdb.editLargeValue` (opens the in-document editor for a long-text / JSON cell)
+  - `UnicDB.importCsv` (idempotent: opens the import wizard)
+  - `UnicDB.importJson`
+  - `UnicDB.openFormView` (toggles form view on the active results tab)
+  - `UnicDB.editLargeValue` (opens the in-document editor for a long-text / JSON cell)
 - Tests covering: CSV parser, JSON parser, mapping + coercion, dry-run SQL build (no real DB needed), execute happy path (integration with a mocked `DbAdapter`), form view (CSS class + label rendering), large-value editor (TextDocumentContentProvider content).
 
 **Out of scope for this cycle:**

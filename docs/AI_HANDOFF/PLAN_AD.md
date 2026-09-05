@@ -2,16 +2,16 @@
 
 ## §Goal
 
-Make the AI Chat panel (VSDB's `src/ui/aiChatPanel.ts`) a real chat-extension for database work, and bridge it to the user's local `omp` install when they want OMP as the runtime.
+Make the AI Chat panel (UnicDB's `src/ui/aiChatPanel.ts`) a real chat-extension for database work, and bridge it to the user's local `omp` install when they want OMP as the runtime.
 
 Two layers, both must ship:
 
 1. **DB-aware tools** (always available, builtin engine + omp engine): the model can actually *look* at the connected database, not just stare at DDL.
-2. **OMP config injection** (opt-in): a button/command writes `vsdb.ai.*` into `.vscode/vsdb-ai-config.yml` so `omp --config .vscode/vsdb-ai-config.yml` connects to the same provider the panel uses. OMP keeps its own session/loop; VSDB keeps the chat UX.
+2. **OMP config injection** (opt-in): a button/command writes `UnicDB.ai.*` into `.vscode/UnicDB-ai-config.yml` so `omp --config .vscode/UnicDB-ai-config.yml` connects to the same provider the panel uses. OMP keeps its own session/loop; UnicDB keeps the chat UX.
 
 ## §Constraints
 
-- Repo `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB`, base `main @ 5a9bb1d` (cycle AB release v1.9.0).
+- Repo `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB`, base `main @ 5a9bb1d` (cycle AB release v1.9.0).
 - DB-aware tools follow the existing ACP permission-bridge pattern (Allow/Deny cards + default-deny on every abnormal exit). Row access is opt-in per turn.
 - Privacy invariant (cycle AA): `buildMessages` system prompt is DDL-only; row bytes flow only via explicit tool calls the user approved this turn.
 - OMP integration is a **config-injection** layer — no OMP child_process wiring in this cycle. The user can copy/paste the suggested `omp` invocation into a terminal or wire it into a `tasks.json` shell task.
@@ -37,17 +37,17 @@ Parser guard for `run_readonly_query`: accept only statements whose first token 
 
 ### OMP config bridge
 
-When the user clicks "Use with OMP" (or runs `vsdb.ai.useWithOmp`):
+When the user clicks "Use with OMP" (or runs `UnicDB.ai.useWithOmp`):
 
-1. Read current `vscode.workspace.getConfiguration('vsdb.ai')` + SecretStorage for the apiKey.
-2. Write `.vscode/vsdb-ai-config.yml` next to `.vscode/settings.json` in YAML form that OMP understands (overlay format — keys that OMP merges over `~/.omp/config.yml`).
+1. Read current `vscode.workspace.getConfiguration('UnicDB.ai')` + SecretStorage for the apiKey.
+2. Write `.vscode/UnicDB-ai-config.yml` next to `.vscode/settings.json` in YAML form that OMP understands (overlay format — keys that OMP merges over `~/.omp/config.yml`).
 3. Post a notification with the exact `omp --config <path> -p "..." --append-system-prompt <contextPath>` line the user can run.
 
 OMP-specific YAML keys to emit (verified against `omp --help` flags):
 
 - `provider`: matches `--provider`. For OpenAI-compatible: emit env-var-friendly keys so `omp` reuses the user's existing `OPENAI_API_KEY`/`OPENAI_BASE_URL`.
 - `model`: defaults map (work → user-set work model, smart → user-set smart model).
-- `appendSystemPrompt.file`: `.vscode/vsdb-db-context.md` — generated on-demand when the user opens the command; contains the schema DDL the same way `buildMessages` already produces it (DRY: extract a single `formatSystemPrompt` helper from `src/ui/aiChatPanel.ts:186-325` and call from both).
+- `appendSystemPrompt.file`: `.vscode/UnicDB-db-context.md` — generated on-demand when the user opens the command; contains the schema DDL the same way `buildMessages` already produces it (DRY: extract a single `formatSystemPrompt` helper from `src/ui/aiChatPanel.ts:186-325` and call from both).
 
 This is a *config injection* layer — no OMP child_process wiring in this cycle. The user can copy/paste the suggested `omp` invocation into a terminal or wire it into a `tasks.json` shell task.
 
@@ -56,8 +56,8 @@ This is a *config injection* layer — no OMP child_process wiring in this cycle
 - `src/ai/tools/readonlySqlParser.ts` — pure, unit-tested. Single export `parseReadonly(sql: string): {ok:true, kind:'select'|'with'} | {ok:false, reason}`.
 - `src/ai/tools/sqlTool.ts` — extends existing `createSqlTool` with the **readonly** SQL guard (parser) + new `list_table_data_sample`, `count_rows`, `run_readonly_query`, `explain_query`, `get_table_relationships` tool definitions.
 - `src/ui/aiChatPanel.ts` — extract `formatSystemPrompt` helper from current buildMessages (DRY for OMP exporter); extend `handleMessage` switch with new permission_request kind for the DB-aware tools (mirrors existing permission_request pipeline).
-- `src/extensionConfigExport.ts` — **new** module (only `vscode` import; everything else pure). Reads `vscode.workspace.getConfiguration('vsdb.ai')`, writes the YAML + DB-context markdown. Returns a `{configPath, contextPath, ompCommandLine}` triple.
-- `src/extension.ts` — register `vsdb.ai.useWithOmp` command + `vsdb.ai.refreshDbContext` (re-emit the context file).
+- `src/extensionConfigExport.ts` — **new** module (only `vscode` import; everything else pure). Reads `vscode.workspace.getConfiguration('UnicDB.ai')`, writes the YAML + DB-context markdown. Returns a `{configPath, contextPath, ompCommandLine}` triple.
+- `src/extension.ts` — register `UnicDB.ai.useWithOmp` command + `UnicDB.ai.refreshDbContext` (re-emit the context file).
 - `webview/aiChatPanelMain.ts` — permission_request rendering already exists for ACP; the new DB tools reuse the same card shape (no new code).
 - New tests:
   - `src/ai/tools/__tests__/readonlySqlParser.test.ts`
@@ -76,10 +76,10 @@ This is a *config injection* layer — no OMP child_process wiring in this cycle
 6. `get_table_relationships` reads FK metadata + reverse-FK (which tables reference this one). No row data.
 7. Each tool posts a permission_request card on first invocation per turn. Default-deny. User can Allow Once / Allow Session / Deny.
 8. `formatSystemPrompt` is the **only** function building the system prompt content; both `buildMessages` (cycle-AA path) and `extensionConfigExport` (OMP config path) call it. Same byte output for same input. Test pins equality.
-9. `vsdb.ai.useWithOmp` writes `.vscode/vsdb-ai-config.yml` + `.vscode/vsdb-db-context.md`. API key never written to disk (env var hint only).
+9. `UnicDB.ai.useWithOmp` writes `.vscode/UnicDB-ai-config.yml` + `.vscode/UnicDB-db-context.md`. API key never written to disk (env var hint only).
 10. The command's `ompCommandLine` output is copy-pasteable into a terminal and runs without further setup (`omp --config <path> -p "..." --append-system-prompt <contextPath>`).
 11. Cycle-AA regression pins stay green: `aiChatPanelPrivacy.test.ts`, `aiChatPanelAttachments.test.ts`, `aiChatPanelWebview.test.ts`, `aiChatPanelThoughtRegen.test.ts`.
-12. The new permission_request bubbles render in the chat thread with the same `.vsdb-chat-permission` card style; on Deny the tool bubbles the rejection reason to the model verbatim.
+12. The new permission_request bubbles render in the chat thread with the same `.UnicDB-chat-permission` card style; on Deny the tool bubbles the rejection reason to the model verbatim.
 
 ## §Test plan
 
@@ -112,7 +112,7 @@ This is a *config injection* layer — no OMP child_process wiring in this cycle
 - `npm run typecheck`
 - `npm test` — full suite green
 - `bash scripts/build.sh` — vsix artifact, 18 entries, 0 forbidden, 0 markers
-- Smoke: open VS Code, set `vsdb.ai.*` config, run `vsdb.ai.useWithOmp`, paste the printed `omp` line into a terminal, confirm the model returns a response that references the connected DB schema.
+- Smoke: open VS Code, set `UnicDB.ai.*` config, run `UnicDB.ai.useWithOmp`, paste the printed `omp` line into a terminal, confirm the model returns a response that references the connected DB schema.
 
 ## §Versioning
 

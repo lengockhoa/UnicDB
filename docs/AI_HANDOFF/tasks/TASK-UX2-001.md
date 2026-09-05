@@ -85,10 +85,10 @@ project's static gate; `compile` is the build.
 ## Executor Report
 
 - **EXECUTOR_MODEL**: `unic-code` (claude-sonnet)
-- **Worktree**: `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-001`
+- **Worktree**: `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/UX2-001`
 - **Files changed** (absolute paths):
-  - `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-001/src/ui/ddlStatusCard.ts`
-  - `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/UX2-001/src/ui/__tests__/ddlStatusCard.test.ts`
+  - `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/UX2-001/src/ui/ddlStatusCard.ts`
+  - `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/UX2-001/src/ui/__tests__/ddlStatusCard.test.ts`
 
 ### RED phase — 3 of 7 new tests failed as expected
 

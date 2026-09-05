@@ -1,15 +1,15 @@
 // src/adapters/__tests__/postgres.integration.test.ts
-// Integration tests cho PostgresAdapter — chỉ chạy khi VSDB_IT=1.
+// Integration tests cho PostgresAdapter — chỉ chạy khi UnicDB_IT=1.
 // TASK-003 §Test Cases #1..#5.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { PostgresAdapter } from "../postgres";
 
-const IT = process.env.VSDB_IT === "1";
-const HOST = process.env.VSDB_PG_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.VSDB_PG_PORT ?? 5433);
-const USER = process.env.VSDB_PG_USER ?? "vsdb";
-const PASS = process.env.VSDB_PG_PASS ?? "vsdb";
-const DB = process.env.VSDB_PG_DB ?? "vsdb";
+const IT = process.env.UnicDB_IT === "1";
+const HOST = process.env.UnicDB_PG_HOST ?? "127.0.0.1";
+const PORT = Number(process.env.UnicDB_PG_PORT ?? 5433);
+const USER = process.env.UnicDB_PG_USER ?? "UnicDB";
+const PASS = process.env.UnicDB_PG_PASS ?? "UnicDB";
+const DB = process.env.UnicDB_PG_DB ?? "UnicDB";
 
 function makeAdapter(pw: string = PASS): PostgresAdapter {
   // PostgresAdapter constructor sẽ nhận (config, password)
@@ -108,26 +108,26 @@ describe.skipIf(!IT)("PostgresAdapter — integration", () => {
   });
 
   it("Test #5 — Metadata: tables, columns, routines", async () => {
-    await adapter.runQuery("DROP TABLE IF EXISTS vsdb_it_orders");
-    await adapter.runQuery("DROP FUNCTION IF EXISTS vsdb_it_double(integer)");
+    await adapter.runQuery("DROP TABLE IF EXISTS UnicDB_it_orders");
+    await adapter.runQuery("DROP FUNCTION IF EXISTS UnicDB_it_double(integer)");
     await adapter.runQuery(`
-      CREATE TABLE vsdb_it_orders (
+      CREATE TABLE UnicDB_it_orders (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
         qty INTEGER
       )
     `);
     await adapter.runQuery(`
-      CREATE OR REPLACE FUNCTION vsdb_it_double(i integer) RETURNS integer
+      CREATE OR REPLACE FUNCTION UnicDB_it_double(i integer) RETURNS integer
       LANGUAGE sql AS $$ SELECT i * 2 $$;
     `);
 
     const tables = await adapter.listTables("public");
-    const found = tables.find((t) => t.name === "vsdb_it_orders");
+    const found = tables.find((t) => t.name === "UnicDB_it_orders");
     expect(found).toBeTruthy();
     expect(found!.schema).toBe("public");
 
-    const cols = await adapter.listColumns("vsdb_it_orders", "public");
+    const cols = await adapter.listColumns("UnicDB_it_orders", "public");
     const id = cols.find((c) => c.name === "id");
     expect(id).toBeTruthy();
     expect(id!.isPrimaryKey).toBe(true);
@@ -143,13 +143,13 @@ describe.skipIf(!IT)("PostgresAdapter — integration", () => {
 
     const routines = await adapter.listRoutines("public");
     const fn = routines.find(
-      (r) => r.name === "vsdb_it_double" && r.kind === "function",
+      (r) => r.name === "UnicDB_it_double" && r.kind === "function",
     );
     expect(fn).toBeTruthy();
     expect(fn!.schema).toBe("public");
 
-    await adapter.runQuery("DROP TABLE IF EXISTS vsdb_it_orders");
-    await adapter.runQuery("DROP FUNCTION IF EXISTS vsdb_it_double(integer)");
+    await adapter.runQuery("DROP TABLE IF EXISTS UnicDB_it_orders");
+    await adapter.runQuery("DROP FUNCTION IF EXISTS UnicDB_it_double(integer)");
   });
 
   // ---- Regression tests (fix round 1) --------------------------------------
@@ -161,7 +161,7 @@ describe.skipIf(!IT)("PostgresAdapter — integration", () => {
     let firstErr: unknown = null;
     try {
       const { batched } = await adapter.runQuery(
-        "SELECT * FROM no_such_table_for_vsdb_regression",
+        "SELECT * FROM no_such_table_for_UnicDB_regression",
       );
       if (batched) {
         await batched.fetchBatch().catch((e) => {
@@ -234,16 +234,16 @@ describe.skipIf(!IT)("PostgresAdapter — integration", () => {
 
   it("Regression #5 — commandTag populated for non-cursor path", async () => {
     // INSERT is not a SELECT so it goes through the non-cursor path.
-    await adapter.runQuery("DROP TABLE IF EXISTS vsdb_it_tags");
-    await adapter.runQuery("CREATE TABLE vsdb_it_tags (id SERIAL PRIMARY KEY, v INT)");
+    await adapter.runQuery("DROP TABLE IF EXISTS UnicDB_it_tags");
+    await adapter.runQuery("CREATE TABLE UnicDB_it_tags (id SERIAL PRIMARY KEY, v INT)");
     const r = await adapter.runQuery(
-      "INSERT INTO vsdb_it_tags (v) VALUES (1), (2), (3)",
+      "INSERT INTO UnicDB_it_tags (v) VALUES (1), (2), (3)",
     );
     expect(r.batched).toBeUndefined();
     expect(r.results).toHaveLength(1);
     expect(r.results[0].commandTag).toBeTruthy();
     expect(String(r.results[0].commandTag)).toMatch(/INSERT/i);
     expect(r.results[0].rowCount).toBe(3);
-    await adapter.runQuery("DROP TABLE IF EXISTS vsdb_it_tags");
+    await adapter.runQuery("DROP TABLE IF EXISTS UnicDB_it_tags");
   });
 });

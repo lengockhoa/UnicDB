@@ -7,7 +7,7 @@
 
 ## Goal
 
-Give `vsdb.browseTableData` a real BigQuery arm. A new pure module `src/ui/bigQueryPreview.ts`
+Give `UnicDB.browseTableData` a real BigQuery arm. A new pure module `src/ui/bigQueryPreview.ts`
 exports `buildBigQueryPreviewSql` (backtick-quoted, LIMIT-bounded GoogleSQL SELECT) and
 `BIGQUERY_PREVIEW_MAX_LIMIT`; the currently-throwing `bigquery` arm of `buildBrowseSelect`
 (`browseCommands.ts:63-67`) delegates to it, and the browse command skips
@@ -117,7 +117,7 @@ RED_OUTPUT:
 ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
 
  FAIL  src/ui/__tests__/bigQueryPreview.test.ts [ src/ui/__tests__/bigQueryPreview.test.ts ]
-Error: Failed to load url ../bigQueryPreview (resolved id: ../bigQueryPreview) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq02-002/src/ui/__tests__/bigQueryPreview.test.ts. Does the file exist?
+Error: Failed to load url ../bigQueryPreview (resolved id: ../bigQueryPreview) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq02-002/src/ui/__tests__/bigQueryPreview.test.ts. Does the file exist?
  ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
 
 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯

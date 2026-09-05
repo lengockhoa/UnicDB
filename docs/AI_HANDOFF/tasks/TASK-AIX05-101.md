@@ -56,7 +56,7 @@ npm run compile
 - Consumes:
   - `AcpProcess.start(handlers: AcpStartHandlers = {}): Promise<AcpProcessHandle>` at `src/ai/omp/acpProcess.ts:117`, extended in this task with `AcpProcess.cancel(): void` for cancellation before a pending `start()` resolves.
   - `AcpClient.request<T = unknown>(method: string, params: unknown, opts?: { timeoutMs?: number }): Promise<T>` at `src/ai/omp/acp.ts:143-147`.
-  - Existing initialize payload `{ protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "vsdb-extension", version: "1.5.1" } }` at `src/ai/omp/acpProcess.ts:229-235`.
+  - Existing initialize payload `{ protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "UnicDB-extension", version: "1.5.1" } }` at `src/ai/omp/acpProcess.ts:229-235`.
 - Produces:
   - `export type OmpEngineState = "stopped" | "starting" | "ready" | "cancelling" | "crashed" | "fallback-builtin"`.
   - `AcpStartHandlers.onStateChange?: (state: OmpEngineState) => void`.

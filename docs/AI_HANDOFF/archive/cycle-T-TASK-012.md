@@ -272,7 +272,7 @@ VERIFICATION:
   command: npm run typecheck
   result: clean, exit 0
   output_excerpt: |
-    > vsdb@1.6.3 typecheck
+    > UnicDB@1.6.3 typecheck
     > tsc --noEmit
     (no errors)
 
@@ -332,13 +332,13 @@ VERIFICATION:
     Duration  7.53s
 
   command: manual E2E (Acceptance Criteria, not part of the automated gate) — real omp/18.0.1 on
-    PATH + real Postgres (docker `vsdb-postgres`, 127.0.0.1:5433/vsdb) + the actual
+    PATH + real Postgres (docker `UnicDB-postgres`, 127.0.0.1:5433/UnicDB) + the actual
     acpProcess.ts/acp.ts/mcpBridge.ts/registry.ts/sqlTool.ts/schemaTools.ts modules via tsx, no
     mocks; two throwaway tables created in the live DB, chat asked "What tables are in this
     database? Use your tools to check, don't guess."
   result: PASS — real tool round-trip observed, correct answer
   output_excerpt: |
-    [BRIDGE] descriptor: {"type":"http","name":"vsdb","url":"http://127.0.0.1:52854",
+    [BRIDGE] descriptor: {"type":"http","name":"UnicDB","url":"http://127.0.0.1:52854",
       "headers":[{"name":"Authorization","value":"Bearer c9c4dedb…"}]}
     [HANDSHAKE OK] sessionId=01a0372e-1659-7547-9c0f-881c137735cf version=18.0.1
     [TOOL CALL] list_tables({})

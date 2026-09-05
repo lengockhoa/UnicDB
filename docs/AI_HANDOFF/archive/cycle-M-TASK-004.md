@@ -90,19 +90,19 @@ Engine wire name preserved as "omp" (AiChatPanelEngine.name: "omp" | "builtin") 
   command: `npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/extension.test.ts && npm run compile && npm run typecheck`
   result: 46 tests pass / 0 fail; esbuild build complete; tsc --noEmit exit 0
   output_excerpt: |
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
      ✓ src/ui/__tests__/aiChatPanel.test.ts  (11 tests) 5ms
      ✓ src/extension.test.ts  (35 tests) 86ms
      Test Files  2 passed (2)
           Tests  46 passed (46)
-     > vsdb@1.5.1 compile
+     > UnicDB@1.5.1 compile
      > node esbuild.js
      esbuild: build complete
-     > vsdb@1.5.1 typecheck
+     > UnicDB@1.5.1 typecheck
      > tsc --noEmit
     Full suite: 750 tests pass / 0 fail (67 files).
   RED OUTPUT (verbatim, captured before implementation):
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
      ❯ src/ui/__tests__/aiChatPanelAcp.test.ts  (10 failed | 1 passed) 11ms
        - 10 tests fail because the panel doesn't yet accept an `acp:` option (errors: "Cannot read properties of undefined (reading 'transport')" / "Cannot read properties of undefined (reading 'result')").
        - The single passing test is #6 (builtin fallback) which doesn't depend on the new ACP path.
@@ -150,7 +150,7 @@ NOTES: Opaque-ID correlation, listed-option allow, dedup, and stop/dispose/repla
   command: npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelAcp.test.ts src/ai/omp/__tests__/acpProcess.test.ts src/extension.test.ts && npm run compile && npm run typecheck
   result: 67 pass / 0 fail; esbuild build complete; tsc --noEmit exit 0
   output_excerpt: |
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
      ✓ src/ai/omp/__tests__/acpProcess.test.ts  (10 tests) 6ms
      ✓ src/ui/__tests__/aiChatPanel.test.ts  (11 tests) 5ms
      ✓ src/ui/__tests__/aiChatPanelAcp.test.ts  (11 tests) 7ms
@@ -160,7 +160,7 @@ NOTES: Opaque-ID correlation, listed-option allow, dedup, and stop/dispose/repla
     esbuild: build complete
     > tsc --noEmit
   RED OUTPUT (verbatim, captured by reverting the production fix in src/ai/omp/acpProcess.ts and re-running the new AcpProcess test only):
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
      ❯ src/ai/omp/__tests__/acpProcess.test.ts  (10 tests | 1 failed) 7ms
        ❯ AcpProcess > child exit after handshake disposes the AcpClient and fires onClose listeners
          → expected +0 to be 1 // Object.is equality

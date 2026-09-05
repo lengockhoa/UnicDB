@@ -15,7 +15,7 @@ point TASK-004's `composeSortQuery` mssql arm at the real adapter export.
 ## Target Files
 
 - `src/adapters/mssql.ts` — add an exported `getTableSortQuery` mirroring the Postgres
-  contract exactly (same 4 args, same return shape, `vsdb_sort` alias). Place it as a
+  contract exactly (same 4 args, same return shape, `UnicDB_sort` alias). Place it as a
   module-level function above `export class MsSqlAdapter` (line 47), matching how
   `src/adapters/postgres.ts` places its own at line 167 above `class PostgresAdapter`
   (line 190). No change to the class, the tedious wiring, or `MssqlQueryParam`.
@@ -33,15 +33,15 @@ point TASK-004's `composeSortQuery` mssql arm at the real adapter export.
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit (happy) | `basic sort wraps in a subquery with bracket quoting` | `getTableSortQuery("SELECT 1","","name","ASC")` → `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY [name] ASC` | none |
-| 2 | unit (happy) | `WHERE from the requery bar is applied to the OUTER query` | `("SELECT * FROM t","age > 18","name","ASC")` → `… ) vsdb_sort WHERE age > 18 ORDER BY [name] ASC`; the inner SQL is verbatim | mirrors postgres semantics at `postgres.ts:176-179` |
+| 1 | unit (happy) | `basic sort wraps in a subquery with bracket quoting` | `getTableSortQuery("SELECT 1","","name","ASC")` → `SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY [name] ASC` | none |
+| 2 | unit (happy) | `WHERE from the requery bar is applied to the OUTER query` | `("SELECT * FROM t","age > 18","name","ASC")` → `… ) UnicDB_sort WHERE age > 18 ORDER BY [name] ASC`; the inner SQL is verbatim | mirrors postgres semantics at `postgres.ts:176-179` |
 | 3 | unit (happy) | `DESC direction is emitted` | contains `ORDER BY [name] DESC` | |
 | 4 | edge (identifier injection) | `] inside a column name is doubled and stays one identifier` | column `name]; DROP TABLE users--` → `[name]]; DROP TABLE users--]`; the payload never appears outside the brackets | the T-SQL analogue of `postgres.sortQuery.test.ts:40` |
 | 5 | edge (direction whitelist) | `an unexpected direction falls back to ASC` | `("SELECT 1","","n","ASC; DROP TABLE t" as any)` → ends `ASC`, contains no `DROP` | cast through `as unknown as "ASC"` |
-| 6 | edge (empty inputs) | `empty originalSql and empty where produce no stray WHERE` | `("","","n","ASC")` → `SELECT * FROM () vsdb_sort ORDER BY [n] ASC`, and `/\bWHERE\b/` does not match | boundary; mirrors `postgres.sortQuery.test.ts:51` |
+| 6 | edge (empty inputs) | `empty originalSql and empty where produce no stray WHERE` | `("","","n","ASC")` → `SELECT * FROM () UnicDB_sort ORDER BY [n] ASC`, and `/\bWHERE\b/` does not match | boundary; mirrors `postgres.sortQuery.test.ts:51` |
 | 7 | edge (whitespace-only where) | `a whitespace-only WHERE is treated as empty` | `("SELECT 1","   ","n","ASC")` → no `WHERE` in output | trims like postgres |
 | 8 | unit (dispatch) | `composeSortQuery("mssql", …) equals the adapter helper` | byte-identical output for the same 4 args; and `composeSortQuery("postgres", …)` still equals `postgres.getTableSortQuery` | pins that the dispatch did not drift |
-| 9 | unit (no dead export) | `mssql.getTableSortQuery is reachable only through composeSortQuery, and the composer's mssql arm holds no duplicated T-SQL` | `queryComposer.ts` source contains no `vsdb_sort` / `[` bracket-quoting string building of its own (the arm is a one-line delegation), while `composeSortQuery("mssql", …)` still returns the full T-SQL — proving the export is wired, not orphaned | source-text assertion plus a behavioral one; guards against the arm being "delegated" by copy-paste |
+| 9 | unit (no dead export) | `mssql.getTableSortQuery is reachable only through composeSortQuery, and the composer's mssql arm holds no duplicated T-SQL` | `queryComposer.ts` source contains no `UnicDB_sort` / `[` bracket-quoting string building of its own (the arm is a one-line delegation), while `composeSortQuery("mssql", …)` still returns the full T-SQL — proving the export is wired, not orphaned | source-text assertion plus a behavioral one; guards against the arm being "delegated" by copy-paste |
 
 Kinds: happy (1-3), injection (4), input-validation/whitelist (5), empty boundary (6),
 whitespace normalization (7), cross-module consistency (8), dead-code/duplication (9).
@@ -102,7 +102,7 @@ npm test
   - `quoteIdent(name, "mssql")` → `[…]` with `]` doubled — `src/core/saveStatements.ts:136,140-142`.
     Prefer reusing it over hand-rolling the bracket escape.
   - Reference contract (do not modify): `getTableSortQuery` — `src/adapters/postgres.ts:167`,
-    returns `SELECT * FROM (${inner}) vsdb_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`.
+    returns `SELECT * FROM (${inner}) UnicDB_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`.
 - Produces:
   ```ts
   // src/adapters/mssql.ts
@@ -135,7 +135,7 @@ wiring here — `src/ui/resultsPanel.ts` and `webview/main.ts` belong to TASK-00
 same wave 2, and two tasks editing one file is exactly the collision the plan forbids.
 
 Case 9 is this task's own guard: it asserts the composer's mssql arm is a genuine
-delegation (no `vsdb_sort` or bracket-building string left in `queryComposer.ts`) rather
+delegation (no `UnicDB_sort` or bracket-building string left in `queryComposer.ts`) rather
 than a copy-paste that leaves the adapter export unreferenced.
 
 Column-header-click sort remains out of scope for every dialect (PLAN.md §2) and is queued
@@ -209,7 +209,7 @@ TEST_PLAN_FOLLOWED: task §Test Cases (9/9) — cases 1-7 new in
 
 FILES_CHANGED:
   - src/adapters/mssql.ts: added exported `getTableSortQuery` above `MsSqlAdapter`
-    (same 4-arg signature, `vsdb_sort` wrap, ASC/DESC whitelist, `quoteIdent(,"mssql")`
+    (same 4-arg signature, `UnicDB_sort` wrap, ASC/DESC whitelist, `quoteIdent(,"mssql")`
     bracket quoting); added `quoteIdent` import. No change to the class/wiring/params.
   - src/ui/queryComposer.ts: mssql arm of `composeSortQuery` now one-line delegation to
     the adapter export; updated module header + function doc comments.
@@ -230,7 +230,7 @@ ISSUES: none.
 
 Note on TASK-004 arm: TASK-004's executor did NOT delegate — the mssql arm was shipped
 inline (single generic `quoteIdent(column, dialect)` body). This task performed the
-replacement, so it is not a no-op. Case 9's whole-file `vsdb_sort`-absence is scoped to
+replacement, so it is not a no-op. Case 9's whole-file `UnicDB_sort`-absence is scoped to
 the mssql arm (PLAN.md §3 owns postgres/mysql inline arms — "TASK-006 (mssql arm only)",
 line 116/133); the source-text assertion instead pins the one-line delegation + zero
 `getTableSortQuery(` duplication + no `quoteIdent(…,"mssql")` bracket building.

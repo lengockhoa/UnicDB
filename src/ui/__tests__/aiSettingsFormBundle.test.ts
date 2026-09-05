@@ -67,7 +67,7 @@ beforeAll(() => {
 const distPath = resolve(process.cwd(), "dist", "aiSettingsForm.js");
 const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -82,16 +82,16 @@ function loadBundle(): BundleHandle {
       "dist/aiSettingsForm.js missing — run `npm run compile` before this test",
     );
   }
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-form-body"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-form-body"></div>';
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
   (0, eval)(bundleSrc);
@@ -158,7 +158,7 @@ describeIfBundle("webview/aiSettingsFormMain.ts bundle (TASK-004)", () => {
       },
       hasApiKey: false,
     });
-    const root = document.getElementById("vsdb-root") as HTMLDivElement;
+    const root = document.getElementById("UnicDB-root") as HTMLDivElement;
     // All required fields rendered.
     for (const id of [
       "baseUrl",

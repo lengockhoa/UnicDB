@@ -1,4 +1,4 @@
-# TASK-003 — Create New Schema: webview form + vsdb.createSchema + reveal
+# TASK-003 — Create New Schema: webview form + UnicDB.createSchema + reveal
 
 - Status: `ready`
 - Owner: `-`
@@ -14,27 +14,27 @@ Right-click a connection (or schema) node → "Create New Schema" opens a NewTab
 ## Target Files
 
 - `src/ui/schemaForm.ts` **(new)** — host webview wrapper (`SchemaForm`), NewTableForm subset:
-  panel id `vsdb.schemaForm`, CSP strict, typed messages, reveal-on-reshow, dispose pattern.
+  panel id `UnicDB.schemaForm`, CSP strict, typed messages, reveal-on-reshow, dispose pattern.
 - `webview/schemaFormMain.ts` **(new)** — webview entry: Name `<input id="schemaName">` up top,
   `<pre id="sql-preview">` below, OK/Cancel buttons, Escape → cancel, live preview on input.
 - `esbuild.js` — add `schemaFormConfig` block (`entryPoints: ["webview/schemaFormMain.ts"]`,
   `outfile: "dist/schemaForm.js"`, copying the `newTableFormConfig` shape at ~L51) + register it
   in the watch/build context calls. ADDITIVE.
-- `src/ui/tableCommands.ts` — register `vsdb.createSchema` inside `registerTableCommands`:
+- `src/ui/tableCommands.ts` — register `UnicDB.createSchema` inside `registerTableCommands`:
   resolve target conn (node arg `meta.connection` → that conn; else `mgr.getActive()`; none →
   info message), `guardPostgres` shape (`COMMAND_TITLE.createSchema = "Create Schema"`), open
   `SchemaForm` with `listSchemaNames` + `runDdl`, on-OK: `tree.refresh()` →
   `revealSchemaNode(treeView, conn, name)` → info message; on error: `showErrorMessage("Create
   Schema failed: <msg>")`, no refresh (guard contract per file header).
 - `src/ui/schemaTree.ts` — add `SchemaTreeProvider.findSchemaNode(conn: ConnectionConfig,
-  schema: string): Promise<VsdbNode | null>` (mirror `findTableNode` at ~L639: `getAdapterFor`
+  schema: string): Promise<UnicDBNode | null>` (mirror `findTableNode` at ~L639: `getAdapterFor`
   → `adapter.listSchemas(false)` → find by name → return the node shape
   `getSchemaNodesForConnection` emits, `contextValue: "schema"`, meta `{connection, schema}`)
   + module fn `revealSchemaNode(treeView, conn, schema)` next to `revealTableNode` (uses
   `_activeProvider`, swallows reveal throw).
-- `package.json` — `contributes.commands` += `vsdb.createSchema` ("VSDB: Create New Schema",
-  category VSDB); `activationEvents` += `onCommand:vsdb.createSchema`; `menus.view/item/context`
-  += entry when `view == vsdb.schemaTree && (viewItem == connection || viewItem == schema)`.
+- `package.json` — `contributes.commands` += `UnicDB.createSchema` ("UnicDB: Create New Schema",
+  category UnicDB); `activationEvents` += `onCommand:UnicDB.createSchema`; `menus.view/item/context`
+  += entry when `view == UnicDB.schemaTree && (viewItem == connection || viewItem == schema)`.
   ADDITIVE ONLY (file carries unrelated uncommitted edits).
 - `src/ui/__tests__/schemaForm.test.ts` **(new)** — host-side form tests (NewTableForm test
   harness pattern).
@@ -47,14 +47,14 @@ Right-click a connection (or schema) node → "Create New Schema" opens a NewTab
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | unit happy | live preview | typing `my_schema` posts state whose preview SQL is `CREATE SCHEMA "my_schema";`; empty name → preview `—` + error listed + OK disabled | harness instance, input event |
-| 2 | unit happy | OK → runDdl + refresh + reveal + toast | `runDdl('CREATE SCHEMA "x";', "x")` awaited → `tree.refresh` called → `revealSchemaNode` path called → info message `VSDB: schema "x" created` | valid name |
+| 2 | unit happy | OK → runDdl + refresh + reveal + toast | `runDdl('CREATE SCHEMA "x";', "x")` awaited → `tree.refresh` called → `revealSchemaNode` path called → info message `UnicDB: schema "x" created` | valid name |
 | 3 | edge (invalid identifier) | `9bad`, `a-b`, `""`, 64-char | each lists an error, OK stays disabled, `runDdl` NOT called | per-fixture typing |
 | 4 | edge (duplicate) | `listSchemaNames()` already contains `Users` (case-insensitive vs `users`) | error `Schema "users" already exists`, OK disabled | preloaded names |
 | 5 | edge (driver guard) | node `meta.connection.driver === "mysql"` (and mssql) | info `Create Schema: PostgreSQL connections only`; form never constructed | connection-node arg |
 | 6 | edge (no connection) | palette invocation, `mgr.getActive()` → null | info message; no form | empty active |
 | 7 | edge (error path) | `runDdl` rejects (`permission denied`) | `showErrorMessage` `Create Schema failed: permission denied`; no `tree.refresh`/reveal | rejecting adapter |
 | 8 | unit | `findSchemaNode` | adapter.listSchemas → node `{label, contextValue:"schema", meta:{connection, schema}}`; adapter throw or miss → null | mock provider |
-| 9 | wiring | registration + menu + bundle | `registeredCommands.has("vsdb.createSchema")` after activate; package.json menu when-clause + activationEvent present; `npm run compile` emits `dist/schemaForm.js` | extension.test.ts harness + fs read of package.json |
+| 9 | wiring | registration + menu + bundle | `registeredCommands.has("UnicDB.createSchema")` after activate; package.json menu when-clause + activationEvent present; `npm run compile` emits `dist/schemaForm.js` | extension.test.ts harness + fs read of package.json |
 
 ## Test Files
 
@@ -100,8 +100,8 @@ script exists — N/A.)
 - Produces: `SchemaForm` class in `src/ui/schemaForm.ts` — `constructor(options: {
   extensionUri: vscode.Uri; listSchemaNames: () => Promise<string[]>; runDdl: (sql: string,
   name: string) => Promise<void> })`, methods `show(): void` / `dispose(): void`; command id
-  `vsdb.createSchema` invoked as `(node?: { meta?: { connection?: ConnectionConfig; schema?:
-  string } })`; `SchemaTreeProvider.findSchemaNode(conn, schema): Promise<VsdbNode | null>` and
+  `UnicDB.createSchema` invoked as `(node?: { meta?: { connection?: ConnectionConfig; schema?:
+  string } })`; `SchemaTreeProvider.findSchemaNode(conn, schema): Promise<UnicDBNode | null>` and
   `revealSchemaNode(treeView: vscode.TreeView<unknown>, conn: ConnectionConfig, schema:
   string): Promise<void>` exported from `src/ui/schemaTree.ts`.
 
@@ -134,19 +134,19 @@ STATUS: DONE
 EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic-code
 EXECUTOR_SUBAGENT: -
-SUMMARY: Implemented Create New Schema flow: SchemaForm webview host (validate/listSchemas snapshot/runDdl/onOk/onError), schemaFormMain webview entry (vanilla DOM, live preview, Escape cancel), esbuild schemaFormConfig emitting dist/schemaForm.js, SchemaTreeProvider.findSchemaNode + module-scoped revealSchemaNode (mirror findTableNode/revealTableNode), vsdb.createSchema command inside registerTableCommands (node arg → conn; else mgr.getActive(); null → info; non-postgres → info; OK → refresh + revealSchemaNode + info; error → showErrorMessage + no refresh), package.json adds command + activationEvent + view/item/context entry for connection+schema viewItems.
+SUMMARY: Implemented Create New Schema flow: SchemaForm webview host (validate/listSchemas snapshot/runDdl/onOk/onError), schemaFormMain webview entry (vanilla DOM, live preview, Escape cancel), esbuild schemaFormConfig emitting dist/schemaForm.js, SchemaTreeProvider.findSchemaNode + module-scoped revealSchemaNode (mirror findTableNode/revealTableNode), UnicDB.createSchema command inside registerTableCommands (node arg → conn; else mgr.getActive(); null → info; non-postgres → info; OK → refresh + revealSchemaNode + info; error → showErrorMessage + no refresh), package.json adds command + activationEvent + view/item/context entry for connection+schema viewItems.
 TEST_PLAN_FOLLOWED: task §4 (Test Cases #1-9) — RED paste captured (5 failures across tableCommands.test.ts, 6 failures across schemaTree.test.ts, 5 failures across extension.test.ts, schemaForm.test.ts module-not-found) before GREEN impl; all 126 tests pass after.
 FILES_CHANGED:
   - src/ui/schemaForm.ts: NEW — SchemaForm class with validate() pure fn (regex /^[A-Za-z_][A-Za-z0-9_$]*$/, length ≤63, case-insensitive dup check) + show/dispose/handleReady/postPreview/handleSubmit; CSP strict; reveal-on-reshow; typed messages
   - webview/schemaFormMain.ts: NEW — vanilla DOM webview entry, Name input + `<pre id="sql-preview">` + OK/Cancel + Escape → cancel; self-contained (redeclares message interfaces inline)
   - esbuild.js: +schemaFormConfig block; wired into both watch ctx7 and build context
   - src/ui/schemaTree.ts: +SchemaTreeProvider.findSchemaNode(conn, schema); +module-scoped revealSchemaNode(treeView, conn, schema) (swallows reveal throw)
-  - src/ui/tableCommands.ts: +COMMAND_TITLE.createSchema; +vsdb.createSchema command (resolve conn from node meta → getActive → info; guard postgres; SchemaForm wired with adapter.listSchemas(true) for dup check; runDdl via adapter.runQuery; onOk → tree.refresh() + revealSchemaNode + info; onError → showErrorMessage)
+  - src/ui/tableCommands.ts: +COMMAND_TITLE.createSchema; +UnicDB.createSchema command (resolve conn from node meta → getActive → info; guard postgres; SchemaForm wired with adapter.listSchemas(true) for dup check; runDdl via adapter.runQuery; onOk → tree.refresh() + revealSchemaNode + info; onError → showErrorMessage)
   - src/ui/__tests__/schemaForm.test.ts: NEW — 8 tests covering cases #1-4 + #7 (live preview, OK → runDdl+onOk, invalid identifier gating, duplicate detection, error path, show reveal, Escape cancel, idempotent dispose)
   - src/ui/__tests__/tableCommands.test.ts: +TASK-003 describe block — 5 tests (case #2 wiring, case #5 mysql/mssql guards, case #6 palette no-conn, case #7 runDdl rejects)
   - src/ui/__tests__/schemaTree.test.ts: +TASK-003 describe block — 6 tests (findSchemaNode hit/miss/throw, revealSchemaNode reveal/throw/absent)
   - src/extension.test.ts: +TASK-003 describe block — 5 tests (command registered, package.json commands + activationEvents + menu entry, dist/schemaForm.js exists after compile)
-  - package.json: +vsdb.createSchema contributes.commands entry; +onCommand:vsdb.createSchema activationEvent; +view/item/context menu entry for viewItem == connection || schema
+  - package.json: +UnicDB.createSchema contributes.commands entry; +onCommand:UnicDB.createSchema activationEvent; +view/item/context menu entry for viewItem == connection || schema
 
 TESTS_ADDED:
   - src/ui/__tests__/schemaForm.test.ts: 8 new tests (cases 1-4, 7 + lifecycle)
@@ -170,7 +170,7 @@ VERIFICATION:
 ISSUES:
   - Test #2 (tableCommands.test.ts createSchema happy path) needed listSchemas + runQuery mockImplementation to simulate the post-CREATE state for revealSchemaNode to find the new schema (otherwise adapter.listSchemas(false) returns static ["public"]). Fixed by overriding mocks after makeFakeMgr.
   - Polling for async reveal+info: `for (let i=0; i<200 && (!reveal.calls.length || infoMessages.empty); i++) await Promise.resolve()` — refresh is sync; revealSchemaNode awaits adapter.listSchemas; info is fire-and-forget. Needed the combined condition because refresh alone fires before reveal.
-  - package.json edits via `PUT N.=M:` narrowly dropped several unrelated entries (analyzeTable, generateSampleData, modifyTable, aiChat, openAiSettings activationEvents + the `"contributes": {` opener + `"commands": [` opener). Each was caught by tsc/JSON parse failure and restored. Final state: 23 activation events (all needed entries present), 23 commands (was 22 + vsdb.createSchema), all JSON valid.
+  - package.json edits via `PUT N.=M:` narrowly dropped several unrelated entries (analyzeTable, generateSampleData, modifyTable, aiChat, openAiSettings activationEvents + the `"contributes": {` opener + `"commands": [` opener). Each was caught by tsc/JSON parse failure and restored. Final state: 23 activation events (all needed entries present), 23 commands (was 22 + UnicDB.createSchema), all JSON valid.
 HANDOFF_TO_REVIEWER: yes
 NEXT: ready for review — wave 3 TASK-003 complete; all 4 target test files green, compile + typecheck clean.
 
@@ -217,7 +217,7 @@ VERIFICATION:
     ✓ src/extension.test.ts  (48 tests) 101ms
     Test Files  4 passed (4)
          Tests  137 passed (137)
-    > vsdb@1.6.0 typecheck
+    > UnicDB@1.6.0 typecheck
     > tsc --noEmit   (exit 0)
   also-verified:
     - Full parallel `vitest run` (77 files): TASK-003's 4 files all green; the single failure was an unrelated scaffold.test.ts flake owned by Fix-002.

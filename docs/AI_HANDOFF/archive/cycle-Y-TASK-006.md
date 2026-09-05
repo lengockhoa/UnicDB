@@ -26,7 +26,7 @@ rejected).
   `buildDistinctValuesQuery`; later owner after TASK-004 releases the file.
 - `src/ui/messages.ts` — extend the exact distinct-values protocol only if the selected contract
   requires a typed display/error field; later owner after TASK-007 releases the file.
-- `webview/main.ts` — render error/truncation status in `.vsdb-setfilter-status`; later owner
+- `webview/main.ts` — render error/truncation status in `.UnicDB-setfilter-status`; later owner
   after TASK-007 releases the file.
 - `src/ui/__tests__/resultsPanelDistinctValues.test.ts` — host SQL-scoping and protocol tests.
 - `src/ui/__tests__/webviewDistinctValues.test.ts` — compiled-bundle footer error/truncation UI
@@ -143,7 +143,7 @@ EXECUTOR_SUBAGENT: feature-implementer
 RED_OUTPUT: |
   Target RED confirmed after writing the 5 new tests, before any production edit.
   `npx vitest run src/ui/__tests__/resultsPanelDistinctValues.test.ts` → Tests 2 failed | 16 passed (18):
-  - case 1: `expected 'SELECT DISTINCT "a" FROM (SELECT id, …' to contain 'vsdb_distinct WHERE archived = false AND "b" IN (''x'') ORDER BY 1'`
+  - case 1: `expected 'SELECT DISTINCT "a" FROM (SELECT id, …' to contain 'UnicDB_distinct WHERE archived = false AND "b" IN (''x'') ORDER BY 1'`
   - case 2: same composed SQL missing `"b" IN ('x')` (host still passes `where=""`)
   `npx vitest run src/ui/__tests__/webviewDistinctValues.test.ts` (after npm run compile) → Tests 3 failed | 10 passed (13):
   - test 17: `expected '1 of 1' to contain 'permission denied for table t'`

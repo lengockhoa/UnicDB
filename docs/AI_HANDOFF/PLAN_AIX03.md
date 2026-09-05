@@ -107,7 +107,7 @@ passes the event reference (not a callback and not a manager) as
 `commandOpenAiChat` constructor object, `src/extension.ts:1132–1163` (grep:
 `rg -n -C 8 "new AiChatPanel|commandOpenAiChat|onDidChangeRecoveryStatus" src/extension.ts`);
 `mgr` is the activation-scoped instance at line 207 and is threaded through the
-`vsdb.aiChat` registration at lines 628–632 into the command helper, not re-imported. The
+`UnicDB.aiChat` registration at lines 628–632 into the command helper, not re-imported. The
 adapter factory already re-resolves per call (`getAdapter()` returns a
 new instance after reconnect) and the schema-context cache self-invalidates by adapter
 reference identity, so the seam only shortens unsafe turns.

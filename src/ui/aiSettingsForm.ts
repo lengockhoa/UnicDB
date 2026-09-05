@@ -25,7 +25,7 @@ import type {
   ProviderResult,
 } from "../ai/provider";
 
-const PANEL_ID = "vsdb.aiSettingsForm";
+const PANEL_ID = "UnicDB.aiSettingsForm";
 
 export interface AiSettingsFormOptions {
   extensionUri: vscode.Uri;
@@ -65,7 +65,7 @@ export class AiSettingsForm {
     }
     this.panel = vscode.window.createWebviewPanel(
       PANEL_ID,
-      "VSDB AI Settings",
+      "UnicDB AI Settings",
       vscode.ViewColumn.Active,
       {
         enableScripts: true,
@@ -243,11 +243,11 @@ export class AiSettingsForm {
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <link rel="stylesheet" href="${styleUri}" />
-  <title>VSDB AI Settings</title>
+  <title>UnicDB AI Settings</title>
 </head>
-<body class="vsdb-form-body">
-  <div id="vsdb-root" class="vsdb-form">
-    <div class="vsdb-form-loading">Loading…</div>
+<body class="UnicDB-form-body">
+  <div id="UnicDB-root" class="UnicDB-form">
+    <div class="UnicDB-form-loading">Loading…</div>
   </div>
   <script src="${scriptUri}"></script>
 </body>

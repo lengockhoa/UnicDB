@@ -104,7 +104,7 @@ npm run compile
 Fresh verification: `npm run typecheck` 0 errors; mandated vitest (admin + scaffold + postgres adapter) 68/68; mysql.ts/mssql.ts contain no `admin` capability.
 
 ### Findings
-1. **P1 — src/extension.ts:1209-1212:** `vsdb.confirmDestructive=false` early-returned before admin-tier classification, letting GRANT/REVOKE/KILL/TERMINATE skip the default-on `vsdb.admin.confirmGrant` gate when run from the editor.
+1. **P1 — src/extension.ts:1209-1212:** `UnicDB.confirmDestructive=false` early-returned before admin-tier classification, letting GRANT/REVOKE/KILL/TERMINATE skip the default-on `UnicDB.admin.confirmGrant` gate when run from the editor.
 2. **P1 — src/ui/adminWizard.ts:255-266:** wizard executed via bare `adapter.runQuery`, never reaching `confirmDangerousStatements`; the documented host-gate coverage claim was false on this path.
 3. **P2 — src/core/admin/pgAdmin.ts:25-38:** grant-target identifiers (schema/table/sequence) were quote-wrapped without NUL/63-char validation; an overlong target could truncate server-side to a different existing identifier.
 
@@ -116,7 +116,7 @@ Fresh verification: `npm run typecheck` 0 errors; mandated vitest (admin + scaff
 
 **Date:** 2026-08-30 · **Executor:** unic-code · Addresses all 3 AhlReviewer findings.
 
-1. **Gate order (P1)** — `confirmDangerousStatements` now classifies ALL tiers first; the `vsdb.confirmDestructive=false` switch clears only the red/amber buckets. Admin-red statements always reach the `vsdb.admin.confirmGrant` modal regardless of the non-admin switch.
+1. **Gate order (P1)** — `confirmDangerousStatements` now classifies ALL tiers first; the `UnicDB.confirmDestructive=false` switch clears only the red/amber buckets. Admin-red statements always reach the `UnicDB.admin.confirmGrant` modal regardless of the non-admin switch.
 2. **Wizard execution path (P1)** — `commandOpenGrantWizard` accepts an `execute` callback; the production wiring in extension.ts routes the confirmed SQL through `confirmDangerousStatements` (admin-red gate) before `adapter.runQuery`. Gate rejection surfaces as an error message and no query runs. Tests: callback receives the built SQL; bare `runQuery` is NOT called when the callback is supplied; gate rejection path covered.
 3. **Target identifier validation (P2)** — new `validateTargetIdentifier` runs before quoting for every grant target (table/sequence/schema): embedded NUL → `AdminError(invalidIdentifier)`; >63 chars → `AdminError(nameTooLong)`. 5 regression tests (NUL on table/sequence/schema, overlong schema, 63-char accept).
 

@@ -38,7 +38,7 @@ Add a portable POSIX shell runner at `scripts/verify-release.sh` that composes t
 npx vitest run src/__tests__/releaseVerify.test.ts -t "verify-release.sh"
 
 # Manual end-to-end on the developer's shell (POSIX bash or zsh only):
-bash /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/scripts/verify-release.sh ; echo "exit=$?"
+bash /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/scripts/verify-release.sh ; echo "exit=$?"
 
 # Full gate
 npm run typecheck

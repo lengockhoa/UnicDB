@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# scripts/install-vsdb.sh — VSDB extension installer.
+# scripts/install-UnicDB.sh — UnicDB extension installer.
 # TASK-008: curl | bash friendly, idempotent.
 #
 # Usage:
-#   bash scripts/install-vsdb.sh                          # install latest from GitHub releases
-#   bash scripts/install-vsdb.sh --local dist/vsdb.vsix   # install from a local .vsix
-#   bash scripts/install-vsdb.sh --dry-run                # resolve CLI, print path, exit 0
-#   bash scripts/install-vsdb.sh --help                   # usage
+#   bash scripts/install-UnicDB.sh                          # install latest from GitHub releases
+#   bash scripts/install-UnicDB.sh --local dist/UnicDB.vsix   # install from a local .vsix
+#   bash scripts/install-UnicDB.sh --dry-run                # resolve CLI, print path, exit 0
+#   bash scripts/install-UnicDB.sh --help                   # usage
 #
 # Environment overrides (for testing):
-#   VSDB_CODE_PATH   — explicit path to `code` CLI (skips PATH + macOS fallback search)
-#   VSDB_DRY_RUN=1   — same as --dry-run
-#   VSDB_RELEASES_URL — override GitHub releases API URL
-#   VSDB_PLATFORM    — fake uname -s value (for tests)
+#   UnicDB_CODE_PATH   — explicit path to `code` CLI (skips PATH + macOS fallback search)
+#   UnicDB_DRY_RUN=1   — same as --dry-run
+#   UnicDB_RELEASES_URL — override GitHub releases API URL
+#   UnicDB_PLATFORM    — fake uname -s value (for tests)
 #
 # Exit codes:
 #   0 — success
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 REPO_OWNER="lengockhoa"
-REPO_NAME="VSDB"
+REPO_NAME="UnicDB"
 DEFAULT_RELEASES_URL="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest"
 
 MACOS_CODE_PATH="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
@@ -32,7 +32,7 @@ LINUX_CODE_PATH="/usr/share/code"
 
 usage() {
   cat <<EOF
-Usage: install-vsdb.sh [options]
+Usage: install-UnicDB.sh [options]
 
 Options:
   --local <file.vsix>   Install a local .vsix file (skip GitHub release lookup).
@@ -40,24 +40,24 @@ Options:
   --help                Show this help and exit.
 
 Environment overrides:
-  VSDB_CODE_PATH      Explicit path to 'code' CLI (skips PATH + fallback search).
-  VSDB_DRY_RUN=1      Same as --dry-run.
-  VSDB_RELEASES_URL   Override GitHub releases API URL.
+  UnicDB_CODE_PATH      Explicit path to 'code' CLI (skips PATH + fallback search).
+  UnicDB_DRY_RUN=1      Same as --dry-run.
+  UnicDB_RELEASES_URL   Override GitHub releases API URL.
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/scripts/install-vsdb.sh | bash
-  bash scripts/install-vsdb.sh --local dist/vsdb-0.1.0.vsix
+  curl -fsSL https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/scripts/install-UnicDB.sh | bash
+  bash scripts/install-UnicDB.sh --local dist/UnicDB-0.1.0.vsix
 EOF
 }
 
 # ----------------------------------------------------------------------------
 # detect_code_cli — resolve absolute path to the 'code' binary.
-# Priority: VSDB_CODE_PATH env > command -v code > platform fallback.
+# Priority: UnicDB_CODE_PATH env > command -v code > platform fallback.
 # Echoes path on stdout; returns 0 if found, 1 if not.
 # ----------------------------------------------------------------------------
 detect_code_cli() {
-  if [[ -n "${VSDB_CODE_PATH:-}" && -x "${VSDB_CODE_PATH}" ]]; then
-    printf '%s\n' "${VSDB_CODE_PATH}"
+  if [[ -n "${UnicDB_CODE_PATH:-}" && -x "${UnicDB_CODE_PATH}" ]]; then
+    printf '%s\n' "${UnicDB_CODE_PATH}"
     return 0
   fi
   local found=""
@@ -67,7 +67,7 @@ detect_code_cli() {
     return 0
   fi
   # Platform fallbacks (best-effort).
-  local platform="${VSDB_PLATFORM:-$(uname -s 2>/dev/null || echo unknown)}"
+  local platform="${UnicDB_PLATFORM:-$(uname -s 2>/dev/null || echo unknown)}"
   case "${platform}" in
     Darwin)
       if [[ -x "${MACOS_CODE_PATH}" ]]; then
@@ -174,7 +174,7 @@ main() {
     esac
   done
 
-  [[ -n "${VSDB_DRY_RUN:-}" ]] && dry_run="1"
+  [[ -n "${UnicDB_DRY_RUN:-}" ]] && dry_run="1"
 
   # Resolve code CLI.
   local code_cli
@@ -183,7 +183,7 @@ main() {
 ERROR: Cannot find 'code' (VS Code CLI).
 
 Tried in order:
-  1. \$VSDB_CODE_PATH (override)
+  1. \$UnicDB_CODE_PATH (override)
   2. 'code' on PATH
   3. Platform fallback paths (macOS app, Linux /usr/share/code, Windows git-bash)
 
@@ -211,7 +211,7 @@ EOF
     fi
     vsix_path="$(cd "$(dirname "${local_file}")" && pwd)/$(basename "${local_file}")"
   else
-    local releases_url="${VSDB_RELEASES_URL:-${DEFAULT_RELEASES_URL}}"
+    local releases_url="${UnicDB_RELEASES_URL:-${DEFAULT_RELEASES_URL}}"
     echo "Fetching latest release from ${releases_url}"
     if ! release_json="$(curl -fsSL "${releases_url}" 2>/dev/null)"; then
       echo "ERROR: failed to fetch release info from ${releases_url}" >&2
@@ -227,10 +227,10 @@ EOF
     echo "Latest release: ${release_tag}"
     echo "Asset URL: ${asset_url}"
     # Thư mục mktemp + tên file đơn giản: VS Code CLI lowercase toàn bộ path
-    # và fail với template chữ hoa (vsdb-XXXXXX.vsix) trên macOS (/var symlink).
+    # và fail với template chữ hoa (UnicDB-XXXXXX.vsix) trên macOS (/var symlink).
     local tmp_dir
     tmp_dir="$(mktemp -d)"
-    vsix_path="${tmp_dir}/vsdb.vsix"
+    vsix_path="${tmp_dir}/UnicDB.vsix"
     echo "Downloading to ${vsix_path}"
     if ! curl -fsSL -o "${vsix_path}" "${asset_url}"; then
       echo "ERROR: failed to download ${asset_url}" >&2
@@ -239,8 +239,8 @@ EOF
     fi
   fi
 
-  # Detect installed version (publisher is "lengockhoa", name "vsdb").
-  local pubname="lengockhoa.vsdb"
+  # Detect installed version (publisher is "lengockhoa", name "UnicDB").
+  local pubname="lengockhoa.UnicDB"
   local prev_ver
   prev_ver="$(get_installed_version "${code_cli}" "${pubname}" || true)"
 
@@ -261,7 +261,7 @@ EOF
   # Extension updates only load in VS Code after a window reload/restart.
   # Prevents the "installed but icon missing" confusion.
   cat <<'EOF'
-NOTE: If VSDB does not show in the Activity Bar, reload the window:
+NOTE: If UnicDB does not show in the Activity Bar, reload the window:
       Cmd+Shift+P (or Ctrl+Shift+P) -> "Developer: Reload Window"
 EOF
 

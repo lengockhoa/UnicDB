@@ -1,5 +1,5 @@
 // src/__tests__/dbx03Scaffold.test.ts
-// DBX-03 scaffold — manifest entry for vsdb.compareTables plus the
+// DBX-03 scaffold — manifest entry for UnicDB.compareTables plus the
 // hygiene guards: no second cache/debounce in the compare path and a
 // CSP-clean webview.
 
@@ -22,10 +22,10 @@ function readJson<T>(relPath: string): T {
 describe("DBX-03 scaffold — package.json", () => {
   const pkg = readJson<PackageJson>("package.json");
 
-  it("vsdb.compareTables is declared with category VSDB + icon", () => {
-    const cmd = pkg.contributes.commands.find((c) => c.command === "vsdb.compareTables");
+  it("UnicDB.compareTables is declared with category UnicDB + icon", () => {
+    const cmd = pkg.contributes.commands.find((c) => c.command === "UnicDB.compareTables");
     expect(cmd).toBeDefined();
-    expect(cmd?.category).toBe("VSDB");
+    expect(cmd?.category).toBe("UnicDB");
     expect(cmd?.icon).toBeTruthy();
   });
 });

@@ -152,7 +152,7 @@ describe("buildSaveStatements — INLINE LITERAL contract (Fix R1)", () => {
     const marker: EditEntry = {
       rowId: 5,
       colIndex: 0,
-      value: { __vsdb_new_row__: true, __rowId: 5, values: ["Alice", 30] },
+      value: { __UnicDB_new_row__: true, __rowId: 5, values: ["Alice", 30] },
     };
     const r = buildSaveStatements(
       "postgres",
@@ -173,7 +173,7 @@ describe("buildSaveStatements — INLINE LITERAL contract (Fix R1)", () => {
     const marker: EditEntry = {
       rowId: 0,
       colIndex: 0,
-      value: { __vsdb_deleted__: true, __rowId: 0 },
+      value: { __UnicDB_deleted__: true, __rowId: 0 },
     };
     const r = buildSaveStatements(
       "postgres",

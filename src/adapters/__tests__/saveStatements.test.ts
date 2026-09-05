@@ -193,12 +193,12 @@ describe("buildSaveStatements — mysql/mssql no-PK → ok:false", () => {
 });
 
 describe("buildSaveStatements — Add Row / Delete Row markers", () => {
-  it("__vsdb_new_row__ marker → INSERT statement with current values (inline)", () => {
+  it("__UnicDB_new_row__ marker → INSERT statement with current values (inline)", () => {
     const blankValues: unknown[] = ["", ""];
     const marker: EditEntry = {
       rowId: 42,
       colIndex: 0,
-      value: { __vsdb_new_row__: true, __rowId: 42, values: blankValues },
+      value: { __UnicDB_new_row__: true, __rowId: 42, values: blankValues },
     };
     const r = buildSaveStatements(
       "postgres",
@@ -216,11 +216,11 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
     expect(stmt).toMatch(/^INSERT INTO "t" \("a", "b"\) VALUES \('', ''\)/);
   });
 
-  it("__vsdb_deleted__ marker → DELETE statement (inline WHERE)", () => {
+  it("__UnicDB_deleted__ marker → DELETE statement (inline WHERE)", () => {
     const marker: EditEntry = {
       rowId: 7,
       colIndex: 0,
-      value: { __vsdb_deleted__: true, __rowId: 7 },
+      value: { __UnicDB_deleted__: true, __rowId: 7 },
     };
     const r = buildSaveStatements(
       "postgres",
@@ -245,7 +245,7 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
     const marker: EditEntry = {
       rowId: 7,
       colIndex: 0,
-      value: { __vsdb_deleted__: true, __rowId: 7 },
+      value: { __UnicDB_deleted__: true, __rowId: 7 },
     };
     const serverRows: unknown[][] = Array.from({ length: 8 }, () => ["", ""]).map(
       (row, idx) => (idx === 7 ? [99, "old-name"] : row),
@@ -274,7 +274,7 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
     const marker: EditEntry = {
       rowId: 7,
       colIndex: 0,
-      value: { __vsdb_deleted__: true, __rowId: 7 },
+      value: { __UnicDB_deleted__: true, __rowId: 7 },
     };
     const serverRows: unknown[][] = Array.from({ length: 8 }, () => ["", ""]).map(
       (row, idx) => (idx === 7 ? [99, "old-name"] : row),
@@ -312,7 +312,7 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
     const marker: EditEntry = {
       rowId: 0,
       colIndex: 0,
-      value: { __vsdb_deleted__: true, __rowId: 0 },
+      value: { __UnicDB_deleted__: true, __rowId: 0 },
     };
     const r = buildSaveStatements(
       "mysql",
@@ -361,7 +361,7 @@ describe("buildSaveStatements — Add Row / Delete Row markers", () => {
     const deleteMarker: EditEntry = {
       rowId: 1,
       colIndex: 0,
-      value: { __vsdb_deleted__: true, __rowId: 1 },
+      value: { __UnicDB_deleted__: true, __rowId: 1 },
     };
     const cellEdit: EditEntry = {
       rowId: 0,
@@ -437,9 +437,9 @@ describe("buildSaveStatements — no_pk guard scoping (Finding 3, fix round 2)",
         rowId: 5,
         colIndex: -1,
         value: {
-          __vsdb_new_row__: true,
+          __UnicDB_new_row__: true,
           __rowId: 5,
-          values: [{ __vsdb_default__: true }, { __vsdb_default__: true }],
+          values: [{ __UnicDB_default__: true }, { __UnicDB_default__: true }],
         },
       },
       { rowId: 5, colIndex: 0, value: "typed-value" },
@@ -471,11 +471,11 @@ describe("buildSaveStatements — no_pk guard scoping (Finding 3, fix round 2)",
       rowId: 9,
       colIndex: -1,
       value: {
-        __vsdb_new_row__: true,
+        __UnicDB_new_row__: true,
         __rowId: 9,
         values: [
-          { __vsdb_default__: true },
-          { __vsdb_default__: true },
+          { __UnicDB_default__: true },
+          { __UnicDB_default__: true },
         ],
       },
     };
@@ -509,7 +509,7 @@ describe("buildSaveStatements — no_pk guard scoping (Finding 3, fix round 2)",
       rowId: 5,
       colIndex: -1,
       value: {
-        __vsdb_new_row__: true,
+        __UnicDB_new_row__: true,
         __rowId: 5,
         values: ["typed-value", "b"],
       },
@@ -538,9 +538,9 @@ describe("buildSaveStatements — Add Row cell edits merge into the INSERT (Find
         rowId: 3,
         colIndex: -1,
         value: {
-          __vsdb_new_row__: true,
+          __UnicDB_new_row__: true,
           __rowId: 3,
-          values: [{ __vsdb_default__: true }, { __vsdb_default__: true }],
+          values: [{ __UnicDB_default__: true }, { __UnicDB_default__: true }],
         },
       },
       { rowId: 3, colIndex: 1, value: "Alice" },
@@ -568,12 +568,12 @@ describe("buildSaveStatements — Add Row cell edits merge into the INSERT (Find
         rowId: 7,
         colIndex: -1,
         value: {
-          __vsdb_new_row__: true,
+          __UnicDB_new_row__: true,
           __rowId: 7,
           values: [
-            { __vsdb_default__: true },
-            { __vsdb_default__: true },
-            { __vsdb_default__: true },
+            { __UnicDB_default__: true },
+            { __UnicDB_default__: true },
+            { __UnicDB_default__: true },
           ],
         },
       },
@@ -613,9 +613,9 @@ describe("buildSaveStatements — dialect-aware all-DEFAULT insert (Finding 3, c
       rowId: 1,
       colIndex: -1,
       value: {
-        __vsdb_new_row__: true,
+        __UnicDB_new_row__: true,
         __rowId: 1,
-        values: [{ __vsdb_default__: true }],
+        values: [{ __UnicDB_default__: true }],
       },
     };
     const r = buildSaveStatements("mysql", "t", ["id"], ["qty"], [marker], []);
@@ -631,9 +631,9 @@ describe("buildSaveStatements — dialect-aware all-DEFAULT insert (Finding 3, c
       rowId: 1,
       colIndex: -1,
       value: {
-        __vsdb_new_row__: true,
+        __UnicDB_new_row__: true,
         __rowId: 1,
-        values: [{ __vsdb_default__: true }],
+        values: [{ __UnicDB_default__: true }],
       },
     };
     const r = buildSaveStatements("postgres", "t", [], ["qty"], [marker], []);
@@ -649,9 +649,9 @@ describe("buildSaveStatements — dialect-aware all-DEFAULT insert (Finding 3, c
       rowId: 1,
       colIndex: -1,
       value: {
-        __vsdb_new_row__: true,
+        __UnicDB_new_row__: true,
         __rowId: 1,
-        values: [{ __vsdb_default__: true }],
+        values: [{ __UnicDB_default__: true }],
       },
     };
     const r = buildSaveStatements("mssql", "t", ["id"], ["qty"], [marker], []);
@@ -812,7 +812,7 @@ describe("buildSaveStatements — skippedRows (A19-skip, §3.4a)", () => {
       rowId: 5,
       colIndex: 0,
       value: {
-        __vsdb_new_row__: true,
+        __UnicDB_new_row__: true,
         __rowId: 5,
         values: ["new-a", "new-b"],
       },
@@ -862,7 +862,7 @@ describe("buildSaveStatements — skippedRows (A19-skip, §3.4a)", () => {
     const marker: EditEntry = {
       rowId: 2,
       colIndex: 0,
-      value: { __vsdb_deleted__: true, __rowId: 2 },
+      value: { __UnicDB_deleted__: true, __rowId: 2 },
     };
     const r = buildSaveStatements("mssql", "t", [], ["a"], [marker], [["x"]]);
     expect(r.ok).toBe(true);
@@ -961,7 +961,7 @@ describe("buildSaveStatements — NULL PK in server row (TASK-008 S1)", () => {
     const marker: EditEntry = {
       rowId: 3,
       colIndex: 0,
-      value: { __vsdb_deleted__: true, __rowId: 3 },
+      value: { __UnicDB_deleted__: true, __rowId: 3 },
     };
     const serverRows: unknown[][] = [
       [1, "a"],

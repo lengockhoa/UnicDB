@@ -134,8 +134,8 @@ describe("sampleDataAi — aiGenerateSampleData e2e", () => {
     driver: "postgres",
     host: "127.0.0.1",
     port: 5432,
-    user: "vsdb",
-    database: "vsdb",
+    user: "UnicDB",
+    database: "UnicDB",
   });
 
   it("case #2: full flow — provider called with work modelId, runQuery ONCE with joined inserts, info message about N inserted rows", async () => {
@@ -186,7 +186,7 @@ describe("sampleDataAi — aiGenerateSampleData e2e", () => {
 
     expect(result.inserted).toBe(3);
     expect(infoSpy).toHaveBeenCalledWith(
-      "VSDB: inserted 3 sample rows into public.users",
+      "UnicDB: inserted 3 sample rows into public.users",
     );
   });
 
@@ -254,7 +254,7 @@ describe("sampleDataAi — aiGenerateSampleData e2e", () => {
     expect(complete).not.toHaveBeenCalled();
     expect(runQuery).not.toHaveBeenCalled();
     expect(infoSpy).toHaveBeenCalledWith(
-      "VSDB: nothing to insert into public.users",
+      "UnicDB: nothing to insert into public.users",
     );
   });
 

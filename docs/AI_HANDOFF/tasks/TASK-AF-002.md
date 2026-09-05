@@ -7,13 +7,13 @@
 
 ## Goal
 
-Extend the schema tree with per-table `indexes` / `constraints` / `triggers` categories plus schema-level `sequences` and row counts in table descriptions, and add "Open DDL" context-menu actions opening real DDL for table/view/routine/trigger in a read-only `vsdb-ddl:` virtual document (replacing the placeholder view-DDL header).
+Extend the schema tree with per-table `indexes` / `constraints` / `triggers` categories plus schema-level `sequences` and row counts in table descriptions, and add "Open DDL" context-menu actions opening real DDL for table/view/routine/trigger in a read-only `UnicDB-ddl:` virtual document (replacing the placeholder view-DDL header).
 
 ## Target Files
 
 - `src/ui/schemaTree.ts` — new CategoryKinds (`indexes` | `constraints` | `triggers` | `sequences`), lazy children via `adapter.catalog` when present, row-count description on table nodes, filter compatibility, "Open DDL" context menu entries.
-- `src/ui/ddlView.ts` — NEW: `TextDocumentContentProvider` on scheme `vsdb-ddl:` + per-URI content cache + `openDdl(node)` command body + refresh command.
-- `src/extension.ts` — register `vsdb.openDdl` + `vsdb.refreshDdl` commands, wire provider registration (ONLY wave-2 owner of this file).
+- `src/ui/ddlView.ts` — NEW: `TextDocumentContentProvider` on scheme `UnicDB-ddl:` + per-URI content cache + `openDdl(node)` command body + refresh command.
+- `src/extension.ts` — register `UnicDB.openDdl` + `UnicDB.refreshDdl` commands, wire provider registration (ONLY wave-2 owner of this file).
 - `src/ui/__tests__/schemaTreeCatalog.test.ts` — NEW.
 - `src/ui/__tests__/ddlView.test.ts` — NEW.
 
@@ -50,7 +50,7 @@ npm test
 - [ ] Every test in §Test Cases passes (RED first, GREEN after).
 - [ ] mysql/mssql behavior unchanged when `catalog` absent (no new node kinds, no errors).
 - [ ] "Open DDL" on a view shows real `CREATE VIEW` text from `pg_get_viewdef` (replaces placeholder header path).
-- [ ] `vsdb-ddl:` documents are read-only (no edit affordance) and refreshable via `vsdb.refreshDdl`.
+- [ ] `UnicDB-ddl:` documents are read-only (no edit affordance) and refreshable via `UnicDB.refreshDdl`.
 - [ ] Full `npm test` green; `npm run typecheck` exit 0; `npm run compile` clean.
 
 ## Dependencies
@@ -59,8 +59,8 @@ npm test
 
 ## Interfaces
 
-- Consumes: `adapter.catalog` (`CatalogApi` exactly as produced by TASK-AF-001), existing `VsdbNode`/`CategoryKind` in `src/ui/schemaTree.ts`, `formatRows(n: number): string`.
-- Produces: command IDs `vsdb.openDdl` (arg: `VsdbNode`) and `vsdb.refreshDdl` (no arg) — consumed by package.json contribution points if declared, and by later roadmap cycles (AI rename/diff open-DDL affordances).
+- Consumes: `adapter.catalog` (`CatalogApi` exactly as produced by TASK-AF-001), existing `UnicDBNode`/`CategoryKind` in `src/ui/schemaTree.ts`, `formatRows(n: number): string`.
+- Produces: command IDs `UnicDB.openDdl` (arg: `UnicDBNode`) and `UnicDB.refreshDdl` (no arg) — consumed by package.json contribution points if declared, and by later roadmap cycles (AI rename/diff open-DDL affordances).
 
 ---
 
@@ -83,7 +83,7 @@ npm test
 - TEST_PLAN_FOLLOWED: TASK-AF-002 §Test Cases 1-10 (10 total: tests 1-6, 7-9, 10)
 - FILES_CHANGED:
   - src/ui/schemaTree.ts: extended CategoryKind union (added indexes|constraints|triggers|sequences); new getTableChildren that probes catalog.listIndexes/listConstraints/listTriggers when adapter.catalog is present; getCategoriesForSchema became async and probes listSequences; getIndexChildren/getConstraintChildren/getTriggerChildren/getSequenceChildren + per-op loaders with 60s cache + leaf-level filter; fetchRowCountsBatch dispatches to catalog.rowCount when catalog present, else existing estimateTableRowsBatch path
-  - src/ui/ddlView.ts: NEW — DdlViewProviderImpl + openDdl + registerDdlView (vsdb-ddl scheme, vsdb.openDdl, vsdb.refreshDdl commands)
+  - src/ui/ddlView.ts: NEW — DdlViewProviderImpl + openDdl + registerDdlView (UnicDB-ddl scheme, UnicDB.openDdl, UnicDB.refreshDdl commands)
   - src/extension.ts: imports registerDdlView + activates it at extension start with ctx.subscriptions
   - src/ui/__tests__/schemaTreeCatalog.test.ts: NEW — 7 tests covering §Test Cases 1-6 + 10
   - src/ui/__tests__/ddlView.test.ts: NEW — 5 tests covering §Test Cases 7-9 + extension wiring
@@ -115,4 +115,4 @@ FINDINGS:
     - Test #6 (task file): filter cannot propagate table-level because existing filter engine is shallow; executor documented the leaf-level contract in the test file. Acceptable scoped deviation — noted for future filter-depth work.
     - Executor report lacks a pasted RED_OUTPUT excerpt; RED-first is evidenced indirectly by commit sequence 76188b8 (vscode mock registers TextDocumentContentProvider) → 3ed2da4 (implementation + tests). Evidence accepted.
 NEXT_STATUS_FOR_INDEX: approved_minor
-NOTES: Implementation commit 3ed2da4 verified in history (schemaTree.ts +435, ddlView.ts NEW 233, extension wiring). vsdb-ddl read-only provider + openDdl/refreshDdl commands match §Produces.
+NOTES: Implementation commit 3ed2da4 verified in history (schemaTree.ts +435, ddlView.ts NEW 233, extension wiring). UnicDB-ddl read-only provider + openDdl/refreshDdl commands match §Produces.

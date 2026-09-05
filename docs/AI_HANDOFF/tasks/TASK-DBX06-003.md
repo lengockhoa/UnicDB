@@ -21,8 +21,8 @@ Reviewer: unic-smart (cycle reviewer)
      Failure mid-run → `done {applied, failedAt, error}` naming the exact
      statement + what already applied. Cancel during run stops BEFORE the
      next statement and returns the same done shape.
-2. Commands in `tableCommands.ts`: `vsdb.renameTable` (table node) and
-   `vsdb.renameColumn` (column node; resolve column via node arg or a
+2. Commands in `tableCommands.ts`: `UnicDB.renameTable` (table node) and
+   `UnicDB.renameColumn` (column node; resolve column via node arg or a
    QuickPick over listTableDetail columns). Both guardPostgres.
 3. `package.json`: commands + view/item menus contributions.
 
@@ -40,7 +40,7 @@ Reviewer: unic-smart (cycle reviewer)
 
 ## Executor
 
-Delivered: src/core/ddl/renameRunner.ts (pure runRenameStatements — progress + mid-run failure + cancel-before-next), src/ui/renameFormMessages.ts (typed init/analysis/progress/done contract), src/ui/renameForm.ts (host — runs the 4 parameterized pg_catalog lookups via adapter.renameUsage capability, builds plan, runs statements, posts per-statement progress + done shape), webview/renameFormMain.ts (vanilla DOM, textContent-only, init/analysis/progress/done renders), esbuild entry dist/renameForm.js, tableCommands.ts wires vsdb.renameTable + vsdb.renameColumn (renameTable → onRenamed reveals the renamed node; renameColumn → QuickPick over listTableDetail columns), package.json command + menu contributions.
+Delivered: src/core/ddl/renameRunner.ts (pure runRenameStatements — progress + mid-run failure + cancel-before-next), src/ui/renameFormMessages.ts (typed init/analysis/progress/done contract), src/ui/renameForm.ts (host — runs the 4 parameterized pg_catalog lookups via adapter.renameUsage capability, builds plan, runs statements, posts per-statement progress + done shape), webview/renameFormMain.ts (vanilla DOM, textContent-only, init/analysis/progress/done renders), esbuild entry dist/renameForm.js, tableCommands.ts wires UnicDB.renameTable + UnicDB.renameColumn (renameTable → onRenamed reveals the renamed node; renameColumn → QuickPick over listTableDetail columns), package.json command + menu contributions.
 
 **RED → GREEN evidence**:
 - `npx vitest run src/core/ddl/__tests__/renameRunner.test.ts` → Tests 3 passed

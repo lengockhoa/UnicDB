@@ -38,12 +38,12 @@ describe("TASK-003 - chat layout CSS contract", () => {
     expect(css, "webview/styles.css must exist").not.toBe("");
   });
 
-  it(".vsdb-chat-thread grows via flex:1 and no longer caps at 60vh", () => {
-    const body = ruleBody(".vsdb-chat-thread");
-    expect(body, ".vsdb-chat-thread rule block must exist").not.toBe("");
+  it(".UnicDB-chat-thread grows via flex:1 and no longer caps at 60vh", () => {
+    const body = ruleBody(".UnicDB-chat-thread");
+    expect(body, ".UnicDB-chat-thread rule block must exist").not.toBe("");
     expect(
       /flex:\s*1(?:[^;]*;|$)/.test(body),
-      ".vsdb-chat-thread must declare flex:1 (or flex:1 1 auto)",
+      ".UnicDB-chat-thread must declare flex:1 (or flex:1 1 auto)",
     ).toBe(true);
     // FIX ROUND 1 — minor: the original `/max-height: \s*60vh/` had a literal
     // space after the colon, so `max-height:60vh` (no space) slipped through.
@@ -51,171 +51,171 @@ describe("TASK-003 - chat layout CSS contract", () => {
     // form check too.
     expect(
       /max-height:\s*60vh/i.test(body),
-      ".vsdb-chat-thread must NOT contain max-height:60vh (kills the bug)",
+      ".UnicDB-chat-thread must NOT contain max-height:60vh (kills the bug)",
     ).toBe(false);
     expect(
       /max-height:60vh/i.test(body),
-      ".vsdb-chat-thread must NOT contain space-free max-height:60vh either",
+      ".UnicDB-chat-thread must NOT contain space-free max-height:60vh either",
     ).toBe(false);
     expect(
       /overflow-y:\s*auto/i.test(body),
-      ".vsdb-chat-thread must keep overflow-y:auto so the thread scrolls",
+      ".UnicDB-chat-thread must keep overflow-y:auto so the thread scrolls",
     ).toBe(true);
   });
 
-  it(".vsdb-chat shell is a full-height flex column so the composer pins bottom", () => {
-    const body = ruleBody(".vsdb-chat");
-    expect(body, ".vsdb-chat rule block must exist").not.toBe("");
+  it(".UnicDB-chat shell is a full-height flex column so the composer pins bottom", () => {
+    const body = ruleBody(".UnicDB-chat");
+    expect(body, ".UnicDB-chat rule block must exist").not.toBe("");
     expect(
       /display:\s*flex/i.test(body),
-      ".vsdb-chat must declare display:flex",
+      ".UnicDB-chat must declare display:flex",
     ).toBe(true);
     expect(
       /flex-direction:\s*column/i.test(body),
-      ".vsdb-chat must declare flex-direction:column",
+      ".UnicDB-chat must declare flex-direction:column",
     ).toBe(true);
     expect(
       /height:\s*100%/i.test(body),
-      ".vsdb-chat must declare height:100%",
+      ".UnicDB-chat must declare height:100%",
     ).toBe(true);
   });
 
-  it(".vsdb-chat-input is a flex child (not absolutely positioned) AFTER the thread", () => {
-    const body = ruleBody(".vsdb-chat-input");
-    expect(body, ".vsdb-chat-input rule block must exist").not.toBe("");
+  it(".UnicDB-chat-input is a flex child (not absolutely positioned) AFTER the thread", () => {
+    const body = ruleBody(".UnicDB-chat-input");
+    expect(body, ".UnicDB-chat-input rule block must exist").not.toBe("");
     expect(
       /position:\s*absolute/i.test(body),
-      ".vsdb-chat-input must NOT be position:absolute",
+      ".UnicDB-chat-input must NOT be position:absolute",
     ).toBe(false);
-    const threadIdx = css.search(/\.vsdb-chat-thread\s*\{/);
-    const inputIdx = css.search(/\.vsdb-chat-input\s*\{/);
+    const threadIdx = css.search(/\.UnicDB-chat-thread\s*\{/);
+    const inputIdx = css.search(/\.UnicDB-chat-input\s*\{/);
     expect(
       threadIdx >= 0 && inputIdx >= 0 && threadIdx < inputIdx,
-      ".vsdb-chat-thread rule must appear before .vsdb-chat-input in stylesheet order",
+      ".UnicDB-chat-thread rule must appear before .UnicDB-chat-input in stylesheet order",
     ).toBe(true);
   });
 
   // FIX ROUND 1 — critical: height-chain.
-  // `<body class="vsdb-form-body">` (src/ui/aiChatPanel.ts buildHtml) had no
-  // height rule, so `.vsdb-chat { height:100% }` collapsed against auto → ~205px
+  // `<body class="UnicDB-form-body">` (src/ui/aiChatPanel.ts buildHtml) had no
+  // height rule, so `.UnicDB-chat { height:100% }` collapsed against auto → ~205px
   // root. Add a chat-scoped body class + height rule; do not break OTHER forms
-  // (connectionForm etc. still share `vsdb-form-body`).
-  it("chat webview body establishes a real height chain (body.vsdb-chat-body height:100vh)", () => {
-    const body = ruleBody("body.vsdb-chat-body");
+  // (connectionForm etc. still share `UnicDB-form-body`).
+  it("chat webview body establishes a real height chain (body.UnicDB-chat-body height:100vh)", () => {
+    const body = ruleBody("body.UnicDB-chat-body");
     expect(
       body,
-      "body.vsdb-chat-body rule block must exist — fixes the 205px panel collapse (CRITICAL)",
+      "body.UnicDB-chat-body rule block must exist — fixes the 205px panel collapse (CRITICAL)",
     ).not.toBe("");
     expect(
       /height:\s*100vh/i.test(body),
-      "body.vsdb-chat-body must declare height:100vh (fills the webview viewport)",
+      "body.UnicDB-chat-body must declare height:100vh (fills the webview viewport)",
     ).toBe(true);
     expect(
       /overflow:\s*hidden/i.test(body),
-      "body.vsdb-chat-body must declare overflow:hidden so the panel owns scrolling",
+      "body.UnicDB-chat-body must declare overflow:hidden so the panel owns scrolling",
     ).toBe(true);
   });
 
-  it(".vsdb-chat fills its body (height:100% + min-height:0) — chain to 100vh", () => {
-    const body = ruleBody(".vsdb-chat");
-    expect(body, ".vsdb-chat rule block must exist").not.toBe("");
+  it(".UnicDB-chat fills its body (height:100% + min-height:0) — chain to 100vh", () => {
+    const body = ruleBody(".UnicDB-chat");
+    expect(body, ".UnicDB-chat rule block must exist").not.toBe("");
     expect(
       /height:\s*100%/i.test(body),
-      ".vsdb-chat must declare height:100% so it fills body.vsdb-chat-body",
+      ".UnicDB-chat must declare height:100% so it fills body.UnicDB-chat-body",
     ).toBe(true);
     expect(
       /min-height:\s*0/i.test(body),
-      ".vsdb-chat must declare min-height:0 (flex children need explicit min-height to shrink)",
+      ".UnicDB-chat must declare min-height:0 (flex children need explicit min-height to shrink)",
     ).toBe(true);
   });
 
-  it("vsdb-form-body (other forms) is NOT touched by the height chain — scope preserved", () => {
-    const formBody = ruleBody(".vsdb-form-body");
-    expect(formBody, ".vsdb-form-body rule block must still exist").not.toBe("");
+  it("UnicDB-form-body (other forms) is NOT touched by the height chain — scope preserved", () => {
+    const formBody = ruleBody(".UnicDB-form-body");
+    expect(formBody, ".UnicDB-form-body rule block must still exist").not.toBe("");
     expect(
       /height:\s*100vh/i.test(formBody),
-      ".vsdb-form-body (shared with connectionForm etc.) must NOT declare height:100vh",
+      ".UnicDB-form-body (shared with connectionForm etc.) must NOT declare height:100vh",
     ).toBe(false);
   });
 
   // FIX ROUND 1 — important: 6 missing TASK-002 affordance styles.
   describe("TASK-002 affordances (CSS contract)", () => {
-    it("thinking block: vsdb-chat-thinking uses a card-like surface", () => {
-      const body = ruleBody(".vsdb-chat-thinking");
-      expect(body, ".vsdb-chat-thinking rule block must exist").not.toBe("");
+    it("thinking block: UnicDB-chat-thinking uses a card-like surface", () => {
+      const body = ruleBody(".UnicDB-chat-thinking");
+      expect(body, ".UnicDB-chat-thinking rule block must exist").not.toBe("");
       expect(
         /border:\s*1px\s+solid/i.test(body),
-        ".vsdb-chat-thinking must declare a 1px solid border",
+        ".UnicDB-chat-thinking must declare a 1px solid border",
       ).toBe(true);
       expect(
         /background:\s*var\(/i.test(body),
-        ".vsdb-chat-thinking must use a --vscode- themed background",
+        ".UnicDB-chat-thinking must use a --vscode- themed background",
       ).toBe(true);
-      const bodyInner = ruleBody(".vsdb-chat-thinking-body");
+      const bodyInner = ruleBody(".UnicDB-chat-thinking-body");
       expect(
         bodyInner,
-        ".vsdb-chat-thinking-body rule block must exist",
+        ".UnicDB-chat-thinking-body rule block must exist",
       ).not.toBe("");
       expect(
         /padding:\s*\d/i.test(bodyInner),
-        ".vsdb-chat-thinking-body must declare a padding value",
+        ".UnicDB-chat-thinking-body must declare a padding value",
       ).toBe(true);
     });
 
     it("jump-to-latest: floating button pinned bottom-right of the thread", () => {
-      const body = ruleBody(".vsdb-chat-jump");
-      expect(body, ".vsdb-chat-jump rule block must exist").not.toBe("");
+      const body = ruleBody(".UnicDB-chat-jump");
+      expect(body, ".UnicDB-chat-jump rule block must exist").not.toBe("");
       expect(
         /position:\s*(?:fixed|absolute)/i.test(body),
-        ".vsdb-chat-jump must be position:fixed or position:absolute (floating)",
+        ".UnicDB-chat-jump must be position:fixed or position:absolute (floating)",
       ).toBe(true);
       expect(
         /bottom:\s*\d/i.test(body),
-        ".vsdb-chat-jump must anchor bottom",
+        ".UnicDB-chat-jump must anchor bottom",
       ).toBe(true);
       expect(
         /right:\s*\d/i.test(body),
-        ".vsdb-chat-jump must anchor right",
+        ".UnicDB-chat-jump must anchor right",
       ).toBe(true);
       expect(
         /z-index:\s*\d+/i.test(body),
-        ".vsdb-chat-jump must declare a z-index (floats above the thread)",
+        ".UnicDB-chat-jump must declare a z-index (floats above the thread)",
       ).toBe(true);
     });
 
     it("md-copy: small inline button attached to a code block", () => {
-      const body = ruleBody(".vsdb-md-copy");
-      expect(body, ".vsdb-md-copy rule block must exist").not.toBe("");
+      const body = ruleBody(".UnicDB-md-copy");
+      expect(body, ".UnicDB-md-copy rule block must exist").not.toBe("");
       expect(
         /font-size:\s*\d/i.test(body),
-        ".vsdb-md-copy must declare a font-size (compact button)",
+        ".UnicDB-md-copy must declare a font-size (compact button)",
       ).toBe(true);
       expect(
         /cursor:\s*pointer/i.test(body),
-        ".vsdb-md-copy must declare cursor:pointer",
+        ".UnicDB-md-copy must declare cursor:pointer",
       ).toBe(true);
     });
 
     it("queued marker: small visual indicator distinct from a settled bubble", () => {
-      const body = ruleBody(".vsdb-chat-queued");
-      expect(body, ".vsdb-chat-queued rule block must exist").not.toBe("");
+      const body = ruleBody(".UnicDB-chat-queued");
+      expect(body, ".UnicDB-chat-queued rule block must exist").not.toBe("");
       // Accept either animation, opacity-based blink, or explicit inline-block
       // sizing — anything that makes the otherwise zero-width span visible.
       expect(
         /(animation:\s*\w+|opacity:\s*0?\.\d|display:\s*inline-block)/i.test(
           body,
         ),
-        ".vsdb-chat-queued must declare animation/opacity/display (visual marker)",
+        ".UnicDB-chat-queued must declare animation/opacity/display (visual marker)",
       ).toBe(true);
     });
 
     it("streaming caret: visible glyph on a streaming assistant bubble", () => {
       // The caret can live on the streaming bubble via ::after OR on the
-      // .vsdb-chat-caret span itself (TASK-002 used the latter: ensureStreamingCaret
-      // appends <span class="vsdb-chat-caret">). Accept either form.
-      const directBody = ruleBody(".vsdb-chat-caret");
+      // .UnicDB-chat-caret span itself (TASK-002 used the latter: ensureStreamingCaret
+      // appends <span class="UnicDB-chat-caret">). Accept either form.
+      const directBody = ruleBody(".UnicDB-chat-caret");
       const streamingAfter =
-        /\.vsdb-chat-assistant\.vsdb-chat-streaming::after\s*\{[^}]*content:\s*['"]/i.test(
+        /\.UnicDB-chat-assistant\.UnicDB-chat-streaming::after\s*\{[^}]*content:\s*['"]/i.test(
           css,
         );
       const hasDirect =
@@ -225,124 +225,124 @@ describe("TASK-003 - chat layout CSS contract", () => {
         );
       expect(
         hasDirect || streamingAfter,
-        "streaming caret must be visible: either .vsdb-chat-caret with display/animation OR .vsdb-chat-assistant.vsdb-chat-streaming::after with a non-empty content",
+        "streaming caret must be visible: either .UnicDB-chat-caret with display/animation OR .UnicDB-chat-assistant.UnicDB-chat-streaming::after with a non-empty content",
       ).toBe(true);
     });
 
-    it("regenerateBtn: button-level affordance styled or inherits .vsdb-chat-secondary", () => {
+    it("regenerateBtn: button-level affordance styled or inherits .UnicDB-chat-secondary", () => {
       // TASK-AG-001: regenerateBtn is an icon-only tile styled by the shared
-      // `.vsdb-chat-actions button` rule (28×28 square, cursor:pointer) — the
-      // old per-ID override and the .vsdb-chat-secondary text-button styling
+      // `.UnicDB-chat-actions button` rule (28×28 square, cursor:pointer) — the
+      // old per-ID override and the .UnicDB-chat-secondary text-button styling
       // are gone. Accept either the shared tile rule, a per-ID override, or
-      // the legacy .vsdb-chat-secondary class as the affordance contract.
+      // the legacy .UnicDB-chat-secondary class as the affordance contract.
       const rule = ruleBody("#regenerateBtn");
-      const tile = ruleBody(".vsdb-chat-actions button");
-      const secondaryBody = ruleBody(".vsdb-chat-secondary");
+      const tile = ruleBody(".UnicDB-chat-actions button");
+      const secondaryBody = ruleBody(".UnicDB-chat-secondary");
       const hasInline = /(padding|margin|font-size|color|background|border|cursor):\s*[^\s;]/i.test(
         rule,
       );
       const hasTile = /(width|height|cursor):\s*[^\s;]/i.test(tile);
-      const hasSecondaryClass = /\.vsdb-chat-secondary/.test(css);
+      const hasSecondaryClass = /\.UnicDB-chat-secondary/.test(css);
       expect(
         hasInline || hasTile || hasSecondaryClass,
-        "#regenerateBtn must be styled by the shared .vsdb-chat-actions button tile, styled inline, OR inherit from .vsdb-chat-secondary",
+        "#regenerateBtn must be styled by the shared .UnicDB-chat-actions button tile, styled inline, OR inherit from .UnicDB-chat-secondary",
       ).toBe(true);
       if (!hasInline && !hasTile) {
-        // Legacy fallback path: regenerateBtn shares .vsdb-chat-secondary —
+        // Legacy fallback path: regenerateBtn shares .UnicDB-chat-secondary —
         // make sure that class has at least minimal button styling.
-        expect(secondaryBody, ".vsdb-chat-secondary rule block must exist").not.toBe("");
+        expect(secondaryBody, ".UnicDB-chat-secondary rule block must exist").not.toBe("");
         expect(
           /(font-size|padding|cursor):\s*[^\s;]/i.test(secondaryBody),
-          ".vsdb-chat-secondary must declare at least one visual property",
+          ".UnicDB-chat-secondary must declare at least one visual property",
         ).toBe(true);
       }
     });
   });
 
   it("resume-picker: row uses cursor:pointer + padding; card mirrors permission-card pattern", () => {
-    const row = ruleBody(".vsdb-chat-resume-row");
-    expect(row, ".vsdb-chat-resume-row rule block must exist").not.toBe("");
+    const row = ruleBody(".UnicDB-chat-resume-row");
+    expect(row, ".UnicDB-chat-resume-row rule block must exist").not.toBe("");
     expect(
       /cursor:\s*pointer/i.test(row),
-      ".vsdb-chat-resume-row must declare cursor:pointer",
+      ".UnicDB-chat-resume-row must declare cursor:pointer",
     ).toBe(true);
     expect(
       /padding:\s*\d/i.test(row),
-      ".vsdb-chat-resume-row must declare a padding value",
+      ".UnicDB-chat-resume-row must declare a padding value",
     ).toBe(true);
     expect(
-      hasHoverRule(".vsdb-chat-resume-row"),
-      ".vsdb-chat-resume-row must have a :hover rule",
+      hasHoverRule(".UnicDB-chat-resume-row"),
+      ".UnicDB-chat-resume-row must have a :hover rule",
     ).toBe(true);
 
-    const card = ruleBody(".vsdb-chat-resume-card");
-    expect(card, ".vsdb-chat-resume-card rule block must exist").not.toBe("");
+    const card = ruleBody(".UnicDB-chat-resume-card");
+    expect(card, ".UnicDB-chat-resume-card rule block must exist").not.toBe("");
     expect(
       /border:\s*1px\s+solid/i.test(card),
-      ".vsdb-chat-resume-card must declare a 1px solid border",
+      ".UnicDB-chat-resume-card must declare a 1px solid border",
     ).toBe(true);
     expect(
       /background:\s*var\(/i.test(card),
-      ".vsdb-chat-resume-card must use a --vscode- themed background",
+      ".UnicDB-chat-resume-card must use a --vscode- themed background",
     ).toBe(true);
     expect(
       /padding:\s*\d/i.test(card),
-      ".vsdb-chat-resume-card must declare a padding value",
+      ".UnicDB-chat-resume-card must declare a padding value",
     ).toBe(true);
 
-    const label = ruleBody(".vsdb-chat-resume-label");
-    expect(label, ".vsdb-chat-resume-label rule block must exist").not.toBe("");
+    const label = ruleBody(".UnicDB-chat-resume-label");
+    expect(label, ".UnicDB-chat-resume-label rule block must exist").not.toBe("");
     expect(
       /font-weight:\s*600/i.test(label),
-      ".vsdb-chat-resume-label must be bold (font-weight:600)",
+      ".UnicDB-chat-resume-label must be bold (font-weight:600)",
     ).toBe(true);
-    const detail = ruleBody(".vsdb-chat-resume-detail");
-    expect(detail, ".vsdb-chat-resume-detail rule block must exist").not.toBe("");
+    const detail = ruleBody(".UnicDB-chat-resume-detail");
+    expect(detail, ".UnicDB-chat-resume-detail rule block must exist").not.toBe("");
     expect(
       /font-size:\s*\d/i.test(detail),
-      ".vsdb-chat-resume-detail must declare a font-size",
+      ".UnicDB-chat-resume-detail must declare a font-size",
     ).toBe(true);
   });
 
   it("mention-dropdown: CSS-first selectors exist (consumed by TASK-005)", () => {
     for (const sel of [
-      ".vsdb-chat-mention-dropdown",
-      ".vsdb-chat-mention-row",
-      ".vsdb-chat-mention-kind",
+      ".UnicDB-chat-mention-dropdown",
+      ".UnicDB-chat-mention-row",
+      ".UnicDB-chat-mention-kind",
     ]) {
       const body = ruleBody(sel);
       expect(body, `${sel} rule block must exist`).not.toBe("");
     }
-    const card = ruleBody(".vsdb-chat-mention-dropdown");
+    const card = ruleBody(".UnicDB-chat-mention-dropdown");
     expect(
       /border:\s*1px\s+solid/i.test(card),
-      ".vsdb-chat-mention-dropdown must declare a 1px solid border",
+      ".UnicDB-chat-mention-dropdown must declare a 1px solid border",
     ).toBe(true);
     expect(
       /background:\s*var\(/i.test(card),
-      ".vsdb-chat-mention-dropdown must use a --vscode- themed background",
+      ".UnicDB-chat-mention-dropdown must use a --vscode- themed background",
     ).toBe(true);
     expect(
       /padding:\s*\d/i.test(card),
-      ".vsdb-chat-mention-dropdown must declare a padding value",
+      ".UnicDB-chat-mention-dropdown must declare a padding value",
     ).toBe(true);
-    const row = ruleBody(".vsdb-chat-mention-row");
+    const row = ruleBody(".UnicDB-chat-mention-row");
     expect(
       /cursor:\s*pointer/i.test(row),
-      ".vsdb-chat-mention-row must declare cursor:pointer",
+      ".UnicDB-chat-mention-row must declare cursor:pointer",
     ).toBe(true);
     expect(
-      hasHoverRule(".vsdb-chat-mention-row"),
-      ".vsdb-chat-mention-row must have a :hover rule",
+      hasHoverRule(".UnicDB-chat-mention-row"),
+      ".UnicDB-chat-mention-row must have a :hover rule",
     ).toBe(true);
-    const kind = ruleBody(".vsdb-chat-mention-kind");
+    const kind = ruleBody(".UnicDB-chat-mention-kind");
     expect(
       /font-size:\s*\d/i.test(kind),
-      ".vsdb-chat-mention-kind must declare a font-size",
+      ".UnicDB-chat-mention-kind must declare a font-size",
     ).toBe(true);
   });
 
-  it("getHtml emits vsdb-chat-body on <body> so the height chain actually applies (fix round 1 re-review)", () => {
+  it("getHtml emits UnicDB-chat-body on <body> so the height chain actually applies (fix round 1 re-review)", () => {
     // The CSS rule alone is dead if buildHtml never puts the class on the
     // body element. Same text-contract approach as the CSS checks above:
     // parse the panel source and assert the emitted body tag carries both
@@ -351,125 +351,125 @@ describe("TASK-003 - chat layout CSS contract", () => {
       resolve(process.cwd(), "src", "ui", "aiChatPanel.ts"),
       "utf8",
     );
-    expect(panelSrc).toContain('<body class="vsdb-form-body vsdb-chat-body">');
+    expect(panelSrc).toContain('<body class="UnicDB-form-body UnicDB-chat-body">');
   });
 
   // -----------------------------------------------------------------------
   // Cycle AB — TASK-003 image-attach CSS contract.
   // The webview needs:
-  //   - .vsdb-chat-attach-btn     (icon button next to send)
-  //   - .vsdb-chat-attachments    (thumbnail strip ABOVE the textarea)
-  //   - .vsdb-chat-thumb          (56×56 frame, hosts an <img>)
-  //   - .vsdb-chat-thumb-remove   (absolute overlay on the thumbnail)
-  //   - .vsdb-chat-attach-warning (amber notice bubble)
+  //   - .UnicDB-chat-attach-btn     (icon button next to send)
+  //   - .UnicDB-chat-attachments    (thumbnail strip ABOVE the textarea)
+  //   - .UnicDB-chat-thumb          (56×56 frame, hosts an <img>)
+  //   - .UnicDB-chat-thumb-remove   (absolute overlay on the thumbnail)
+  //   - .UnicDB-chat-attach-warning (amber notice bubble)
   // Plus theme tokens declared at :root (light defaults) and overridden in a
   // [data-theme="dark"] block:
-  //   --vsdb-warning-bg / --vsdb-warning-fg / --vsdb-warning-border
-  //   --vsdb-overlay-bg
-  //   --vsdb-input-hover-bg
-  //   --vsdb-error-bg
-  // The thumb strip lives inside .vsdb-chat-input so the cycle-AA pinned
+  //   --UnicDB-warning-bg / --UnicDB-warning-fg / --UnicDB-warning-border
+  //   --UnicDB-overlay-bg
+  //   --UnicDB-input-hover-bg
+  //   --UnicDB-error-bg
+  // The thumb strip lives inside .UnicDB-chat-input so the cycle-AA pinned
   // composer + height chain still owns scrolling; the css contract test below
   // guards that lock too (case h).
   // -----------------------------------------------------------------------
   describe("TASK-003 cycle AB — image attach CSS contract", () => {
-    it("a) .vsdb-chat-attach-btn present with cursor:pointer", () => {
-      const body = ruleBody(".vsdb-chat-attach-btn");
-      expect(body, ".vsdb-chat-attach-btn rule block must exist").not.toBe("");
+    it("a) .UnicDB-chat-attach-btn present with cursor:pointer", () => {
+      const body = ruleBody(".UnicDB-chat-attach-btn");
+      expect(body, ".UnicDB-chat-attach-btn rule block must exist").not.toBe("");
       expect(
         /cursor:\s*pointer/i.test(body),
-        ".vsdb-chat-attach-btn must declare cursor:pointer",
+        ".UnicDB-chat-attach-btn must declare cursor:pointer",
       ).toBe(true);
     });
 
-    it("a-focus) .vsdb-chat-attach-btn:focus-visible declares a visible focus ring via theme token", () => {
+    it("a-focus) .UnicDB-chat-attach-btn:focus-visible declares a visible focus ring via theme token", () => {
       // The focus rule lives in a sibling block (selector + :focus-visible),
       // so scan the file-level CSS rather than ruleBody().
       expect(
-        /\.vsdb-chat-attach-btn(?:\.[\w-]+)*\s*:focus-visible\s*\{[^}]*outline\s*:/i.test(
+        /\.UnicDB-chat-attach-btn(?:\.[\w-]+)*\s*:focus-visible\s*\{[^}]*outline\s*:/i.test(
           css,
         ),
-        ".vsdb-chat-attach-btn:focus-visible must declare an outline (visible focus ring)",
+        ".UnicDB-chat-attach-btn:focus-visible must declare an outline (visible focus ring)",
       ).toBe(true);
     });
 
-    it("b) .vsdb-chat-attachments strip layout (display:flex, gap:8px, overflow-x:auto, max-height:80px)", () => {
-      const body = ruleBody(".vsdb-chat-attachments");
-      expect(body, ".vsdb-chat-attachments rule block must exist").not.toBe("");
+    it("b) .UnicDB-chat-attachments strip layout (display:flex, gap:8px, overflow-x:auto, max-height:80px)", () => {
+      const body = ruleBody(".UnicDB-chat-attachments");
+      expect(body, ".UnicDB-chat-attachments rule block must exist").not.toBe("");
       expect(
         /display:\s*flex/i.test(body),
-        ".vsdb-chat-attachments must declare display:flex (horizontal row of thumbnails)",
+        ".UnicDB-chat-attachments must declare display:flex (horizontal row of thumbnails)",
       ).toBe(true);
       expect(
         /gap:\s*8px/i.test(body),
-        ".vsdb-chat-attachments must declare gap:8px",
+        ".UnicDB-chat-attachments must declare gap:8px",
       ).toBe(true);
       expect(
         /overflow-x:\s*auto/i.test(body),
-        ".vsdb-chat-attachments must declare overflow-x:auto (strip scrolls horizontally)",
+        ".UnicDB-chat-attachments must declare overflow-x:auto (strip scrolls horizontally)",
       ).toBe(true);
       expect(
         /max-height:\s*80px/i.test(body),
-        ".vsdb-chat-attachments must declare max-height:80px (capped row height)",
+        ".UnicDB-chat-attachments must declare max-height:80px (capped row height)",
       ).toBe(true);
     });
 
-    it("c) .vsdb-chat-thumb is a 56×56 frame with position:relative (anchors the remove button)", () => {
-      const body = ruleBody(".vsdb-chat-thumb");
-      expect(body, ".vsdb-chat-thumb rule block must exist").not.toBe("");
+    it("c) .UnicDB-chat-thumb is a 56×56 frame with position:relative (anchors the remove button)", () => {
+      const body = ruleBody(".UnicDB-chat-thumb");
+      expect(body, ".UnicDB-chat-thumb rule block must exist").not.toBe("");
       expect(
         /width:\s*56px/i.test(body),
-        ".vsdb-chat-thumb must declare width:56px",
+        ".UnicDB-chat-thumb must declare width:56px",
       ).toBe(true);
       expect(
         /height:\s*56px/i.test(body),
-        ".vsdb-chat-thumb must declare height:56px",
+        ".UnicDB-chat-thumb must declare height:56px",
       ).toBe(true);
       expect(
         /position:\s*relative/i.test(body),
-        ".vsdb-chat-thumb must declare position:relative (anchors .vsdb-chat-thumb-remove)",
+        ".UnicDB-chat-thumb must declare position:relative (anchors .UnicDB-chat-thumb-remove)",
       ).toBe(true);
     });
 
-    it("d) .vsdb-chat-thumb img uses object-fit:cover (fills the 56×56 frame without distortion)", () => {
+    it("d) .UnicDB-chat-thumb img uses object-fit:cover (fills the 56×56 frame without distortion)", () => {
       // ruleBody() does not understand compound selectors like
-      // ".vsdb-chat-thumb img", so scan the file-level CSS for a rule body
+      // ".UnicDB-chat-thumb img", so scan the file-level CSS for a rule body
       // that declares object-fit:cover under that selector.
       expect(
-        /\.vsdb-chat-thumb\s+img\s*\{[^}]*object-fit:\s*cover/i.test(css),
-        ".vsdb-chat-thumb img must declare object-fit:cover",
+        /\.UnicDB-chat-thumb\s+img\s*\{[^}]*object-fit:\s*cover/i.test(css),
+        ".UnicDB-chat-thumb img must declare object-fit:cover",
       ).toBe(true);
     });
 
-    it("e) .vsdb-chat-thumb-remove is an absolute overlay (top:2px, right:2px)", () => {
-      const body = ruleBody(".vsdb-chat-thumb-remove");
+    it("e) .UnicDB-chat-thumb-remove is an absolute overlay (top:2px, right:2px)", () => {
+      const body = ruleBody(".UnicDB-chat-thumb-remove");
       expect(
         body,
-        ".vsdb-chat-thumb-remove rule block must exist",
+        ".UnicDB-chat-thumb-remove rule block must exist",
       ).not.toBe("");
       expect(
         /position:\s*absolute/i.test(body),
-        ".vsdb-chat-thumb-remove must declare position:absolute (overlay)",
+        ".UnicDB-chat-thumb-remove must declare position:absolute (overlay)",
       ).toBe(true);
       expect(
         /top:\s*2px/i.test(body),
-        ".vsdb-chat-thumb-remove must declare top:2px",
+        ".UnicDB-chat-thumb-remove must declare top:2px",
       ).toBe(true);
       expect(
         /right:\s*2px/i.test(body),
-        ".vsdb-chat-thumb-remove must declare right:2px",
+        ".UnicDB-chat-thumb-remove must declare right:2px",
       ).toBe(true);
     });
 
-    it("f) .vsdb-chat-attach-warning references var(--vsdb-warning-bg) (theme-token contract)", () => {
-      const body = ruleBody(".vsdb-chat-attach-warning");
+    it("f) .UnicDB-chat-attach-warning references var(--UnicDB-warning-bg) (theme-token contract)", () => {
+      const body = ruleBody(".UnicDB-chat-attach-warning");
       expect(
         body,
-        ".vsdb-chat-attach-warning rule block must exist",
+        ".UnicDB-chat-attach-warning rule block must exist",
       ).not.toBe("");
       expect(
-        /var\(\s*--vsdb-warning-bg\s*\)/i.test(body),
-        ".vsdb-chat-attach-warning must reference var(--vsdb-warning-bg)",
+        /var\(\s*--UnicDB-warning-bg\s*\)/i.test(body),
+        ".UnicDB-chat-attach-warning must reference var(--UnicDB-warning-bg)",
       ).toBe(true);
     });
 
@@ -483,12 +483,12 @@ describe("TASK-003 - chat layout CSS contract", () => {
       let m: RegExpExecArray | null;
       while ((m = re.exec(css)) !== null) bodies.push(m[1]);
       const tokens = [
-        "--vsdb-warning-bg",
-        "--vsdb-warning-fg",
-        "--vsdb-warning-border",
-        "--vsdb-overlay-bg",
-        "--vsdb-input-hover-bg",
-        "--vsdb-error-bg",
+        "--UnicDB-warning-bg",
+        "--UnicDB-warning-fg",
+        "--UnicDB-warning-border",
+        "--UnicDB-overlay-bg",
+        "--UnicDB-input-hover-bg",
+        "--UnicDB-error-bg",
       ];
       const found = bodies.some((b) =>
         tokens.some((tok) => new RegExp(tok + "\\s*:", "i").test(b)),
@@ -499,15 +499,15 @@ describe("TASK-003 - chat layout CSS contract", () => {
       ).toBe(true);
     });
 
-    it("h) regression: body.vsdb-chat-body { height: 100vh } rule still present (cycle AA height chain)", () => {
-      const body = ruleBody("body.vsdb-chat-body");
+    it("h) regression: body.UnicDB-chat-body { height: 100vh } rule still present (cycle AA height chain)", () => {
+      const body = ruleBody("body.UnicDB-chat-body");
       expect(
         body,
-        "body.vsdb-chat-body rule block must still exist (cycle AA lock)",
+        "body.UnicDB-chat-body rule block must still exist (cycle AA lock)",
       ).not.toBe("");
       expect(
         /height:\s*100vh/i.test(body),
-        "body.vsdb-chat-body must still declare height:100vh",
+        "body.UnicDB-chat-body must still declare height:100vh",
       ).toBe(true);
     });
   });
@@ -519,103 +519,103 @@ describe("TASK-003 - chat layout CSS contract", () => {
   // the source CSS text directly (same pattern as the rest of this file).
   // -----------------------------------------------------------------------
   describe("TASK-UX1-008 - streaming bubble layout (R9 + R10)", () => {
-    it("R9 case 1: .vsdb-chat-bubble declares min-height + width:fit-content and retains max-width<=95%", () => {
-      const bubble = ruleBody(".vsdb-chat-bubble");
-      expect(bubble, ".vsdb-chat-bubble rule block must exist").not.toBe("");
+    it("R9 case 1: .UnicDB-chat-bubble declares min-height + width:fit-content and retains max-width<=95%", () => {
+      const bubble = ruleBody(".UnicDB-chat-bubble");
+      expect(bubble, ".UnicDB-chat-bubble rule block must exist").not.toBe("");
       // Positive min-height so an empty/short bubble still occupies one line
       // (prevents vertical one-char-per-line collapse during pre-first-delta).
       expect(
         /min-height:\s*\d/i.test(bubble),
-        ".vsdb-chat-bubble must declare a positive min-height (e.g. 1lh / 16px)",
+        ".UnicDB-chat-bubble must declare a positive min-height (e.g. 1lh / 16px)",
       ).toBe(true);
       // fit-content so the bubble shrinks to its content width and never
       // gets reflowed into a one-char-wide column by flex sizing.
       expect(
         /width:\s*fit-content/i.test(bubble),
-        ".vsdb-chat-bubble must declare width:fit-content",
+        ".UnicDB-chat-bubble must declare width:fit-content",
       ).toBe(true);
       // Cap retained so long SQL still wraps inside the panel.
       expect(
         /max-width:\s*95%/i.test(bubble),
-        ".vsdb-chat-bubble must RETAIN max-width:95% (regression guard)",
+        ".UnicDB-chat-bubble must RETAIN max-width:95% (regression guard)",
       ).toBe(true);
     });
 
-    it("R9 case 2: .vsdb-chat-caret no longer uses display:inline-block (was the one-char-per-line cause)", () => {
-      const caret = ruleBody(".vsdb-chat-caret");
-      expect(caret, ".vsdb-chat-caret rule block must exist").not.toBe("");
+    it("R9 case 2: .UnicDB-chat-caret no longer uses display:inline-block (was the one-char-per-line cause)", () => {
+      const caret = ruleBody(".UnicDB-chat-caret");
+      expect(caret, ".UnicDB-chat-caret rule block must exist").not.toBe("");
       expect(
         /display:\s*inline-block/i.test(caret),
-        ".vsdb-chat-caret must NOT declare display:inline-block (forces own line box, garbles streaming text)",
+        ".UnicDB-chat-caret must NOT declare display:inline-block (forces own line box, garbles streaming text)",
       ).toBe(false);
       // The fix replaces it with display:inline (or equivalent). Accept any
       // non-block value so the test stays pinned to the bug, not the syntax.
       expect(
         /display:\s*(?:inline(?:-flex)?|contents?)/i.test(caret),
-        ".vsdb-chat-caret must declare a non-block display value (inline/inline-flex/contents)",
+        ".UnicDB-chat-caret must declare a non-block display value (inline/inline-flex/contents)",
       ).toBe(true);
     });
 
-    it("R9 case 3: .vsdb-chat-assistant.vsdb-chat-streaming RETAINs white-space:pre-wrap (regression guard)", () => {
+    it("R9 case 3: .UnicDB-chat-assistant.UnicDB-chat-streaming RETAINs white-space:pre-wrap (regression guard)", () => {
       // The naive "fix" for R9 would be white-space:normal — that would
       // collapse streamed multi-line SQL onto one line. Pinned regression.
-      const streaming = ruleBody(".vsdb-chat-assistant.vsdb-chat-streaming");
+      const streaming = ruleBody(".UnicDB-chat-assistant.UnicDB-chat-streaming");
       expect(
         streaming,
-        ".vsdb-chat-assistant.vsdb-chat-streaming rule block must exist",
+        ".UnicDB-chat-assistant.UnicDB-chat-streaming rule block must exist",
       ).not.toBe("");
       expect(
         /white-space:\s*pre-wrap/i.test(streaming),
-        ".vsdb-chat-assistant.vsdb-chat-streaming must RETAIN white-space:pre-wrap",
+        ".UnicDB-chat-assistant.UnicDB-chat-streaming must RETAIN white-space:pre-wrap",
       ).toBe(true);
       // Same guard at the base bubble level.
-      const bubble = ruleBody(".vsdb-chat-bubble");
+      const bubble = ruleBody(".UnicDB-chat-bubble");
       expect(
         /white-space:\s*pre-wrap/i.test(bubble),
-        ".vsdb-chat-bubble must RETAIN white-space:pre-wrap",
+        ".UnicDB-chat-bubble must RETAIN white-space:pre-wrap",
       ).toBe(true);
     });
 
     it("R10 case 4: assistant bubbles are NOT flush against the left border (padding-left>=12px or thread margin-left>=8px)", () => {
-      const assistant = ruleBody(".vsdb-chat-assistant");
-      const thread = ruleBody(".vsdb-chat-thread");
-      expect(assistant, ".vsdb-chat-assistant rule block must exist").not.toBe("");
-      expect(thread, ".vsdb-chat-thread rule block must exist").not.toBe("");
+      const assistant = ruleBody(".UnicDB-chat-assistant");
+      const thread = ruleBody(".UnicDB-chat-thread");
+      expect(assistant, ".UnicDB-chat-assistant rule block must exist").not.toBe("");
+      expect(thread, ".UnicDB-chat-thread rule block must exist").not.toBe("");
       const assistantPadding =
         /padding-left:\s*(?:1[2-9]|[2-9]\d|\d{3,})px/i.test(assistant);
       const threadMargin =
         /margin-left:\s*(?:[8-9]|[1-9]\d+)px/i.test(thread);
       expect(
         assistantPadding || threadMargin,
-        "either .vsdb-chat-assistant padding-left>=12px OR .vsdb-chat-thread margin-left>=8px must hold (R10)",
+        "either .UnicDB-chat-assistant padding-left>=12px OR .UnicDB-chat-thread margin-left>=8px must hold (R10)",
       ).toBe(true);
     });
 
-    it("R10 case 5: .vsdb-chat-user retains align-self:flex-end (user bubble unaffected by R10)", () => {
-      const user = ruleBody(".vsdb-chat-user");
-      expect(user, ".vsdb-chat-user rule block must exist").not.toBe("");
+    it("R10 case 5: .UnicDB-chat-user retains align-self:flex-end (user bubble unaffected by R10)", () => {
+      const user = ruleBody(".UnicDB-chat-user");
+      expect(user, ".UnicDB-chat-user rule block must exist").not.toBe("");
       expect(
         /align-self:\s*flex-end/i.test(user),
-        ".vsdb-chat-user must RETAIN align-self:flex-end (right-aligned user bubble)",
+        ".UnicDB-chat-user must RETAIN align-self:flex-end (right-aligned user bubble)",
       ).toBe(true);
     });
   });
 
   // -----------------------------------------------------------------------
   // TASK-UX1-009 — R11 chat improvements: case 8 (right-edge truncation).
-  // The fix is anchored on the EXISTING `.vsdb-chat-bubble` selector —
+  // The fix is anchored on the EXISTING `.UnicDB-chat-bubble` selector —
   // the task scope is APPEND-ONLY on UX1-008's existing rule block. The
   // bubble already has `white-space: pre-wrap` and `max-width:95%` from
   // UX1-008; R11 just adds `overflow-wrap: anywhere` so long SQL/code
   // lines break at the panel edge instead of overflowing horizontally.
   // -----------------------------------------------------------------------
   describe("TASK-UX1-009 - right-edge text truncation (R11)", () => {
-    it("case 8: .vsdb-chat-bubble declares overflow-wrap:anywhere (R11 truncation contract)", () => {
-      const body = ruleBody(".vsdb-chat-bubble");
-      expect(body, ".vsdb-chat-bubble rule block must exist").not.toBe("");
+    it("case 8: .UnicDB-chat-bubble declares overflow-wrap:anywhere (R11 truncation contract)", () => {
+      const body = ruleBody(".UnicDB-chat-bubble");
+      expect(body, ".UnicDB-chat-bubble rule block must exist").not.toBe("");
       expect(
         /overflow-wrap:\s*anywhere/i.test(body),
-        ".vsdb-chat-bubble must declare overflow-wrap:anywhere (R11 truncation)",
+        ".UnicDB-chat-bubble must declare overflow-wrap:anywhere (R11 truncation)",
       ).toBe(true);
     });
   });

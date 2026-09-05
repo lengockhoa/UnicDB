@@ -4,7 +4,7 @@
 > `archive/cycle-DBX01-2026-08-29-claimed-done.md`) claimed all four tasks
 > complete. Auditing the repository on 2026-08-30 after the v1.15.0 release
 > shows no `src/core/importer/`, no `src/ui/importWizard*`, and no
-> `vsdb.importCsv` command in `package.json` — the cycle was
+> `UnicDB.importCsv` command in `package.json` — the cycle was
 > planning_only, never executed. The plan below re-opens the work, keeps
 > the same scope and acceptance, and updates the per-task test contracts
 > so the executor lands a real cycle.
@@ -28,13 +28,13 @@ PostgreSQL only. The cycle must not introduce cross-connection copy or any new a
 - `src/core/importer/importExecute.ts` — runs the plan inside a single `DbTransaction`; respects `dangerousStatement` gate; rollback on any mid-batch failure; never truncates oversized rows.
 - `src/ui/importWizard.ts` (host) + `webview/importWizardMain.ts` (CSP-clean) — file → preview → mapping → dry-run → confirm → execute → result.
 - `src/ui/formView.ts` (host) + `webview/formViewMain.ts` (CSP-clean) — single-row labeled form; JSON cells expand without truncation.
-- `src/ui/largeValueEditor.ts` — registers `vsdb-lv:` text document content provider; full-fidelity long-text/JSON viewing.
+- `src/ui/largeValueEditor.ts` — registers `UnicDB-lv:` text document content provider; full-fidelity long-text/JSON viewing.
 - 4 new commands wired into `package.json` + `extension.ts`:
-  - `vsdb.importCsv`
-  - `vsdb.importJson`
-  - `vsdb.openFormView`
-  - `vsdb.editLargeValue`
-- 2 activation events (`onCommand:vsdb.importCsv`, `onCommand:vsdb.importJson`), 1 setting (`vsdb.import.batchSize`, default 1000), 1 view contribution for the form panel.
+  - `UnicDB.importCsv`
+  - `UnicDB.importJson`
+  - `UnicDB.openFormView`
+  - `UnicDB.editLargeValue`
+- 2 activation events (`onCommand:UnicDB.importCsv`, `onCommand:UnicDB.importJson`), 1 setting (`UnicDB.import.batchSize`, default 1000), 1 view contribution for the form panel.
 
 **Out of scope:** MySQL/MSSQL parity (DBX-08), cross-connection copy, reformatting on import target, background execution (imports run synchronously inside a transaction then commit).
 

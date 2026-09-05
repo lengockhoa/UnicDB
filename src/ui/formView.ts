@@ -2,7 +2,7 @@
 // DBX-01-004 — single-row labeled form renderer. Host-side data
 // shaping only; the actual DOM lives in the webview (CSP-clean).
 // `null` renders as "(NULL)"; long values are NOT truncated here —
-// the webview delegates to the `vsdb-lv:` large-value editor.
+// the webview delegates to the `UnicDB-lv:` large-value editor.
 
 export interface FormViewEntry {
   column: string;

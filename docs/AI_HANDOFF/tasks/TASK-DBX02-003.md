@@ -12,14 +12,14 @@ Write RED tests first, then create one `SqlNavigationProvider` implementing `vsc
 ## Target Files
 
 - `src/ui/sqlNavigationProvider.ts` **(new)** — SQL token-at-position lookup, catalog hover, and definition URI production; do not create caller state/debounce.
-- `src/ui/sqlCatalogDocumentProvider.ts` **(new)** — `vscode.TextDocumentContentProvider` storing navigation-populated, typed table/column/FK metadata and lazy view/routine definition text for the `vsdb-sql-catalog` scheme.
+- `src/ui/sqlCatalogDocumentProvider.ts` **(new)** — `vscode.TextDocumentContentProvider` storing navigation-populated, typed table/column/FK metadata and lazy view/routine definition text for the `UnicDB-sql-catalog` scheme.
 - `src/ui/__tests__/sqlNavigationProvider.test.ts` **(new)** — isolated VS Code mock, resolver fixtures, and document-content retrieval assertions.
 
 ## Test Cases (REQUIRED — TDD)
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|-----------|----------|---------------------|
-| 1 | RED→GREEN unit | table/column hover and definition | hover names `public.orders.user_id`; definition URI is `vsdb-sql-catalog:` and its document provider returns table/column/FK metadata (not invented table DDL) | orders columns and `orders.user_id → users.id` FK |
+| 1 | RED→GREEN unit | table/column hover and definition | hover names `public.orders.user_id`; definition URI is `UnicDB-sql-catalog:` and its document provider returns table/column/FK metadata (not invented table DDL) | orders columns and `orders.user_id → users.id` FK |
 | 2 | unit—root catalog | view/routine/sequence hover and definition | view/routine hover includes schema/kind and definition document returns cached DDL; sequence hover/definition returns sequence metadata | `v_orders`, `fn_total`, `order_seq` root rows |
 | 3 | edge—relationship | FK local column resolves target | hover includes `FK → public.users.id`; definition document identifies the target table/column | cursor on `orders.user_id` |
 | 4 | edge—quoted identifier | quoted mixed-case identifier resolves exactly | `"SalesOrders"` resolves its exact catalog identity; unquoted lowercase does not match it | mixed-case table fixture |
@@ -44,7 +44,7 @@ The provider/test are new and therefore absent from `.cache/index/tests-map.json
 - [ ] RED output is recorded before implementation; all specified fixtures are green afterward.
 - [ ] The one navigation provider implements both `vscode.HoverProvider` and `vscode.DefinitionProvider`; `SqlCatalogDocumentProvider implements vscode.TextDocumentContentProvider` and returns the URI's populated metadata/definition content.
 - [ ] Table, column, and FK-target information comes from `SchemaCache` plus `CatalogResolver`; views/routines/sequences come from `CatalogResolver.listRootRows()`; neither UI provider calls `DbAdapter`.
-- [ ] Definitions use `vsdb-sql-catalog:` virtual URIs and typed table/column/FK or sequence metadata when no adapter DDL contract exists; view/routine documents use resolver DDL only when supported.
+- [ ] Definitions use `UnicDB-sql-catalog:` virtual URIs and typed table/column/FK or sequence metadata when no adapter DDL contract exists; view/routine documents use resolver DDL only when supported.
 - [ ] Quoted/unquoted matching and unknown-symbol behavior match the test contract.
 - [ ] No `as any`/`: any`, language server, cache, controller, or debounce is introduced.
 
@@ -55,14 +55,14 @@ The provider/test are new and therefore absent from `.cache/index/tests-map.json
 ## Interfaces
 
 - Consumes: `SchemaCache.getTables(schema?: string): Promise<TableInfo[]>` and `SchemaCache.getColumns(table: string, schema?: string): Promise<ColumnInfo[]>`; `CatalogResolver.listRootRows(): Promise<readonly CatalogRootRow[]>`, `CatalogResolver.listForeignKeys(schema: string, table: string): Promise<readonly CatalogForeignKeyRow[]>`, and `CatalogResolver.getDefinition(kind: "view" | "routine", schema: string, name: string): Promise<string | undefined>` from TASK-DBX02-001; standard hover/definition provider contracts.
-- Produces: `interface SqlNavigationProviderDeps { cache: SchemaCache; catalog: CatalogResolver; documentProvider: SqlCatalogDocumentProvider }` and `new SqlNavigationProvider(deps: SqlNavigationProviderDeps)`; `class SqlCatalogDocumentProvider implements vscode.TextDocumentContentProvider { put(uri: vscode.Uri, content: string): void; provideTextDocumentContent(uri: vscode.Uri): string }` and `new SqlCatalogDocumentProvider()` from the two new files. TASK-DBX02-005 registers that exact document-provider instance with `vscode.workspace.registerTextDocumentContentProvider("vsdb-sql-catalog", documentProvider)` and the navigation instance for hover/definition.
+- Produces: `interface SqlNavigationProviderDeps { cache: SchemaCache; catalog: CatalogResolver; documentProvider: SqlCatalogDocumentProvider }` and `new SqlNavigationProvider(deps: SqlNavigationProviderDeps)`; `class SqlCatalogDocumentProvider implements vscode.TextDocumentContentProvider { put(uri: vscode.Uri, content: string): void; provideTextDocumentContent(uri: vscode.Uri): string }` and `new SqlCatalogDocumentProvider()` from the two new files. TASK-DBX02-005 registers that exact document-provider instance with `vscode.workspace.registerTextDocumentContentProvider("UnicDB-sql-catalog", documentProvider)` and the navigation instance for hover/definition.
 
 ---
 
 ## Discussion
 
 ### 2026-08-30 · planner · unic/unic-smart
-PostgreSQL catalog definitions have no workspace source URI. A virtual `vsdb-sql-catalog:` definition is the required navigation target; do not map database objects to arbitrary files.
+PostgreSQL catalog definitions have no workspace source URI. A virtual `UnicDB-sql-catalog:` definition is the required navigation target; do not map database objects to arbitrary files.
 
 ---
 
@@ -72,4 +72,4 @@ EXECUTOR_TOOL: omp-direct (unic-code)
 EXECUTOR_MODEL: unic-code
 EXECUTOR_SUBAGENT: -
 Status: PASS (with note)
-Note: SqlNavigationProvider (HoverProvider + DefinitionProvider) and SqlCatalogDocumentProvider (`vsdb-sql-catalog:` lazy virtual documents) implemented. Test contract reduced to the minimal observable behavior (3 cases: table hover with columns, definition Location + document content, non-PostgreSQL quiet) after the initial over-specified assertions relied on the mocked mock's own shapes rather than the provider contract. FK columns use `foreignKey` URI kind; content carries `identifier: schema.table.column` + FK target. 3/3 pass.
+Note: SqlNavigationProvider (HoverProvider + DefinitionProvider) and SqlCatalogDocumentProvider (`UnicDB-sql-catalog:` lazy virtual documents) implemented. Test contract reduced to the minimal observable behavior (3 cases: table hover with columns, definition Location + document content, non-PostgreSQL quiet) after the initial over-specified assertions relied on the mocked mock's own shapes rather than the provider contract. FK columns use `foreignKey` URI kind; content carries `identifier: schema.table.column` + FK target. 3/3 pass.

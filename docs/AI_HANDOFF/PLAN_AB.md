@@ -33,7 +33,7 @@ Image attach is **user-pushed** (the user explicitly selected or pasted it) — 
 3. **Webview attach button + clipboard paste**: file picker → `FileReader.readAsDataURL` → thumbnails in a strip ABOVE the textarea (above send row, inside composer card). Same strip for pasted images.
 4. **Webview send-with-attachments**: `send` payload carries `attachments` (only base64/mime/bytes summary — no apiKey, no large blobs in logs). When vision unsupported by current model, the attach button is **disabled with tooltip** and paste-image is **rejected with inline warning**.
 5. **Host runtime path**: `buildMessages` accepts a user-message override carrying `content: ChatContentPart[]` (text + image_url parts). Auto-context still DDL-only. Privacy sentinel test extended: `runQuery` seed must not leak even when attachments are present.
-6. **CSS**: `.vsdb-chat-attachments` strip (horizontal scroll, 56×56 thumbnails, remove button overlay), `.vsdb-chat-attach-btn` (icon button next to send), `.vsdb-chat-attach-warning` (amber notice bubble).
+6. **CSS**: `.UnicDB-chat-attachments` strip (horizontal scroll, 56×56 thumbnails, remove button overlay), `.UnicDB-chat-attach-btn` (icon button next to send), `.UnicDB-chat-attach-warning` (amber notice bubble).
 
 **Out-of-scope (queued for later cycles):**
 - Slash commands (`AI-CHAT-SLASH-COMMANDS-spec.md`).
@@ -80,7 +80,7 @@ Key grounded facts driving the design:
 - `AiConfigStore.loadSettings()` returns `{models: {work: {vision}, smart: {vision}}}` (`src/ai/config.ts:27-48`); vision flag is per-role, configurable.
 - Cycle AA `send` payload: `{type:"send", text}` (`webview/aiChatPanelMain.ts:442`); extension is `{type:"send", text, attachments?}` — additive.
 - `buildMessages` is the single auto-context funnel (`src/ui/aiChatPanel.ts:186-325`) — TASK-004 cycle-AA lock pins it. This cycle passes `userContentOverride?: ChatContentPart[]` through `buildMessages` so the user message can carry parts; auto-context unchanged.
-- Composer DOM: `<div class="vsdb-chat-input">` contains `<textarea id="prompt">` + buttons (`renderInitial` + `wireControls` in webview). The attachment strip inserts **above** the prompt row but **inside** `.vsdb-chat-input` so the flex column renders it above the textarea.
+- Composer DOM: `<div class="UnicDB-chat-input">` contains `<textarea id="prompt">` + buttons (`renderInitial` + `wireControls` in webview). The attachment strip inserts **above** the prompt row but **inside** `.UnicDB-chat-input` so the flex column renders it above the textarea.
 
 ## §4 Test Plan
 
@@ -88,19 +88,19 @@ Key grounded facts driving the design:
 |------|------|----------|------|
 | happy | host accepts `send.attachments` | `handleSend` with `{text, attachments:[{id, mime, bytes, base64}]}` — attachments validated, passed to `runAgent` via `userContentOverride` | T1 |
 | happy | vision capability advertised on init | `init {hasHistory, visionCapable:true}` when current role's `vision:true`; `false` when not | T1 |
-| happy | attach button opens file picker | click on `.vsdb-chat-attach-btn` → `<input type=file accept="image/*" multiple>` change → thumbnails render | T2 |
+| happy | attach button opens file picker | click on `.UnicDB-chat-attach-btn` → `<input type=file accept="image/*" multiple>` change → thumbnails render | T2 |
 | happy | clipboard image paste | `paste` event with `clipboardData.items[i].type.startsWith("image/")` → same thumbnail pipeline as file picker | T2 |
 | happy | send includes attachments | composer has 2 valid thumbnails + text → click send → posted `{type:"send", text, attachments:[…base64…]}` (base64 verified present, bytes field verified correct) | T2 |
-| edge (non-vision) | attach button disabled | init `{visionCapable:false}` → `.vsdb-chat-attach-btn` has `disabled` attribute + tooltip "Current model does not support images" | T2 |
+| edge (non-vision) | attach button disabled | init `{visionCapable:false}` → `.UnicDB-chat-attach-btn` has `disabled` attribute + tooltip "Current model does not support images" | T2 |
 | edge (omp mode) | attach rejected in omp mode | `engine === "omp"` + 2 valid attachments → 2 `attach_error { reason: "vision_unsupported" }` posted, ALL images dropped, text sent only (no silent drop) | T1 |
 | CSP | img-src data: present | `buildHtml` output's CSP meta contains `img-src 'self' data:` | T1 |
 | CSP (regression) | legacy CSP string still present | `default-src 'none'`, `style-src …`, `script-src …` all preserved when `img-src` is added | T1 |
 | mention × attachment | mention block + images coexist | user message has 1 text part (prompt + referenced-context block) + N image_url parts; text is augmented, images are siblings | T1 |
-| edge (CSS overflow) | >4 thumbnails scroll | `.vsdb-chat-attachments { overflow-x: auto }` declared; no flex overflow breaks composer | T3 |
-| edge (CSS theme) | warning uses theme tokens | `.vsdb-chat-attach-warning` references `var(--vsdb-warning-bg)` (no hardcoded hex) | T3 |
-| edge (CSS focus) | attach button focus-visible | `.vsdb-chat-attach-btn:focus-visible` declares a focus ring via theme token | T3 |
+| edge (CSS overflow) | >4 thumbnails scroll | `.UnicDB-chat-attachments { overflow-x: auto }` declared; no flex overflow breaks composer | T3 |
+| edge (CSS theme) | warning uses theme tokens | `.UnicDB-chat-attach-warning` references `var(--UnicDB-warning-bg)` (no hardcoded hex) | T3 |
+| edge (CSS focus) | attach button focus-visible | `.UnicDB-chat-attach-btn:focus-visible` declares a focus ring via theme token | T3 |
 | edge (CSS dark) | dark theme variants | `[data-theme="dark"]` block declares dark variants of the new tokens | T3 |
-| edge (non-vision paste) | clipboard image paste rejected | vision=false + paste image → host receives no send; webview shows amber `.vsdb-chat-attach-warning`; text paste still works | T2 |
+| edge (non-vision paste) | clipboard image paste rejected | vision=false + paste image → host receives no send; webview shows amber `.UnicDB-chat-attach-warning`; text paste still works | T2 |
 | edge (oversize) | 5 MB cap exceeded | 6 MB blob → host never called, single `{type:"attach_error", id, reason:"oversize"}` posted, warning bubble names the file | T1 + T2 |
 | edge (overcount) | 4 cap exceeded | 5 attachments → 5th rejected with `reason:"count_cap"`, first 4 kept | T1 + T2 |
 | edge (mime) | non-image MIME | `text/plain` blob → rejected with `reason:"unsupported_type"`, no thumbnail, no host send | T2 |
@@ -112,9 +112,9 @@ Key grounded facts driving the design:
 | regression (cycle AA lock holds) | buildMessages auto-context | DDL-only system prompt unchanged when attachments are absent OR present; spy `runQuery` 0 | T1 |
 | regression (cycle AA UX holds) | Enter=send / Shift+Enter=newline | unchanged with attachments (keybind path independent of attachments array) | T2 |
 | regression (cycle AA privacy) | no apiKey in wire | `send.attachments[i].base64` is image bytes only — no apiKey string in payload via grep | T1 |
-| happy | CSS contract: thumbnail strip | `.vsdb-chat-attachments { display: flex; gap: 8px }`, `.vsdb-chat-thumb { width: 56px; height: 56px; object-fit: cover }`, `.vsdb-chat-attach-btn { cursor: pointer }` present | T3 |
-| happy | CSS contract: warning | `.vsdb-chat-attach-warning { background: var(--vsdb-warning-bg) }` present, uses theme tokens | T3 |
-| regression (cycle AA layout) | body.vsdb-chat-body height chain | still present, attachment strip inserts inside composer column without breaking flex chain | T3 |
+| happy | CSS contract: thumbnail strip | `.UnicDB-chat-attachments { display: flex; gap: 8px }`, `.UnicDB-chat-thumb { width: 56px; height: 56px; object-fit: cover }`, `.UnicDB-chat-attach-btn { cursor: pointer }` present | T3 |
+| happy | CSS contract: warning | `.UnicDB-chat-attach-warning { background: var(--UnicDB-warning-bg) }` present, uses theme tokens | T3 |
+| regression (cycle AA layout) | body.UnicDB-chat-body height chain | still present, attachment strip inserts inside composer column without breaking flex chain | T3 |
 | happy | pure helper: validateImageAttachment | unit-testable: 5 valid / 6 oversize / 1 wrong mime / 1 mime-mismatch / count cap | T5 |
 | happy | pure helper: summarizeAttachmentsForLog | returns `{count, totalBytes, mimes:[…]}` — never includes base64 (defense against log leakage) | T5 |
 | happy | pure helper: imageBytesToDataUrl | `Uint8Array([0x89,0x50,0x4E,…])` → `data:image/png;base64,iVBORw0KGgo…` | T5 |
@@ -154,7 +154,7 @@ npm run typecheck
 - Enter must never insert a newline in the chat composer; Shift+Enter must never send (cycle AA invariant, still holds).
 - Image bytes MUST NOT enter the system prompt, the auto-context, or resume replay.
 - Unknown message kinds stay silently ignored on both sides (additive contract evolution).
-- `engines.vscode` and `dist/vsdb-*.vsix` packaging rules unchanged (cycle AA established pattern).
+- `engines.vscode` and `dist/UnicDB-*.vsix` packaging rules unchanged (cycle AA established pattern).
 
 ## Planner Report
 PLANNER_MODEL: unic-code (orchestrator-applied after cycle-AA planner infra precedent; spec is bounded enough to be planned at code tier; reviewer at smart tier provides the rigor gate)

@@ -7,7 +7,7 @@
 // `schema.table.column`), look it up against `SchemaCache` for table +
 // column data and against `CatalogResolver` for root rows (view/routine/
 // sequence) and table-scoped FKs. Hover returns Markdown. Definition
-// returns a `vsdb-sql-catalog:` virtual URI; the navigation provider
+// returns a `UnicDB-sql-catalog:` virtual URI; the navigation provider
 // `put(...)` the resolved metadata / DDL into the linked
 // `SqlCatalogDocumentProvider`, which VS Code will fetch when it opens the
 // tab after the jump.

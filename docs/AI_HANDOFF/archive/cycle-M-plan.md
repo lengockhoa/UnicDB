@@ -1,7 +1,7 @@
 # PLAN — Cycle M: approval-aware omp ACP bridge
 
 ## §1 Intent
-Replace Cycle L’s long-lived `omp --mode rpc --approval-mode yolo` bridge with an ACP stdio bridge. A user must explicitly Allow or Deny every omp permission request in VSDB chat; no response, stop, panel disposal, or process exit denies it. Preserve the builtin agent fallback, never send an API key to the webview/ACP path, and keep DB operations behind VSDB’s existing read-only tools.
+Replace Cycle L’s long-lived `omp --mode rpc --approval-mode yolo` bridge with an ACP stdio bridge. A user must explicitly Allow or Deny every omp permission request in UnicDB chat; no response, stop, panel disposal, or process exit denies it. Preserve the builtin agent fallback, never send an API key to the webview/ACP path, and keep DB operations behind UnicDB’s existing read-only tools.
 
 ## §2 Scope
 **In:** typed injected JSON-RPC/NDJSON ACP transport with server-request routing; proof-first safe lifecycle/cwd probe; `initialize → initialized → newSession → prompt`; `session/update` text streaming only; correlated permission UI/response; ACP process launch without yolo; panel/extension migration; removal of obsolete Cycle L RPC/process code after every caller migrates; and focused tests. **Out:** ACP SDK/new runtime, bundling omp, telemetry/backend, DB-tool bypass, model/tool live smoke, and changing builtin behavior. No dependency is added unless TASK-001 proves it necessary.
@@ -18,10 +18,10 @@ Replace Cycle L’s long-lived `omp --mode rpc --approval-mode yolo` bridge with
 | edge—concurrent | two incoming permission requests | each gets only its own correlated response |
 | edge—lifecycle | timeout/stop/dispose/exit/replacement | every pending permission gets one cancelled ACP result |
 | regression | builtin chat and DB read-only host tools | builtin still posts final/done; destructive SQL remains rejected |
-| gated probe | `VSDB_OMP_ACP_SMOKE=1` lifecycle/cwd proof | initialize capabilities + initialized + no-prompt newSession/session ID are recorded; spawn `cwd` works and `--cwd` support is explicitly recorded |
+| gated probe | `UnicDB_OMP_ACP_SMOKE=1` lifecycle/cwd proof | initialize capabilities + initialized + no-prompt newSession/session ID are recorded; spawn `cwd` works and `--cwd` support is explicitly recorded |
 
 ## §5 Verification
-`npx vitest run src/ai/omp/__tests__/acp.test.ts src/ai/omp/__tests__/acpProcess.test.ts && npm run typecheck`; `npx vitest run src/ui/__tests__/aiChatPanelMessages.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts src/ui/__tests__/aiChatPanel.test.ts src/extension.test.ts && npm run compile && npm run typecheck`. `package.json` has no lint script. ACP smoke is opt-in only: `VSDB_OMP_ACP_SMOKE=1 npx vitest run src/ai/omp/__tests__/acpLiveSmoke.test.ts`; do not run it unless the fixture remains initialize-only.
+`npx vitest run src/ai/omp/__tests__/acp.test.ts src/ai/omp/__tests__/acpProcess.test.ts && npm run typecheck`; `npx vitest run src/ui/__tests__/aiChatPanelMessages.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts src/ui/__tests__/aiChatPanel.test.ts src/extension.test.ts && npm run compile && npm run typecheck`. `package.json` has no lint script. ACP smoke is opt-in only: `UnicDB_OMP_ACP_SMOKE=1 npx vitest run src/ai/omp/__tests__/acpLiveSmoke.test.ts`; do not run it unless the fixture remains initialize-only.
 
 ## §6 Acceptance
 - [ ] ACP spawn always scopes the child to workspace `cwd`, never enables yolo/auto approval, and uses `--cwd` only when proof-supported. (TASK-001/002/004)
@@ -34,7 +34,7 @@ Replace Cycle L’s long-lived `omp --mode rpc --approval-mode yolo` bridge with
 ## §7 Task Split & Global Constraints
 Wave 1: TASK-001 ACP client + proof-first safe lifecycle/cwd probe; TASK-003 permission message protocol/webview. Wave 2: TASK-002 ACP process lifecycle (depends TASK-001). Wave 3: TASK-004 panel/extension migration, permission coordinator, and legacy RPC removal (depends TASK-001, TASK-002, TASK-003). Same-wave tasks have no shared files.
 
-**Global constraints:** VS Code engine remains `^1.75.0`; TypeScript/Node extension host only; no new dependency/runtime unless TASK-001 proves necessary; preserve names/copy conventions; no telemetry/backend/bundled omp; apiKey never crosses webview/ACP; default-deny is mandatory; DB access remains VSDB read-only guarded.
+**Global constraints:** VS Code engine remains `^1.75.0`; TypeScript/Node extension host only; no new dependency/runtime unless TASK-001 proves necessary; preserve names/copy conventions; no telemetry/backend/bundled omp; apiKey never crosses webview/ACP; default-deny is mandatory; DB access remains UnicDB read-only guarded.
 
 ## Planner Report
 PLANNER_MODEL: unic/unic-smart

@@ -77,12 +77,12 @@ EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: bao-sonnet
 EXECUTOR_SUBAGENT: feature-implementer
 RED_OUTPUT: |
-  > vsdb@1.6.3 test
+  > UnicDB@1.6.3 test
   > vitest run src/ui/__tests__/manualCommit.test.ts
 
   The CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.
 
-   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-009
+   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-009
 
    ❯ src/ui/__tests__/manualCommit.test.ts  (7 tests | 4 failed) 8ms
      ❯ src/ui/__tests__/manualCommit.test.ts > ResultsPanel manual-commit mode (TASK-009) > manualCommit wraps save in BEGIN and leaves commit for explicit action
@@ -155,12 +155,12 @@ RED_OUTPUT: |
 Verification Output: |
   $ npm test src/ui/__tests__/manualCommit.test.ts
 
-  > vsdb@1.6.3 test
+  > UnicDB@1.6.3 test
   > vitest run src/ui/__tests__/manualCommit.test.ts
 
   The CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.
 
-   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-009
+   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-009
 
    ✓ src/ui/__tests__/manualCommit.test.ts  (7 tests) 5ms
 
@@ -171,7 +171,7 @@ Verification Output: |
 
   $ npm run compile
 
-  > vsdb@1.6.3 compile
+  > UnicDB@1.6.3 compile
   > node esbuild.js
 
     dist/newTableForm.js      20.2kb
@@ -201,18 +201,18 @@ Verification Output: |
 
   $ npm test
 
-  > vsdb@1.6.3 test
+  > UnicDB@1.6.3 test
   > vitest run
 
   The CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.
 
-   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-009
+   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-009
 
   ✓ 95 test files passed; 1 test file skipped.
   ✓ 1326 tests passed; 2 tests skipped; 0 tests failed.
   Note: expected stderr from ResultsPanel postMessage rejection tests was emitted:
-  [vsdb] postMessage rejected: DataCloneError: BigInt
-  [vsdb] postMessage sync throw: Boom sync
+  [UnicDB] postMessage rejected: DataCloneError: BigInt
+  [UnicDB] postMessage sync throw: Boom sync
 
    Test Files  95 passed | 1 skipped (96)
         Tests  1326 passed | 2 skipped (1328)
@@ -221,7 +221,7 @@ Verification Output: |
 
   $ npm run typecheck
 
-  > vsdb@1.6.3 typecheck
+  > UnicDB@1.6.3 typecheck
   > tsc --noEmit
 Status: FAIL
 Note: Implementation and all checks pass, but the task's hard file boundary forbids modifying src/extension.ts, the sole ResultsPanel SaveContext wiring site. Consequently `ConnectionConfig.manualCommit` is never supplied to ResultsPanel in production and the user-facing toggle is unreachable. A one-line getManualCommit: () => mgr.getActive()?.manualCommit === true addition to src/extension.ts is required for PASS; it was not made because it is outside the permitted Target Files.

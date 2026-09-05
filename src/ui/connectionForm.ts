@@ -40,7 +40,7 @@ export class ConnectionForm {
       return;
     }
     this.panel = vscode.window.createWebviewPanel(
-      "vsdb.connectionForm",
+      "UnicDB.connectionForm",
       this.options.existing
         ? `Edit Connection — ${this.options.existing.name}`
         : "New Connection",
@@ -191,11 +191,11 @@ export class ConnectionForm {
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <link rel="stylesheet" href="${styleUri}" />
-  <title>VSDB Connection</title>
+  <title>UnicDB Connection</title>
 </head>
-<body class="vsdb-form-body">
-  <div id="vsdb-root" class="vsdb-form">
-    <div class="vsdb-form-loading">Loading…</div>
+<body class="UnicDB-form-body">
+  <div id="UnicDB-root" class="UnicDB-form">
+    <div class="UnicDB-form-loading">Loading…</div>
   </div>
   <script src="${scriptUri}"></script>
 </body>

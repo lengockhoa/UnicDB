@@ -23,7 +23,7 @@ only match regexes, it cannot know `users` is a real table.
   `schemaCache` instance already exists there (`src/extension.ts:132`) — reuse it, do not
   construct a second cache. Also call the provider's `refresh()` from the two places that
   already invalidate the cache: the `mgr.onDidChangeActive` subscription
-  (`src/extension.ts:141`) and the `vsdb.refreshSchema` command handler
+  (`src/extension.ts:141`) and the `UnicDB.refreshSchema` command handler
   (`src/extension.ts:233-237`).
 - `src/ui/__tests__/sqlSemanticTokens.test.ts` **(new)** — tests below.
 
@@ -81,7 +81,7 @@ npm test
       `readonly onDidChangeSemanticTokens: vscode.Event<void>` and a public `refresh(): void`
       that fires it, plus `dispose()` disposing the underlying `EventEmitter`.
 - [ ] `src/extension.ts` calls `refresh()` from **both** cache-invalidation sites —
-      `mgr.onDidChangeActive` (`:141`) and the `vsdb.refreshSchema` handler (`:233-237`) —
+      `mgr.onDidChangeActive` (`:141`) and the `UnicDB.refreshSchema` handler (`:233-237`) —
       and pushes the provider onto `disposables` so its emitter is released on deactivate.
 - [ ] All 10 Test Cases PASS.
 - [ ] `npm run typecheck` clean; `npm test` ≥ 1327 passed, 0 failed.
@@ -90,7 +90,7 @@ npm test
 ## Dependencies
 
 - (none) — independent of TASK-001. Semantic tokens layer over whatever TextMate grammar
-  is active; they do not require VSDB's injection grammar to exist.
+  is active; they do not require UnicDB's injection grammar to exist.
 
 ## Interfaces
 
@@ -153,7 +153,7 @@ Required shape:
   the only signal.
 - Call `refresh()` wherever the cache becomes newly-valid. Two sites already exist and
   need no new plumbing: `mgr.onDidChangeActive` at `src/extension.ts:141` (currently
-  `() => schemaCache.invalidate()`) and the `vsdb.refreshSchema` command at
+  `() => schemaCache.invalidate()`) and the `UnicDB.refreshSchema` command at
   `src/extension.ts:233-237`. Extend both to also call `provider.refresh()`.
 - Additionally, when `provideDocumentSemanticTokens` runs against a **cold** cache — the
   awaited lookup returned empty *and* `hasConnection()` is true — schedule one `refresh()`
@@ -190,7 +190,7 @@ FILES_CHANGED:
     refresh(), dispose(), cold-cache refresh scheduling).
   - src/extension.ts: import provider; construct next to SchemaCache; guard
     registerDocumentSemanticTokensProvider; push provider onto disposables;
-    refresh() from mgr.onDidChangeActive + vsdb.refreshSchema.
+    refresh() from mgr.onDidChangeActive + UnicDB.refreshSchema.
   - src/ui/__tests__/sqlSemanticTokens.test.ts: new — cases #1-#7,#9,#10.
   - src/extension.test.ts: case #8 (registration guard) added.
 TESTS_ADDED:

@@ -18,7 +18,7 @@ Add a pure function `getTableSortQuery` to `postgres.ts` that wraps a SQL query 
 
 | # | Loai | Ten test | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit | `getTableSortQuery basic sort` | `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY "name" ASC` | originalSql=`"SELECT 1"`, column=`"name"`, direction=`"ASC"` |
+| 1 | unit | `getTableSortQuery basic sort` | `SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY "name" ASC` | originalSql=`"SELECT 1"`, column=`"name"`, direction=`"ASC"` |
 | 2 | unit | `getTableSortQuery with WHERE` | SQL contains both WHERE and ORDER BY | whereFromBar=`"age > 18"` |
 | 3 | unit | `getTableSortQuery DESC direction` | ORDER BY ... DESC | direction=`"DESC"` |
 | 4 | unit | `getTableSortQuery empty where` | No WHERE clause added | whereFromBar=`""` |
@@ -40,7 +40,7 @@ npm run typecheck
 
 ## Acceptance Criteria
 
-- [ ] `getTableSortQuery` wraps SQL in subquery with `vsdb_sort` alias
+- [ ] `getTableSortQuery` wraps SQL in subquery with `UnicDB_sort` alias
 - [ ] ORDER BY uses quoted column identifier (injection-safe)
 - [ ] WHERE clause from requery bar is included when non-empty
 - [ ] Empty where produces no WHERE clause
@@ -119,7 +119,7 @@ $ npm test
 EXIT_CODE=0
 
 $ npm run typecheck
-> vsdb@1.6.3 typecheck
+> UnicDB@1.6.3 typecheck
 > tsc --noEmit
 EXIT_CODE=0
 ```

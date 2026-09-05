@@ -1,4 +1,4 @@
-# VSDB — VS Code Database Extension: Design Document
+# UnicDB — VS Code Database Extension: Design Document
 
 **Date:** 2026-08-21
 **Status:** Approved through brainstorming
@@ -8,7 +8,7 @@
 
 ## 1. Overview & Goals
 
-VSDB is a VS Code extension that lets you run SQL directly from the editor with an experience as close as possible to DataGrip.
+UnicDB is a VS Code extension that lets you run SQL directly from the editor with an experience as close as possible to DataGrip.
 
 **Current problem:** Connecting to a DB from VS Code is difficult; you have to use an external tool (DataGrip) alongside VS Code.
 
@@ -35,7 +35,7 @@ VSDB is a VS Code extension that lets you run SQL directly from the editor with 
 **Project structure:**
 
 ```
-vsdb/
+UnicDB/
 ├── src/
 │   ├── extension.ts              # Entry point: registers commands, keybinding, activity bar
 │   ├── config/
@@ -62,7 +62,7 @@ vsdb/
 │   └── icon.png                  # 128×128 extension icon
 ├── scripts/
 │   ├── build.sh                  # vsce package → .vsix (for the maintainer)
-│   └── install-vsdb.sh           # download vsix + install/update (for the team)
+│   └── install-UnicDB.sh           # download vsix + install/update (for the team)
 ├── package.json                  # Manifest: commands, keybinding, views
 └── esbuild.js
 ```
@@ -96,14 +96,14 @@ All 3 drivers are pure JS (`pg`, `mysql2`, `tedious`) — no native compilation,
 
 **Important note about Workspace State:** connections are stored per workspace. Each project (workspace) has its own connection list — exactly the "everyone manages their own, nothing shared" requirement. Opening a different workspace = separate connections. (The VS Code secrets API is per workspace, which matches the need.)
 
-**Add-connection flow** — command `VSDB: Add Connection`:
+**Add-connection flow** — command `UnicDB: Add Connection`:
 1. QuickPick to choose the driver: PostgreSQL / MySQL / SQL Server
 2. InputBox in order: name → host → port (default per driver: 5432/3306/1433) → user → password → database
 3. **Test the connection before saving** — on failure report the error immediately and do not save a broken connection
 4. Save: password → SecretStorage, everything else → workspace state
 5. Status bar + schema tree update
 
-**Management:** `VSDB: Add / Edit / Delete Connection` via the Command Palette. Edit allows changing every field; a new password overwrites SecretStorage. Deleting a connection also deletes the secret and closes the socket if it is open.
+**Management:** `UnicDB: Add / Edit / Delete Connection` via the Command Palette. Edit allows changing every field; a new password overwrites SecretStorage. Deleting a connection also deletes the secret and closes the socket if it is open.
 
 **Active connection:** remembered per workspace (workspace state). Reopening the project → the previous DB is reselected automatically. Status bar `$(database) work_db [postgres]` — click → QuickPick to switch. Only 1 connection is active at a time (though many connections can exist in the list; switching the active one closes the old connection).
 
@@ -121,7 +121,7 @@ All 3 drivers are pure JS (`pg`, `mysql2`, `tedious`) — no native compilation,
 ```json
 {
   "key": "cmd+enter",
-  "command": "vsdb.runQuery",
+  "command": "UnicDB.runQuery",
   "when": "editorTextFocus && resourceLangId == sql"
 }
 ```
@@ -139,10 +139,10 @@ Only active when a `.sql` editor has focus — it does not steal the shortcut fr
 
 **Splitting statements when running:** a selection containing multiple statements → run them sequentially, one result tab per statement. A failing statement → stop there, earlier tabs keep their results, and clearly show which statement number failed.
 
-**3 entry points, 1 logic path** — all call `vsdb.runQuery`:
+**3 entry points, 1 logic path** — all call `UnicDB.runQuery`:
 - **Cmd+Enter** (keyboard)
 - **The ▶ button on the editor title bar** (`menu.editor/title`, shown for `.sql`)
-- **The "▶ Run" CodeLens** on each statement (setting `vsdb.showRunLens`, enabled by default)
+- **The "▶ Run" CodeLens** on each statement (setting `UnicDB.showRunLens`, enabled by default)
 
 **Cancel:** long-running query → a Cancel button in the grid header + a Progress notification. The adapter supports cancellation through the driver API (pg_cancel_backend, query.kill for MySQL/MSSQL).
 
@@ -187,10 +187,10 @@ Only active when a `.sql` editor has focus — it does not steal the shortcut fr
 
 ## 6. Schema Explorer (Sidebar)
 
-**Activity Bar** VSDB icon (database cylinder + green arrow) → tree panel:
+**Activity Bar** UnicDB icon (database cylinder + green arrow) → tree panel:
 
 ```
-🗄️ VSDB
+🗄️ UnicDB
 ├── ● work_db [postgres]          ← active, green dot
 │   ├── 📁 Tables
 │   │   ├── 📄 users
@@ -227,14 +227,14 @@ Click a connection → switch the active one. A not-yet-connected connection sho
 
 **Phase 1 (now):** build the `.vsix` and share it via a script.
 
-- Maintainer: `scripts/build.sh` → `vsce package` → `vsdb-<version>.vsix` → push to GitHub Releases / a shared drive
+- Maintainer: `scripts/build.sh` → `vsce package` → `UnicDB-<version>.vsix` → push to GitHub Releases / a shared drive
 - Team: a single command:
 
 ```
-curl -fsSL https://.../install-vsdb.sh | bash
+curl -fsSL https://.../install-UnicDB.sh | bash
 ```
 
-The script: read the latest version → download the vsix → `code --install-extension vsdb-<version>.vsix` (installing over the top = update). It detects an older installed version automatically → reports the update.
+The script: read the latest version → download the vsix → `code --install-extension UnicDB-<version>.vsix` (installing over the top = update). It detects an older installed version automatically → reports the update.
 
 **Phase 2 (once stable):** publish to the VS Code Marketplace → silent auto-update, zero effort. The code does not change, only a release step is added.
 

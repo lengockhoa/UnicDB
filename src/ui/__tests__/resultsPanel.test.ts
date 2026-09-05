@@ -951,7 +951,7 @@ describe("ResultsPanel — TASK-RLX02-003 cancel path", () => {
 
     const errors = showErr.mock.calls.map((c) => String(c[0]));
     const noise = errors.find((m) =>
-      /VSDB:|Load more failed:|VSDB requery failed:/.test(m) &&
+      /UnicDB:|Load more failed:|UnicDB requery failed:/.test(m) &&
       /cancel/i.test(m),
     );
     expect(noise).toBeUndefined();
@@ -1029,7 +1029,7 @@ describe("ResultsPanel — resultsPlacement (AI-001)", () => {
     expect(vi.mocked(vscode.commands.executeCommand)).not.toHaveBeenCalled();
   });
 
-  it("T3a. package.json manifest declares vsdb.resultsPlacement (enum below|beside, default below)", () => {
+  it("T3a. package.json manifest declares UnicDB.resultsPlacement (enum below|beside, default below)", () => {
     const raw = fs.readFileSync(
       path.join(__dirname, "..", "..", "..", "package.json"),
       "utf-8",
@@ -1045,7 +1045,7 @@ describe("ResultsPanel — resultsPlacement (AI-001)", () => {
       };
     };
     const prop = manifest.contributes?.configuration?.properties?.[
-      "vsdb.resultsPlacement"
+      "UnicDB.resultsPlacement"
     ];
     expect(prop).toBeDefined();
     // TASK-UX1-006 (R8a) — enum now includes the `top` opt-in. `below` and

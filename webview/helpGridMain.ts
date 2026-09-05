@@ -1,6 +1,6 @@
 // webview/helpGridMain.ts
 //
-// TASK-OC4O-002 — VSDB Help Grid webview. Renders the cards payload sent by
+// TASK-OC4O-002 — UnicDB Help Grid webview. Renders the cards payload sent by
 // the host into a responsive CSS grid; each card has a "Try it" button that
 // posts `{ type: "runCommand", commandId }` to the host.
 
@@ -18,19 +18,19 @@ interface HelpCard {
   commandId: string;
 }
 
-const root = document.getElementById("vsdb-help-root") as HTMLDivElement;
+const root = document.getElementById("UnicDB-help-root") as HTMLDivElement;
 
 function render(cards: readonly HelpCard[]): void {
   root.innerHTML = "";
   const grid = document.createElement("div");
-  grid.className = "vsdb-help-grid";
+  grid.className = "UnicDB-help-grid";
   for (const c of cards) {
     const card = document.createElement("div");
-    card.className = "vsdb-help-card";
+    card.className = "UnicDB-help-card";
     card.dataset["commandId"] = c.commandId;
 
     const header = document.createElement("div");
-    header.className = "vsdb-help-card-header";
+    header.className = "UnicDB-help-card-header";
     const icon = document.createElement("span");
     icon.className = "codicon";
     icon.classList.add(c.icon.replace(/[()]/g, ""));
@@ -41,15 +41,15 @@ function render(cards: readonly HelpCard[]): void {
     header.appendChild(title);
 
     const blurb = document.createElement("p");
-    blurb.className = "vsdb-help-card-blurb";
+    blurb.className = "UnicDB-help-card-blurb";
     blurb.textContent = c.blurb;
 
     const cmd = document.createElement("code");
-    cmd.className = "vsdb-help-card-cmd";
+    cmd.className = "UnicDB-help-card-cmd";
     cmd.textContent = c.commandId;
 
     const button = document.createElement("button");
-    button.className = "vsdb-help-card-try";
+    button.className = "UnicDB-help-card-try";
     button.type = "button";
     button.textContent = "Try it";
     button.addEventListener("click", () => {

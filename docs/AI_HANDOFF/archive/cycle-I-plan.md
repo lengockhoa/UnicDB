@@ -2,7 +2,7 @@
 
 ## §1 Intent
 
-Users currently cannot create or modify tables from VSDB's Schema Explorer — every DDL change
+Users currently cannot create or modify tables from UnicDB's Schema Explorer — every DDL change
 means switching to another tool. Success for this cycle (PostgreSQL only):
 
 1. Right-click a **schema** node, a **Tables category** node, or a **table** node → **"New Table…"**
@@ -40,7 +40,7 @@ handlers no-op politely for non-tables categories.
 - Tree command wiring: package.json contributes (commands + view/item/context menus on
   `schema`, `category`, `table` nodes), extension.ts registrations, driver guards, tree
   refresh + reveal after execute, success notifications.
-- Unit tests (vitest, host + pure) and PG integration tests (VSDB_IT=1).
+- Unit tests (vitest, host + pure) and PG integration tests (UnicDB_IT=1).
 - Docs: CODE_MAP.md + README.md rows (closing task).
 
 **Out of scope**
@@ -155,8 +155,8 @@ Per-task tables live in each TASK file (same coverage, file-scoped). Cycle-level
 | edge (wrong input) | mysql node right-click | "New Table: PostgreSQL connections only", no runQuery |
 | edge (boundary) | Sample Data N=0 / N=1000000 | N=0 → 0 inserts (empty doc); N clamped to 1000 |
 | edge (rename detection) | column renamed + type changed in one edit | RENAME then SET DATA TYPE, no DROP+ADD |
-| integration (VSDB_IT=1) | create table on live PG → introspect round-trip | introspected spec round-trips defaults/nullability/keys |
-| integration (VSDB_IT=1) | alter round-trip: create → modify → verify | new column present, renamed column gone-old-present-new, dropped key absent |
+| integration (UnicDB_IT=1) | create table on live PG → introspect round-trip | introspected spec round-trips defaults/nullability/keys |
+| integration (UnicDB_IT=1) | alter round-trip: create → modify → verify | new column present, renamed column gone-old-present-new, dropped key absent |
 
 Test selection rule (docs/AI_HANDOFF/RULES.md): target file under `src/` → tests from
 `.cache/index/tests-map.json`; new files with no entry → the task's own new test files are the
@@ -173,7 +173,7 @@ No `lint` script exists in this repo (stated explicitly, not omitted silently).
 - T3: `npx vitest run src/core/__tests__/ddlAlterTable.test.ts && npx tsc --noEmit`
 - T4: `npm run compile && npx vitest run src/ui/__tests__/newTableForm.test.ts src/ui/__tests__/newTableFormBundle.test.ts && npx tsc --noEmit`
 - T5: `npm run compile && npx vitest run src/extension.test.ts src/ui/__tests__/tableCommands.test.ts src/ui/__tests__/schemaTree.test.ts && npx tsc --noEmit`
-- T6: `npm run compile && VSDB_IT=1 VSDB_PG_HOST=127.0.0.1 VSDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit`
+- T6: `npm run compile && UnicDB_IT=1 UnicDB_PG_HOST=127.0.0.1 UnicDB_PG_PORT=5433 npx vitest run -c vitest.integration.config.ts src/adapters/__tests__/ddl.integration.test.ts && npx vitest run src/__tests__/releaseHygiene.test.ts && npx tsc --noEmit`
 
 ## §6 Acceptance
 
@@ -186,7 +186,7 @@ No `lint` script exists in this repo (stated explicitly, not omitted silently).
 6. Non-postgres drivers → "New Table: PostgreSQL connections only"; Views/Routines category →
    polite no-op; Escape/Cancel close without executing. — T4, T5
 7. `npm run compile`, `npx tsc --noEmit`, listed vitest runs all PASS; integration green under
-   VSDB_IT=1. — all
+   UnicDB_IT=1. — all
 8. CODE_MAP.md + README.md document the feature. — T6
 
 ## §7 Global Constraints (inherited by every TASK file by reference)
@@ -196,7 +196,7 @@ No `lint` script exists in this repo (stated explicitly, not omitted silently).
   matching existing files).
 - Identifier quoting: only when needed (non-lowercase, empty, reserved word, non `[a-z_][a-z0-9_]*`).
 - NEVER put `search_path`-dependent names in DDL — always schema-qualify from `node.meta.schema`.
-- Executor MUST NOT start/stop docker; PG assumed running at 127.0.0.1:5433 (vsdb/vsdb/vsdb).
+- Executor MUST NOT start/stop docker; PG assumed running at 127.0.0.1:5433 (UnicDB/UnicDB/UnicDB).
 - Exact default expressions in TASK-001 are normative; tests assert them verbatim.
 - 1 commit per wave; no push from executors.
 - No same-wave shared target files (table below is authoritative):

@@ -17,7 +17,7 @@ budget of "at most 2 descriptor shapes tried").
    variant (ground-truth shape from `packages/utils/src/acp/protocol.ts` in the upstream
    `can1357/oh-my-pi` repo, tag `v18.0.1`):
    ```json
-   { "type": "http", "name": "vsdb_probe", "url": "http://127.0.0.1:<port>", "headers": [] }
+   { "type": "http", "name": "UnicDB_probe", "url": "http://127.0.0.1:<port>", "headers": [] }
    ```
 4. `<port>` is a real local `node:http` server started by the probe script BEFORE spawning
    omp. It implements just enough of MCP Streamable HTTP to observe traffic:
@@ -81,7 +81,7 @@ upstream protocol.ts type definition (`McpServer` union: `stdio` variant vs
   "params": {
     "cwd": "/var/folders/ts/19rcd7fx4fs3cfl66t1vbpq00000gn/T/task012-probe-nVgYKF",
     "mcpServers": [
-      { "type": "http", "name": "vsdb_probe", "url": "http://127.0.0.1:51108", "headers": [] }
+      { "type": "http", "name": "UnicDB_probe", "url": "http://127.0.0.1:51108", "headers": [] }
     ]
   }
 }

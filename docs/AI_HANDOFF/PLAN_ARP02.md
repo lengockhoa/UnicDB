@@ -1,6 +1,6 @@
 # PLAN_ARP02 — Shutdown-safe query ownership and connection provenance
 
-Source: `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-02 (P0; deps RLX-02 v1.31.0 + ARP-01 v1.37.0 both released).
+Source: `docs/plans/2026-09-01-UnicDB-additive-roadmap.md` §ARP-02 (P0; deps RLX-02 v1.31.0 + ARP-01 v1.37.0 both released).
 Base: `main @ 367cb80` (v1.37.0). Executor: `unic-code`. Reviewer: `unic-smart`.
 Full-suite baseline: **2963 passed | 2 skipped** (from `npm test`).
 

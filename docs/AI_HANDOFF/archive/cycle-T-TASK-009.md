@@ -156,7 +156,7 @@ rowErrors?: Array<{ rowId: number; error: string }>;
 
 ### 2026-08-25 · planner · claude-opus-5
 
-**Stale-inventory note:** A1/A2 (the `__vsdb_browse__` ctid subquery wrap) and A18 no longer exist
+**Stale-inventory note:** A1/A2 (the `__UnicDB_browse__` ctid subquery wrap) and A18 no longer exist
 at HEAD — cycle S (`8b58f24`) removed them. `parseFromClause` now receives plain
 `SELECT * FROM "s"."t"` and resolves, so "statement #0 has no addressable table" is already gone.
 Do not re-introduce a browse-time ctid wrap; the lazy save-time resolver is the shipped design.
@@ -212,7 +212,7 @@ below).
 - `src/ui/resultsPanel.ts`: `render()` now assigns `this.header`; `handleMessage`'s `saveEdits`
   case forwards `msg.serverIndexByRowId`; `handleSaveEdits` gained a 5th param
   (`serverIndexByRowId?`), builds a `Map<number,number>` from it, narrows ctid-resolution to
-  only the rowIds that actually need one (excluding pure `__vsdb_new_row__` inserts), always
+  only the rowIds that actually need one (excluding pure `__UnicDB_new_row__` inserts), always
   passes `{ schema, serverIndexByRowId, ctidByRowId }` to `buildSaveStatements`, runs the whole
   statement batch as one combined `runner.runSql(BEGIN;...;COMMIT;)` call (dialect-aware
   keywords via new `transactionKeywords()` — plain `BEGIN/COMMIT/ROLLBACK` for
@@ -470,7 +470,7 @@ VERIFICATION:
      Start at  11:53:43
      Duration  7.68s
 
-     > vsdb@1.6.3 typecheck
+     > UnicDB@1.6.3 typecheck
      > tsc --noEmit
      (no output — clean)
 

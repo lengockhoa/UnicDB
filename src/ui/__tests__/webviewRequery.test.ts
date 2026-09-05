@@ -77,18 +77,18 @@ beforeAll(() => {
 const distPath = resolve(process.cwd(), "dist", "webview.js");
 const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
-interface VsdbBundle {
+interface UnicDBBundle {
   render: () => void;
   postToHost: (msg: unknown) => void;
 }
 
-interface VsdbGlobal {
-  __vsdb?: VsdbBundle;
-  acquireVsCodeApi?: () => VsdbApi;
+interface UnicDBGlobal {
+  __UnicDB?: UnicDBBundle;
+  acquireVsCodeApi?: () => UnicDBApi;
 }
 
 interface GridNodeLike {
@@ -101,41 +101,41 @@ interface GridApiLike {
 }
 
 interface GridHostWithApi extends HTMLElement {
-  __vsdbApi?: GridApiLike;
+  __UnicDBApi?: GridApiLike;
 }
 
 function readGridApi(host: HTMLElement | null): GridApiLike | null {
   if (!host) return null;
-  return (host as GridHostWithApi).__vsdbApi ?? null;
+  return (host as GridHostWithApi).__UnicDBApi ?? null;
 }
 
 function loadBundle(): {
   received: Array<Record<string, unknown>>;
   root: HTMLDivElement;
-  vsdb: VsdbBundle;
+  UnicDB: UnicDBBundle;
 } {
   if (!bundleSrc) {
     throw new Error(
       "dist/webview.js missing — run `npm run compile` before this test",
     );
   }
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-webview"></div>';
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as VsdbGlobal).acquireVsCodeApi = () => api;
+  (globalThis as unknown as UnicDBGlobal).acquireVsCodeApi = () => api;
 
   (0, eval)(bundleSrc);
-  const vsdb = (window as unknown as VsdbGlobal).__vsdb;
-  if (!vsdb) {
-    throw new Error("bundle did not expose __vsdb");
+  const UnicDB = (window as unknown as UnicDBGlobal).__UnicDB;
+  if (!UnicDB) {
+    throw new Error("bundle did not expose __UnicDB");
   }
-  return { received, root, vsdb };
+  return { received, root, UnicDB };
 }
 
 function dispatchState(msg: Record<string, unknown>): void {
@@ -211,9 +211,9 @@ function collectIds(api: GridApiLike | null): number[] {
 }
 
 function queryGridApiHost(): HTMLElement | null {
-  // `gridHost` is the AG Grid host element (.vsdb-ag-host class). The
-  // persistent wrap carries the .vsdb-grid-host class — different DOM.
-  return document.querySelector(".vsdb-ag-host") as HTMLElement | null;
+  // `gridHost` is the AG Grid host element (.UnicDB-ag-host class). The
+  // persistent wrap carries the .UnicDB-grid-host class — different DOM.
+  return document.querySelector(".UnicDB-ag-host") as HTMLElement | null;
 }
 
 // ---- tests ----------------------------------------------------------------
@@ -227,16 +227,16 @@ describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)", () => 
     dispatchState(selectState());
 
     const whereInput = root.querySelector(
-      ".vsdb-requery-where",
+      ".UnicDB-requery-where",
     ) as HTMLInputElement | null;
     const orderInput = root.querySelector(
-      ".vsdb-requery-order",
+      ".UnicDB-requery-order",
     ) as HTMLInputElement | null;
     const runBtn = root.querySelector(
-      ".vsdb-requery-run",
+      ".UnicDB-requery-run",
     ) as HTMLButtonElement | null;
     const clearBtn = root.querySelector(
-      ".vsdb-requery-clear",
+      ".UnicDB-requery-clear",
     ) as HTMLButtonElement | null;
 
     expect(whereInput).toBeTruthy();
@@ -252,13 +252,13 @@ describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)", () => 
     dispatchState(selectState());
 
     const whereInput = document.querySelector(
-      ".vsdb-requery-where",
+      ".UnicDB-requery-where",
     ) as HTMLInputElement | null;
     const orderInput = document.querySelector(
-      ".vsdb-requery-order",
+      ".UnicDB-requery-order",
     ) as HTMLInputElement | null;
     const runBtn = document.querySelector(
-      ".vsdb-requery-run",
+      ".UnicDB-requery-run",
     ) as HTMLButtonElement | null;
 
     whereInput!.value = "id > 1";
@@ -280,7 +280,7 @@ describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)", () => 
     dispatchState(selectState());
 
     const runBtn = document.querySelector(
-      ".vsdb-requery-run",
+      ".UnicDB-requery-run",
     ) as HTMLButtonElement | null;
     runBtn!.click();
 
@@ -299,13 +299,13 @@ describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)", () => 
     dispatchState(selectState());
 
     const whereInput = document.querySelector(
-      ".vsdb-requery-where",
+      ".UnicDB-requery-where",
     ) as HTMLInputElement | null;
     const orderInput = document.querySelector(
-      ".vsdb-requery-order",
+      ".UnicDB-requery-order",
     ) as HTMLInputElement | null;
     const clearBtn = document.querySelector(
-      ".vsdb-requery-clear",
+      ".UnicDB-requery-clear",
     ) as HTMLButtonElement | null;
 
     whereInput!.value = "x = 1";
@@ -321,13 +321,13 @@ describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)", () => 
     const { root } = loadBundle();
     dispatchState(selectState());
 
-    const gridWrap = root.querySelector(".vsdb-grid-host") as HTMLElement | null;
+    const gridWrap = root.querySelector(".UnicDB-grid-host") as HTMLElement | null;
     expect(gridWrap).toBeTruthy();
 
     const requeryBar = gridWrap!.querySelector(
-      "[data-vsdb-requery-bar]",
+      "[data-UnicDB-requery-bar]",
     ) as HTMLElement | null;
-    const gridHost = gridWrap!.querySelector(".vsdb-ag-host") as HTMLElement | null;
+    const gridHost = gridWrap!.querySelector(".UnicDB-ag-host") as HTMLElement | null;
     expect(requeryBar).toBeTruthy();
     expect(gridHost).toBeTruthy();
 
@@ -346,11 +346,11 @@ describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)", () => 
     const { root } = loadBundle();
     dispatchState(selectState());
 
-    const toolbar = root.querySelector(".vsdb-toolbar") as HTMLElement | null;
+    const toolbar = root.querySelector(".UnicDB-toolbar") as HTMLElement | null;
     const requeryBar = root.querySelector(
-      "[data-vsdb-requery-bar]",
+      "[data-UnicDB-requery-bar]",
     ) as HTMLElement | null;
-    const gridHost = root.querySelector(".vsdb-ag-host") as HTMLElement | null;
+    const gridHost = root.querySelector(".UnicDB-ag-host") as HTMLElement | null;
     expect(toolbar).toBeTruthy();
     expect(requeryBar).toBeTruthy();
     expect(gridHost).toBeTruthy();
@@ -378,9 +378,9 @@ describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)", () => 
     // Bundle is loaded (initial render runs) but we never dispatchState.
     // The active tab is empty → panel shows the empty placeholder, and
     // gridWrap is either detached or display:none.
-    const panel = root.querySelector(".vsdb-panel") as HTMLElement | null;
+    const panel = root.querySelector(".UnicDB-panel") as HTMLElement | null;
     const requeryBar = root.querySelector(
-      "[data-vsdb-requery-bar]",
+      "[data-UnicDB-requery-bar]",
     ) as HTMLElement | null;
     expect(panel).toBeTruthy();
     // No requery bar reachable through root → bar stays inside gridWrap
@@ -395,12 +395,12 @@ describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)", () => 
     const { root } = loadBundle();
     dispatchState(selectState());
 
-    const gridWrap = root.querySelector(".vsdb-grid-host") as HTMLElement | null;
+    const gridWrap = root.querySelector(".UnicDB-grid-host") as HTMLElement | null;
     expect(gridWrap).toBeTruthy();
 
-    const gridHost = gridWrap!.querySelector(".vsdb-ag-host") as HTMLElement | null;
+    const gridHost = gridWrap!.querySelector(".UnicDB-ag-host") as HTMLElement | null;
     const gridFooter = gridWrap!.querySelector(
-      ".vsdb-grid-footer",
+      ".UnicDB-grid-footer",
     ) as HTMLElement | null;
     expect(gridHost).toBeTruthy();
     expect(gridFooter).toBeTruthy();
@@ -438,7 +438,7 @@ describeIfBundle("webview grid reset on requery (Fix R2 critical #1)", () => {
   itIfBundle(
     "ORDER BY change with equal row count RE-RENDERS new order (not stale append)",
     () => {
-      const { vsdb } = loadBundle();
+      const { UnicDB } = loadBundle();
       dispatchState(
         selectState({ rows: [[1, "a"], [2, "b"], [3, "c"]], rowCount: 3 }),
       );
@@ -462,7 +462,7 @@ describeIfBundle("webview grid reset on requery (Fix R2 critical #1)", () => {
           rowCount: 3,
         }),
       );
-      vsdb.render();
+      UnicDB.render();
       dispatchState(
         stateWithStatus({
           status: "done",
@@ -487,7 +487,7 @@ describeIfBundle("webview grid reset on requery (Fix R2 critical #1)", () => {
   itIfBundle(
     "Row-growing requery RE-RENDERS fresh rows (no append-mix [1,2,12,13])",
     () => {
-      const { vsdb } = loadBundle();
+      const { UnicDB } = loadBundle();
       // Initial state: 2 rows.
       dispatchState(
         selectState({ rows: [[1, "a"], [2, "b"]], rowCount: 2 }),
@@ -508,7 +508,7 @@ describeIfBundle("webview grid reset on requery (Fix R2 critical #1)", () => {
           rowCount: 2,
         }),
       );
-      vsdb.render();
+      UnicDB.render();
 
       // Requery result: WHERE removed → 4 rows.
       dispatchState(

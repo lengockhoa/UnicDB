@@ -84,7 +84,7 @@ RED_OUTPUT:
 ❯ src/ui/__tests__/sqlCompletionProvider.test.ts  (0 test)
 ⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯
  FAIL  src/ui/__tests__/sqlCompletionProvider.test.ts [ src/ui/__tests__/sqlCompletionProvider.test.ts ]
-Error: Failed to load url ../sqlCompletionProvider (resolved id: ../sqlCompletionProvider) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-008/src/ui/__tests__/sqlCompletionProvider.test.ts. Does the file exist?
+Error: Failed to load url ../sqlCompletionProvider (resolved id: ../sqlCompletionProvider) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-008/src/ui/__tests__/sqlCompletionProvider.test.ts. Does the file exist?
  ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
  Test Files  1 failed (1)
       Tests  no tests
@@ -93,7 +93,7 @@ Error: Failed to load url ../sqlCompletionProvider (resolved id: ../sqlCompletio
 ❯ src/ui/__tests__/schemaCache.test.ts  (0 test)
 ⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯
  FAIL  src/ui/__tests__/schemaCache.test.ts [ src/ui/__tests__/schemaCache.test.ts ]
-Error: Failed to load url ../schemaCache (resolved id: ../schemaCache) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-008/src/ui/__tests__/schemaCache.test.ts. Does the file exist?
+Error: Failed to load url ../schemaCache (resolved id: ../schemaCache) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-008/src/ui/__tests__/schemaCache.test.ts. Does the file exist?
  ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
  Test Files  1 failed (1)
       Tests  no tests
@@ -123,7 +123,7 @@ $ npm run typecheck
  (no output — clean, exit 0)
 ```
 Status: PASS
-Note: Decisions recorded: (1) registration of `vscode.languages.registerCompletionItemProvider` in extension.ts is availability-guarded because `src/extension.test.ts`'s partial vscode mock (outside this task's editable files) stubs only `registerCodeLensProvider`; unguarded call would throw in every activate() smoke test. Real VS Code always has the API. (2) `vsdb.refreshSchema` now calls `schemaCache.invalidate()` before `tree.refresh()`. (3) Test #6 uses the dot-trigger path (`public.`) since listTables is what that path calls; test #4 keyword list intentionally contains no "us"-prefixed keywords. (4) schemaCache is vscode-free (no mock needed in its tests).
+Note: Decisions recorded: (1) registration of `vscode.languages.registerCompletionItemProvider` in extension.ts is availability-guarded because `src/extension.test.ts`'s partial vscode mock (outside this task's editable files) stubs only `registerCodeLensProvider`; unguarded call would throw in every activate() smoke test. Real VS Code always has the API. (2) `UnicDB.refreshSchema` now calls `schemaCache.invalidate()` before `tree.refresh()`. (3) Test #6 uses the dot-trigger path (`public.`) since listTables is what that path calls; test #4 keyword list intentionally contains no "us"-prefixed keywords. (4) schemaCache is vscode-free (no mock needed in its tests).
 
 ## Reviewer Verdict (R1 — autocomplete)
 VERDICT: APPROVED-WITH-MINOR

@@ -93,11 +93,11 @@ empty diff:
 
 ```bash
 npx tsc -p tsconfig.webview.json --noEmit 2>&1 \
-  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/vsdb-webview-tsc-before.txt
+  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/UnicDB-webview-tsc-before.txt
 # ... make the edits ...
 npx tsc -p tsconfig.webview.json --noEmit 2>&1 \
-  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/vsdb-webview-tsc-after.txt
-diff /tmp/vsdb-webview-tsc-before.txt /tmp/vsdb-webview-tsc-after.txt && echo "WEBVIEW TSC BASELINE UNCHANGED"
+  | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/UnicDB-webview-tsc-after.txt
+diff /tmp/UnicDB-webview-tsc-before.txt /tmp/UnicDB-webview-tsc-after.txt && echo "WEBVIEW TSC BASELINE UNCHANGED"
 ```
 
 Paste the diff result into the Executor Report. Do not fix the baseline errors.
@@ -192,7 +192,7 @@ run will reject anyway; better, skip the filter push-down entirely and use plain
 Re-read the file at the start of this task; do not work from a wave-1-era copy.
 
 **Populating `typed` (plan review R1, finding 4).** AG Grid's set-filter model only carries
-display strings — VSDB builds those entries with `String(v)` in `buildSetFilterEntries`
+display strings — UnicDB builds those entries with `String(v)` in `buildSetFilterEntries`
 (`src/ui/resultsGridModel.ts:1151-1176`). Sending them as-is would make every server-side
 predicate a string literal, which costs the index on MySQL and hard-fails an MSSQL `int` or
 `datetime2` column. So the webview must attach the raw values too:

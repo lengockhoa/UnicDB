@@ -91,7 +91,7 @@ NEXT: ready for review
 
 ### RED output (initial run, no implementation modules)
 ```
- RUN  v1.4.x /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002
+ RUN  v1.4.x /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-002
 
  ❯ src/ai/tools/__tests__/schemaContext.test.ts  (0 test)
  ❯ src/ai/tools/__tests__/sqlTool.test.ts  (0 test)

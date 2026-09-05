@@ -197,7 +197,7 @@ GREEN OUTPUT (full suite, after fix):
   command: npm run typecheck && npx vitest run src/ui/__tests__/aiChatPanelResume.test.ts src/ui/__tests__/aiChatPanelMessages.test.ts src/ui/__tests__/aiChatPanelAcp.test.ts src/ui/__tests__/aiChatPanel.test.ts
   result: 4 files / 53 tests pass / 0 fail / exit 0
   output_excerpt: |
-    > vsdb@1.5.1 typecheck
+    > UnicDB@1.5.1 typecheck
     > tsc --noEmit
     ✓ src/ui/__tests__/aiChatPanelMessages.test.ts  (15 tests) 4ms
     ✓ src/ui/__tests__/aiChatPanel.test.ts          (16 tests) 7ms

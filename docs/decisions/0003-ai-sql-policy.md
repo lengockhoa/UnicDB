@@ -2,7 +2,7 @@
 
 - Status: **Accepted** (gating ARP-06 — this ADR lands before/with any ARP-06 source change; TASK-ARP06-001 writes it and pins the core profile, -002 adopts it in `run_sql`, -003/-004/-005 are usage-visibility work outside this policy)
 - Date: 2026-09-02
-- Deciders: VSDB maintainers (recorded in `docs/AI_HANDOFF/PLAN.md` §1–§3, cycle ARP-06 commissioning brief; source roadmap `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §ARP-06)
+- Deciders: UnicDB maintainers (recorded in `docs/AI_HANDOFF/PLAN.md` §1–§3, cycle ARP-06 commissioning brief; source roadmap `docs/plans/2026-09-01-UnicDB-additive-roadmap.md` §ARP-06)
 - Scope: `src/ai/tools/readonlySqlParser.ts` (core profile), `src/ai/tools/sqlTool.ts` (`run_sql` profile — cited as existing behavior at write time; ARP-06.2 owns any change to it), `src/ai/tools/dbAwareTools.ts` / `src/ai/tools/analysisTools.ts` (core-profile consumers). ARP-01's dialect-aware read-only classifier and `guardAdapter` are NOT part of this decision and must not be perturbed.
 
 ## 1. Context and problem

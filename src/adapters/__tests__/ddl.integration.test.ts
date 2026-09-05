@@ -7,8 +7,8 @@
 //   5. sample INSERTs count
 //   6. duplicate create rejects
 //
-// Chỉ chạy khi VSDB_IT=1; PG ở 127.0.0.1:5433 (vsdb/vsdb/vsdb).
-// Mỗi test tự tạo table `vsdb_it_ddl_<seq>` unique, DROP qua dedicated
+// Chỉ chạy khi UnicDB_IT=1; PG ở 127.0.0.1:5433 (UnicDB/UnicDB/UnicDB).
+// Mỗi test tự tạo table `UnicDB_it_ddl_<seq>` unique, DROP qua dedicated
 // one-off Client trong afterAll — bypass pool max=1.
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { Client, type Pool } from "pg";
@@ -30,12 +30,12 @@ import {
 import { diffTable } from "../../core/ddl/alterTable";
 import { generateSampleInserts } from "../../core/ddl/sampleData";
 
-const IT = process.env.VSDB_IT === "1";
-const HOST = process.env.VSDB_PG_HOST ?? "127.0.0.1";
-const PORT = Number(process.env.VSDB_PG_PORT ?? 5433);
-const USER = process.env.VSDB_PG_USER ?? "vsdb";
-const PASS = process.env.VSDB_PG_PASS ?? "vsdb";
-const DB = process.env.VSDB_PG_DB ?? "vsdb";
+const IT = process.env.UnicDB_IT === "1";
+const HOST = process.env.UnicDB_PG_HOST ?? "127.0.0.1";
+const PORT = Number(process.env.UnicDB_PG_PORT ?? 5433);
+const USER = process.env.UnicDB_PG_USER ?? "UnicDB";
+const PASS = process.env.UnicDB_PG_PASS ?? "UnicDB";
+const DB = process.env.UnicDB_PG_DB ?? "UnicDB";
 
 // Stable but unique-per-run suffix to avoid cross-test collision when the
 // suite is rerun against the same DB.
@@ -44,7 +44,7 @@ const RUN_SUFFIX = `${Date.now().toString(36)}_${Math.floor(
 ).toString(36)}`;
 
 function uniqTableName(prefix: string): string {
-  return `vsdb_it_ddl_${prefix}_${RUN_SUFFIX}`;
+  return `UnicDB_it_ddl_${prefix}_${RUN_SUFFIX}`;
 }
 
 /** Unique constraint key-name suffix reused across tests for hand-named keys. */

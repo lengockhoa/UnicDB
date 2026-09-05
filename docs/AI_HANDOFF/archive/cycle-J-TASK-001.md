@@ -48,8 +48,8 @@ returns trimmed input unchanged otherwise (does NOT validate scheme — that's a
 ```ts
 // src/ai/config.ts
 import * as vscode from "vscode";
-export const KEY_AI_SETTINGS = "vsdb.ai.settings";
-export const KEY_AI_API_KEY = "vsdb.ai.apiKey";
+export const KEY_AI_SETTINGS = "UnicDB.ai.settings";
+export const KEY_AI_API_KEY = "UnicDB.ai.apiKey";
 export class AiConfigStore {
   constructor(ctx: vscode.ExtensionContext)
   loadSettings(): Promise<AiSettings | null>   // null when nothing stored / JSON invalid
@@ -75,7 +75,7 @@ by construction). Empty `apiKey` string ⇒ throw `"API key is required"` before
 | 5 | edge (security) | apiKey never in settings | `{...valid, apiKey:"sk-x"} as unknown as AiSettings` → includes `"apiKey must not be stored in settings"` |
 | 6 | unit | normalizeBaseUrl | `" https://x/v1/ "`→`"https://x/v1"`, `"https://x/v1///"`→`"https://x/v1"`, `"https://x"` unchanged, `""`→`""` |
 | 7 | unit | redactAiConfig | returns the 5 settings fields; result has NO `apiKey` key (`Object.keys` excludes it) |
-| 8 | unit | save→load round-trip | fake stores; `save(valid, "sk-1")` → `loadConfig()` deep-equals `{...valid, apiKey:"sk-1"}`; secret stored under exactly `"vsdb.ai.apiKey"`, settings under `"vsdb.ai.settings"` |
+| 8 | unit | save→load round-trip | fake stores; `save(valid, "sk-1")` → `loadConfig()` deep-equals `{...valid, apiKey:"sk-1"}`; secret stored under exactly `"UnicDB.ai.apiKey"`, settings under `"UnicDB.ai.settings"` |
 | 9 | edge (validation) | invalid save persists nothing | `save(invalid, "sk-1")` rejects; both fake stores EMPTY afterwards |
 | 10 | edge (secret-failure) | SecretStorage.store rejects | fake `store` throws → save rejects; settings NOT in globalState (ordering: secret first, settings last) |
 | 11 | edge (state/null) | unconfigured | empty stores → `loadConfig() === null`, `loadSettings() === null`, `loadApiKey() === undefined`; no throw |
@@ -104,7 +104,7 @@ npx vitest run src/ai/__tests__/settings.test.ts src/ai/__tests__/config.test.ts
 - Consumes: (none)
 - Produces (frozen — TASK-002/003/004 import exactly these):
   - From `src/ai/settings.ts`: `AiCompletionMethod`, `AiModelRole`, `AiModelConfig`, `AiSettings`, `AiConfig`, `defaultAiSettings()`, `aiSettingsErrors(s: AiSettings): string[]`, `normalizeBaseUrl(url: string): string`, `redactAiConfig(cfg: AiConfig): AiSettings`.
-  - From `src/ai/config.ts`: `KEY_AI_SETTINGS = "vsdb.ai.settings"`, `KEY_AI_API_KEY = "vsdb.ai.apiKey"`, `class AiConfigStore { constructor(ctx: vscode.ExtensionContext); loadSettings(): Promise<AiSettings | null>; loadApiKey(): Promise<string | undefined>; loadConfig(): Promise<AiConfig | null>; save(settings: AiSettings, apiKey: string): Promise<void>; clear(): Promise<void> }`.
+  - From `src/ai/config.ts`: `KEY_AI_SETTINGS = "UnicDB.ai.settings"`, `KEY_AI_API_KEY = "UnicDB.ai.apiKey"`, `class AiConfigStore { constructor(ctx: vscode.ExtensionContext); loadSettings(): Promise<AiSettings | null>; loadApiKey(): Promise<string | undefined>; loadConfig(): Promise<AiConfig | null>; save(settings: AiSettings, apiKey: string): Promise<void>; clear(): Promise<void> }`.
 
 ---
 
@@ -159,7 +159,7 @@ RED_OUTPUT (initial — both modules missing, both suites failed to load):
      Test Files  2 failed (2)
           Tests  no tests
 
-ISSUES: Test file naming — assignment prompt used aiSettings.test.ts/aiConfig.test.ts; task file Spec uses settings.test.ts/config.test.ts. Followed the task-file spec (normative). Spec didn't define an updateSettings method — followed the 5 spec methods (loadSettings/loadApiKey/loadConfig/save/clear). Spec says "JSON of the 5 settings fields" for globalState — implemented as structured object (mirrors vsdb.connections pattern in ConnectionManager); loadSettings accepts both object and JSON-string forms for robustness.
+ISSUES: Test file naming — assignment prompt used aiSettings.test.ts/aiConfig.test.ts; task file Spec uses settings.test.ts/config.test.ts. Followed the task-file spec (normative). Spec didn't define an updateSettings method — followed the 5 spec methods (loadSettings/loadApiKey/loadConfig/save/clear). Spec says "JSON of the 5 settings fields" for globalState — implemented as structured object (mirrors UnicDB.connections pattern in ConnectionManager); loadSettings accepts both object and JSON-string forms for robustness.
 
 HANDOFF_TO_REVIEWER: yes — task ready, INDEX row set to pending_review.
 

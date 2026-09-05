@@ -477,7 +477,7 @@ describe("TASK-ARP06-002 — only approved SQL executes", () => {
   it.each([
     [
       "DML with apiKey + DSN comment",
-      "DELETE FROM users WHERE api_key='sk-proj-S3CRETvalue42' -- postgres://admin:hunter2@db.prod.internal:5432/vsdb",
+      "DELETE FROM users WHERE api_key='sk-proj-S3CRETvalue42' -- postgres://admin:hunter2@db.prod.internal:5432/UnicDB",
       "Only SELECT/SHOW/EXPLAIN/WITH…SELECT are allowed (read-only)",
       [
         "DELETE FROM users",
@@ -489,7 +489,7 @@ describe("TASK-ARP06-002 — only approved SQL executes", () => {
         "hunter2",
         "db.prod.internal",
         "5432",
-        "vsdb",
+        "UnicDB",
       ],
     ],
     [

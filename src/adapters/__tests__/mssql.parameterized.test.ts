@@ -27,8 +27,8 @@ function cfg(): ConnectionConfig {
     driver: "mssql",
     host: "127.0.0.1",
     port: 1433,
-    user: "vsdb",
-    database: "vsdb",
+    user: "UnicDB",
+    database: "UnicDB",
   };
 }
 
@@ -454,7 +454,7 @@ describe("MsSqlAdapter.cancelActiveQuery (TASK-RLX02-002)", () => {
     const { adapter, execSql, requests, emitMetadata, closeConnection } =
       makeDeferredAdapter();
 
-    const runPromise = adapter.runQuery("SELECT * FROM dbo.vsdb_big");
+    const runPromise = adapter.runQuery("SELECT * FROM dbo.UnicDB_big");
     await vi.waitFor(() => expect(requests.length).toBe(1));
     const request = requests[0];
     emitMetadata(request); // tedious emits columnMetadata before rows flow
@@ -531,7 +531,7 @@ describe("MsSqlAdapter ARP-05.3 — paused-stream survival (requestTimeout: 0)",
       .spyOn(TediousRequestCtor.prototype, "setTimeout")
       .mockClear();
 
-    const runPromise = adapter.runQuery("SELECT * FROM dbo.vsdb_big");
+    const runPromise = adapter.runQuery("SELECT * FROM dbo.UnicDB_big");
     await vi.waitFor(() => expect(requests.length).toBe(1));
     const request = requests[0];
     const pauseSpy = vi.spyOn(request, "pause");

@@ -16,7 +16,7 @@ Wire the DBX05-001/002 modules into the product: additive `ConnectionConfig` fie
   - `getAdapter` (active path) and `getAdapterFor` (passive path): when `cfg.readOnly`, wrap the returned adapter's `runQuery` with `readOnlyIntent.isMutationSql` check — mutation → throw `ReadOnlyViolation` BEFORE connect/IO; when `cfg.tunnel`, ensure tunnel started for `cfg.id` and build the adapter cfg with rewritten host/port (`127.0.0.1:<localPort>`); persisted metadata untouched.
   - `dispose()` → `tunnels.stopAll()`. `deleteConnection`/`editConnection` stop that connection's tunnel (edit may restart with new config).
 - `src/ui/connectionForm.ts` + `src/ui/connectionFormMessages.ts` — ADDITIVE: folder (text), color (palette picker — send hex list to webview), read-only (checkbox), tunnel host/port/user/identityFile fields. Round-trip through existing save message.
-- Tree provider (wherever `vsdb.schemaTree` connections are produced) — ADDITIVE: when any connection has a folder, group under folder nodes (label = folder name, collapsible, icon color = assignColor(folder)); ungrouped stay at root.
+- Tree provider (wherever `UnicDB.schemaTree` connections are produced) — ADDITIVE: when any connection has a folder, group under folder nodes (label = folder name, collapsible, icon color = assignColor(folder)); ungrouped stay at root.
 - Tests: extend `src/core/__tests__/connectionManager.test.ts` and `src/ui/__tests__/connectionForm.test.ts`.
 
 ## Test Cases (REQUIRED — TDD)

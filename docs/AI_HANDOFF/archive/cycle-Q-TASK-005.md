@@ -20,7 +20,7 @@ behavior and the bottom footer exactly as today.
   toolbar/tabs, above the table). Do not change the bar's element structure, persistence
   semantics (created once, values read on click), or handlers. `saveBanner` stays above
   `gridFooter`; footer stays at bottom.
-- `webview/styles.css` — ONLY if the relocation needs a spacing tweak (e.g. `.vsdb-requery-bar`
+- `webview/styles.css` — ONLY if the relocation needs a spacing tweak (e.g. `.UnicDB-requery-bar`
   margin/border against the toolbar); no redesign.
 - `src/ui/__tests__/webviewRequery.test.ts` (modify) — add DOM-order assertions to the existing
   `describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)")` block; keep

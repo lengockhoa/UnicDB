@@ -91,10 +91,10 @@ EXECUTOR_TOOL: Claude Code
 EXECUTOR_MODEL: unic-code
 EXECUTOR_SUBAGENT: feature-implementer
 RED_OUTPUT: |
-  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq00-003
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq00-003
 
    FAIL  src/adapters/__tests__/bigqueryAdc.test.ts [ src/adapters/__tests__/bigqueryAdc.test.ts ]
-  Error: Failed to load url ../bigqueryAdc (resolved id: ../bigqueryAdc) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq00-003/src/adapters/__tests__/bigqueryAdc.test.ts. Does the file exist?
+  Error: Failed to load url ../bigqueryAdc (resolved id: ../bigqueryAdc) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq00-003/src/adapters/__tests__/bigqueryAdc.test.ts. Does the file exist?
    Test Files  1 failed (1)
         Tests  no tests
 Verification Output: |
@@ -104,7 +104,7 @@ Verification Output: |
        Tests  6 passed (6)
 
   # 2. typecheck (clean)
-  > vsdb@1.45.0 typecheck
+  > UnicDB@1.45.0 typecheck
   > tsc --noEmit
   (no errors)
 

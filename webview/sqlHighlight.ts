@@ -1,5 +1,5 @@
 // webview/sqlHighlight.ts — TASK-003
-// Dependency-free pure SQL tokenizer + highlighter for VSDB's own webviews
+// Dependency-free pure SQL tokenizer + highlighter for UnicDB's own webviews
 // (Results Messages tab, AI-chat ```sql blocks) — the one place no TextMate
 // grammar or semantic-token provider can reach.
 //
@@ -31,9 +31,9 @@ export interface SqlToken {
   end: number;
 }
 
-/** CSS class emitted per token kind: `vsdb-sql-tok-<kind>`. */
+/** CSS class emitted per token kind: `UnicDB-sql-tok-<kind>`. */
 export function tokenClass(kind: SqlTokenKind): string {
-  return `vsdb-sql-tok-${kind}`;
+  return `UnicDB-sql-tok-${kind}`;
 }
 
 /** Common SQL reserved words (case-insensitive). A word that is not in this
@@ -233,7 +233,7 @@ export function tokenizeSql(sql: string): SqlToken[] {
 }
 
 /**
- * Build a DocumentFragment of `<span class="vsdb-sql-tok-<kind>">` nodes for
+ * Build a DocumentFragment of `<span class="UnicDB-sql-tok-<kind>">` nodes for
  * the given SQL. Every character is written back through span.textContent —
  * never through an HTML string — so hostile SQL cannot execute or create
  * elements.

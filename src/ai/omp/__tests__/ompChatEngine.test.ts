@@ -102,7 +102,7 @@ describe("OmpChatEngine.send", () => {
       mcpServers: [
         {
           type: "http",
-          name: "vsdb",
+          name: "UnicDB",
           url: "http://127.0.0.1:41234",
           headers: [],
         },
@@ -311,7 +311,7 @@ describe("OmpChatEngine.resume", () => {
       expect.arrayContaining([
         expect.objectContaining({
           type: "http",
-          name: "vsdb",
+          name: "UnicDB",
           url: "http://127.0.0.1:41234",
         }),
       ]),
@@ -772,7 +772,7 @@ describe("OmpChatEngine — TASK-AIX05-103 mcpServers pass-through", () => {
     fakeAcp.sessionPrompt.mockResolvedValue({ stopReason: "end_turn" });
     const bridgeDescriptor = {
       type: "http",
-      name: "vsdb",
+      name: "UnicDB",
       url: "http://127.0.0.1:54321",
       headers: [{ name: "Authorization", value: "Bearer custom-token-xyz" }],
     };
@@ -814,7 +814,7 @@ describe("OmpChatEngine — TASK-AIX05-103 mcpServers pass-through", () => {
     });
     const bridgeDescriptor = {
       type: "http",
-      name: "vsdb",
+      name: "UnicDB",
       url: "http://127.0.0.1:54321",
       headers: [{ name: "Authorization", value: "Bearer token-abc" }],
     };

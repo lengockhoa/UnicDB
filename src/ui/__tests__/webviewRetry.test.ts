@@ -53,11 +53,11 @@ interface EditStateHandle {
   snapshot: () => Array<{ rowId: number; colIndex: number; value: unknown }>;
 }
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
-interface VsdbDebug {
+interface UnicDBDebug {
   gridApi?: GridApi;
   editState?: EditStateHandle;
   commit?: () => void;
@@ -70,14 +70,14 @@ interface VsdbDebug {
   ) => void;
 }
 
-function vsdbApi(): VsdbDebug | null {
+function UnicDBApi(): UnicDBDebug | null {
   if (typeof window === "undefined") return null;
-  const maybe = (window as unknown as { __vsdb?: VsdbDebug }).__vsdb;
+  const maybe = (window as unknown as { __UnicDB?: UnicDBDebug }).__UnicDB;
   return maybe ?? null;
 }
 
 function getEditState(): EditStateHandle | null {
-  return vsdbApi()?.editState ?? null;
+  return UnicDBApi()?.editState ?? null;
 }
 
 beforeAll(() => {
@@ -123,16 +123,16 @@ function loadBundle(): {
     );
   }
 
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-webview"></div>';
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
   (0, eval)(bundleSrc);
@@ -194,19 +194,19 @@ async function dirtyAndCommit(
   names: string[],
   originals: string[],
 ): Promise<void> {
-  const sim = vsdbApi()?.simulateCellEdit;
+  const sim = UnicDBApi()?.simulateCellEdit;
   expect(sim).toBeTruthy();
   for (let i = 0; i < names.length; i++) {
     sim!(i, "name", names[i], originals[i]);
   }
   await flushGridEvents();
-  vsdbApi()!.commit!();
+  UnicDBApi()!.commit!();
   await flushGridEvents();
 }
 
 function findRetryButton(): HTMLButtonElement | null {
   return document.querySelector(
-    ".vsdb-save-banner .vsdb-save-retry",
+    ".UnicDB-save-banner .UnicDB-save-retry",
   ) as HTMLButtonElement | null;
 }
 
@@ -239,11 +239,11 @@ describeIfBundle("webview/main.ts bundle — TASK-005 retry affordance", () => {
     await flushGridEvents();
 
     const banner = document.querySelector(
-      ".vsdb-save-banner",
+      ".UnicDB-save-banner",
     ) as HTMLElement | null;
     expect(banner).toBeTruthy();
     // Banner is VISIBLE (no hidden class, no hidden attribute).
-    expect(banner!.classList.contains("vsdb-hidden")).toBe(false);
+    expect(banner!.classList.contains("UnicDB-hidden")).toBe(false);
     expect(banner!.getAttribute("hidden")).toBe(null);
     // Retry button exists inside the banner DOM.
     const btn = findRetryButton();
@@ -267,11 +267,11 @@ describeIfBundle("webview/main.ts bundle — TASK-005 retry affordance", () => {
     // No retry button in the banner DOM (banner itself hidden).
     expect(findRetryButton()).toBeNull();
     const banner = document.querySelector(
-      ".vsdb-save-banner",
+      ".UnicDB-save-banner",
     ) as HTMLElement | null;
     expect(banner).toBeTruthy();
     const hidden =
-      banner!.classList.contains("vsdb-hidden") ||
+      banner!.classList.contains("UnicDB-hidden") ||
       banner!.getAttribute("hidden") !== null;
     expect(hidden).toBe(true);
   });
@@ -407,9 +407,9 @@ describeIfBundle("webview/main.ts bundle — TASK-005 retry affordance", () => {
 
     // Invoke the retry handler directly (the button never rendered) —
     // with 0 failed rows it MUST be a no-op: nothing posted.
-    expect(typeof vsdbApi()?.retry).toBe("function");
+    expect(typeof UnicDBApi()?.retry).toBe("function");
     received.length = 0;
-    vsdbApi()!.retry!();
+    UnicDBApi()!.retry!();
     await flushGridEvents();
     expect(
       received.filter((m) => m.type === "retryFailedRows"),
@@ -441,7 +441,7 @@ describeIfBundle("webview/main.ts bundle — TASK-005 retry affordance", () => {
 
       // User then edits a CLEAN row (row 0) — it becomes dirty again but is
       // NOT part of the failed set.
-      const sim = vsdbApi()?.simulateCellEdit;
+      const sim = UnicDBApi()?.simulateCellEdit;
       sim!(0, "name", "post-failure-edit", "alpha");
       await flushGridEvents();
       expect(getEditState()!.dirtyCount).toBe(2);

@@ -19,7 +19,7 @@ beforeAll(() => {
 const distPath = resolve(process.cwd(), "dist", "aiChatPanel.js");
 const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -72,15 +72,15 @@ function loadBundle(): BundleHandle {
     window.removeEventListener(type, listener, options);
   }
   bundleListeners.length = 0;
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-form-body"></div>';
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-form-body"></div>';
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
   (0, eval)(bundleSrc);
@@ -111,7 +111,7 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (TASK-003)", () => {
     const { received } = loadBundle();
     expect(received.some((m) => m.type === "ready")).toBe(true);
     dispatch({ type: "init", hasHistory: false });
-    const root = document.getElementById("vsdb-root") as HTMLDivElement;
+    const root = document.getElementById("UnicDB-root") as HTMLDivElement;
     for (const id of ["prompt", "sendBtn", "stopBtn", "clearBtn"]) {
       expect(root.querySelector(`#${id}`)).not.toBeNull();
     }
@@ -173,7 +173,7 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (TASK-003)", () => {
       text: "## Hello\n\nWorld",
       markdown: true,
     });
-    const root = document.getElementById("vsdb-root") as HTMLDivElement;
+    const root = document.getElementById("UnicDB-root") as HTMLDivElement;
     const html = root.innerHTML;
     expect(html).toMatch(/Hello/);
     expect(html).toMatch(/<h2/);
@@ -183,7 +183,7 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (TASK-004 Resume)", () => {
   itIfBundle("#9 Resume button exists in initial render and is enabled", () => {
     const { received: _r } = loadBundle();
     dispatch({ type: "init", hasHistory: false });
-    const root = document.getElementById("vsdb-root") as HTMLDivElement;
+    const root = document.getElementById("UnicDB-root") as HTMLDivElement;
     const resumeBtn = document.getElementById(
       "resumeBtn",
     ) as HTMLButtonElement | null;
@@ -194,7 +194,7 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (TASK-004 Resume)", () => {
   itIfBundle("#10 click Resume → posts exactly one resume_list", () => {
     const { received } = loadBundle();
     dispatch({ type: "init", hasHistory: false });
-    const root = document.getElementById("vsdb-root") as HTMLDivElement;
+    const root = document.getElementById("UnicDB-root") as HTMLDivElement;
     const resumeBtn = document.getElementById(
       "resumeBtn",
     ) as HTMLButtonElement | null;
@@ -207,7 +207,7 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (TASK-004 Resume)", () => {
   itIfBundle("#11 no apiKey material across resume picker exchanges", () => {
     const { received } = loadBundle();
     dispatch({ type: "init", hasHistory: false });
-    const root = document.getElementById("vsdb-root") as HTMLDivElement;
+    const root = document.getElementById("UnicDB-root") as HTMLDivElement;
     const resumeBtn = document.getElementById(
       "resumeBtn",
     ) as HTMLButtonElement | null;
@@ -219,7 +219,7 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (TASK-004 Resume)", () => {
         { sessionId: "sess-B", label: "second", detail: "2 messages" },
       ],
     });
-    const rows = root.querySelectorAll<HTMLDivElement>(".vsdb-chat-resume-row");
+    const rows = root.querySelectorAll<HTMLDivElement>(".UnicDB-chat-resume-row");
     rows[0]?.click();
     const allText = JSON.stringify(received);
     expect(allText).not.toMatch(/sk-/i);
@@ -332,10 +332,10 @@ describeIfBundle(
       },
     );
 
-    itIfBundle("#AG9 .vsdb-btn svg sizing rule stays intact in styles.css", () => {
+    itIfBundle("#AG9 .UnicDB-btn svg sizing rule stays intact in styles.css", () => {
       const cssPath = resolve(process.cwd(), "webview", "styles.css");
       const css = readFileSync(cssPath, "utf8");
-      expect(/\.vsdb-btn svg\s*\{[^}]*pointer-events:\s*none/.test(css)).toBe(
+      expect(/\.UnicDB-btn svg\s*\{[^}]*pointer-events:\s*none/.test(css)).toBe(
         true,
       );
     });
@@ -349,7 +349,7 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (slash commands)", () => {
     const prompt = inputEl("prompt");
     prompt.value = "/";
     prompt.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(document.querySelector(".vsdb-chat-slash-dropdown")).not.toBeNull();
+    expect(document.querySelector(".UnicDB-chat-slash-dropdown")).not.toBeNull();
     expect(received.filter((m) => m.type === "send")).toHaveLength(0);
   });
 
@@ -398,7 +398,7 @@ describeIfBundle(
   () => {
     /** Cast helpers for the bundle DOM assertions. */
     function rootEl(): HTMLDivElement {
-      return document.getElementById("vsdb-root") as HTMLDivElement;
+      return document.getElementById("UnicDB-root") as HTMLDivElement;
     }
 
     /** Send a prompt through the composer and wait one microtask for the
@@ -421,11 +421,11 @@ describeIfBundle(
         // lives BELOW it (not as an overlay on the bubble text). The row
         // carries the assistant-side "AI is thinking…" label.
         const thinkingRows = root.querySelectorAll<HTMLElement>(
-          ".vsdb-chat-thinking-row",
+          ".UnicDB-chat-thinking-row",
         );
         expect(
           thinkingRows.length,
-          "send must append exactly one .vsdb-chat-thinking-row",
+          "send must append exactly one .UnicDB-chat-thinking-row",
         ).toBe(1);
         expect(
           (thinkingRows[0]?.textContent ?? "").trim(),
@@ -433,7 +433,7 @@ describeIfBundle(
         ).toBe("AI is thinking…");
         // The thinking row lives BELOW the user bubble (appendChild order).
         const queuedUser = root.querySelector(
-          ".vsdb-chat-bubble.vsdb-chat-user.vsdb-chat-queued",
+          ".UnicDB-chat-bubble.UnicDB-chat-user.UnicDB-chat-queued",
         );
         expect(queuedUser).not.toBeNull();
         // Position assertion: queuedUser is BEFORE the thinking row in DOM
@@ -445,14 +445,14 @@ describeIfBundle(
           // DOCUMENT_FOLLOWING (4) means thinkingRows[0] is after queuedUser.
           expect(
             (comparison & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
-            ".vsdb-chat-thinking-row must come AFTER the queued user bubble (separate row, not overlay)",
+            ".UnicDB-chat-thinking-row must come AFTER the queued user bubble (separate row, not overlay)",
           ).toBe(true);
         }
         // First delta of the turn removes the row.
         dispatch({ type: "delta", text: "hi" });
         expect(
-          root.querySelector(".vsdb-chat-thinking-row"),
-          "first delta must remove .vsdb-chat-thinking-row",
+          root.querySelector(".UnicDB-chat-thinking-row"),
+          "first delta must remove .UnicDB-chat-thinking-row",
         ).toBeNull();
       },
     );
@@ -470,13 +470,13 @@ describeIfBundle(
         // through the markdown pipeline once a fence closes.
         dispatch({ type: "delta", text: "\n\n```sql\nSELECT 1 FROM users;\n```\n" });
         const bubble = rootEl().querySelector(
-          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+          ".UnicDB-chat-bubble.UnicDB-chat-assistant.UnicDB-chat-streaming",
         ) as HTMLDivElement | null;
         expect(bubble).not.toBeNull();
-        const codePre = bubble?.querySelector("pre.vsdb-md-code");
-        expect(codePre, "closed fence must render pre.vsdb-md-code in bubble").not.toBeNull();
-        const copyBtn = bubble?.querySelector("button.vsdb-md-copy");
-        expect(copyBtn, "closed fence must render button.vsdb-md-copy").not.toBeNull();
+        const codePre = bubble?.querySelector("pre.UnicDB-md-code");
+        expect(codePre, "closed fence must render pre.UnicDB-md-code in bubble").not.toBeNull();
+        const copyBtn = bubble?.querySelector("button.UnicDB-md-copy");
+        expect(copyBtn, "closed fence must render button.UnicDB-md-copy").not.toBeNull();
         // data-raw round-trip contract: clicking the button un-escapes the
         // attribute and writes the raw code to the clipboard.
         // jsdom doesn't ship a working clipboard; assert writeText was
@@ -503,26 +503,26 @@ describeIfBundle(
         // First delta removes the thinking row.
         dispatch({ type: "delta", text: "hi" });
         // Open fence but NO closing fence — bubble should NOT yet contain
-        // a pre.vsdb-md-code (mid-stream re-render guard).
+        // a pre.UnicDB-md-code (mid-stream re-render guard).
         dispatch({ type: "delta", text: "```sql\nSELECT 1 FROM users" });
         const bubbleAfterOpen = rootEl().querySelector<HTMLDivElement>(
-          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+          ".UnicDB-chat-bubble.UnicDB-chat-assistant.UnicDB-chat-streaming",
         );
         expect(
-          bubbleAfterOpen?.querySelector("pre.vsdb-md-code"),
-          "open fence (no closing) must NOT yet render pre.vsdb-md-code",
+          bubbleAfterOpen?.querySelector("pre.UnicDB-md-code"),
+          "open fence (no closing) must NOT yet render pre.UnicDB-md-code",
         ).toBeNull();
         // Now send the closing newline and backticks.
         dispatch({ type: "delta", text: ";\n```\n" });
         const bubbleAfterClose = rootEl().querySelector<HTMLDivElement>(
-          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+          ".UnicDB-chat-bubble.UnicDB-chat-assistant.UnicDB-chat-streaming",
         );
         expect(
-          bubbleAfterClose?.querySelector("pre.vsdb-md-code"),
-          "closing fence must render pre.vsdb-md-code exactly once",
+          bubbleAfterClose?.querySelector("pre.UnicDB-md-code"),
+          "closing fence must render pre.UnicDB-md-code exactly once",
         ).not.toBeNull();
-        const codeCount = bubbleAfterClose?.querySelectorAll("pre.vsdb-md-code").length;
-        expect(codeCount, "exactly one pre.vsdb-md-code after close").toBe(1);
+        const codeCount = bubbleAfterClose?.querySelectorAll("pre.UnicDB-md-code").length;
+        expect(codeCount, "exactly one pre.UnicDB-md-code after close").toBe(1);
       },
     );
 
@@ -533,12 +533,12 @@ describeIfBundle(
         dispatch({ type: "init", hasHistory: false });
         sendViaComposer("hello");
         // Error path.
-        let row = rootEl().querySelector(".vsdb-chat-thinking-row");
+        let row = rootEl().querySelector(".UnicDB-chat-thinking-row");
         expect(row, "send must show the thinking row").not.toBeNull();
         dispatch({ type: "error", message: "boom" });
         expect(
-          rootEl().querySelector(".vsdb-chat-thinking-row"),
-          "error must remove .vsdb-chat-thinking-row (no orphaned spinner)",
+          rootEl().querySelector(".UnicDB-chat-thinking-row"),
+          "error must remove .UnicDB-chat-thinking-row (no orphaned spinner)",
         ).toBeNull();
         // Host's terminal lifecycle post — only `done` re-enables the
         // composer (sendBtn.disabled === state.busy, see setBusy). Match
@@ -546,12 +546,12 @@ describeIfBundle(
         dispatch({ type: "done" });
         // Terminal assistant message path.
         sendViaComposer("again");
-        row = rootEl().querySelector(".vsdb-chat-thinking-row");
+        row = rootEl().querySelector(".UnicDB-chat-thinking-row");
         expect(row, "second send must re-show the thinking row").not.toBeNull();
         dispatch({ type: "assistant", text: "reply", markdown: true });
         expect(
-          rootEl().querySelector(".vsdb-chat-thinking-row"),
-          "terminal assistant must remove .vsdb-chat-thinking-row",
+          rootEl().querySelector(".UnicDB-chat-thinking-row"),
+          "terminal assistant must remove .UnicDB-chat-thinking-row",
         ).toBeNull();
       },
     );
@@ -570,7 +570,7 @@ describeIfBundle(
             "```\n<img src=x onerror=\"alert(1)\">\n```\n",
         });
         const bubble = rootEl().querySelector<HTMLDivElement>(
-          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+          ".UnicDB-chat-bubble.UnicDB-chat-assistant.UnicDB-chat-streaming",
         );
         expect(bubble).not.toBeNull();
         // No element with tag "img" must exist anywhere in the bubble
@@ -581,7 +581,7 @@ describeIfBundle(
         ).toBe(0);
         // The text content of the code element must still carry the raw
         // hostile text (escaped in the DOM, not dropped).
-        const code = bubble?.querySelector("pre.vsdb-md-code code");
+        const code = bubble?.querySelector("pre.UnicDB-md-code code");
         expect(code?.textContent ?? "").toContain("<img src=x onerror=\"alert(1)\">");
       },
     );
@@ -599,14 +599,14 @@ describeIfBundle(
         dispatch({ type: "delta", text: "tail 2\n" });
         dispatch({ type: "delta", text: "tail 3\n" });
         const bubble = rootEl().querySelector<HTMLDivElement>(
-          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+          ".UnicDB-chat-bubble.UnicDB-chat-assistant.UnicDB-chat-streaming",
         );
         expect(bubble).not.toBeNull();
         // Exactly one copy button per fenced block — even after repeated
         // deltas. (The re-render replaces the bubble's innerHTML, not the
         // bubble itself, so copy buttons are not duplicated.)
-        const copyBtns = bubble?.querySelectorAll("button.vsdb-md-copy").length;
-        expect(copyBtns, "exactly one .vsdb-md-copy per fenced block").toBe(1);
+        const copyBtns = bubble?.querySelectorAll("button.UnicDB-md-copy").length;
+        expect(copyBtns, "exactly one .UnicDB-md-copy per fenced block").toBe(1);
       },
     );
 
@@ -618,17 +618,17 @@ describeIfBundle(
         sendViaComposer("show me users");
         // Queued marker present after send.
         let queuedUser = rootEl().querySelector(
-          ".vsdb-chat-bubble.vsdb-chat-user.vsdb-chat-queued",
+          ".UnicDB-chat-bubble.UnicDB-chat-user.UnicDB-chat-queued",
         );
         expect(queuedUser, "queued user bubble present after send").not.toBeNull();
         // First delta resolves the queued marker (UX1-008 lifecycle invariant).
         dispatch({ type: "delta", text: "hi" });
         queuedUser = rootEl().querySelector(
-          ".vsdb-chat-bubble.vsdb-chat-user.vsdb-chat-queued",
+          ".UnicDB-chat-bubble.UnicDB-chat-user.UnicDB-chat-queued",
         );
         expect(
           queuedUser,
-          "first delta must clear the .vsdb-chat-queued marker on the user bubble",
+          "first delta must clear the .UnicDB-chat-queued marker on the user bubble",
         ).toBeNull();
       },
     );
@@ -649,19 +649,19 @@ describeIfBundle(
           ],
         });
         expect(
-          rootEl().querySelector(".vsdb-chat-thinking-row"),
+          rootEl().querySelector(".UnicDB-chat-thinking-row"),
           "history replay must NOT append a thinking row (no live turn)",
         ).toBeNull();
         // The user's next live turn must still surface the thinking row.
         sendViaComposer("new question");
         expect(
-          rootEl().querySelector(".vsdb-chat-thinking-row"),
+          rootEl().querySelector(".UnicDB-chat-thinking-row"),
           "subsequent live send must re-show the thinking row",
         ).not.toBeNull();
         // And it must clear on the next terminal assistant message.
         dispatch({ type: "assistant", text: "reply", markdown: true });
         expect(
-          rootEl().querySelector(".vsdb-chat-thinking-row"),
+          rootEl().querySelector(".UnicDB-chat-thinking-row"),
           "terminal assistant must remove the live-turn thinking row",
         ).toBeNull();
       },
@@ -689,16 +689,16 @@ describeIfBundle(
           text: "and\n\n```py\nprint(2)\n```\ntail\n",
         });
         const bubble = rootEl().querySelector<HTMLDivElement>(
-          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+          ".UnicDB-chat-bubble.UnicDB-chat-assistant.UnicDB-chat-streaming",
         );
         expect(bubble).not.toBeNull();
-        // Both code blocks must be rendered as boxed pre.vsdb-md-code
+        // Both code blocks must be rendered as boxed pre.UnicDB-md-code
         // elements — the first one must NOT be inlined as plain text
         // just because the source was re-rendered on the second close.
-        const pres = bubble?.querySelectorAll("pre.vsdb-md-code");
+        const pres = bubble?.querySelectorAll("pre.UnicDB-md-code");
         expect(
           pres?.length ?? 0,
-          "two streamed code blocks must both render as pre.vsdb-md-code",
+          "two streamed code blocks must both render as pre.UnicDB-md-code",
         ).toBe(2);
         // The bubble must NOT contain a stray literal "Copy" word from
         // the first block's copy button leaking back into the markdown
@@ -717,7 +717,7 @@ describeIfBundle(
         // After settlement the streaming class is gone; nothing to
         // assert beyond a clean no-throw render.
         expect(
-          rootEl().querySelector(".vsdb-chat-bubble.vsdb-chat-streaming"),
+          rootEl().querySelector(".UnicDB-chat-bubble.UnicDB-chat-streaming"),
           "terminal assistant must close the streaming bubble",
         ).toBeNull();
       },

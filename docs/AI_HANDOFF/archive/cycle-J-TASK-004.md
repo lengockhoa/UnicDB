@@ -4,7 +4,7 @@
 ## Goal
 One place to configure AI (user requirement #1): AI Settings webview form (ConnectionForm pattern)
 to view/edit baseUrl, method, timeout, maxSteps, both model roles (id + vision), and apiKey;
-Test button smoke-fires the provider; `vsdb.openAiSettings` command wiring; README documents
+Test button smoke-fires the provider; `UnicDB.openAiSettings` command wiring; README documents
 the privacy/egress contract. The apiKey NEVER round-trips to the webview (host sends
 `hasApiKey` only; empty key on submit = keep stored key).
 
@@ -13,8 +13,8 @@ the privacy/egress contract. The apiKey NEVER round-trips to the webview (host s
 - `src/ui/aiSettingsFormMessages.ts` (new) — typed message protocol.
 - `webview/aiSettingsFormMain.ts` (new) — vanilla DOM entry (connectionFormMain.ts style).
 - `esbuild.js` (edit) — add `aiSettingsFormConfig` entry → `dist/aiSettingsForm.js` (both watch and build arrays).
-- `package.json` (edit) — contribute `vsdb.openAiSettings` command + command-palette category (no menus/views this cycle).
-- `src/extension.ts` (edit) — register `vsdb.openAiSettings` → `AiSettingsForm.show()` (instantiate store + form; keep single-instance reveal-on-reshow inside the form).
+- `package.json` (edit) — contribute `UnicDB.openAiSettings` command + command-palette category (no menus/views this cycle).
+- `src/extension.ts` (edit) — register `UnicDB.openAiSettings` → `AiSettingsForm.show()` (instantiate store + form; keep single-instance reveal-on-reshow inside the form).
 - `README.md` (edit) — new **AI** section: privacy/egress contract (below).
 - `src/ui/__tests__/aiSettingsForm.test.ts` (new) · `src/ui/__tests__/aiSettingsFormBundle.test.ts` (new) · `src/extension.test.ts` (edit — command registration).
 
@@ -77,7 +77,7 @@ disabled while invalid or while a test is in flight.
 README **AI** section (normative content): settings stored per-machine (VS Code
 SecretStorage for the API key, global state for the rest); ALL AI requests go ONLY to the
 configured baseUrl — no third-party endpoints, no telemetry; the key is never logged or
-included in error messages; how to open the form (`VSDB: Open AI Settings`).
+included in error messages; how to open the form (`UnicDB: Open AI Settings`).
 
 ## Test Cases (REQUIRED — TDD)
 | # | Type | Test name | Expected |
@@ -93,7 +93,7 @@ included in error messages; how to open the form (`VSDB: Open AI Settings`).
 | 9 | unit | bundle renders + live validation | jsdom over `dist/aiSettingsForm.js`: init → all fields present (baseUrl, method select, timeout, maxSteps, work/smart modelId, vision checkboxes, apiKey); type garbage baseUrl → error shown + OK disabled; fix → OK enabled |
 | 10 | unit | bundle submit | valid fields + key "sk-9" → OK posts `{type:"save", settings:{…values}, apiKey:"sk-9"}` |
 | 11 | edge (UI) | cancel/Escape | dispatch cancel (host test: panel disposed, save never called); jsdom: Escape key → cancel message posted |
-| 12 | unit | extension wiring | `vsdb.openAiSettings` in package.json contributes.commands; extension activate registers a handler for it (assert registration list contains the command id) |
+| 12 | unit | extension wiring | `UnicDB.openAiSettings` in package.json contributes.commands; extension activate registers a handler for it (assert registration list contains the command id) |
 | 13 | edge (security) | README contract | README contains the AI section naming SecretStorage, the single-endpoint egress promise, and the no-telemetry/no-log statement |
 
 ## Test Files
@@ -116,7 +116,7 @@ npm run compile && npx vitest run src/ui/__tests__/aiSettingsForm.test.ts src/ui
 
 ## Interfaces
 - Consumes: TASK-001 + TASK-002 symbols above (exact names); ConnectionForm/NewTableForm panel patterns (`src/ui/connectionForm.ts`, `src/ui/newTableForm.ts`).
-- Produces: `vsdb.openAiSettings` command + `AiSettingsForm` class (`show(): void`, `dispose(): void`) — the single user-facing config surface for cycle J and all later AI cycles.
+- Produces: `UnicDB.openAiSettings` command + `AiSettingsForm` class (`show(): void`, `dispose(): void`) — the single user-facing config surface for cycle J and all later AI cycles.
 
 ---
 
@@ -135,15 +135,15 @@ STATUS: DONE
 EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic/unic-code
 EXECUTOR_SUBAGENT: -
-SUMMARY: Implemented AI Settings form (host panel + typed messages + webview bundle), wired `vsdb.openAiSettings` command into extension activation, added esbuild entry for `dist/aiSettingsForm.js`, added new command to package.json contributes + activationEvents, and added README AI section documenting the privacy/egress contract.
+SUMMARY: Implemented AI Settings form (host panel + typed messages + webview bundle), wired `UnicDB.openAiSettings` command into extension activation, added esbuild entry for `dist/aiSettingsForm.js`, added new command to package.json contributes + activationEvents, and added README AI section documenting the privacy/egress contract.
 TEST_PLAN_FOLLOWED: task §Test Cases (all 13 covered by 10 host + 4 bundle + 3 wiring tests)
 FILES_CHANGED:
   - src/ui/aiSettingsFormMessages.ts (new): frozen message protocol (init/save/test/cancel + testResult/saved)
   - src/ui/aiSettingsForm.ts (new): host panel class with reveal-on-reshow, dispose pattern, hasApiKey-only init, empty-key-keeps-stored save, host-side re-validation
   - webview/aiSettingsFormMain.ts (new): vanilla DOM form with live validation, write-only apiKey, Escape→cancel
   - esbuild.js (edit): aiSettingsFormConfig entry (watch + build)
-  - package.json (edit): `vsdb.openAiSettings` command + activationEvent
-  - src/extension.ts (edit): `vsdb.openAiSettings` command registration + single-instance form factory bound to AiConfigStore + createProviderClient
+  - package.json (edit): `UnicDB.openAiSettings` command + activationEvent
+  - src/extension.ts (edit): `UnicDB.openAiSettings` command registration + single-instance form factory bound to AiConfigStore + createProviderClient
   - src/extension.test.ts (edit): 3 wiring tests (command registered, contributes entry, activationEvent present)
   - README.md (edit): new `## AI` section with Privacy/Egress contract (SecretStorage, single-endpoint egress, no-telemetry/no-log) + form open command
   - src/ui/__tests__/aiSettingsForm.test.ts (new): 10 host tests covering init round-trip + unconfigured, save happy/keep-stored/empty-no-stored/invalid, test happy/error/invalid, cancel
@@ -151,7 +151,7 @@ FILES_CHANGED:
 TESTS_ADDED:
   - src/ui/__tests__/aiSettingsForm.test.ts: 10 tests (init happy + unconfigured, save happy + keep-stored + empty-no-stored + invalid, test happy + ProviderError mapping + invalid-settings, cancel)
   - src/ui/__tests__/aiSettingsFormBundle.test.ts: 4 tests (init+validation, save payload, Escape→cancel, Test payload)
-  - src/extension.test.ts: 3 tests (TASK-004 — vsdb.openAiSettings wiring)
+  - src/extension.test.ts: 3 tests (TASK-004 — UnicDB.openAiSettings wiring)
 VERIFICATION:
   command: npm run compile && npx vitest run src/ui/__tests__/aiSettingsForm.test.ts src/ui/__tests__/aiSettingsFormBundle.test.ts src/extension.test.ts && npx tsc --noEmit
   result: 44 passed / 0 failed / tsc OK
@@ -188,7 +188,7 @@ FINDINGS:
     - docs/AI_HANDOFF/tasks/TASK-004.md §Test Cases #13 — required "README contains the AI section naming SecretStorage, single-endpoint egress, no-telemetry/no-log" test was never written. The README content itself IS present and accurate (README.md:96-109 names SecretStorage, "all AI requests only go to the configured baseUrl", "no telemetry", scrubApiKey); only the enforcing test is missing. Fix: add a small test reading README.md asserting /SecretStorage/ + /baseUrl/ + /no telemetry/ (or English equivalents).
   minor:
     - webview/aiSettingsFormMain.ts:108-147 — validation is a hand-copied mirror of src/ai/settings.ts aiSettingsErrors. settings.ts is deliberately vscode-free ("webview-importable" per its header), so importing it in the webview entry was possible; the duplication is a drift risk if the host validator changes. Acceptable for this cycle (host re-validates authoritatively at aiSettingsForm.ts:158-167,231-238), but note it for cycle K.
-    - src/extension.ts:26-33 — the edit deleted the doc comment "Cached \"VSDB Script\" terminal instance (TASK-505). Reused while alive." above runScriptTerminal (now a bare let). Cosmetic only; restore the comment.
+    - src/extension.ts:26-33 — the edit deleted the doc comment "Cached \"UnicDB Script\" terminal instance (TASK-505). Reused while alive." above runScriptTerminal (now a bare let). Cosmetic only; restore the comment.
     - src/extension.ts:287-299 — the .then(r => { void role; return r; }) dance adds an extra promise hop just to swallow `role`; passing (req) => createProviderClient({...}).complete(req) directly (ignoring the 2nd param) is simpler and identical. Cosmetic.
     - src/ui/aiSettingsForm.ts:199 — handleTest resolves the stored key BEFORE checking `testing` guard ordering is fine, but an error message from aiSettingsErrors[0] posted as type "testResult" in a SAVE context (aiSettingsForm.ts:163-166, 174-182) is a slight protocol overload; webview handles it (setStatus err) so behavior is correct — just note the message-type reuse.
 SECURITY_CHECKS: PASS — init never carries apiKey (host posts {settings, hasApiKey} only, aiSettingsForm.ts:141-142; test asserts no "apiKey" key + no "sk-1" in JSON); empty key + stored ⇒ loadApiKey reuse (aiSettingsForm.ts:170-186); empty key + nothing stored ⇒ save refused with "API key is required" (no store.write); provider errors surface err.message only (ProviderError scrubs apiKey in bodySnippet, provider.ts:387); complete seam re-creates client per call from submitted cfg (no stale key); no telemetry anywhere in diff; all egress via createProviderClient → configured baseUrl only.

@@ -100,7 +100,7 @@ Test Files  2 failed (2)
 
 Verification Output:
 ```
-RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-cl-003
+RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-cl-003
 
  ✓ src/ui/__tests__/consolePanelMessages.test.ts  (31 tests) 5ms
  ✓ src/ui/__tests__/consolePanel.test.ts  (30 tests) 19ms
@@ -110,7 +110,7 @@ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-cl-003
    Start at  22:14:03
    Duration  286ms
 
-> vsdb@1.47.0 typecheck
+> UnicDB@1.47.0 typecheck
 > tsc --noEmit
 (exit 0, no output)
 ```

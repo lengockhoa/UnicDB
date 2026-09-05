@@ -93,7 +93,7 @@ export interface HostMcp {
 // ---------------------------------------------------------------------------
 
 const MCP_PROTOCOL_VERSION = "2025-11-25";
-const HOST_INFO = { name: "vsdb-host-mcp", version: "1.11.0" } as const;
+const HOST_INFO = { name: "UnicDB-host-mcp", version: "1.11.0" } as const;
 
 function isRecordLike(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

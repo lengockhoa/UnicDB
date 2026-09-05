@@ -121,6 +121,6 @@ describe("ag-grid-community smoke (TASK-201)", () => {
     const css = readFileSync(cssPath, "utf8");
     // Legacy quartz stylesheet must NOT be bundled (AG error #106 conflict).
     expect(css).not.toMatch(/\.ag-theme-quartz\s*,\s*\.ag-theme-quartz-dark/);
-    expect(css).toMatch(/\.vsdb-ag-host/);
+    expect(css).toMatch(/\.UnicDB-ag-host/);
   });
 });

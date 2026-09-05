@@ -75,7 +75,7 @@ Rules (frozen):
   today; this guards future/foreign tools.
 - Webview: if detail ≤ 120 chars and single-line → current plain `<div>`; else
   `<details><summary>Show tool details</summary><pre>` — every node set via `textContent`,
-  never `innerHTML`. Empty detail → no node at all. Add missing `.vsdb-chat-permission*`
+  never `innerHTML`. Empty detail → no node at all. Add missing `.UnicDB-chat-permission*`
   styles (grep shows zero rules in `webview/styles.css` today).
 
 Rejected: rendering raw JSON in the dialog body (noise for 1-line SQL); parsing args in the
@@ -138,7 +138,7 @@ extension.vsixmanifest; and contains NO `src/`, `node_modules/`, `tests/`, `docs
 | edge (T2) | abort mid-tool | token flipped → no further step posts (gate) |
 | edge (T2) | boundary: empty tool name | label `"tool"` |
 | regression (T2) | assistant-only final step | no step message posted; existing `stepIdx < assistantIdx` assertion still green |
-| artifact (T3) | `npm run package` happy path | exit 0, `vsdb-1.6.0.vsix` exists, required entries in `unzip -l` |
+| artifact (T3) | `npm run package` happy path | exit 0, `UnicDB-1.6.0.vsix` exists, required entries in `unzip -l` |
 | edge (T3) | exclusion audit | listing has no `src/`, `node_modules/`, `tests/`, `docs/`, `*.map` |
 | edge (T3) | embedded metadata | vsix package.json shows version 1.6.0, license MIT, repository URL |
 | regression (T3) | typecheck after metadata edits | `npm run typecheck` exit 0 |
@@ -149,7 +149,7 @@ All from `package.json` scripts (`npm test` = `vitest run`, args after `--` pass
 
 - TASK-001: `npm run typecheck && npm test -- src/ui/__tests__/permissionDetail.test.ts src/ui/__tests__/aiChatPanelAcp.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts`
 - TASK-002: `npm run typecheck && npm test -- src/ai/__tests__/agent.test.ts src/ai/__tests__/agentStream.test.ts src/ui/__tests__/aiChatPanel.test.ts`
-- TASK-003: `npm run typecheck && npm run package && unzip -l vsdb-1.6.0.vsix`
+- TASK-003: `npm run typecheck && npm run package && unzip -l UnicDB-1.6.0.vsix`
 - Wave boundary (orchestrator): full `npm test` — 819-test baseline must hold.
 
 ## §6 Acceptance
@@ -159,7 +159,7 @@ All from `package.json` scripts (`npm test` = `vitest run`, args after `--` pass
 - [ ] Existing ACP permission tests still pass — opaque-ID/one-shot semantics untouched (TASK-001)
 - [ ] Builtin turn posts one step line per tool call before execution; no duplicates (TASK-002)
 - [ ] Abort stops step lines; assistant-only steps post none; `npm test` suite green (TASK-002)
-- [ ] `vsdb-1.6.0.vsix` packages clean with correct contents; CHANGELOG + RELEASE doc added (TASK-003)
+- [ ] `UnicDB-1.6.0.vsix` packages clean with correct contents; CHANGELOG + RELEASE doc added (TASK-003)
 - [ ] No new deps; no apiKey in webview/ACP; read-only DB boundary untouched
 
 ## §7 Global Constraints (inherited by every TASK file)
@@ -209,6 +209,6 @@ SCOPE:
 YAGNI:
   - none — rejected alternatives recorded; slice-3 vitest exemption justified
 
-Evidence spot-checks: 819-pass baseline re-run green (2 skipped); scripts/typecheck/package/vscode:prepublish at package.json:362-363 as cited; .vscodeignore already excludes src/webview/tests/docs/node_modules/**/*.map/scripts; no CHANGELOG.md exists today; agent.ts:259 loop, aiChatPanel.ts:399-406 dead branch, :599-602 string guards, :347 abort gate, :567 thought-chunk guard, provider.ts ToolCall shape, messages.ts step/permission shapes — all match plan citations; install-vsdb.sh supports --local/--dry-run; `vsce publish` appears only as explicit out-of-scope.
+Evidence spot-checks: 819-pass baseline re-run green (2 skipped); scripts/typecheck/package/vscode:prepublish at package.json:362-363 as cited; .vscodeignore already excludes src/webview/tests/docs/node_modules/**/*.map/scripts; no CHANGELOG.md exists today; agent.ts:259 loop, aiChatPanel.ts:399-406 dead branch, :599-602 string guards, :347 abort gate, :567 thought-chunk guard, provider.ts ToolCall shape, messages.ts step/permission shapes — all match plan citations; install-UnicDB.sh supports --local/--dry-run; `vsce publish` appears only as explicit out-of-scope.
 
 NOTES: Version 1.6.0 justified (user-visible features across M–P). MIN-1 is cosmetic; no re-plan needed.

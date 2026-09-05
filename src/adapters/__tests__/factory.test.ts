@@ -17,8 +17,8 @@ function cfg(driver: ConnectionConfig["driver"]): ConnectionConfig {
     driver,
     host: "127.0.0.1",
     port: 5433,
-    user: "vsdb",
-    database: "vsdb",
+    user: "UnicDB",
+    database: "UnicDB",
   };
 }
 
@@ -47,22 +47,22 @@ function bqCfg(overrides: {
 
 describe("createAdapter — factory", () => {
   it("postgres → trả về PostgresAdapter", () => {
-    const a = createAdapter(cfg("postgres"), "vsdb");
+    const a = createAdapter(cfg("postgres"), "UnicDB");
     expect(a).toBeInstanceOf(PostgresAdapter);
   });
 
   it("mysql → trả về MySqlAdapter", () => {
-    const a = createAdapter(cfg("mysql"), "vsdb");
+    const a = createAdapter(cfg("mysql"), "UnicDB");
     expect(a).toBeInstanceOf(MySqlAdapter);
   });
 
   it("mssql → trả về MsSqlAdapter", () => {
-    const a = createAdapter(cfg("mssql"), "VsdbPass123!");
+    const a = createAdapter(cfg("mssql"), "UnicDBPass123!");
     expect(a).toBeInstanceOf(MsSqlAdapter);
   });
 
   it("factory export trả về object implement DbAdapter interface", () => {
-    const a = createAdapter(cfg("postgres"), "vsdb");
+    const a = createAdapter(cfg("postgres"), "UnicDB");
     // Duck-type: phải có các method đặc trưng.
     expect(typeof a.connect).toBe("function");
     expect(typeof a.close).toBe("function");

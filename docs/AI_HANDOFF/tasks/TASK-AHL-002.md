@@ -2,11 +2,11 @@
 
 ## Goal
 
-Add an `adminTree` view (sibling tree provider to `vsdb.schemaTree`) showing Roles → per-role grants + Sessions + Locks for Postgres. Add a grant/revoke wizard that walks the user through privileges + target object + grantee and posts the SQL via the existing runner. All writes go through `confirmDangerousStatements` (extended in TASK-AHL-004).
+Add an `adminTree` view (sibling tree provider to `UnicDB.schemaTree`) showing Roles → per-role grants + Sessions + Locks for Postgres. Add a grant/revoke wizard that walks the user through privileges + target object + grantee and posts the SQL via the existing runner. All writes go through `confirmDangerousStatements` (extended in TASK-AHL-004).
 
 ## Target Files
 
-- `src/ui/adminTree.ts` — NEW `AdminTreeProvider`. Top-level category: a single connection-level Admin node; sub-categories: Roles, Grants, Sessions, Locks (each probes via `adapter.admin.*`). Lazy children per role / per session. `VsdbNode.meta.adminKind` discriminator: `"admin_category" | "role" | "role_grant" | "session" | "lock_wait" | "admin_error"`. `getParent` reconstructs Admin → connection → schema. `catalogErrorNode` pattern reused for error rendering. Disjoint from schemaTree (separate provider), but registers as a new view via `vscode.window.createTreeView("vsdb.adminTree", { treeDataProvider })`.
+- `src/ui/adminTree.ts` — NEW `AdminTreeProvider`. Top-level category: a single connection-level Admin node; sub-categories: Roles, Grants, Sessions, Locks (each probes via `adapter.admin.*`). Lazy children per role / per session. `UnicDBNode.meta.adminKind` discriminator: `"admin_category" | "role" | "role_grant" | "session" | "lock_wait" | "admin_error"`. `getParent` reconstructs Admin → connection → schema. `catalogErrorNode` pattern reused for error rendering. Disjoint from schemaTree (separate provider), but registers as a new view via `vscode.window.createTreeView("UnicDB.adminTree", { treeDataProvider })`.
 - `src/ui/adminWizard.ts` — NEW. Pure helpers `pickPrivileges()`, `pickGrantee()`, `previewGrantSql()`, `previewRevokeSql()`. Returns `Thenable<string | undefined>` — `undefined` for cancel. Uses `vscode.window.showQuickPick` / `showInformationMessage`. Pre-confirms DCL via `confirmDangerousStatements` (extended in TASK-AHL-004).
 - `src/ui/__tests__/adminTree.test.ts` — NEW. Fake connection manager + adapter; assert Admin category absent for mysql/mssql; present for postgres; sub-category children populated.
 - `src/ui/__tests__/adminWizard.test.ts` — NEW. Mock quickPick; verify wizard produces expected GRANT/REVOKE strings; cancel posts nothing.
@@ -55,8 +55,8 @@ npm run compile
 
 ## Interfaces
 
-- Consumes: `AdminApi` from TASK-AHL-001; existing `VsdbNode` / `CategoryKind` shape from schemaTree (reused, not extended).
-- Produces: new vscode view `vsdb.adminTree`; new `vscode.commands.registerCommand("vsdb.admin.refresh")`; new contributions-declared commands in `package.json` (added in TASK-AHL-004). No new webview messages — preview SQL runs through existing `runSql` path.
+- Consumes: `AdminApi` from TASK-AHL-001; existing `UnicDBNode` / `CategoryKind` shape from schemaTree (reused, not extended).
+- Produces: new vscode view `UnicDB.adminTree`; new `vscode.commands.registerCommand("UnicDB.admin.refresh")`; new contributions-declared commands in `package.json` (added in TASK-AHL-004). No new webview messages — preview SQL runs through existing `runSql` path.
 
 ---
 

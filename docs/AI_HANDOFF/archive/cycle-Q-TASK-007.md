@@ -18,7 +18,7 @@ CodeLens runStatement) plus the browse flow.
 - `src/core/keywordQualify.ts` **(new)** — pure transform `qualifyKeywordTables(sql, listTables)`
   + exported `isPgReservedKeyword(word)`. No vscode/db imports.
 - `src/extension.ts` (modify) — apply the transform inside `runStatements` (verified ~L450, the
-  single submit path wired from editor `vsdb.runQuery` L433 and CodeLens `vsdb.runStatement`
+  single submit path wired from editor `UnicDB.runQuery` L433 and CodeLens `UnicDB.runStatement`
   L447) before `runner.run`; async adaptation allowed (runStatements is already async).
 - `src/ui/browseCommands.ts` (modify) — apply transform to the generated browse SQL before
   running (cheap, consistent).
@@ -38,7 +38,7 @@ the transform.
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
 | 1 | regression happy | unqualified keyword table | `SELECT * FROM order;` + listTables `["order"]` → `SELECT * FROM "public"."order";` (changed: true); still ONE statement | transform call |
-| 2 | regression (editor path) | runStatement with keyword table | invoking `vsdb.runStatement` with `SELECT * FROM order;` → `runner.run` receives sql containing `"public"."order"` — RED before fix | extension.test.ts harness |
+| 2 | regression (editor path) | runStatement with keyword table | invoking `UnicDB.runStatement` with `SELECT * FROM order;` → `runner.run` receives sql containing `"public"."order"` — RED before fix | extension.test.ts harness |
 | 3 | edge | already-qualified untouched | `SELECT * FROM prd.order` and `SELECT * FROM public."order"` → unchanged | listTables stub |
 | 4 | edge | quoted untouched | `SELECT * FROM "order"` → unchanged | listTables stub |
 | 5 | edge (non-table keyword usage) | ORDER BY / keyword-as-keyword | `SELECT 1 FROM t ORDER BY x` → unchanged | listTables stub |
@@ -148,7 +148,7 @@ VERIFICATION:
     FAIL  src/extension.test.ts > TASK-003 — npm run compile emits dist/schemaForm.js (pre-existing)
     Test Files  1 failed | 2 passed (3)
     Tests  74 passed | 1 failed (75)
-    > vsdb@1.6.0 typecheck
+    > UnicDB@1.6.0 typecheck
     > tsc --noEmit
     (no output = clean)
 ISSUES: pure-module test #11 was added as part of the task (case #11 lives in

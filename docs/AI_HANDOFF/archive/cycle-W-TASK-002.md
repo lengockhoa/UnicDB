@@ -22,12 +22,12 @@ truncation helper that decides whether the list is complete. No call sites — T
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit (happy) | postgres composition | `SELECT DISTINCT "name" FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1 LIMIT 1001` | `("SELECT * FROM t", "name", "postgres", "", 1000)` |
+| 1 | unit (happy) | postgres composition | `SELECT DISTINCT "name" FROM (SELECT * FROM t) UnicDB_distinct ORDER BY 1 LIMIT 1001` | `("SELECT * FROM t", "name", "postgres", "", 1000)` |
 | 2 | unit (happy) | mysql quoting | identical shape with `` `name` `` and backticked alias-free body | same, `"mysql"` |
-| 3 | edge (dialect capability) | mssql has no LIMIT | `SELECT DISTINCT TOP (1001) [name] FROM (SELECT * FROM t) vsdb_distinct ORDER BY 1` | same, `"mssql"` |
+| 3 | edge (dialect capability) | mssql has no LIMIT | `SELECT DISTINCT TOP (1001) [name] FROM (SELECT * FROM t) UnicDB_distinct ORDER BY 1` | same, `"mssql"` |
 | 4 | edge (injection) | column payload stays one identifier | output contains `"name""; DROP TABLE t--"` (doubled quote) and no bare `DROP TABLE t--` outside the identifier | column `name"; DROP TABLE t--`, postgres |
 | 5 | edge (boundary) | trailing semicolon on inner SQL is stripped | no `;` inside the `(...)` wrap; exactly one statement in the output | `"SELECT * FROM t;"` |
-| 6 | edge (composition) | an existing WHERE is applied at the OUTER level | `… vsdb_distinct WHERE id > 5 ORDER BY 1 LIMIT 1001`, inner SQL verbatim | `where = "id > 5"` |
+| 6 | edge (composition) | an existing WHERE is applied at the OUTER level | `… UnicDB_distinct WHERE id > 5 ORDER BY 1 LIMIT 1001`, inner SQL verbatim | `where = "id > 5"` |
 | 7 | edge (empty input) | empty/whitespace WHERE adds no clause | output contains no `WHERE` | `where = "   "` |
 | 8 | edge (boundary) | `takeDistinctValues` under the limit | `{ values: [1,2,3], truncated: false }` | rows `[[1],[2],[3]]`, limit 1000 |
 | 9 | edge (boundary) | `takeDistinctValues` exactly at limit+1 | `values.length === 2` and `truncated === true` | rows of length 3, limit 2 |
@@ -132,8 +132,8 @@ typecheck verified in-worktree. queryComposer.ts NOT modified.
    `distinctValues.ts` with a comment pointing at the original; a four-line pure regex helper
    duplicated once is cheaper than a cross-task file collision. Flag it in your Executor Report
    so a later cycle can hoist both into a shared module.
-3. **The subquery alias is `vsdb_distinct`** — deliberately different from `vsdb_page`
-   (`buildPagedQuery`) and `vsdb_sort` (`composeSortQuery`) so a nested composition can never
+3. **The subquery alias is `UnicDB_distinct`** — deliberately different from `UnicDB_page`
+   (`buildPagedQuery`) and `UnicDB_sort` (`composeSortQuery`) so a nested composition can never
    collide on the alias name.
 4. **`ORDER BY 1` (ordinal), not `ORDER BY <col>`.** The outer select projects exactly one
    column; the ordinal is valid on all three dialects and sidesteps re-quoting. MSSQL needs the
@@ -180,9 +180,9 @@ FINDINGS:
   critical:
     - none
   important:
-    - file: /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/__tests__/distinctValues.test.ts:41 — the quoted-identifier edge uses partial `toContain` assertions, and lines 13-100 never exercise a schema-qualified inner table. Regressions that alter a qualified base statement or the exact escaped-identifier SQL shape can pass; add exact `toBe` assertions covering both the escaped identifier and a schema-qualified base query.
+    - file: /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/src/ui/__tests__/distinctValues.test.ts:41 — the quoted-identifier edge uses partial `toContain` assertions, and lines 13-100 never exercise a schema-qualified inner table. Regressions that alter a qualified base statement or the exact escaped-identifier SQL shape can pass; add exact `toBe` assertions covering both the escaped identifier and a schema-qualified base query.
   minor:
-    - file: /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ui/distinctValues.ts:78 — the comment says rows with extra columns are skipped, but line 94 accepts every non-empty row and takes cell 0; make the documentation match the implemented first-cell behavior.
+    - file: /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/src/ui/distinctValues.ts:78 — the comment says rows with extra columns are skipped, but line 94 accepts every non-empty row and takes cell 0; make the documentation match the implemented first-cell behavior.
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Running model bao-opus; configured reviewer model is unic-smart. Model isolation is satisfied against bao-sonnet, RED evidence is concrete, and all fresh verification commands pass.
 

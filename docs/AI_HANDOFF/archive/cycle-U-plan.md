@@ -2,7 +2,7 @@
 
 ## §1 Intent
 
-**Problem.** VSDB's results grid is a functional query runner, not a data-browsing tool. After
+**Problem.** UnicDB's results grid is a functional query runner, not a data-browsing tool. After
 running a query, users cannot sort by column header, must manually type ORDER BY clauses, cannot
 tell whether a cell is NULL or just visually empty, cannot retry only the failed rows from a
 batch save, and have no way to manually commit/rollback a transaction. The export serializer
@@ -15,7 +15,7 @@ interpolates string values directly into SQL instead of using parameterized quer
 |---------|-------------------|
 | Export keepIndices bug | `serializeExport("json", ["id","id"], rows, {hiddenColumns:["id"]})` → `{"columns":[],"rows":[[]]}`, not error |
 | MSSQL parameter binding | `MSSQL adapter` uses `request.addParameter` for metadata queries; no `${this.literal()}` in SQL strings |
-| Postgres sort query | `getTableSortQuery("SELECT * FROM t WHERE id>5", "", "name", "ASC")` → `SELECT * FROM (SELECT * FROM t WHERE id>5) vsdb_sort ORDER BY "name" ASC` |
+| Postgres sort query | `getTableSortQuery("SELECT * FROM t WHERE id>5", "", "name", "ASC")` → `SELECT * FROM (SELECT * FROM t WHERE id>5) UnicDB_sort ORDER BY "name" ASC` |
 | NULL cell display | Grid shows "(NULL)" italic text for null cells; double-click still enters edit mode |
 | A19 failed-row retry | Webview posts `{type:"retryFailedRows", index, rowIds:[5,8], failedEdits:[...]}` on retry click |
 | Post-commit refresh | After successful saveEdits, grid auto-re-renders with fresh rows; dirty state clears for all non-errored rows |
@@ -78,7 +78,7 @@ the `Request` constructor or inline before `execSql`. The `execute` method gains
 
 Add a pure function `getTableSortQuery(originalSql: string, whereFromBar: string, column: string, direction: "ASC"|"DESC"): string` to `postgres.ts`. Composes:
 ```
-SELECT * FROM (<originalSql>) vsdb_sort [WHERE <whereFromBar>] ORDER BY "<column>" <direction>
+SELECT * FROM (<originalSql>) UnicDB_sort [WHERE <whereFromBar>] ORDER BY "<column>" <direction>
 ```
 No adapter instance needed — pure SQL composition. The webview will compose the requery by
 putting column sort into the `orderBy` field of the existing `requery` message.
@@ -86,7 +86,7 @@ putting column sort into the `orderBy` field of the existing `requery` message.
 ### 3.4 NULL cell display (TASK-004)
 
 In `webview/main.ts`'s `renderGrid()`, add a `valueFormatter` for data columns that replaces
-null/undefined values with an italic `<span class="vsdb-null">(NULL)</span>` when rendering.
+null/undefined values with an italic `<span class="UnicDB-null">(NULL)</span>` when rendering.
 The cell's underlying data remains null — the formatter only changes display. The
 `cell-editor` component (AG Grid default text editor) already allows editing null cells;
 no change needed for edit entry. For the cell value viewer (double-click a read-only cell
@@ -181,8 +181,8 @@ open, show a `$(lock)` indicator in the status bar.
 |---|------|-----------|----------|------|
 | H1 | unit | keepIndices hides only the specified positional indices | `"columns":["id__2"]` | TASK-001 |
 | H2 | unit | MSSQL execute with params sends correct NVarChar types | No `${this.literal()}` in any SQL string | TASK-002 |
-| H3 | unit | getTableSortQuery with column + direction | `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY "col" ASC` | TASK-003 |
-| H4 | unit | NULL cell renders "(NULL)" in italic span | Grid cell contains `class="vsdb-null"` | TASK-004 |
+| H3 | unit | getTableSortQuery with column + direction | `SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY "col" ASC` | TASK-003 |
+| H4 | unit | NULL cell renders "(NULL)" in italic span | Grid cell contains `class="UnicDB-null"` | TASK-004 |
 | H5 | bundle | Retry button appears when saveResult has rowErrors | Button element exists in banner | TASK-005 |
 | H6 | bundle | saveResult.ok triggers requery post | `postToHost` called with `{type:"requery"}` | TASK-006 |
 | H7 | bundle | Tab shows label when r.label is set | Tab text matches label | TASK-007 |
@@ -195,7 +195,7 @@ open, show a `$(lock)` indicator in the status bar.
 |---|------|-----------|----------|------|
 | E1 | boundary | keepIndices with empty hiddenIndices array | No filtering, all columns preserved | TASK-001 |
 | E2 | malformed input | getTableSortQuery with SQL injection in column name | Column quoted as identifier, not interpolated raw | TASK-003 |
-| E3 | empty input | getTableSortQuery with empty originalSql | Returns `SELECT * FROM () vsdb_sort ORDER BY ...` (no crash) | TASK-003 |
+| E3 | empty input | getTableSortQuery with empty originalSql | Returns `SELECT * FROM () UnicDB_sort ORDER BY ...` (no crash) | TASK-003 |
 | E4 | null input | NULL cell double-click enters edit mode | AG Grid cell editor activates | TASK-004 |
 | E5 | boundary | Retry with 0 failed rows | No retry message posted (no-op) | TASK-005 |
 | E6 | boundary | Post-commit refresh when cursor is open | Previous cursor closed before requery runs | TASK-006 |
@@ -270,7 +270,7 @@ npm test && npm run typecheck && npm run compile
 - Each task commits once at wave end; no push until cycle complete
 - CSP: no inline scripts; all webview JS from bundled dist/webview.js
 - Do not modify CLAUDE.md, docs/AI_HANDOFF/RULES.md, or .ukit/storage/config.json
-- Naming: CSS classes use `vsdb-` prefix; VSCode command IDs use `vsdb.` prefix
+- Naming: CSS classes use `UnicDB-` prefix; VSCode command IDs use `UnicDB.` prefix
 
 ---
 

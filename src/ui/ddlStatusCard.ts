@@ -122,8 +122,8 @@ export function extractHint(pgError: string | undefined): string | undefined {
  * Build the card text fields for a non-SELECT statement.
  *
  * Pure: produces strings only. The webview assembly reads these
- * fields to build the DOM (`title` → `<div class="vsdb-ddl-card-title">`,
- * `meta` → `<div class="vsdb-ddl-card-meta">`, etc.).
+ * fields to build the DOM (`title` → `<div class="UnicDB-ddl-card-title">`,
+ * `meta` → `<div class="UnicDB-ddl-card-meta">`, etc.).
  *
  * Failure semantics:
  *     `errorText` is byte-identical to `r.error`. The `hint` is a

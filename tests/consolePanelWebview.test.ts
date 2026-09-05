@@ -64,8 +64,8 @@ function loadBundle(): {
     );
   }
 
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-console"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-console"></div>';
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
   const received: Array<Record<string, unknown>> = [];
   const api = {
@@ -223,10 +223,10 @@ describeIfBundle(
         await flush();
 
         // Tab bar shows one node per tab.
-        const tabNodes = document.querySelectorAll(".vsdb-console-tab");
+        const tabNodes = document.querySelectorAll(".UnicDB-console-tab");
         expect(tabNodes.length).toBe(2);
         const activeTab = document.querySelector(
-          ".vsdb-console-tab.vsdb-console-tab-active",
+          ".UnicDB-console-tab.UnicDB-console-tab-active",
         );
         expect(activeTab).toBeTruthy();
         expect(activeTab!.textContent).toContain("alpha");

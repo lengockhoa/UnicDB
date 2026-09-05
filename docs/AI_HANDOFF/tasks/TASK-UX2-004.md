@@ -112,7 +112,7 @@ VERIFICATION:
   command: npm run typecheck
   result: exit 0
   output_excerpt: |
-    > vsdb@1.51.2 typecheck
+    > UnicDB@1.51.2 typecheck
     > tsc --noEmit
 
   command: npm run compile
@@ -169,7 +169,7 @@ NOTES: Code is correct and fully verified (all 4 verification commands re-run gr
 The original executor did not paste the RED output for these 4 cases (wave 3 was committed as a single commit `a0da149`, so the pre-impl state was not preserved). To repair the report-contract gap, the orchestrator re-ran the TDD cycle on the working tree by temporarily reverting the `runStatements` outer-catch block in `src/extension.ts:2627-2652` to its pre-UX2-004 behavior (toast-only), keeping the integration test file in place, and running vitest. The captured failing output:
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
 
  ❯ src/ui/__tests__/resultsPanelErrorIntegration.test.ts  (4 tests | 2 failed) 8ms
    ❯ ResultsPanel error integration — TASK-UX2-004 > case 1 — first-connect failure

@@ -591,7 +591,7 @@ describe("TASK-004 case 16 — non-simple ORDER BY is parsed or rejected, never 
     const composed = runSql.mock.calls[0]![0] as string;
     expect(composed).not.toBe(composeRequery(sql, "id > 0", "a, b DESC"));
     expect(composed).toBe(
-      'SELECT * FROM (SELECT id FROM t) AS vsdb_sub WHERE id > 0 ORDER BY "a" ASC, "b" DESC',
+      'SELECT * FROM (SELECT id FROM t) AS UnicDB_sub WHERE id > 0 ORDER BY "a" ASC, "b" DESC',
     );
   });
 

@@ -42,7 +42,7 @@ Cycle: 2026-08-22-A · Base: main · Planner: Planner (unic-smart)
 - New state arrives: `model.sync(index, …)` → if same statement (no reset) and rows grew → `api.applyTransaction({add: delta, addIndex})` — NOT `setRowData` → scroll position preserved (bugs 1+2 die).
 - New query (reset): `shouldResetGrid(results)` = any status `'running'` → `model.reset()` + `setRowData` + scroll top.
 
-**Bundle/CSS:** `webview/main.ts` imports `ag-grid-community/styles/ag-grid.css` + `ag-theme-quartz.css` + `./styles.css` (custom override last). esbuild emits CSS imports automatically → `dist/webview.css`, overwriting the file copied by `copyWebviewCss()` (runs before build). If package exports fail to resolve `ag-grid-community/styles/*`, fall back to a relative import `../node_modules/ag-grid-community/styles/*.css`. TASK-203 fully removes `copyWebviewCss()` (clean cutover). `connectionForm` links `dist/webview.css` — styles.css now lives inside the bundle, so the form does NOT lose its style; TASK-203 only deletes the `.vsdb-grid*` VirtualGrid rules, every selector the connection form currently uses is kept.
+**Bundle/CSS:** `webview/main.ts` imports `ag-grid-community/styles/ag-grid.css` + `ag-theme-quartz.css` + `./styles.css` (custom override last). esbuild emits CSS imports automatically → `dist/webview.css`, overwriting the file copied by `copyWebviewCss()` (runs before build). If package exports fail to resolve `ag-grid-community/styles/*`, fall back to a relative import `../node_modules/ag-grid-community/styles/*.css`. TASK-203 fully removes `copyWebviewCss()` (clean cutover). `connectionForm` links `dist/webview.css` — styles.css now lives inside the bundle, so the form does NOT lose its style; TASK-203 only deletes the `.UnicDB-grid*` VirtualGrid rules, every selector the connection form currently uses is kept.
 
 **Grid features (Community, matching reference UI):** `sortable:true, filter:true, resizable:true` on every column; `floatingFilter:true` (text filter — per-column icon/row filter); `rowSelection:{mode:'multiRow', checkboxes:true, headerCheckbox:true}`; toolbar search input → `api.setQuickFilter(text)`; ellipsis via `cellStyle` + `valueFormatter: formatCell` + `enableBrowserTooltips` (hover shows full UUID/JSON); footer `N row(s)` from `api.getDisplayedRowCount()` (event `modelUpdated`). Copy: range selection is Enterprise → use row checkboxes + Ctrl/Cmd+C keydown handler on the grid host → `selectionToText(selectedRows)` (tab-separated) → `postToHost({type:'copy'})` — keep the old protocol.
 
@@ -73,7 +73,7 @@ c	d`; null cell → empty string |
 | edge (204) | cancel inside loadMore | loadMore reject "cancelled" → does NOT call showErrorMessage; busy:false |
 | edge (204) | real error | loadMore reject generic → showErrorMessage "Load more failed: …" |
 | regression (204) | full resultsPanel suite | old tests (sanitize BigInt, postMessage rejection) still pass |
-| smoke (205) | version + package | `package.json` 1.3.0; `npm run package` produces vsdb-1.3.0.vsix |
+| smoke (205) | version + package | `package.json` 1.3.0; `npm run package` produces UnicDB-1.3.0.vsix |
 
 ## §5 Verification Commands
 
@@ -118,7 +118,7 @@ PLANNER_MODEL: unic-smart
 ## Planner Self-Audit
 Checklist: 12/12 pass
 Fixed during audit: (a) TASK-201 must add css imports into main.ts right at W1 to actually demonstrate the CSS pipeline end-to-end (instead of waiting until W2); (b) dropped the idea of fixing queryRunner.ts — cancel-during-loadMore is already reachable via `currentBatched` (queryRunner.ts:276), TASK-204 only touches resultsPanel; (c) locked client-side row model instead of Infinite Row Model — data is memory-resident, rationale captured in §3; (d) tsconfig does not typecheck webview/ — discovered and captured in §7.
-Known gaps: (1) Which CSS selectors in styles.css belong to the connection form are not enumerated line-by-line — TASK-203 may ONLY DELETE the `.vsdb-grid*`/ `.vsdb-scroll*`/ `.vsdb-spacer*`/ `.vsdb-viewport*` rules (VirtualGrid-only), everything else is kept; connectionForm regression = test suite + manual form open. (2) ag-grid `styles/*` exports-map resolution not yet verified locally (no install during planning) — relative-path fallback import is captured in TASK-201 Discussion. (3) Final browser smoke (Playwright/`.cache/webview-repro/aggrid.html`) is the orchestrator's job before release, not an executor gate.
+Known gaps: (1) Which CSS selectors in styles.css belong to the connection form are not enumerated line-by-line — TASK-203 may ONLY DELETE the `.UnicDB-grid*`/ `.UnicDB-scroll*`/ `.UnicDB-spacer*`/ `.UnicDB-viewport*` rules (VirtualGrid-only), everything else is kept; connectionForm regression = test suite + manual form open. (2) ag-grid `styles/*` exports-map resolution not yet verified locally (no install during planning) — relative-path fallback import is captured in TASK-201 Discussion. (3) Final browser smoke (Playwright/`.cache/webview-repro/aggrid.html`) is the orchestrator's job before release, not an executor gate.
 
 ## Plan Review Log
 
@@ -129,7 +129,7 @@ Status: Approved
 COMPLETENESS:
   - none — bugs, approach, waves, file ownership, tests, commands, version bump all specified; known gaps self-declared and acceptable.
 CONSISTENCY:
-  - minor (advisory): §3 + Self-Audit gap (1) delete-glob `.vsdb-grid*` also matches `.vsdb-grid-footer` (webview/main.ts:185) and `.vsdb-grid-host` (main.ts:150) which MUST be KEPT — TASK-203.md line 15 already says "footer `.vsdb-grid-footer` keep" and re-adds `.vsdb-grid-host`; task text governs, executor must NOT glob-delete those two.
+  - minor (advisory): §3 + Self-Audit gap (1) delete-glob `.UnicDB-grid*` also matches `.UnicDB-grid-footer` (webview/main.ts:185) and `.UnicDB-grid-host` (main.ts:150) which MUST be KEPT — TASK-203.md line 15 already says "footer `.UnicDB-grid-footer` keep" and re-adds `.UnicDB-grid-host`; task text governs, executor must NOT glob-delete those two.
 CLARITY:
   - minor (advisory): §7 "type risks must be blocked by compile + bundle test" overstates esbuild — esbuild transpiles without type diagnostics (only catches resolve/syntax errors). The real net is the jsdom smoke/bundle tests; `npm run compile` passing must NOT be read as type safety.
 SCOPE:
@@ -137,4 +137,4 @@ SCOPE:
 YAGNI:
   - none — every feature maps to reference-UI/user requirements; Enterprise/CDN/protocol changes rejected.
 
-NOTES: Plan claims cross-checked against repo: tsconfig excludes webview/ and **/*.test.ts (so tsc never sees AG Grid types — plan's mitigation acknowledged); package.json has no lint script, typecheck gate correct; messages.ts matches frozen set; cancel-during-loadMore reachable via currentBatched (queryRunner.ts:274) and isCancelled() exists (queryRunner.ts:78); styles.css `.vsdb-row` is connectionForm-only and untouched by the deletion list. Minor items are advisory — task files disambiguate; no flawed build expected.
+NOTES: Plan claims cross-checked against repo: tsconfig excludes webview/ and **/*.test.ts (so tsc never sees AG Grid types — plan's mitigation acknowledged); package.json has no lint script, typecheck gate correct; messages.ts matches frozen set; cancel-during-loadMore reachable via currentBatched (queryRunner.ts:274) and isCancelled() exists (queryRunner.ts:78); styles.css `.UnicDB-row` is connectionForm-only and untouched by the deletion list. Minor items are advisory — task files disambiguate; no flawed build expected.

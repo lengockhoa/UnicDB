@@ -115,14 +115,14 @@ VERIFICATION:
 
     The CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.
 
-     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
 
      ❯ src/ai/omp/__tests__/detect.test.ts  (0 test)
 
     ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
 
      FAIL  src/ai/omp/__tests__/detect.test.ts [ src/ai/omp/__tests__/detect.test.ts ]
-    Error: Failed to load url ../detect (resolved id: ../detect) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ai/omp/__tests__/detect.test.ts. Does the file exist?
+    Error: Failed to load url ../detect (resolved id: ../detect) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/src/ai/omp/__tests__/detect.test.ts. Does the file exist?
      ❯ loadAndTransform node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
 
     ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯

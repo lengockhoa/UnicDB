@@ -18,10 +18,10 @@ vi.mock("vscode", () => ({
 import { LargeValueProvider } from "../largeValueEditor";
 
 describe("LargeValueProvider", () => {
-  it("serves the value verbatim through the vsdb-lv: URI", () => {
+  it("serves the value verbatim through the UnicDB-lv: URI", () => {
     const provider = new LargeValueProvider();
     const uri = provider.put("users.payload", '{"a":1}');
-    expect(uri.scheme).toBe("vsdb-lv");
+    expect(uri.scheme).toBe("UnicDB-lv");
     expect(provider.provideTextDocumentContent(uri)).toBe('{"a":1}');
   });
 
@@ -37,7 +37,7 @@ describe("LargeValueProvider", () => {
   it("returns empty string for an unknown URI", () => {
     const provider = new LargeValueProvider();
     provider.put("known", "v");
-    const fakeUri = { toString: () => "vsdb-lv:/never-put" };
+    const fakeUri = { toString: () => "UnicDB-lv:/never-put" };
     expect(provider.provideTextDocumentContent(fakeUri as never)).toBe("");
   });
 

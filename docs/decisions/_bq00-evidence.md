@@ -87,7 +87,7 @@ query(query: Query, callback?: SimpleQueryRowsCallback): void;
 - Object-`Query` form resolves to `SimpleQueryRowsResponse`, which
   `bigquery.d.ts:51` defines as `[RowMetadata[], bigquery.IJob]` — a tuple
   of `[rows, job]` rather than a paginated response object. This is the
-  difference VSDB must respect: the string form auto-paginates, the object
+  difference UnicDB must respect: the string form auto-paginates, the object
   form returns the raw `[rows, job]` tuple.
 
 ### `BigQuery.createQueryJob` — on `BigQuery`
@@ -106,7 +106,7 @@ createQueryJob(options: Query | string, callback: JobCallback): void;
 - Promise overload resolves to `JobResponse` — defined as `[Job, bigquery.IJob]`
   in the `table.d.ts` import line (`bigquery.d.ts:22` imports
   `JobResponse, JobCallback` from `./table`).
-- The `Job` instance returned in the tuple is the handle VSDB needs to call
+- The `Job` instance returned in the tuple is the handle UnicDB needs to call
   `cancel()` and `getQueryResults()` on. So a BQ-00 driver must destructure
   the tuple (`const [job] = await bq.createQueryJob(...);`) and operate on
   the `Job`, not the raw API response.
@@ -132,7 +132,7 @@ cancel(callback: CancelCallback): void;
   acknowledgement).
 - `CancelCallback` (`job.d.ts:26`) is `RequestCallback<bigquery.IJobCancelResponse>`
   — the standard `(err, response) => void` node-style callback.
-- **Implication for VSDB:** `job.cancel()` is **not** `void`. It returns a
+- **Implication for UnicDB:** `job.cancel()` is **not** `void`. It returns a
   promise that resolves to a tuple; the cancel acknowledgement is wrapped in
   `[apiResponse]`. To know whether cancellation succeeded the caller must
   inspect the tuple element (no `job.status` is bundled in the response —

@@ -72,11 +72,11 @@ beforeAll(() => {
 const distPath = resolve(process.cwd(), "dist", "webview.js");
 const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
 
-interface VsdbGlobals {
+interface UnicDBGlobals {
   gridApi?: GridApi;
 }
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -94,16 +94,16 @@ function loadBundle(): {
     );
   }
 
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-webview"></div>';
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
   (0, eval)(bundleSrc);
@@ -116,8 +116,8 @@ function dispatchState(msg: Record<string, unknown>): void {
 }
 
 function getGridApi(): GridApi | null {
-  const w = window as unknown as { __vsdb?: VsdbGlobals };
-  return w.__vsdb?.gridApi ?? null;
+  const w = window as unknown as { __UnicDB?: UnicDBGlobals };
+  return w.__UnicDB?.gridApi ?? null;
 }
 
 function selectState(args: {
@@ -203,7 +203,7 @@ describeIfBundle("webview/main.ts bundle — TASK-602 set-filter panel", () => {
       await flushGridEvents();
 
       expect(api!.getDisplayedRowCount()).toBe(1);
-      const footer = root.querySelector(".vsdb-grid-footer") as HTMLElement;
+      const footer = root.querySelector(".UnicDB-grid-footer") as HTMLElement;
       expect(footer).toBeTruthy();
       expect(footer.textContent).toMatch(/1 of 3/);
     },
@@ -237,37 +237,37 @@ describeIfBundle("webview/main.ts bundle — TASK-602 set-filter panel", () => {
       const gui = filter.getGui() as SetFilterGui;
       expect(gui).toBeTruthy();
       // The component root class
-      expect(gui.classList.contains("vsdb-setfilter")).toBe(true);
+      expect(gui.classList.contains("UnicDB-setfilter")).toBe(true);
 
       // Search input
-      const search = gui.querySelector(".vsdb-setfilter-search");
+      const search = gui.querySelector(".UnicDB-setfilter-search");
       expect(search).toBeTruthy();
 
       // Select All checkbox
       const selectAll = gui.querySelector(
-        ".vsdb-setfilter-selectall",
+        ".UnicDB-setfilter-selectall",
       ) as HTMLInputElement | null;
       expect(selectAll).toBeTruthy();
       expect(selectAll!.type).toBe("checkbox");
 
       // Per-value entries: one per value + checkbox + count, right-aligned
       const entries = Array.from(
-        gui.querySelectorAll(".vsdb-setfilter-entry"),
+        gui.querySelectorAll(".UnicDB-setfilter-entry"),
       ) as HTMLElement[];
       expect(entries.length).toBe(3);
       const labels = entries.map(
-        (e) => (e.querySelector(".vsdb-setfilter-label") as HTMLElement).textContent,
+        (e) => (e.querySelector(".UnicDB-setfilter-label") as HTMLElement).textContent,
       );
       expect(labels).toEqual(["alpha", "beta", "gamma"]);
 
       for (const entry of entries) {
         const cb = entry.querySelector(
-          ".vsdb-setfilter-entry-checkbox",
+          ".UnicDB-setfilter-entry-checkbox",
         ) as HTMLInputElement | null;
         expect(cb).toBeTruthy();
         expect(cb!.type).toBe("checkbox");
-        const label = entry.querySelector(".vsdb-setfilter-label");
-        const count = entry.querySelector(".vsdb-setfilter-count");
+        const label = entry.querySelector(".UnicDB-setfilter-label");
+        const count = entry.querySelector(".UnicDB-setfilter-count");
         expect(label).toBeTruthy();
         expect(count).toBeTruthy();
         // Count is right-aligned: margin-left:auto on the count element.
@@ -276,16 +276,16 @@ describeIfBundle("webview/main.ts bundle — TASK-602 set-filter panel", () => {
       }
 
       // Footer: status text + Clear + Close
-      const status = gui.querySelector(".vsdb-setfilter-status") as HTMLElement;
+      const status = gui.querySelector(".UnicDB-setfilter-status") as HTMLElement;
       expect(status).toBeTruthy();
       // All entries checked by default → status text is "All" or "3 of 3"
       expect(status.textContent).toMatch(/All|3 of 3/);
       const clear = gui.querySelector(
-        ".vsdb-setfilter-clear",
+        ".UnicDB-setfilter-clear",
       ) as HTMLButtonElement | null;
       expect(clear).toBeTruthy();
       const close = gui.querySelector(
-        ".vsdb-setfilter-close",
+        ".UnicDB-setfilter-close",
       ) as HTMLButtonElement | null;
       expect(close).toBeTruthy();
     },
@@ -346,21 +346,21 @@ describeIfBundle("webview/main.ts bundle — TASK-602 set-filter panel", () => {
       const filter = await getFilterInstance<IFilterComp>(api!, "name");
       const gui = filter.getGui() as SetFilterGui;
       const entries = Array.from(
-        gui.querySelectorAll(".vsdb-setfilter-entry"),
+        gui.querySelectorAll(".UnicDB-setfilter-entry"),
       ) as HTMLElement[];
       // BUMD merged, X distinct → 2 entries
       const labels = entries.map(
-        (e) => (e.querySelector(".vsdb-setfilter-label") as HTMLElement).textContent,
+        (e) => (e.querySelector(".UnicDB-setfilter-label") as HTMLElement).textContent,
       );
       expect(labels).toContain("BUMD");
       expect(labels).not.toContain("bumd");
       const bumdEntry = entries.find(
         (e) =>
-          (e.querySelector(".vsdb-setfilter-label") as HTMLElement).textContent ===
+          (e.querySelector(".UnicDB-setfilter-label") as HTMLElement).textContent ===
           "BUMD",
       );
       const bumdCount = bumdEntry!.querySelector(
-        ".vsdb-setfilter-count",
+        ".UnicDB-setfilter-count",
       ) as HTMLElement;
       expect(bumdCount.textContent.trim()).toBe("2");
     },
@@ -391,7 +391,7 @@ describeIfBundle("webview/main.ts bundle — TASK-602 set-filter panel", () => {
       const filter = await getFilterInstance<IFilterComp>(api!, "name");
       const gui = filter.getGui() as SetFilterGui;
 
-      const search = gui.querySelector(".vsdb-setfilter-search") as HTMLInputElement;
+      const search = gui.querySelector(".UnicDB-setfilter-search") as HTMLInputElement;
       expect(search).toBeTruthy();
 
       // Simulate typing "bu" into the search box. Dispatch input event so
@@ -403,14 +403,14 @@ describeIfBundle("webview/main.ts bundle — TASK-602 set-filter panel", () => {
       // After filter: visible entries are BUMD + BUMN (2). banana hidden.
       const visibleEntries = Array.from(
         gui.querySelectorAll(
-          ".vsdb-setfilter-entry:not(.vsdb-setfilter-entry-hidden)",
+          ".UnicDB-setfilter-entry:not(.UnicDB-setfilter-entry-hidden)",
         ),
       ) as HTMLElement[];
       expect(visibleEntries.length).toBe(2);
 
       // Click Select All → only visible entries get checked; banana stays unchecked.
       const selectAll = gui.querySelector(
-        ".vsdb-setfilter-selectall",
+        ".UnicDB-setfilter-selectall",
       ) as HTMLInputElement;
       selectAll.checked = true;
       selectAll.dispatchEvent(new Event("change", { bubbles: true }));
@@ -455,7 +455,7 @@ describeIfBundle("webview/main.ts bundle — TASK-602 set-filter panel", () => {
       const filter = await getFilterInstance<IFilterComp>(api!, "name");
       const gui = filter.getGui() as SetFilterGui;
       const clear = gui.querySelector(
-        ".vsdb-setfilter-clear",
+        ".UnicDB-setfilter-clear",
       ) as HTMLButtonElement;
       expect(clear).toBeTruthy();
       clear.click();
@@ -556,7 +556,7 @@ describeIfBundle("webview/main.ts bundle — TASK-602 set-filter panel", () => {
         ),
       );
       await flushGridEvents();
-      const gridWrap = root.querySelector(".vsdb-grid-host") as HTMLElement;
+      const gridWrap = root.querySelector(".UnicDB-grid-host") as HTMLElement;
       expect(gridWrap).toBeTruthy();
       // jsdom reflects the inline style. After the fix the wrap's inline
       // display is "" (CSS class governs: `display: flex`); before the fix
@@ -597,7 +597,7 @@ describeIfBundle("webview/main.ts bundle — TASK-602 set-filter panel", () => {
       const filter = await getFilterInstance<IFilterComp>(api!, "name");
       const gui = filter.getGui() as SetFilterGui;
       const close = gui.querySelector(
-        ".vsdb-setfilter-close",
+        ".UnicDB-setfilter-close",
       ) as HTMLButtonElement | null;
       expect(close).toBeTruthy();
 
@@ -667,13 +667,13 @@ describeIfBundle("webview/main.ts bundle — TASK-602 set-filter panel", () => {
 // against the source CSS text directly via regex (same pattern as
 // chatLayoutCss.test.ts / resultsGridModelNull.test.ts). The fix pins a
 // symmetric flex scaffold + matching block padding for
-// `.vsdb-setfilter-selectall-row` and `.vsdb-setfilter-entry` so the
+// `.UnicDB-setfilter-selectall-row` and `.UnicDB-setfilter-entry` so the
 // Select All checkbox and the item checkboxes land on the same x-position.
 //
 // Region contract (PLAN §2, wave-1 round-1 revision):
-//   UX1-005 owns ONLY `.vsdb-setfilter-*` in webview/styles.css and
-//   SetFilterComponent in webview/main.ts. `.vsdb-chat-*` belongs to
-//   UX1-008 and `.vsdb-ddl-*` to UX1-010 — those are NOT touched here.
+//   UX1-005 owns ONLY `.UnicDB-setfilter-*` in webview/styles.css and
+//   SetFilterComponent in webview/main.ts. `.UnicDB-chat-*` belongs to
+//   UX1-008 and `.UnicDB-ddl-*` to UX1-010 — those are NOT touched here.
 // ------------------------------------------------------------------------
 
 const _ux1005CssPath = resolve(process.cwd(), "webview", "styles.css");
@@ -709,27 +709,27 @@ describe("TASK-UX1-005 — set-filter popup Select All alignment (R5)", () => {
 
   // Case 1 — happy: select-all row and entry row declare identical indent-bearing
   // padding AND both declare align-items:center so the checkbox y-line matches.
-  it("case 1 — .vsdb-setfilter-selectall-row and .vsdb-setfilter-entry share the same padding", () => {
-    const selectAllBody = _ux1005RuleBody(".vsdb-setfilter-selectall-row");
-    const entryBody = _ux1005RuleBody(".vsdb-setfilter-entry");
+  it("case 1 — .UnicDB-setfilter-selectall-row and .UnicDB-setfilter-entry share the same padding", () => {
+    const selectAllBody = _ux1005RuleBody(".UnicDB-setfilter-selectall-row");
+    const entryBody = _ux1005RuleBody(".UnicDB-setfilter-entry");
 
     expect(
       selectAllBody,
-      ".vsdb-setfilter-selectall-row rule block must exist",
+      ".UnicDB-setfilter-selectall-row rule block must exist",
     ).not.toBe("");
     expect(
       entryBody,
-      ".vsdb-setfilter-entry rule block must exist",
+      ".UnicDB-setfilter-entry rule block must exist",
     ).not.toBe("");
 
     // Both must declare align-items:center (the checkbox baseline MUST match).
     expect(
       /align-items:\s*center/i.test(selectAllBody),
-      ".vsdb-setfilter-selectall-row must declare align-items:center",
+      ".UnicDB-setfilter-selectall-row must declare align-items:center",
     ).toBe(true);
     expect(
       /align-items:\s*center/i.test(entryBody),
-      ".vsdb-setfilter-entry must declare align-items:center",
+      ".UnicDB-setfilter-entry must declare align-items:center",
     ).toBe(true);
 
     // Pin: both rows share the SAME padding (block or shorthand). Accept
@@ -757,63 +757,63 @@ describe("TASK-UX1-005 — set-filter popup Select All alignment (R5)", () => {
 
   // Case 2 — happy: select-all label matches entry row flex scaffold
   // (`display:flex`, `align-items:center`, same `gap`).
-  it("case 2 — .vsdb-setfilter-selectall-label and .vsdb-setfilter-entry share display:flex, align-items:center, gap", () => {
-    const labelBody = _ux1005RuleBody(".vsdb-setfilter-selectall-label");
-    const entryBody = _ux1005RuleBody(".vsdb-setfilter-entry");
+  it("case 2 — .UnicDB-setfilter-selectall-label and .UnicDB-setfilter-entry share display:flex, align-items:center, gap", () => {
+    const labelBody = _ux1005RuleBody(".UnicDB-setfilter-selectall-label");
+    const entryBody = _ux1005RuleBody(".UnicDB-setfilter-entry");
 
     expect(
       labelBody,
-      ".vsdb-setfilter-selectall-label rule block must exist",
+      ".UnicDB-setfilter-selectall-label rule block must exist",
     ).not.toBe("");
     expect(
       entryBody,
-      ".vsdb-setfilter-entry rule block must exist",
+      ".UnicDB-setfilter-entry rule block must exist",
     ).not.toBe("");
 
     expect(
       /display:\s*flex/i.test(labelBody),
-      ".vsdb-setfilter-selectall-label must declare display:flex",
+      ".UnicDB-setfilter-selectall-label must declare display:flex",
     ).toBe(true);
     expect(
       /display:\s*flex/i.test(entryBody),
-      ".vsdb-setfilter-entry must declare display:flex",
+      ".UnicDB-setfilter-entry must declare display:flex",
     ).toBe(true);
 
     expect(
       /align-items:\s*center/i.test(labelBody),
-      ".vsdb-setfilter-selectall-label must declare align-items:center",
+      ".UnicDB-setfilter-selectall-label must declare align-items:center",
     ).toBe(true);
     expect(
       /align-items:\s*center/i.test(entryBody),
-      ".vsdb-setfilter-entry must declare align-items:center",
+      ".UnicDB-setfilter-entry must declare align-items:center",
     ).toBe(true);
 
     const labelGap = _ux1005Decl(labelBody, "gap");
     const entryGap = _ux1005Decl(entryBody, "gap");
     expect(
       labelGap !== null && entryGap !== null && labelGap === entryGap,
-      `gap must match between .vsdb-setfilter-selectall-label (${labelGap}) and .vsdb-setfilter-entry (${entryGap})`,
+      `gap must match between .UnicDB-setfilter-selectall-label (${labelGap}) and .UnicDB-setfilter-entry (${entryGap})`,
     ).toBe(true);
   });
 
   // Case 3 — edge A: Select All divider (border-bottom) survives the change.
-  it("case 3 — .vsdb-setfilter-selectall-row keeps the divider (border-bottom)", () => {
-    const selectAllBody = _ux1005RuleBody(".vsdb-setfilter-selectall-row");
+  it("case 3 — .UnicDB-setfilter-selectall-row keeps the divider (border-bottom)", () => {
+    const selectAllBody = _ux1005RuleBody(".UnicDB-setfilter-selectall-row");
     expect(
       selectAllBody,
-      ".vsdb-setfilter-selectall-row rule block must exist",
+      ".UnicDB-setfilter-selectall-row rule block must exist",
     ).not.toBe("");
     expect(
       /border-bottom\s*:/i.test(selectAllBody),
-      ".vsdb-setfilter-selectall-row must still declare border-bottom (Select All divider)",
+      ".UnicDB-setfilter-selectall-row must still declare border-bottom (Select All divider)",
     ).toBe(true);
   });
 
   // Case 4 — edge B: no other setfilter rule re-introduces a divergent indent.
   it("case 4 — no other setfilter rule carries a divergent padding-left", () => {
     // Capture the canonical padding-left pinned in case 1.
-    const selectAllBody = _ux1005RuleBody(".vsdb-setfilter-selectall-row");
-    const entryBody = _ux1005RuleBody(".vsdb-setfilter-entry");
+    const selectAllBody = _ux1005RuleBody(".UnicDB-setfilter-selectall-row");
+    const entryBody = _ux1005RuleBody(".UnicDB-setfilter-entry");
     const canonical =
       _ux1005Decl(selectAllBody, "padding-left") ??
       _ux1005Decl(entryBody, "padding-left");
@@ -822,7 +822,7 @@ describe("TASK-UX1-005 — set-filter popup Select All alignment (R5)", () => {
     if (canonical === null) return;
 
     const re =
-      /(?:\.|^|[\s,])(\.vsdb-setfilter-(?:selectall-row|selectall-label|entry|selectall|entry-checkbox|label|count|list|status|footer|clear|close))\s*\{([^}]*)\}/gi;
+      /(?:\.|^|[\s,])(\.UnicDB-setfilter-(?:selectall-row|selectall-label|entry|selectall|entry-checkbox|label|count|list|status|footer|clear|close))\s*\{([^}]*)\}/gi;
     let m: RegExpExecArray | null;
     while ((m = re.exec(_ux1005Css)) !== null) {
       const selector = m[1];
@@ -861,7 +861,7 @@ describe("TASK-UX1-005 — set-filter popup Select All alignment (R5)", () => {
     expect(mainSrc).toMatch(/class\s+SetFilterComponent/);
     // The select-all row + entry row DOM construction still uses the same
     // class names; the fix is CSS-only.
-    expect(mainSrc).toContain('className = "vsdb-setfilter-selectall-row"');
-    expect(mainSrc).toContain('className = "vsdb-setfilter-entry"');
+    expect(mainSrc).toContain('className = "UnicDB-setfilter-selectall-row"');
+    expect(mainSrc).toContain('className = "UnicDB-setfilter-entry"');
   });
 });

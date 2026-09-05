@@ -87,10 +87,10 @@ constraints: PLAN.md §7.
 5. **Executor decision — host requery lane for emulated NULLS (case 4 / 8c).** With the parser
    change, `resultsPanel.composeRequerySql` needs zero edits: a single term with `nulls` already
    routes through the multi-term wrap (`terms.length === 1 && !first.nulls` is false) into
-   `buildOrderByClause(terms, dialect)` on the pinned `AS vsdb_sub` wrapper. The rewritten 8c
+   `buildOrderByClause(terms, dialect)` on the pinned `AS UnicDB_sub` wrapper. The rewritten 8c
    therefore asserts exact execution on that existing lane:
-   mysql → `` SELECT * FROM (SELECT id FROM t) AS vsdb_sub ORDER BY `a` IS NULL ASC, `a` ASC ``;
-   mssql → `SELECT * FROM (SELECT id FROM t) AS vsdb_sub ORDER BY CASE WHEN [a] IS NULL THEN 1
+   mysql → `` SELECT * FROM (SELECT id FROM t) AS UnicDB_sub ORDER BY `a` IS NULL ASC, `a` ASC ``;
+   mssql → `SELECT * FROM (SELECT id FROM t) AS UnicDB_sub ORDER BY CASE WHEN [a] IS NULL THEN 1
    ELSE 0 END ASC, [a] ASC`; plus `runSql` called exactly once, no `status:"error"`, no
    `Invalid ORDER BY` text, and `showErrorMessage` never called.
 6. **Executor observation — pre-existing full-suite failure (not this task's).** On clean HEAD
@@ -126,12 +126,12 @@ RED_OUTPUT: |
       259|     expect(runSql).toHaveBeenCalledTimes(1);
          |                    ^
   Example diff for case 1 (mysql emulation RED):
-  - Expected: `SELECT * FROM (SELECT * FROM t) vsdb_page ORDER BY `a` IS NULL ASC, `a` ASC, `id` ASC LIMIT 500 OFFSET 0`
-  - Received: `SELECT * FROM (SELECT * FROM t) vsdb_page ORDER BY `a` ASC NULLS LAST, `id` ASC LIMIT 500 OFFSET 0`
+  - Expected: `SELECT * FROM (SELECT * FROM t) UnicDB_page ORDER BY `a` IS NULL ASC, `a` ASC, `id` ASC LIMIT 500 OFFSET 0`
+  - Received: `SELECT * FROM (SELECT * FROM t) UnicDB_page ORDER BY `a` ASC NULLS LAST, `id` ASC LIMIT 500 OFFSET 0`
   Tests 10 failed | 71 passed (81) — all 10 failures are the new/rewritten assertions failing because parseOrderBy still rejects NULLS on mysql/mssql and buildOrderByClause still emits raw `NULLS …`.
 Verification Output: |
   Command 1 (fresh in final turn): npx vitest run src/ui/__tests__/queryComposer.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts
-   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-005
+   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-005
    ✓ src/ui/__tests__/resultsPanelOrderBy.test.ts  (16 tests) 7ms
    ✓ src/ui/__tests__/queryComposer.test.ts  (65 tests) 10ms
    Test Files  2 passed (2)
@@ -139,7 +139,7 @@ Verification Output: |
    Start at 23:51:17 · Duration ~0.48s — exit 0
 
   Command 2 (fresh in final turn): npm run typecheck
-   > vsdb@1.6.7 typecheck
+   > UnicDB@1.6.7 typecheck
    > tsc --noEmit
    TYPECHECK_EXIT=0
 

@@ -135,7 +135,7 @@ Verification Output (after install + GREEN):
  Tests  7 passed (7)
 
 # typecheck
-> vsdb@1.45.0 typecheck
+> UnicDB@1.45.0 typecheck
 > tsc --noEmit  (exit 0, no errors)
 
 # compile + dist check
@@ -163,7 +163,7 @@ Verification Output:
 
 ```
 # focused test (7/7 GREEN)
-RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq00-001-fix
+RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq00-001-fix
 [bq00] probe bundle: 1194990 bytes, errors=0
 [bq00] installed @google-cloud/bigquery@9.0.3 engines.node=">=22" major=9 runtime=v22.22.1
  ✓ src/adapters/__tests__/bigqueryPackage.test.ts  (7 tests) 180ms
@@ -171,11 +171,11 @@ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq00-001-fi
       Tests  7 passed (7)
 
 # typecheck
-> vsdb@1.45.0 typecheck
+> UnicDB@1.45.0 typecheck
 > tsc --noEmit  (exit 0, no errors)
 
 # compile
-> vsdb@1.45.0 compile
+> UnicDB@1.45.0 compile
 > node esbuild.js
 esbuild: build complete
 (dist/comparePanel.js, schemaForm.js, connectionForm.js, aiSettingsForm.js, renameForm.js, newTableForm.js, erPanel.js, consolePanel.js, aiChatPanel.js, webview.js, extension.js all regenerated)

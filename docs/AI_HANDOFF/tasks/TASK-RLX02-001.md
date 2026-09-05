@@ -96,7 +96,7 @@ Verification Output: |
             Tests  59 passed (59)
      Note: mysql.integration.test.ts is excluded by the default vitest config
      (vitest.config.ts excludes **/*.integration.test.ts; it is gated behind
-     VSDB_IT=1 + a live server) — pre-existing behavior, command exits 0.
+     UnicDB_IT=1 + a live server) — pre-existing behavior, command exits 0.
 
   2) npm run typecheck
      > tsc --noEmit   (clean, no output)

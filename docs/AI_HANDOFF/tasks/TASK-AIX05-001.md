@@ -77,7 +77,7 @@ Notes:
   misleading "done") → error in onError/catch.
 - Webview `#sessionChip` textContent-only; re-uses or creates
   `#sessionChip` inside the engine banner; class names
-  `vsdb-chat-session-{connecting|running|done|error}`.
+  `UnicDB-chat-session-{connecting|running|done|error}`.
 
 ## Reviewer
 

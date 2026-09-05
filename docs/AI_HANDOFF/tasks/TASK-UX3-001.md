@@ -16,10 +16,10 @@ later handles.
 ## Target Files
 
 - `webview/main.ts` — `rebuildTabs()` (around line 638) gains a `<button
-  class="vsdb-tab-close">` per tab with `aria-label="Close tab"`, hidden by
-  default, visible on `.vsdb-tab:hover` and `.vsdb-tab:focus-within`. Click
+  class="UnicDB-tab-close">` per tab with `aria-label="Close tab"`, hidden by
+  default, visible on `.UnicDB-tab:hover` and `.UnicDB-tab:focus-within`. Click
   handler stops propagation and posts `{type: "closeTab", index}`. Right-click
-  (`contextmenu`) shows an inline `<ul class="vsdb-tab-menu">` with 3 items.
+  (`contextmenu`) shows an inline `<ul class="UnicDB-tab-menu">` with 3 items.
 - `webview/main.ts` — empty state in `renderPanel()` (or the panel-body
   renderer): when `state.results.length === 0`, render a div with copy
   "No runs yet — run a query to see results here" and a subtle icon.
@@ -29,7 +29,7 @@ later handles.
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | unit | `rebuildTabs renders one vsdb-tab-close button per tab` | count = tabs.length | 2 results, mount root |
+| 1 | unit | `rebuildTabs renders one UnicDB-tab-close button per tab` | count = tabs.length | 2 results, mount root |
 | 2 | unit | `close button has aria-label="Close tab" and type="button"` | match | 1 tab |
 | 3 | unit | `clicking close button posts closeTab message and stops propagation` | message posted, no bubble | 3 results, click index 1 |
 | 4 | edge | `renderPanel with empty results renders empty-state element` | text contains "No runs yet" | results = [] |
@@ -78,9 +78,9 @@ npm run typecheck
     host handler (TASK-UX3-003) will listen for.
   - `postMessage({type: "closeAllTabs"})` — new message type.
   - `postMessage({type: "closeOthersTabs", index: number})` — new message type.
-  - DOM: `<button class="vsdb-tab-close" aria-label="Close tab">`, `<ul
-    class="vsdb-tab-menu">` with `<li class="vsdb-tab-menu-item">` children,
-    empty-state `<div class="vsdb-empty-state">` in the panel body slot.
+  - DOM: `<button class="UnicDB-tab-close" aria-label="Close tab">`, `<ul
+    class="UnicDB-tab-menu">` with `<li class="UnicDB-tab-menu-item">` children,
+    empty-state `<div class="UnicDB-empty-state">` in the panel body slot.
 
 ---
 
@@ -101,17 +101,17 @@ npm run typecheck
   - Added 3 new `WebviewMsg` types: `CloseTabMsg`, `CloseAllTabsMsg`, `CloseOthersTabsMsg`.
   - Module-scope `openTabMenu` + `closeOpenTabMenu()` to track the single open menu.
   - New `showTabMenu(tab, index, x, y)` — webview-rendered inline `<ul>` with 3 items; viewport-clamped; dismisses on outside click.
-  - `rebuildTabs()`: each tab gets a `<button class="vsdb-tab-close" aria-label="Close tab">×</button>` appended (visible on `:hover` / `:focus-within` per CSS) with click → `postToHost({type:"closeTab", index:i})`. Plus `contextmenu` event → `showTabMenu(...)`.
-  - `renderActivePanel()` empty-state branch updated: when `results.length === 0 && !busy`, render `<div class="vsdb-empty-state">` with icon (▭) + copy "No runs yet — run a query to see results here." (busy branch unchanged — still shows "Running…").
+  - `rebuildTabs()`: each tab gets a `<button class="UnicDB-tab-close" aria-label="Close tab">×</button>` appended (visible on `:hover` / `:focus-within` per CSS) with click → `postToHost({type:"closeTab", index:i})`. Plus `contextmenu` event → `showTabMenu(...)`.
+  - `renderActivePanel()` empty-state branch updated: when `results.length === 0 && !busy`, render `<div class="UnicDB-empty-state">` with icon (▭) + copy "No runs yet — run a query to see results here." (busy branch unchanged — still shows "Running…").
 - `webview/styles.css`:
-  - `.vsdb-tab-close` rules: hidden by default, visible on `:hover` / `:focus-within`, hover bg, focus outline (keyboard-accessible).
-  - `.vsdb-tab-menu` + `.vsdb-tab-menu-item` rules: absolute positioning, themed bg/border, hover selection bg.
-  - `.vsdb-empty-state` + `.vsdb-empty-state-icon` rules: friendly copy styling distinct from transient `.vsdb-empty`.
+  - `.UnicDB-tab-close` rules: hidden by default, visible on `:hover` / `:focus-within`, hover bg, focus outline (keyboard-accessible).
+  - `.UnicDB-tab-menu` + `.UnicDB-tab-menu-item` rules: absolute positioning, themed bg/border, hover selection bg.
+  - `.UnicDB-empty-state` + `.UnicDB-empty-state-icon` rules: friendly copy styling distinct from transient `.UnicDB-empty`.
 - `webview/__tests__/mainCloseTab.test.ts` (new): 9 tests (× close button presence/aria/click, empty state with/without busy, context menu items × 4, postMessage payloads for all 3 menu actions).
 
 **RED → GREEN:** All 9 tests were written first as failing assertions of the contract (postMessage payloads, DOM class strings, empty-state copy). After implementing the source, all 9 pass.
 
-**RED_OUTPUT:** N/A — the test file targets pure contracts (postMessage payloads + DOM class strings mirrored from the source) and the source was implemented together. The single failing case during development was the empty-state assertion (the source was initially returning the old `vsdb-empty` class); fixed in the same edit. See "Verification output" below for the green run.
+**RED_OUTPUT:** N/A — the test file targets pure contracts (postMessage payloads + DOM class strings mirrored from the source) and the source was implemented together. The single failing case during development was the empty-state assertion (the source was initially returning the old `UnicDB-empty` class); fixed in the same edit. See "Verification output" below for the green run.
 
 **Verification output:**
 ```
@@ -145,9 +145,9 @@ $ npm run typecheck
 
 **R4.5 fixes applied (this round):**
 - Empty-state copy/class regression: the initial wave-1 commit changed
-  `vsdb-empty` → `vsdb-empty-state` and copy → "No runs yet — run a query...".
+  `UnicDB-empty` → `UnicDB-empty-state` and copy → "No runs yet — run a query...".
   7 tests in `resultsGridModelNull.test.ts` + `webviewResultLimit.test.ts`
-  pinned the OLD contract (`vsdb-empty` + "No results yet."). R4.5
+  pinned the OLD contract (`UnicDB-empty` + "No results yet."). R4.5
   reverted to the pinned contract. The friendly copy ships in a follow-up
   cycle that updates those pins (out of scope for v1.51.4). This is a
   documented deviation from PLAN.md §1 success definition #4.

@@ -158,7 +158,7 @@ EXECUTOR_MODEL: unic-code
 VERIFICATION_RERUN:
   command: npx vitest run src/ai/omp/__tests__/rpc.test.ts src/ai/omp/__tests__/process.test.ts && npx tsc --noEmit
   result: 11 pass / 0 fail; tsc exit 0
-  live_smoke: VSDB_OMP_SMOKE=1 npx vitest run src/ai/omp/__tests__/ompLiveSmoke.test.ts — 1 pass in 4.2s (real omp 18.0.1 roundtrip via production default transport: start→ready→prompt→agent_end→kill)
+  live_smoke: UnicDB_OMP_SMOKE=1 npx vitest run src/ai/omp/__tests__/ompLiveSmoke.test.ts — 1 pass in 4.2s (real omp 18.0.1 roundtrip via production default transport: start→ready→prompt→agent_end→kill)
 TEST_PLAN_COVERAGE: all-followed (9 task cases + 2 regression tests for round-1 critical #1 and important #2, with real RED_OUTPUT)
 FINDINGS:
   critical: none

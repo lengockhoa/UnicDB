@@ -111,7 +111,7 @@ Change set:
   avoids a second shape). `SubmitPayload` is `Omit<ConnectionFormSubmit,"type">`
   (`connectionForm.ts:18`), so it picks the field up with no edit there.
 - `webview/connectionFormMain.ts` — a checkbox `id="manualCommit"` using the existing
-  `<label class="vsdb-form-check">` pattern that `useSsl` uses (`:151-153`); `readForm()`
+  `<label class="UnicDB-form-check">` pattern that `useSsl` uses (`:151-153`); `readForm()`
   (`:50-64`) returns `manualCommit: input("manualCommit").checked`; `applyInit()` (`:201-220`)
   prefills from `existing.manualCommit === true`.
 - `src/extension.ts` — `openConnectionForm`'s add literal (`:740-752`) and edit patch
@@ -241,7 +241,7 @@ Two halves of one dropdown:
   `combinedWhere` is already computed (`composeRequerySql:1132-1134`), cleared in `render()`,
   read here.
 - Webview: `handleDistinctValues` drops any reply carrying `error` (`webview/main.ts:2283`) and
-  never surfaces `truncated`. Both must render into the existing `.vsdb-setfilter-status`
+  never surfaces `truncated`. Both must render into the existing `.UnicDB-setfilter-status`
   footer (`:1216`, text set at `:1444-1450`).
 
 Both halves touch files other tasks own (`resultsPanel.ts` → TASK-004,
@@ -347,7 +347,7 @@ Kind vocabulary: *happy*, *edge-boundary*, *edge-dialect*, *edge-ordering*, *edg
 | regression | T5 parse no longer rejects | `parseOrderBy("a NULLS LAST","mysql")` returns `{ok:true}`; the two rejection assertions are rewritten, not deleted. |
 | happy | T6 DISTINCT scoped | With a filter active on column `b`, the DISTINCT query for `a` carries a WHERE including `b`'s predicate. |
 | edge-boundary | T6 own filter excluded | The DISTINCT query for `a` never includes `a`'s own filter predicate. |
-| edge-failure | T6 error surfaced | A reply carrying `error` renders the message in `.vsdb-setfilter-status` instead of being dropped. |
+| edge-failure | T6 error surfaced | A reply carrying `error` renders the message in `.UnicDB-setfilter-status` instead of being dropped. |
 | edge-boundary | T6 truncated note | A reply with `truncated:true` renders a "first 1000" note alongside the count. |
 | happy | T7 typed dialect | Every `state` post carries `dialect` equal to `saveContext.getDriver()`. |
 | edge-empty | T7 no connection | With `getDriver()` returning null, `dialect` is omitted and the webview falls back to header parsing. |
@@ -425,8 +425,8 @@ Every `TASK-xxx.md` inherits this section by reference; it is not repeated per t
   with a per-dialect assertion.
 - Identifiers reach SQL only through `quoteIdent`; values only through typed literals. No
   string interpolation of user input.
-- Reserved subquery aliases must not collide: `vsdb_page`, `vsdb_sort`, `vsdb_sub`,
-  `vsdb_distinct`. A new wrapper needs a new `vsdb_*` alias.
+- Reserved subquery aliases must not collide: `UnicDB_page`, `UnicDB_sort`, `UnicDB_sub`,
+  `UnicDB_distinct`. A new wrapper needs a new `UnicDB_*` alias.
 - Postgres pool is `max: 1`; MySQL is `connectionLimit: 1`. Any query issued while a cursor or
   transaction is open must reuse the pinned handle or close the cursor first.
 - Tasks in the same wave must not modify the same file (§2 collision map is authoritative).

@@ -1,7 +1,7 @@
 // tests/webviewUndoRedo.test.ts
 //
 // TASK-008 — Unified Excel-like undo/redo stack wiring (jsdom). #6 cell-edit
-// + Cmd+Z reverts cell + strips vsdb-cell-dirty; #7 saveResult ok clears the
+// + Cmd+Z reverts cell + strips UnicDB-cell-dirty; #7 saveResult ok clears the
 // stack (undo past DB write is out of scope).
 //
 // Loads dist/webview.js into jsdom (built via `npm run compile`), stubs
@@ -34,7 +34,7 @@ interface MediaQueryListLike {
   dispatchEvent(): boolean;
 }
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -45,7 +45,7 @@ interface UndoStackHandle {
   clear(): void;
 }
 
-interface VsdbDebug {
+interface UnicDBDebug {
   gridApi?: GridApi;
   editState?: {
     markDirty: (
@@ -75,14 +75,14 @@ interface VsdbDebug {
   redoBtn?: HTMLButtonElement;
 }
 
-function vsdbApi(): VsdbDebug | null {
+function UnicDBApi(): UnicDBDebug | null {
   if (typeof window === "undefined") return null;
-  const maybe = (window as unknown as { __vsdb?: VsdbDebug }).__vsdb;
+  const maybe = (window as unknown as { __UnicDB?: UnicDBDebug }).__UnicDB;
   return maybe ?? null;
 }
 
-function getEditState(): VsdbDebug["editState"] | null {
-  return vsdbApi()?.editState ?? null;
+function getEditState(): UnicDBDebug["editState"] | null {
+  return UnicDBApi()?.editState ?? null;
 }
 
 function getSimulateEdit():
@@ -93,11 +93,11 @@ function getSimulateEdit():
       oldValue: unknown,
     ) => void)
   | null {
-  return vsdbApi()?.simulateCellEdit ?? null;
+  return UnicDBApi()?.simulateCellEdit ?? null;
 }
 
 function getUndoStack(): UndoStackHandle | null {
-  return vsdbApi()?.undoStack ?? null;
+  return UnicDBApi()?.undoStack ?? null;
 }
 
 beforeAll(() => {
@@ -143,16 +143,16 @@ function loadBundle(): {
     );
   }
 
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-webview"></div>';
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
   (0, eval)(bundleSrc);
@@ -204,7 +204,7 @@ const describeIfBundle = describe.runIf(bundleSrc !== null);
 describeIfBundle("webview/main.ts bundle (TASK-008 undo/redo wiring)", () => {
   // ---- #6: cell edit → Cmd+Z revert + stack tracking --------------------
   itIfBundle(
-    "6. cell edit + Cmd+Z reverts cell + strips vsdb-cell-dirty; redo replays",
+    "6. cell edit + Cmd+Z reverts cell + strips UnicDB-cell-dirty; redo replays",
     async () => {
       const { root } = loadBundle();
       void root;
@@ -214,7 +214,7 @@ describeIfBundle("webview/main.ts bundle (TASK-008 undo/redo wiring)", () => {
       const editState = getEditState();
       const sim = getSimulateEdit();
       const stack = getUndoStack();
-      const debug = vsdbApi()!;
+      const debug = UnicDBApi()!;
       expect(sim).toBeTruthy();
       expect(editState).toBeTruthy();
       expect(stack).toBeTruthy();
@@ -236,11 +236,11 @@ describeIfBundle("webview/main.ts bundle (TASK-008 undo/redo wiring)", () => {
       expect(debug.redoBtn!.disabled).toBe(true);
 
       const gridHost = document.querySelector(
-        ".vsdb-grid-host",
+        ".UnicDB-grid-host",
       ) as HTMLDivElement | null;
       expect(gridHost).toBeTruthy();
       const cellsBefore = gridHost!.querySelectorAll(
-        '.ag-row[row-index="0"] [col-id="name"].vsdb-cell-dirty',
+        '.ag-row[row-index="0"] [col-id="name"].UnicDB-cell-dirty',
       );
       expect(cellsBefore.length).toBeGreaterThanOrEqual(1);
 
@@ -264,7 +264,7 @@ describeIfBundle("webview/main.ts bundle (TASK-008 undo/redo wiring)", () => {
       expect(debug.redoBtn!.disabled).toBe(false);
 
       const cellsAfter = gridHost!.querySelectorAll(
-        '.ag-row[row-index="0"] [col-id="name"].vsdb-cell-dirty',
+        '.ag-row[row-index="0"] [col-id="name"].UnicDB-cell-dirty',
       );
       expect(cellsAfter.length).toBe(0);
 
@@ -290,7 +290,7 @@ describeIfBundle("webview/main.ts bundle (TASK-008 undo/redo wiring)", () => {
 
       const sim = getSimulateEdit();
       const stack = getUndoStack();
-      const debug = vsdbApi()!;
+      const debug = UnicDBApi()!;
       expect(sim).toBeTruthy();
       expect(stack).toBeTruthy();
 

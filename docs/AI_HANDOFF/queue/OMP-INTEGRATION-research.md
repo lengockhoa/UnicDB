@@ -1,4 +1,4 @@
-# OMP Integration Research — VSDB Extension
+# OMP Integration Research — UnicDB Extension
 
 > Generated: 2026-08-23 (handoff Cycle L wave 1, scout agent) | Evidence-only, no speculation
 
@@ -20,7 +20,7 @@
 ### F3: config system
 - Global `~/.omp/agent/config.yml`: `modelRoles` (this machine: default unic/unic-code, smol unic/unic-lite, slow+plan unic/unic-smart), `tools.approvalMode: yolo`, `model.maxOutputTokens`.
 - Providers `~/.omp/agent/models.yml`: provider `unic` → `baseUrl https://openai.unicjsc.com/v1`, api `openai-responses`; models unic-smart/unic-work(vision)/unic-code/unic-lite (256k ctx, 32k out).
-- Project `.omp/config.yml` overrides (VSDB repo has one: modelRoles lite/code/smart/vision, approvalMode write).
+- Project `.omp/config.yml` overrides (UnicDB repo has one: modelRoles lite/code/smart/vision, approvalMode write).
 - Agents `<project>/.omp/agents/*.md` — YAML frontmatter (name, description, model: "@code", tools) + Markdown system prompt.
 - Skills: omp reads `.claude/skills/` directly via its claude discovery provider (no mirror needed).
 
@@ -35,27 +35,27 @@
 
 Natives are versioned directories (`~/.omp/natives/<version>/`). npm package (~17.2.x) lags binary (18.0.1).
 
-### F5: VSDB's existing install/update story
-- One command (README): `curl -fsSL https://raw.githubusercontent.com/lengockhoa/VSDB/main/scripts/install-vsdb.sh | bash` — fetches latest .vsix from GitHub Releases → `code --install-extension <vsix> --force`. Idempotent.
-- No post-install step for external tools. AI config currently manual via "VSDB: Open AI Settings".
+### F5: UnicDB's existing install/update story
+- One command (README): `curl -fsSL https://raw.githubusercontent.com/lengockhoa/UnicDB/main/scripts/install-UnicDB.sh | bash` — fetches latest .vsix from GitHub Releases → `code --install-extension <vsix> --force`. Idempotent.
+- No post-install step for external tools. AI config currently manual via "UnicDB: Open AI Settings".
 
 ## §Options Compared
 
 | Criterion | (a) spawn `omp -p` | (b) RPC server | (c) config-only reuse | (d) in-process SDK |
 |---|---|---|---|---|
 | Latency | 300-500ms/message | ~100ms first, ~0 after | ~0 (current) | ~200ms init |
-| Streaming | no | **yes** (text_delta) | yes (VSDB fetch) | yes |
-| Persistence | session resume flags | **in-process + resume** | VSDB in-memory | full |
-| Tools | omp built-ins only | **set_host_tools bridge** | VSDB 3 tools only | customTools |
+| Streaming | no | **yes** (text_delta) | yes (UnicDB fetch) | yes |
+| Persistence | session resume flags | **in-process + resume** | UnicDB in-memory | full |
+| Tools | omp built-ins only | **set_host_tools bridge** | UnicDB 3 tools only | customTools |
 | Errors | exit code | **structured RpcResponse** | ProviderError | structured |
 | Upgrade coupling | tight | **medium (v1/v2 nego)** | none | tight (Bun sync) |
 | Runtime req | binary on PATH | binary on PATH | none | **Bun 1.3.14+** ✗ |
 
 ## §Recommendation — Option (b): RPC bridge
 
-Spawn `omp --mode rpc --yolo --cwd <workspace>` as a long-lived child process. `src/ai/ompBridge.ts` = RPC client + lifecycle (spawn/health/restart/`--continue` resume). Register VSDB's DB tools (`run_sql` read-only, `list_tables`, `describe_table`) via `set_host_tools`; omp agent calls them back through host_tool_call frames. Chat panel streams text_delta into webview. **Fallback**: omp missing/old/crashed → existing cycle-J/K path (provider+agent.ts) with a one-time notification pointing at the install one-liner.
+Spawn `omp --mode rpc --yolo --cwd <workspace>` as a long-lived child process. `src/ai/ompBridge.ts` = RPC client + lifecycle (spawn/health/restart/`--continue` resume). Register UnicDB's DB tools (`run_sql` read-only, `list_tables`, `describe_table`) via `set_host_tools`; omp agent calls them back through host_tool_call frames. Chat panel streams text_delta into webview. **Fallback**: omp missing/old/crashed → existing cycle-J/K path (provider+agent.ts) with a one-time notification pointing at the install one-liner.
 
-Why: persistent process (no per-message cold start), real streaming, host-tool bridge keeps read-only guardrails in VSDB hands, omp's full 31-tool surface + model routing for free, `omp update` is the one-command upgrade, no Bun dependency. (a) latency unusable; (c) discards omp's value; (d) blocked by VS Code Node host.
+Why: persistent process (no per-message cold start), real streaming, host-tool bridge keeps read-only guardrails in UnicDB hands, omp's full 31-tool surface + model routing for free, `omp update` is the one-command upgrade, no Bun dependency. (a) latency unusable; (c) discards omp's value; (d) blocked by VS Code Node host.
 
 ## §Risks
 

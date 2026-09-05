@@ -1404,7 +1404,7 @@ describe("AiChatPanel — buildMessages full-DB context", () => {
     const history: ChatMessage[] = [{ role: "user", content: "earlier" }];
     const msgs = await buildMessages(factory, history, { role: "user", content: "hi" });
     expect(msgs[0]?.content).toBe(
-      "You are VSDB's AI assistant. Help the user explore and query their database.",
+      "You are UnicDB's AI assistant. Help the user explore and query their database.",
     );
     expect(msgs[0]?.content).not.toContain("Database structure");
     // Messages still [system, ...history, user].

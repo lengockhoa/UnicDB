@@ -20,15 +20,15 @@ interface ReceivedMsg {
   };
 }
 beforeEach(() => {
-  // data-vsdb-skip-auto-init tells the webview module NOT to call render()
+  // data-UnicDB-skip-auto-init tells the webview module NOT to call render()
   // + post({type:"ready"}) at import time — tests drive the lifecycle
   // explicitly via dispatchInit() so each test gets a clean render against
   // its own spec without leaking the previous test's selectedColumn.
-  document.body.innerHTML = '<div id="vsdb-root" data-vsdb-skip-auto-init="true"></div>';
+  document.body.innerHTML = '<div id="UnicDB-root" data-UnicDB-skip-auto-init="true"></div>';
   const received: ReceivedMsg[] = [];
   const api = { postMessage: (m: unknown) => received.push(m as ReceivedMsg) };
   vi.stubGlobal("acquireVsCodeApi", () => api);
-  (window as unknown as { __vsdbReceived: ReceivedMsg[] }).__vsdbReceived = received;
+  (window as unknown as { __UnicDBReceived: ReceivedMsg[] }).__UnicDBReceived = received;
 });
 
 afterEach(async () => {
@@ -47,7 +47,7 @@ afterEach(() => {
 });
 
 function receivedMsgs(): ReceivedMsg[] {
-  return (window as unknown as { __vsdbReceived: ReceivedMsg[] }).__vsdbReceived;
+  return (window as unknown as { __UnicDBReceived: ReceivedMsg[] }).__UnicDBReceived;
 }
 
 function lastSpecChanged(): ReceivedMsg {
@@ -316,12 +316,12 @@ describe("newTableFormMain — Type dropdown + default auto-fill", () => {
     // first one's DOM has been torn down. The previous instance's
     // listener must be replaced, not duplicated.
     vi.resetModules();
-    document.body.innerHTML = '<div id="vsdb-root" data-vsdb-skip-auto-init="true"></div>';
+    document.body.innerHTML = '<div id="UnicDB-root" data-UnicDB-skip-auto-init="true"></div>';
     const received2: ReceivedMsg[] = [];
     vi.stubGlobal("acquireVsCodeApi", () => ({
       postMessage: (m: unknown) => received2.push(m as ReceivedMsg),
     }));
-    (window as unknown as { __vsdbReceived: ReceivedMsg[] }).__vsdbReceived = received2;
+    (window as unknown as { __UnicDBReceived: ReceivedMsg[] }).__UnicDBReceived = received2;
     await importModuleFresh();
     dispatchInit({
       type: "init",

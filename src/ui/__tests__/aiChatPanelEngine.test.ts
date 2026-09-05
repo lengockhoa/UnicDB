@@ -1,7 +1,7 @@
 // src/ui/__tests__/aiChatPanelEngine.test.ts — Cycle AE TASK-003
 //
 // Engine routing test for AiChatPanel. Cycle AE wires the user's
-// `vsdb.ai.engine` setting into the chat panel's per-turn dispatch:
+// `UnicDB.ai.engine` setting into the chat panel's per-turn dispatch:
 //
 //   engine === "builtin" → runAgent (provider). UNCHANGED.
 //   engine === "omp"     → OmpChatEngine.send(text, events). NEW.
@@ -95,7 +95,7 @@ vi.mock("vscode", () => ({
   workspace: {
     getConfiguration: vi.fn((section: string) => ({
       get: vi.fn((key: string, defaultValue?: unknown) => {
-        if (section === "vsdb" && key === "ai.engine") {
+        if (section === "UnicDB" && key === "ai.engine") {
           return defaultValue ?? "builtin";
         }
         return defaultValue;
@@ -364,15 +364,15 @@ describe("AiChatPanel — engine routing (cycle AE TASK-003)", () => {
     // land before asserting so the test never races the config write.
     await until(() =>
       state.configUpdates.some(
-        (u) => u.key === "vsdb.ai.engine" && u.value === "builtin",
+        (u) => u.key === "UnicDB.ai.engine" && u.value === "builtin",
       ),
     );
  
      // Engine was called.
      expect(engine.send).toHaveBeenCalledTimes(1);
-    // engine flipped back to builtin via vsdb config.
+    // engine flipped back to builtin via UnicDB config.
     expect(state.configUpdates).toContainEqual({
-      key: "vsdb.ai.engine",
+      key: "UnicDB.ai.engine",
       value: "builtin",
     });
     // Next turn now runs builtin (runAgent) — proves the engine flip took.
@@ -410,7 +410,7 @@ describe("AiChatPanel — engine routing (cycle AE TASK-003)", () => {
     expect(agentState.runAgentMock).toHaveBeenCalledTimes(1);
     expect(engine.send).not.toHaveBeenCalled();
     expect(state.configUpdates).not.toContainEqual({
-      key: "vsdb.ai.engine",
+      key: "UnicDB.ai.engine",
       value: "builtin",
     });
   });

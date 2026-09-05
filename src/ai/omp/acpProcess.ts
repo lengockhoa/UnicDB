@@ -334,7 +334,7 @@ export class AcpProcess {
         acp.request("initialize", {
           protocolVersion: EXPECTED_OMP_PROTOCOL_VERSION,
           clientCapabilities: {},
-          clientInfo: { name: "vsdb-extension", version: "1.5.1" },
+          clientInfo: { name: "UnicDB-extension", version: "1.5.1" },
         }),
         startError,
       ])) as { protocolVersion?: unknown; agentInfo?: { version?: string } };

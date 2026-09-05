@@ -17,7 +17,7 @@ vi.mock("vscode", () => ({
     fs: { readFile: vi.fn(async () => new Uint8Array()) },
   },
   commands: { executeCommand: vi.fn() },
-  Uri: { parse: (s: string) => ({ toString: () => s, scheme: "vsdb-lv" }) },
+  Uri: { parse: (s: string) => ({ toString: () => s, scheme: "UnicDB-lv" }) },
 }));
 
 import { runImport, type ImportWizardContext } from "../importWizard";

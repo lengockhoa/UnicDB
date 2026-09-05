@@ -43,7 +43,7 @@ export type CategoryKind =
   | "triggers"
   | "sequences";
 
-export interface VsdbNode {
+export interface UnicDBNode {
   label: string;
   /** Icon id VS Code (vd "$(database)") hoặc undefined. */
   icon?: string;
@@ -88,7 +88,7 @@ interface CacheEntry<T> {
 function catalogErrorNode(
   op: "listIndexes" | "listConstraints" | "listTriggers" | "listSequences",
   err: unknown,
-): VsdbNode {
+): UnicDBNode {
   const message = err instanceof Error ? err.message : String(err);
   return {
     label: `Failed to load ${op}: ${message}`,
@@ -99,17 +99,17 @@ function catalogErrorNode(
 }
 
 
-export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
+export class SchemaTreeProvider implements vscode.TreeDataProvider<UnicDBNode> {
   private readonly mgr: ConnectionManager;
   private readonly _onDidChangeTreeData =
-    new vscode.EventEmitter<VsdbNode | undefined>();
+    new vscode.EventEmitter<UnicDBNode | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   /** Cache lazy-loaded children theo node key. Node key = `connectionId|category|objectKey`. */
-  private cache = new Map<string, CacheEntry<VsdbNode[]>>();
+  private cache = new Map<string, CacheEntry<UnicDBNode[]>>();
 
   /**
-   * Cache riêng cho row counts. Tách khỏi `cache` (typed `VsdbNode[]`)
+   * Cache riêng cho row counts. Tách khỏi `cache` (typed `UnicDBNode[]`)
    * vì entry khác type (number), tránh `as any` và giữ key namespace sạch.
    * Key: `rowcount|${conn.id}|${schema}|${table}`, TTL = CACHE_TTL_MS.
    */
@@ -183,7 +183,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     return label.toLowerCase().includes(this.filterText.toLowerCase());
   }
 
-  getTreeItem(node: VsdbNode): vscode.TreeItem {
+  getTreeItem(node: UnicDBNode): vscode.TreeItem {
     const item = new vscode.TreeItem(node.label, node.collapsible);
     if (node.icon) {
       if (node.contextValue === "connection" && this.isActive(node)) {
@@ -204,12 +204,12 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   }
 
   /** Node connection có phải active connection hiện tại không. */
-  private isActive(node: VsdbNode): boolean {
+  private isActive(node: UnicDBNode): boolean {
     const active = this.mgr.getActive();
     return Boolean(active && node.meta?.connection?.id === active.id);
   }
 
-  async getChildren(node: VsdbNode | undefined): Promise<VsdbNode[]> {
+  async getChildren(node: UnicDBNode | undefined): Promise<UnicDBNode[]> {
     try {
       if (node === undefined) {
         return this.getRoot();
@@ -245,7 +245,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
 
   // ---- Root: connections ----------------------------------------------------
 
-  private getRoot(): VsdbNode[] {
+  private getRoot(): UnicDBNode[] {
     // Empty state do viewsWelcome trong package.json render ("No connections yet.
     // [Add Connection]"), không cần placeholder node trong tree.
     // Root: connections LUÔN giữ kể cả khi filter active — connections là
@@ -256,7 +256,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     // connections stay at root.
     const conns = this.mgr.listConnections();
     const groups = groupConnections(conns);
-    const nodes: VsdbNode[] = [];
+    const nodes: UnicDBNode[] = [];
     for (const g of groups) {
       if (g.folder === undefined) {
         nodes.push(...g.items.map((c) => this.connectionNode(c)));
@@ -275,7 +275,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   }
 
   /** Folder node children: the connections inside it. */
-  private getFolderChildren(node: VsdbNode): VsdbNode[] {
+  private getFolderChildren(node: UnicDBNode): UnicDBNode[] {
     const ids = (node.meta?.connectionIds as string[] | undefined) ?? [];
     return this.mgr
       .listConnections()
@@ -285,7 +285,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
 
   // ---- DBX-05 connection node factory --------------------------------------
 
-  private connectionNode(c: ConnectionConfig): VsdbNode {
+  private connectionNode(c: ConnectionConfig): UnicDBNode {
     // TASK-BQ02-003 — BigQuery's host/port/database are empty strings (no
     // socket connection), so the pg-style `driver@host:port/database`
     // tooltip would render `bigquery@:0/` (visual artifact). Use the
@@ -307,7 +307,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       contextValue: "connection",
       collapsible: vscode.TreeItemCollapsibleState.Collapsed,
       command: {
-        command: "vsdb.selectConnectionFromTree",
+        command: "UnicDB.selectConnectionFromTree",
         title: "Select as Active Connection",
         arguments: [c.id],
       },
@@ -318,12 +318,12 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
 
   // ---- Schema nodes (connection → schemas) ---------------------------------
 
-  private async getSchemaNodesForConnection(node: VsdbNode): Promise<VsdbNode[]> {
+  private async getSchemaNodesForConnection(node: UnicDBNode): Promise<UnicDBNode[]> {
     const conn = node.meta?.connection;
     if (!conn) return [];
 
     const hideSystemSchemas = vscode.workspace
-      .getConfiguration("vsdb")
+      .getConfiguration("UnicDB")
       .get<boolean>("hideSystemSchemas", true);
     const includeSystem = !hideSystemSchemas;
     const key = `schemas|${conn.id}|includeSystem=${includeSystem ? 1 : 0}`;
@@ -348,7 +348,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       adapter = await this.getAdapterFor(conn);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const errNode: VsdbNode = {
+      const errNode: UnicDBNode = {
         label: `Connect failed: ${message}`,
         icon: "error",
         contextValue: "error",
@@ -361,7 +361,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       return [errNode];
     }
 
-    let children: VsdbNode[];
+    let children: UnicDBNode[];
     try {
       const schemas = await adapter.listSchemas(includeSystem);
       if (schemas.length === 0) {
@@ -413,7 +413,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     return children;
   }
 
-  private async getCategoriesForSchema(node: VsdbNode): Promise<VsdbNode[]> {
+  private async getCategoriesForSchema(node: UnicDBNode): Promise<UnicDBNode[]> {
     const conn = node.meta?.connection;
     const schema = node.meta?.schema;
     if (!conn || !schema) return [];
@@ -421,7 +421,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     const collapsible = this.filterText !== ""
       ? vscode.TreeItemCollapsibleState.Expanded
       : vscode.TreeItemCollapsibleState.Collapsed;
-    const out: VsdbNode[] = [
+    const out: UnicDBNode[] = [
       {
         label: "Tables",
         icon: "table",
@@ -469,7 +469,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
 
   // ---- Category children: tables/views/routines ----------------------------
 
-  private async getCategoryChildren(node: VsdbNode): Promise<VsdbNode[]> {
+  private async getCategoryChildren(node: UnicDBNode): Promise<UnicDBNode[]> {
     const conn = node.meta?.connection;
     const category = node.meta?.category;
     const schema = node.meta?.schema;
@@ -481,7 +481,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     // output trước khi return). Đảm bảo badge = tổng unfiltered + filter chỉ
     // ảnh hưởng output array, không ảnh hưởng cache count.
     const cached = this.cache.get(key);
-    let children: VsdbNode[];
+    let children: UnicDBNode[];
     if (cached && cached.expiresAt > Date.now()) {
       children = cached.data;
     } else {
@@ -492,7 +492,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       } catch (err) {
         // Adapter throw → trả về error node, tree không crash.
         const message = err instanceof Error ? err.message : String(err);
-        const errNode: VsdbNode = {
+        const errNode: UnicDBNode = {
           label: `Connect failed: ${message}`,
           icon: "error",
           contextValue: "error",
@@ -505,12 +505,12 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
         return [errNode];
       }
 
-      let raw: VsdbNode[];
+      let raw: UnicDBNode[];
       try {
         if (category === "tables") {
           const tables = await adapter.listTables(schema);
           raw = tables.map((t) => {
-            const n: VsdbNode = {
+            const n: UnicDBNode = {
               label: t.name,
               description: t.schema,
               tooltip: `${t.schema}.${t.name}`,
@@ -525,10 +525,10 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
               },
             };
             // TASK-002 — double-click/Enter opens ResultsPanel with SELECT *
-            // for this table. Argument is the whole VsdbNode so browseCommands
+            // for this table. Argument is the whole UnicDBNode so browseCommands
             // can read .meta. Chevrons keep single-click expand behavior.
             n.command = {
-              command: "vsdb.browseTableData",
+              command: "UnicDB.browseTableData",
               title: "Browse Data",
               arguments: [n],
             };
@@ -537,7 +537,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
         } else if (category === "views") {
           const views = await adapter.listViews(schema);
           raw = views.map((v) => {
-            const n: VsdbNode = {
+            const n: UnicDBNode = {
               label: v.name,
               description: v.schema,
               tooltip: `${v.schema}.${v.name}`,
@@ -550,7 +550,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
               },
             };
             n.command = {
-              command: "vsdb.browseTableData",
+              command: "UnicDB.browseTableData",
               title: "Browse Data",
               arguments: [n],
             };
@@ -570,7 +570,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
               objectName: r.name,
             },
             command: {
-              command: "vsdb.copyQualifiedName",
+              command: "UnicDB.copyQualifiedName",
               title: "Copy qualified name",
               arguments: [qualifiedName({ table: r.name, schema: r.schema })],
             },
@@ -657,12 +657,12 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
    * - Reject → nuốt lỗi, tree vẫn render đủ mọi table node (fire-and-forget).
    */
   private fetchRowCountsBatch(
-    tableNodes: VsdbNode[],
+    tableNodes: UnicDBNode[],
     conn: ConnectionConfig,
     schema: string,
   ): void {
     const now = Date.now();
-    const pendingNodes: VsdbNode[] = [];
+    const pendingNodes: UnicDBNode[] = [];
     const pendingNames: string[] = [];
     for (const tNode of tableNodes) {
       const tName = tNode.meta?.objectName;
@@ -730,7 +730,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
    */
   private fetchRowCountsViaCatalog(
     catalog: NonNullable<DbAdapter["catalog"]>,
-    tableNodes: VsdbNode[],
+    tableNodes: UnicDBNode[],
     conn: ConnectionConfig,
     schema: string,
   ): Promise<void> {
@@ -754,7 +754,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
           // description." Description không đổi (giữ schema fallback).
           const message = err instanceof Error ? err.message : String(err);
           console.error(
-            `[vsdb] catalog.rowCount failed for ${schema}.${tName}: ${message}`,
+            `[UnicDB] catalog.rowCount failed for ${schema}.${tName}: ${message}`,
           );
         });
     }
@@ -769,7 +769,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   // render khi list tương ứng non-empty. Khi catalog thiếu → fallback chỉ
   // trả columns (giữ behavior cũ, regression #10).
 
-  private async getTableChildren(node: VsdbNode): Promise<VsdbNode[]> {
+  private async getTableChildren(node: UnicDBNode): Promise<UnicDBNode[]> {
     const conn = node.meta?.connection;
     const schema = node.meta?.schema;
     const tableName = node.meta?.objectName;
@@ -798,7 +798,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       ? vscode.TreeItemCollapsibleState.Expanded
       : vscode.TreeItemCollapsibleState.Collapsed;
 
-    const cats: VsdbNode[] = [];
+    const cats: UnicDBNode[] = [];
     try {
       const idxs = await catalog.listIndexes(schema, tableName);
       if (idxs.length > 0) {
@@ -865,23 +865,23 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     return [...cats, ...columns];
   }
 
-  private async getIndexChildren(node: VsdbNode): Promise<VsdbNode[]> {
+  private async getIndexChildren(node: UnicDBNode): Promise<UnicDBNode[]> {
     return this.loadIndexLeaves(node);
   }
 
-  private async getConstraintChildren(node: VsdbNode): Promise<VsdbNode[]> {
+  private async getConstraintChildren(node: UnicDBNode): Promise<UnicDBNode[]> {
     return this.loadConstraintLeaves(node);
   }
 
-  private async getTriggerChildren(node: VsdbNode): Promise<VsdbNode[]> {
+  private async getTriggerChildren(node: UnicDBNode): Promise<UnicDBNode[]> {
     return this.loadTriggerLeaves(node);
   }
 
-  private async getSequenceChildren(node: VsdbNode): Promise<VsdbNode[]> {
+  private async getSequenceChildren(node: UnicDBNode): Promise<UnicDBNode[]> {
     return this.loadSequenceLeaves(node);
   }
 
-  private async loadIndexLeaves(node: VsdbNode): Promise<VsdbNode[]> {
+  private async loadIndexLeaves(node: UnicDBNode): Promise<UnicDBNode[]> {
     const conn = node.meta?.connection;
     const schema = node.meta?.schema;
     const tableName = node.meta?.objectName;
@@ -897,7 +897,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       // DBX-08 — admission by declared capability, never optional-object presence.
       if (!hasAdapterCapability(adapter, "catalog") || !adapter.catalog) return [];
       const raw = await adapter.catalog.listIndexes(schema, tableName);
-      const data: VsdbNode[] = raw.map((info) => ({
+      const data: UnicDBNode[] = raw.map((info) => ({
         label: info.name,
         description: info.method,
         tooltip: `${info.schema}.${info.table}: ${info.name} (${info.method})${info.isUnique ? " UNIQUE" : ""}`,
@@ -920,7 +920,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     }
   }
 
-  private async loadConstraintLeaves(node: VsdbNode): Promise<VsdbNode[]> {
+  private async loadConstraintLeaves(node: UnicDBNode): Promise<UnicDBNode[]> {
     const conn = node.meta?.connection;
     const schema = node.meta?.schema;
     const tableName = node.meta?.objectName;
@@ -936,7 +936,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       // DBX-08 — admission by declared capability, never optional-object presence.
       if (!hasAdapterCapability(adapter, "catalog") || !adapter.catalog) return [];
       const raw = await adapter.catalog.listConstraints(schema, tableName);
-      const data: VsdbNode[] = raw.map((info) => ({
+      const data: UnicDBNode[] = raw.map((info) => ({
         label: info.name,
         description: info.type,
         tooltip: info.fkTarget
@@ -961,7 +961,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     }
   }
 
-  private async loadTriggerLeaves(node: VsdbNode): Promise<VsdbNode[]> {
+  private async loadTriggerLeaves(node: UnicDBNode): Promise<UnicDBNode[]> {
     const conn = node.meta?.connection;
     const schema = node.meta?.schema;
     const tableName = node.meta?.objectName;
@@ -977,7 +977,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       // DBX-08 — admission by declared capability, never optional-object presence.
       if (!hasAdapterCapability(adapter, "catalog") || !adapter.catalog) return [];
       const raw = await adapter.catalog.listTriggers(schema, tableName);
-      const data: VsdbNode[] = raw.map((info) => ({
+      const data: UnicDBNode[] = raw.map((info) => ({
         label: info.name,
         description: `${info.timing} ${info.event}`,
         tooltip: `${info.name} (${info.timing} ${info.event})`,
@@ -1000,7 +1000,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     }
   }
 
-  private async loadSequenceLeaves(node: VsdbNode): Promise<VsdbNode[]> {
+  private async loadSequenceLeaves(node: UnicDBNode): Promise<UnicDBNode[]> {
     const conn = node.meta?.connection;
     const schema = node.meta?.schema;
     const objectKey = node.meta?.objectKey;
@@ -1015,7 +1015,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       // DBX-08 — admission by declared capability, never optional-object presence.
       if (!hasAdapterCapability(adapter, "catalog") || !adapter.catalog) return [];
       const raw = await adapter.catalog.listSequences(schema);
-      const data: VsdbNode[] = raw.map((info) => ({
+      const data: UnicDBNode[] = raw.map((info) => ({
         label: info.name,
         description: info.dataType,
         tooltip: `${info.schema}.${info.name}${info.lastValue ? ` (last: ${info.lastValue})` : ""}`,
@@ -1037,7 +1037,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       return [catalogErrorNode("listSequences", err)];
     }
   }
-  private applyLeafFilter(data: VsdbNode[]): VsdbNode[] {
+  private applyLeafFilter(data: UnicDBNode[]): UnicDBNode[] {
     if (this.filterText === "") return data;
     const filtered = data.filter((c) => this.matchesFilter(c.label));
     if (filtered.length === 0) {
@@ -1056,7 +1056,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
 
 
 
-  private async getColumnChildren(node: VsdbNode): Promise<VsdbNode[]> {
+  private async getColumnChildren(node: UnicDBNode): Promise<UnicDBNode[]> {
     const conn = node.meta?.connection;
     const objectKey = node.meta?.objectKey;
     const schema = node.meta?.schema;
@@ -1074,7 +1074,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       adapter = await this.getAdapterFor(conn);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const errNode: VsdbNode = {
+      const errNode: UnicDBNode = {
         label: `Connect failed: ${message}`,
         icon: "error",
         contextValue: "error",
@@ -1092,7 +1092,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       columns = await adapter.listColumns(tableName, schema);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      const errNode: VsdbNode = {
+      const errNode: UnicDBNode = {
         label: `Failed to load columns: ${message}`,
         icon: "error",
         contextValue: "error",
@@ -1105,7 +1105,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
       return [errNode];
     }
 
-    const data: VsdbNode[] = columns.map((c) => ({
+    const data: UnicDBNode[] = columns.map((c) => ({
       label: c.name,
       description: c.dataType,
       icon: c.isPrimaryKey ? "key" : "symbol-field",
@@ -1153,7 +1153,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
     conn: ConnectionConfig,
     schema: string,
     table: string,
-  ): Promise<VsdbNode | null> {
+  ): Promise<UnicDBNode | null> {
     let adapter: DbAdapter;
     try {
       adapter = await this.getAdapterFor(conn);
@@ -1182,7 +1182,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
         objectName: hit.name,
       },
       command: {
-        command: "vsdb.copyQualifiedName",
+        command: "UnicDB.copyQualifiedName",
         title: "Copy qualified name",
         arguments: [qualifiedName({ table: hit.name, schema: hit.schema })],
       },
@@ -1197,7 +1197,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
   async findSchemaNode(
     conn: ConnectionConfig,
     schema: string,
-  ): Promise<VsdbNode | null> {
+  ): Promise<UnicDBNode | null> {
     let adapter: DbAdapter;
     try {
       adapter = await this.getAdapterFor(conn);
@@ -1239,7 +1239,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
    * Implementation: build parent node mỗi lần (cheap; chỉ khi reveal trigger).
    * Nếu meta thiếu → null (giống connection root).
    */
-  getParent(node: VsdbNode): VsdbNode | null {
+  getParent(node: UnicDBNode): UnicDBNode | null {
     const meta = node.meta;
     if (!meta) return null;
 
@@ -1268,7 +1268,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<VsdbNode> {
         // TASK-010/D3 — giữ nhất quán với getRoot(): connection nodes Collapsed.
         collapsible: vscode.TreeItemCollapsibleState.Collapsed,
         command: {
-          command: "vsdb.selectConnectionFromTree",
+          command: "UnicDB.selectConnectionFromTree",
           title: "Select as Active Connection",
           arguments: [conn.id],
         },

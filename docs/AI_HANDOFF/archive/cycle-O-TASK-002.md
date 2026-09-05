@@ -88,10 +88,10 @@ VERIFICATION:
   command: npm run typecheck && npx vitest run src/ai/omp/__tests__/acpProcess.test.ts src/ai/omp/__tests__/acp.test.ts
   result: 28 pass / 0 fail / exit 0
   output_excerpt: |
-    > vsdb@1.5.1 typecheck
+    > UnicDB@1.5.1 typecheck
     > tsc --noEmit
     ===
-     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
      ✓ src/ai/omp/__tests__/acp.test.ts  (14 tests) 4ms
      ✓ src/ai/omp/__tests__/acpProcess.test.ts  (14 tests) 7ms
      Test Files  2 passed (2)
@@ -103,7 +103,7 @@ NEXT: ready for review
 
 RED evidence (pre-fix, same command on `acpProcess.test.ts` only):
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
 
  ❯ src/ai/omp/__tests__/acpProcess.test.ts  (14 tests | 2 failed) 11ms
    ❯ AcpProcess > session/new frame sends {cwd, mcpServers: []} (regression for latent -32603)

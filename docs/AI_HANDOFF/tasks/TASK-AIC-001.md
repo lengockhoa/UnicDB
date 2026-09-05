@@ -70,7 +70,7 @@ No lint script is defined in `package.json`.
 ## Discussion
 
 ### 2026-08-29 · planner · unic-smart
-The cycle intentionally reuses `baseUrl`, `method`, `timeoutMs`, and `KEY_AI_API_KEY = "vsdb.ai.apiKey"`. Do not add autocomplete-specific endpoint/key fields or an API key to webview messages.
+The cycle intentionally reuses `baseUrl`, `method`, `timeoutMs`, and `KEY_AI_API_KEY = "UnicDB.ai.apiKey"`. Do not add autocomplete-specific endpoint/key fields or an API key to webview messages.
 
 ---
 

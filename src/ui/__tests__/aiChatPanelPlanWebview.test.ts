@@ -19,7 +19,7 @@ const compiled = execFileSync(
   { encoding: "utf8" },
 ).toString();
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -31,15 +31,15 @@ interface Harness {
 
 function makeHarness(): Harness {
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg: unknown) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-form-body"></div>';
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-form-body"></div>';
 
   const originalAdd = window.addEventListener.bind(window);
   let latestMessageHandler: ((ev: MessageEvent) => void) | null = null;
@@ -66,7 +66,7 @@ function makeHarness(): Harness {
     dispatch: (msg: Record<string, unknown>) => {
       latestMessageHandler?.({ data: msg } as MessageEvent);
     },
-    root: document.getElementById("vsdb-root") as HTMLDivElement,
+    root: document.getElementById("UnicDB-root") as HTMLDivElement,
   };
 }
 
@@ -98,7 +98,7 @@ describe("webview — change_plan card", () => {
     const h = makeHarness();
     h.dispatch(planMsg());
 
-    const cards = h.root.querySelectorAll(".vsdb-chat-plan");
+    const cards = h.root.querySelectorAll(".UnicDB-chat-plan");
     expect(cards.length).toBe(1);
     const card = cards[0] as HTMLElement;
     expect(card.textContent).toContain("add column c");
@@ -107,11 +107,11 @@ describe("webview — change_plan card", () => {
     // dangerNote rendered
     expect(card.textContent).toContain("destructive — will be confirmed");
     // tier classes
-    expect(card.querySelector(".vsdb-chat-plan-tier-red")).not.toBeNull();
-    expect(card.querySelector(".vsdb-chat-plan-tier-amber")).not.toBeNull();
+    expect(card.querySelector(".UnicDB-chat-plan-tier-red")).not.toBeNull();
+    expect(card.querySelector(".UnicDB-chat-plan-tier-amber")).not.toBeNull();
     // buttons
-    const approve = card.querySelector<HTMLButtonElement>(".vsdb-chat-plan-approve");
-    const reject = card.querySelector<HTMLButtonElement>(".vsdb-chat-plan-reject");
+    const approve = card.querySelector<HTMLButtonElement>(".UnicDB-chat-plan-approve");
+    const reject = card.querySelector<HTMLButtonElement>(".UnicDB-chat-plan-reject");
     expect(approve).not.toBeNull();
     expect(reject).not.toBeNull();
     expect(approve!.disabled).toBe(false);
@@ -130,18 +130,18 @@ describe("webview — change_plan card", () => {
       }),
     );
 
-    const card = h.root.querySelector(".vsdb-chat-plan") as HTMLElement;
+    const card = h.root.querySelector(".UnicDB-chat-plan") as HTMLElement;
     expect(card.textContent).toContain("missing: c");
-    const approve = card.querySelector<HTMLButtonElement>(".vsdb-chat-plan-approve");
+    const approve = card.querySelector<HTMLButtonElement>(".UnicDB-chat-plan-approve");
     expect(approve!.disabled).toBe(true);
   });
 
   it("Approve button posts plan_approve; Reject posts plan_reject", () => {
     const h = makeHarness();
     h.dispatch(planMsg());
-    const card = h.root.querySelector(".vsdb-chat-plan") as HTMLElement;
-    (card.querySelector(".vsdb-chat-plan-approve") as HTMLButtonElement).click();
-    (card.querySelector(".vsdb-chat-plan-reject") as HTMLButtonElement).click();
+    const card = h.root.querySelector(".UnicDB-chat-plan") as HTMLElement;
+    (card.querySelector(".UnicDB-chat-plan-approve") as HTMLButtonElement).click();
+    (card.querySelector(".UnicDB-chat-plan-reject") as HTMLButtonElement).click();
 
     expect(h.received.some((m) => m.type === "plan_approve")).toBe(true);
     expect(h.received.some((m) => m.type === "plan_reject")).toBe(true);
@@ -166,7 +166,7 @@ describe("webview — change_plan card", () => {
         },
       }),
     );
-    const card = h.root.querySelector(".vsdb-chat-plan") as HTMLElement;
+    const card = h.root.querySelector(".UnicDB-chat-plan") as HTMLElement;
     expect(card.querySelector("script")).toBeNull();
     expect(card.querySelector("img")).toBeNull();
     // raw text preserved verbatim

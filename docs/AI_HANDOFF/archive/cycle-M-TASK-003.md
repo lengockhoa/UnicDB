@@ -103,7 +103,7 @@ RED_OUTPUT (reproduced by temporarily removing `webview/aiChatPanelMain.ts`):
 ```text
 [33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
 
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
 
  ✓ src/ui/__tests__/aiChatPanelMessages.test.ts  (7 tests) 2ms
  ❯ src/ui/__tests__/aiChatPanelWebview.test.ts  (0 test)
@@ -111,7 +111,7 @@ RED_OUTPUT (reproduced by temporarily removing `webview/aiChatPanelMain.ts`):
 ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
 
  FAIL  src/ui/__tests__/aiChatPanelWebview.test.ts [ src/ui/__tests__/aiChatPanelWebview.test.ts ]
-Error: ENOENT: no such file or directory, open '/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/webview/aiChatPanelMain.ts'
+Error: ENOENT: no such file or directory, open '/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/webview/aiChatPanelMain.ts'
  ❯ readFileSync node:fs:440:20
  ❯ src/ui/__tests__/aiChatPanelWebview.test.ts:33:16
      31| 
@@ -122,7 +122,7 @@ Error: ENOENT: no such file or directory, open '/Volumes/KHOA_EXTENAL/DOCKER_CRE
      35|   resolve(process.cwd(), "node_modules", ".bin", "esbuild"),
 
 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
-Serialized Error: { errno: -2, code: 'ENOENT', syscall: 'open', path: '/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/webview/aiChatPanelMain.ts' }
+Serialized Error: { errno: -2, code: 'ENOENT', syscall: 'open', path: '/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/webview/aiChatPanelMain.ts' }
 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
 
  Test Files  1 failed | 1 passed (2)
@@ -137,7 +137,7 @@ VERIFY_OUTPUT:
 ```text
 [33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
 
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
 
  ✓ src/ui/__tests__/aiChatPanelMessages.test.ts  (7 tests) 2ms
  ✓ src/ui/__tests__/aiChatPanelWebview.test.ts  (9 tests) 34ms
@@ -148,7 +148,7 @@ VERIFY_OUTPUT:
    Duration  478ms (transform 38ms, setup 0ms, collect 66ms, tests 36ms, environment 236ms, prepare 84ms)
 
 
-> vsdb@1.5.1 typecheck
+> UnicDB@1.5.1 typecheck
 > tsc --noEmit
 
 

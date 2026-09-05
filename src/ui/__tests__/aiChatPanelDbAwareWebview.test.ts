@@ -4,13 +4,13 @@
 // renders `permission_request` cards for any tool id/name/detail/options —
 // the cycle AD DB-aware tools (count_rows, list_table_data_sample,
 // run_readonly_query, explain_query, get_table_relationships) reuse the
-// same wire shape and the same `.vsdb-chat-permission` card. This file
+// same wire shape and the same `.UnicDB-chat-permission` card. This file
 // pins that contract from the webview side:
 //
 //   * host posts permission_request with requestId `dbtool-…` + tool.name
 //     `count_rows` + the standard 3 options → card renders with the
-//     `.vsdb-chat-permission` class, the data-request-id attribute, a
-//     `.vsdb-chat-permission-tool-name` node carrying the tool name, and
+//     `.UnicDB-chat-permission` class, the data-request-id attribute, a
+//     `.UnicDB-chat-permission-tool-name` node carrying the tool name, and
 //     three buttons (allow once / allow session / deny).
 //   * clicking Deny posts a `permission_response` back to the host with the
 //     matching requestId and NO optionId field (matches webview
@@ -40,7 +40,7 @@ const compiled = execFileSync(
   { encoding: "utf8" },
 ).toString();
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -52,16 +52,16 @@ interface Harness {
 
 function makeHarness(): Harness {
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg: unknown) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi })
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi })
     .acquireVsCodeApi = () => api;
 
   document.body.innerHTML =
-    '<div id="vsdb-root" class="vsdb-form-body"></div>';
+    '<div id="UnicDB-root" class="UnicDB-form-body"></div>';
 
   const originalAdd = window.addEventListener.bind(window);
   let latestMessageHandler: ((ev: MessageEvent) => void) | null = null;
@@ -93,7 +93,7 @@ function makeHarness(): Harness {
   return {
     received,
     dispatch,
-    root: document.getElementById("vsdb-root") as HTMLDivElement,
+    root: document.getElementById("UnicDB-root") as HTMLDivElement,
   };
 }
 
@@ -109,7 +109,7 @@ afterEach(() => {
 // #1 DB-aware tool permission_request renders card with the standard shape
 // ============================================================================
 describe("AiChatPanelWebview — DB-aware tool permission_request card (cycle AD TASK-002)", () => {
-  it("renders a card with .vsdb-chat-permission + data-request-id + 3 option buttons for count_rows", () => {
+  it("renders a card with .UnicDB-chat-permission + data-request-id + 3 option buttons for count_rows", () => {
     const h = makeHarness();
     h.dispatch({
       type: "init",
@@ -136,27 +136,27 @@ describe("AiChatPanelWebview — DB-aware tool permission_request card (cycle AD
     });
 
     const card = h.root.querySelector(
-      '.vsdb-chat-permission[data-request-id="dbtool-1k7c-0"]',
+      '.UnicDB-chat-permission[data-request-id="dbtool-1k7c-0"]',
     );
     expect(card).not.toBeNull();
     if (!card) return;
     // The card carries the tool name verbatim in a dedicated node — that's
     // the DOM marker PLAN_AD.md §Acceptance #12 calls for.
-    const nameNode = card.querySelector(".vsdb-chat-permission-tool-name");
+    const nameNode = card.querySelector(".UnicDB-chat-permission-tool-name");
     expect(nameNode?.textContent).toBe("count_rows");
     // Tool id is rendered alongside (matches the ACP card shape).
-    const idNode = card.querySelector(".vsdb-chat-permission-tool-id");
+    const idNode = card.querySelector(".UnicDB-chat-permission-tool-id");
     expect(idNode?.textContent).toBe("dbtool-1k7c-0");
     // Three buttons: allow once / allow session / deny — rendered with
     // the cycle AC class split (allow → primary, deny → secondary).
     const buttons = Array.from(
-      card.querySelectorAll("button.vsdb-chat-permission-allow, button.vsdb-chat-permission-deny"),
+      card.querySelectorAll("button.UnicDB-chat-permission-allow, button.UnicDB-chat-permission-deny"),
     );
     expect(buttons.length).toBe(3);
     const labels = buttons.map((b) => b.textContent);
     expect(labels).toEqual(["Allow once", "Allow for this session", "Deny"]);
     const deny = buttons.find((b) =>
-      b.classList.contains("vsdb-chat-permission-deny"),
+      b.classList.contains("UnicDB-chat-permission-deny"),
     );
     expect(deny).toBeDefined();
     expect(deny?.dataset.optionId).toBe("deny");
@@ -190,7 +190,7 @@ describe("AiChatPanelWebview — tool_result outcome card (AIX-03)", () => {
       status: "ok",
       summary: "✓ run_readonly_query — 3 lines (capped)",
     });
-    const card = h.root.querySelector(".vsdb-chat-tool-result-ok");
+    const card = h.root.querySelector(".UnicDB-chat-tool-result-ok");
     expect(card).not.toBeNull();
     expect(card?.textContent).toBe("✓ run_readonly_query — 3 lines (capped)");
     h.dispatch({
@@ -199,10 +199,10 @@ describe("AiChatPanelWebview — tool_result outcome card (AIX-03)", () => {
       status: "denied",
       summary: "✗ count_rows — denied by user",
     });
-    const denied = h.root.querySelector(".vsdb-chat-tool-result-denied");
+    const denied = h.root.querySelector(".UnicDB-chat-tool-result-denied");
     expect(denied?.textContent).toBe("✗ count_rows — denied by user");
     // No innerHTML sink usage: summary survives as text (no live nodes).
-    expect(h.root.querySelector(".vsdb-chat-tool-result-failed")).toBeNull();
+    expect(h.root.querySelector(".UnicDB-chat-tool-result-failed")).toBeNull();
   });
 });
 
@@ -238,14 +238,14 @@ describe("AiChatPanelWebview — DB-aware tool Deny emits permission_response (c
     });
 
     const card = h.root.querySelector<HTMLDivElement>(
-      '.vsdb-chat-permission[data-request-id="dbtool-1k7c-0"]',
+      '.UnicDB-chat-permission[data-request-id="dbtool-1k7c-0"]',
     );
     expect(card).not.toBeNull();
     if (!card) return;
 
     const deny = Array.from(
       card.querySelectorAll<HTMLButtonElement>(
-        "button.vsdb-chat-permission-deny",
+        "button.UnicDB-chat-permission-deny",
       ),
     ).find((b) => b.dataset.optionId === "deny");
     expect(deny).toBeDefined();
@@ -264,7 +264,7 @@ describe("AiChatPanelWebview — DB-aware tool Deny emits permission_response (c
     );
     // Card is gone after the click — one response per visible request.
     expect(
-      h.root.querySelector('.vsdb-chat-permission[data-request-id="dbtool-1k7c-0"]'),
+      h.root.querySelector('.UnicDB-chat-permission[data-request-id="dbtool-1k7c-0"]'),
     ).toBeNull();
     // A second click on a stale deny button (now orphaned) emits nothing.
     deny!.click();
@@ -306,14 +306,14 @@ describe("AiChatPanelWebview — DB-aware tool Allow Once echoes optionId (cycle
     });
 
     const card = h.root.querySelector<HTMLDivElement>(
-      '.vsdb-chat-permission[data-request-id="dbtool-9zzz-3"]',
+      '.UnicDB-chat-permission[data-request-id="dbtool-9zzz-3"]',
     );
     expect(card).not.toBeNull();
     if (!card) return;
 
     const allowOnce = Array.from(
       card.querySelectorAll<HTMLButtonElement>(
-        "button.vsdb-chat-permission-allow",
+        "button.UnicDB-chat-permission-allow",
       ),
     ).find((b) => b.dataset.optionId === "allow-once");
     expect(allowOnce).toBeDefined();
@@ -360,13 +360,13 @@ describe("AiChatPanelWebview — DB-aware tool Allow Session echoes optionId (cy
     });
 
     const card = h.root.querySelector<HTMLDivElement>(
-      '.vsdb-chat-permission[data-request-id="dbtool-allow-session-1"]',
+      '.UnicDB-chat-permission[data-request-id="dbtool-allow-session-1"]',
     );
     expect(card).not.toBeNull();
     if (!card) return;
     const allowSession = Array.from(
       card.querySelectorAll<HTMLButtonElement>(
-        "button.vsdb-chat-permission-allow",
+        "button.UnicDB-chat-permission-allow",
       ),
     ).find((button) => button.dataset.optionId === "allow-session");
     expect(allowSession).toBeDefined();

@@ -65,10 +65,10 @@ vi.mock("vscode", () => {
       getConfiguration: vi.fn((section: string) => ({
         get: <T>(key: string): T | undefined => {
           state.workspaceConfigCalls.push({ section });
-          if (section === "vsdb" && key === "showRunLens") {
+          if (section === "UnicDB" && key === "showRunLens") {
             return state.configShowRunLens as T;
           }
-          if (section === "vsdb" && key === "showRunLensSh") {
+          if (section === "UnicDB" && key === "showRunLensSh") {
             return state.configShowRunLensSh as T;
           }
           return undefined;
@@ -86,7 +86,7 @@ vi.mock("vscode", () => {
 });
 
 import * as vscode from "vscode";
-import { VsdbCodeLensProvider } from "../codeLensProvider";
+import { UnicDBCodeLensProvider } from "../codeLensProvider";
 
 function fakeDoc(languageId: string, lines: string[]) {
   // Pre-compute line offsets for positionAt.
@@ -116,7 +116,7 @@ function fakeDoc(languageId: string, lines: string[]) {
   };
 }
 
-describe("VsdbCodeLensProvider — provideCodeLenses", () => {
+describe("UnicDBCodeLensProvider — provideCodeLenses", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.configShowRunLens = true;
@@ -126,14 +126,14 @@ describe("VsdbCodeLensProvider — provideCodeLenses", () => {
   });
 
   it("Test #5 — showRunLens=true + sql document → 1 lens per statement", () => {
-    const provider = new VsdbCodeLensProvider();
+    const provider = new UnicDBCodeLensProvider();
     const doc = fakeDoc("sql", ["SELECT 1;", "SELECT 2;"]);
     const lenses = provider.provideCodeLenses(doc as never) as Array<{
       range: { start: { line: number } };
       command: { command: string; arguments: unknown[] };
     }>;
     expect(lenses.length).toBeGreaterThanOrEqual(1);
-    expect(lenses[0].command.command).toBe("vsdb.runStatement");
+    expect(lenses[0].command.command).toBe("UnicDB.runStatement");
     expect(Array.isArray(lenses[0].command.arguments)).toBe(true);
   });
 
@@ -143,33 +143,33 @@ describe("VsdbCodeLensProvider — provideCodeLenses", () => {
 
     // Without a resolver (default/back-compat), GO is NOT dialect-gated on →
     // everything stays one lens (matches existing zero-arg behavior).
-    const providerNoDialect = new VsdbCodeLensProvider();
+    const providerNoDialect = new UnicDBCodeLensProvider();
     const lensesNoDialect = providerNoDialect.provideCodeLenses(doc as never) as unknown[];
     expect(lensesNoDialect.length).toBe(1);
 
     // With a resolver returning "mssql", GO is a real batch separator → 2 lenses.
-    const providerMssql = new VsdbCodeLensProvider(() => "mssql");
+    const providerMssql = new UnicDBCodeLensProvider(() => "mssql");
     const lensesMssql = providerMssql.provideCodeLenses(doc as never) as unknown[];
     expect(lensesMssql.length).toBe(2);
   });
 
   it("showRunLens=false → trả về [] (không có lens)", () => {
     state.configShowRunLens = false;
-    const provider = new VsdbCodeLensProvider();
+    const provider = new UnicDBCodeLensProvider();
     const doc = fakeDoc("sql", ["SELECT 1;", "SELECT 2;"]);
     const lenses = provider.provideCodeLenses(doc as never);
     expect(lenses).toEqual([]);
   });
 
   it("languageId != sql → trả về [] (filter language)", () => {
-    const provider = new VsdbCodeLensProvider();
+    const provider = new UnicDBCodeLensProvider();
     const doc = fakeDoc("markdown", ["SELECT 1;"]);
     const lenses = provider.provideCodeLenses(doc as never);
     expect(lenses).toEqual([]);
   });
 
   it("lens ranges map trở lại statement ranges (test range lengths cover sql length)", () => {
-    const provider = new VsdbCodeLensProvider();
+    const provider = new UnicDBCodeLensProvider();
     const sql = "SELECT 1;\nSELECT 2;\nSELECT 3;";
     const doc = fakeDoc("sql", sql.split("\n"));
     const lenses = provider.provideCodeLenses(doc as never) as Array<{
@@ -186,8 +186,8 @@ describe("VsdbCodeLensProvider — provideCodeLenses", () => {
 
   // ===== TASK-605: shellscript "▶ Run" lens =====
 
-  it("Test #3 — shellscript document → exactly 1 lens on line 0, command 'vsdb.runScript', title '$(play) Run', no args", () => {
-    const provider = new VsdbCodeLensProvider();
+  it("Test #3 — shellscript document → exactly 1 lens on line 0, command 'UnicDB.runScript', title '$(play) Run', no args", () => {
+    const provider = new UnicDBCodeLensProvider();
     const doc = fakeDoc("shellscript", ["#!/bin/bash", "echo hi"]);
     const lenses = provider.provideCodeLenses(doc as never) as Array<{
       range: { start: { line: number; character: number } };
@@ -196,13 +196,13 @@ describe("VsdbCodeLensProvider — provideCodeLenses", () => {
     expect(lenses.length).toBe(1);
     expect(lenses[0].range.start.line).toBe(0);
     expect(lenses[0].range.start.character).toBe(0);
-    expect(lenses[0].command.command).toBe("vsdb.runScript");
+    expect(lenses[0].command.command).toBe("UnicDB.runScript");
     expect(lenses[0].command.title).toBe("$(play) Run");
     expect(lenses[0].command.arguments).toEqual([]);
   });
 
   it("Test #4 — showRunLensSh=false → [] cho shellscript; SQL path vẫn dùng showRunLens như cũ", () => {
-    const provider = new VsdbCodeLensProvider();
+    const provider = new UnicDBCodeLensProvider();
 
     state.configShowRunLensSh = false;
     const shDoc = fakeDoc("shellscript", ["#!/bin/bash", "echo hi"]);
@@ -217,12 +217,12 @@ describe("VsdbCodeLensProvider — provideCodeLenses", () => {
     }>;
     expect(sqlLenses.length).toBeGreaterThanOrEqual(2);
     for (const l of sqlLenses) {
-      expect(l.command.command).toBe("vsdb.runStatement");
+      expect(l.command.command).toBe("UnicDB.runStatement");
     }
   });
 
   it("Test #5 (TASK-605) — languageId neither sql nor shellscript (markdown) → []", () => {
-    const provider = new VsdbCodeLensProvider();
+    const provider = new UnicDBCodeLensProvider();
     const doc = fakeDoc("markdown", ["# heading", "echo nope"]);
     const lenses = provider.provideCodeLenses(doc as never);
     expect(lenses).toEqual([]);
@@ -230,7 +230,7 @@ describe("VsdbCodeLensProvider — provideCodeLenses", () => {
 
   it("Test #6 — config change trên showRunLensSh trigger _onDidChangeCodeLenses (mirror SQL pattern)", () => {
     // Provider phải được tạo TRƯỚC khi inspect mock results (clearAllMocks reset state).
-    const provider = new VsdbCodeLensProvider();
+    const provider = new UnicDBCodeLensProvider();
     void provider;
 
     const EventEmitterMock = vi.mocked(vscode.EventEmitter);
@@ -249,17 +249,17 @@ describe("VsdbCodeLensProvider — provideCodeLenses", () => {
     if (!cb) return;
 
     fireSpy.mockClear();
-    cb({ affectsConfiguration: (s: string) => s === "vsdb.showRunLensSh" });
+    cb({ affectsConfiguration: (s: string) => s === "UnicDB.showRunLensSh" });
     expect(fireSpy).toHaveBeenCalled();
 
     fireSpy.mockClear();
-    cb({ affectsConfiguration: (s: string) => s === "vsdb.unrelated" });
+    cb({ affectsConfiguration: (s: string) => s === "UnicDB.unrelated" });
     expect(fireSpy).not.toHaveBeenCalled();
   });
   // #8 regression-lock (TASK-005 cycle R): mỗi lens range start/end ===
   // positionAt(stmt.start) / positionAt(stmt.end) — không lệch ký tự.
   it("#8 lens range = positionAt(stmt.start/end); không lệch ký tự so với text", () => {
-    const provider = new VsdbCodeLensProvider();
+    const provider = new UnicDBCodeLensProvider();
     const sql = "SELECT 1;\nSELECT 2;\nSELECT 3;";
     const doc = fakeDoc("sql", sql.split("\n"));
     const lenses = provider.provideCodeLenses(doc as never) as Array<{

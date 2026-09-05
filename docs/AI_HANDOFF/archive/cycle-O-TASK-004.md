@@ -98,15 +98,15 @@ VERIFICATION:
   command: npm run compile && npm run typecheck && npx vitest run src/ui/__tests__/aiChatPanelWebview.test.ts src/ui/__tests__/aiChatPanelBundle.test.ts
   result: 32 pass / 0 fail / exit 0
   output_excerpt: |
-    > vsdb@1.5.1 compile
+    > UnicDB@1.5.1 compile
     > node esbuild.js
     ...
     dist/aiChatPanel.js      13.4kb
     ...
-    > vsdb@1.5.1 typecheck
+    > UnicDB@1.5.1 typecheck
     > tsc --noEmit
     ...
-     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
      ✓ src/ui/__tests__/aiChatPanelBundle.test.ts  (11 tests) 33ms
      ✓ src/ui/__tests__/aiChatPanelWebview.test.ts  (21 tests) 52ms
 

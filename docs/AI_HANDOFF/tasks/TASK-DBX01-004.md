@@ -7,7 +7,7 @@
 
 ## Goal
 
-Write RED scaffold test first, then build the import wizard host + webview (CSP-clean, no inline script, all messages through `acquireVsCodeApi()`), the large-value editor (via `vsdb-lv:` text document content provider for full-fidelity JSON / long-text editing), the form view (single-row labeled form rendering), wire 4 new commands into `package.json` + `extension.ts` (`vsdb.importCsv`, `vsdb.importJson`, `vsdb.openFormView`, `vsdb.editLargeValue`), the activation events + setting, and the scaffold smoke test. Reuse `connectionManager`, `resultsPanel`, and `queryRunner` — no second cache or wrapper.
+Write RED scaffold test first, then build the import wizard host + webview (CSP-clean, no inline script, all messages through `acquireVsCodeApi()`), the large-value editor (via `UnicDB-lv:` text document content provider for full-fidelity JSON / long-text editing), the form view (single-row labeled form rendering), wire 4 new commands into `package.json` + `extension.ts` (`UnicDB.importCsv`, `UnicDB.importJson`, `UnicDB.openFormView`, `UnicDB.editLargeValue`), the activation events + setting, and the scaffold smoke test. Reuse `connectionManager`, `resultsPanel`, and `queryRunner` — no second cache or wrapper.
 
 ## Target Files
 
@@ -15,26 +15,26 @@ Write RED scaffold test first, then build the import wizard host + webview (CSP-
 - `webview/importWizardMain.ts` **(new)** — compiled webview main; CSP-clean.
 - `src/ui/formView.ts` **(new)** — single-row labeled form renderer (data only; styling lives in webview).
 - `webview/formViewMain.ts` **(new)** — compiled webview main.
-- `src/ui/largeValueEditor.ts` **(new)** — registers `vsdb-lv:` text document content provider; opens a `vscode.TextDocument` for a long value cell.
+- `src/ui/largeValueEditor.ts` **(new)** — registers `UnicDB-lv:` text document content provider; opens a `vscode.TextDocument` for a long value cell.
 - `src/__tests__/dbx01Scaffold.test.ts` **(new)** — scaffold smoke: 4 commands + 2 activation events + 1 setting + 1 view + content provider registered.
 - `src/extension.ts` — additive registration guarded for partial vscode mocks (mirror existing `typeof vscode.languages.registerX === "function"` pattern).
-- `package.json` — additive 4 commands, 2 activation events, 1 setting (`vsdb.import.batchSize`), 1 view contribution for the form panel.
+- `package.json` — additive 4 commands, 2 activation events, 1 setting (`UnicDB.import.batchSize`), 1 view contribution for the form panel.
 
 ## Test Cases (REQUIRED — TDD)
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|-----------|----------|---------------------|
-| 1 | unit | scaffold: 4 command ids registered | activate() registers `vsdb.importCsv`/`vsdb.importJson`/`vsdb.openFormView`/`vsdb.editLargeValue` | partial vscode mock |
-| 2 | unit | scaffold: content provider for `vsdb-lv:` registered | `workspace.registerTextDocumentContentProvider` called with scheme `vsdb-lv` | partial mock |
-| 3 | unit | scaffold: setting `vsdb.import.batchSize` default 1000 | `configuration.get("vsdb.import.batchSize")` defaults to 1000 | configuration stub |
-| 4 | unit | scaffold: 2 activation events present | manifest has `onCommand:vsdb.importCsv` and `onCommand:vsdb.importJson` | parsed package.json |
+| 1 | unit | scaffold: 4 command ids registered | activate() registers `UnicDB.importCsv`/`UnicDB.importJson`/`UnicDB.openFormView`/`UnicDB.editLargeValue` | partial vscode mock |
+| 2 | unit | scaffold: content provider for `UnicDB-lv:` registered | `workspace.registerTextDocumentContentProvider` called with scheme `UnicDB-lv` | partial mock |
+| 3 | unit | scaffold: setting `UnicDB.import.batchSize` default 1000 | `configuration.get("UnicDB.import.batchSize")` defaults to 1000 | configuration stub |
+| 4 | unit | scaffold: 2 activation events present | manifest has `onCommand:UnicDB.importCsv` and `onCommand:UnicDB.importJson` | parsed package.json |
 | 5 | unit | scaffold: view contribution registered for form panel | `contributes.viewsContainer` has the form panel | parsed package.json |
 | 6 | unit | import wizard pre-fills mapping from matching headers | CSV `id,name` over `users(id,name)` auto-maps both | mock parse result |
 | 7 | unit | import wizard requires user confirmation before execute | confirmDangerousStatements called once, then runQuery | mock flow |
 | 8 | unit | form view renders labeled rows | one entry per (column, value) | row fixture |
 | 9 | unit | form view JSON cell expands without truncation | length = original payload length, no `…` | 10 KB JSON payload |
 | 10 | edge | form view null cell renders as `(NULL)` | row entry's value === "(NULL)" | `null` cell |
-| 11 | unit | large-value editor uses TextDocumentContentProvider | opening a `vsdb-lv:` uri returns the original text verbatim | 50 KB string |
+| 11 | unit | large-value editor uses TextDocumentContentProvider | opening a `UnicDB-lv:` uri returns the original text verbatim | 50 KB string |
 | 12 | regression | never truncates long values in the editor | `provideTextDocumentContent` returns input unchanged | 200 KB string |
 | 13 | edge | wizard refuses when no active connection | result.error names "no-connection" | empty ConnectionManager |
 | 14 | regression | no second cache, no second debounce in the import path | importWizard does not import `acSchemaCache` or own a debounce | grep guard in test |
@@ -78,7 +78,7 @@ npm run compile
   - `import { openImportWizard } from "./ui/importWizard";` — `(uri: vscode.Uri, ctx: { connectionManager, schemaCache }) => void`
   - `import { openFormView } from "./ui/formView";` — `(row: Record<string, unknown>, ctx) => void`
   - `import { openLargeValueEditor } from "./ui/largeValueEditor";` — `(cell: { value: string; label: string }) => void`
-  - `export const LARGE_VALUE_SCHEME = "vsdb-lv";` (used by the form view to open a long cell)
+  - `export const LARGE_VALUE_SCHEME = "UnicDB-lv";` (used by the form view to open a long cell)
 
 ---
 ## Discussion
@@ -90,7 +90,7 @@ npm run compile
 ## Executor Report
 EXECUTOR_TOOL: omp-direct (unic-code)
 Status: PASS
-Note: importWizard host (parse -> auto-map case-insensitive -> dry-run -> confirmDangerousStatements -> execute; no-cache/no-timer regression-guarded), formView (pure, null -> (NULL), large-value flag without truncation), largeValueEditor (vsdb-lv: provider, 200 KB verbatim passthrough, Disposable). extension.ts wires 4 commands + provider behind partial-mock guards; package.json gains 4 commands, 2 activation events, vsdb.import.batchSize (default 1000). ahlScaffold command-count assertion relaxed to floor. Verification: DBX-01 targeted 19/19, full 2301 passed | 2 skipped, tsc clean, esbuild clean.
+Note: importWizard host (parse -> auto-map case-insensitive -> dry-run -> confirmDangerousStatements -> execute; no-cache/no-timer regression-guarded), formView (pure, null -> (NULL), large-value flag without truncation), largeValueEditor (UnicDB-lv: provider, 200 KB verbatim passthrough, Disposable). extension.ts wires 4 commands + provider behind partial-mock guards; package.json gains 4 commands, 2 activation events, UnicDB.import.batchSize (default 1000). ahlScaffold command-count assertion relaxed to floor. Verification: DBX-01 targeted 19/19, full 2301 passed | 2 skipped, tsc clean, esbuild clean.
 EXECUTOR_TOOL: omp-direct (unic-code)
 Status: PASS
-Note: importWizard host (parse -> auto-map case-insensitive -> dry-run -> confirmDangerousStatements -> execute; no-cache/no-timer regression-guarded), formView (pure, null -> (NULL), large-value flag without truncation), largeValueEditor (vsdb-lv: provider, 200 KB verbatim passthrough, Disposable). extension.ts wires 4 commands + provider behind partial-mock guards; package.json gains 4 commands, 2 activation events, vsdb.import.batchSize (default 1000). ahlScaffold command-count assertion relaxed to floor. Verification: DBX-01 targeted 19/19, full 2301 passed | 2 skipped, tsc clean, esbuild clean.
+Note: importWizard host (parse -> auto-map case-insensitive -> dry-run -> confirmDangerousStatements -> execute; no-cache/no-timer regression-guarded), formView (pure, null -> (NULL), large-value flag without truncation), largeValueEditor (UnicDB-lv: provider, 200 KB verbatim passthrough, Disposable). extension.ts wires 4 commands + provider behind partial-mock guards; package.json gains 4 commands, 2 activation events, UnicDB.import.batchSize (default 1000). ahlScaffold command-count assertion relaxed to floor. Verification: DBX-01 targeted 19/19, full 2301 passed | 2 skipped, tsc clean, esbuild clean.

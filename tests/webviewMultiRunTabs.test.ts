@@ -11,8 +11,8 @@ interface MediaQueryListLike {
   addListener(): void; removeListener(): void; addEventListener(): void;
   removeEventListener(): void; dispatchEvent(): boolean;
 }
-interface VsdbApi { postMessage: (msg: unknown) => void; }
-interface VsdbDebug { getActiveTab: () => number; gridApi?: unknown; }
+interface UnicDBApi { postMessage: (msg: unknown) => void; }
+interface UnicDBDebug { getActiveTab: () => number; gridApi?: unknown; }
 
 beforeAll(() => {
   const g = globalThis as unknown as {
@@ -42,11 +42,11 @@ const describeIfBundle = describe.runIf(bundleSrc !== null);
 
 function loadBundle(): { received: Array<Record<string, unknown>>; root: HTMLDivElement } {
   if (!bundleSrc) throw new Error("dist/webview.js missing — run `npm run compile` first");
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-webview"></div>';
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = { postMessage: (msg) => received.push(msg as Record<string, unknown>) };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi = () => api;
+  const api: UnicDBApi = { postMessage: (msg) => received.push(msg as Record<string, unknown>) };
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi = () => api;
   (0, eval)(bundleSrc);
   return { received, root };
 }
@@ -67,11 +67,11 @@ function state(results: Record<string, unknown>[]): Record<string, unknown> {
 function dispatch(msg: Record<string, unknown>): void {
   window.dispatchEvent(new MessageEvent("message", { data: msg }));
 }
-function debug(): VsdbDebug {
-  return (window as unknown as { __vsdb: VsdbDebug }).__vsdb;
+function debug(): UnicDBDebug {
+  return (window as unknown as { __UnicDB: UnicDBDebug }).__UnicDB;
 }
 function tabs(root: HTMLDivElement): HTMLButtonElement[] {
-  return Array.from(root.querySelectorAll<HTMLButtonElement>(".vsdb-tab"));
+  return Array.from(root.querySelectorAll<HTMLButtonElement>(".UnicDB-tab"));
 }
 
 describeIfBundle("TASK-AH-003 append-only result tabs", () => {
@@ -93,7 +93,7 @@ describeIfBundle("TASK-AH-003 append-only result tabs", () => {
     const nextTabs = tabs(root);
     expect(nextTabs).toHaveLength(6);
     expect(nextTabs.slice(0, 2).map((tab) => tab.textContent)).toEqual(oldLabels);
-    expect(nextTabs[2]?.classList.contains("vsdb-tab-active")).toBe(true);
+    expect(nextTabs[2]?.classList.contains("UnicDB-tab-active")).toBe(true);
     expect(debug().getActiveTab()).toBe(2);
   });
 
@@ -167,7 +167,7 @@ describeIfBundle("TASK-AH-003 append-only result tabs", () => {
     dispatch(state([result(10), result(11), result(12)]));
     await flush();
     expect(debug().getActiveTab()).toBe(2);
-    expect(tabs(root)[2]?.classList.contains("vsdb-tab-active")).toBe(true);
+    expect(tabs(root)[2]?.classList.contains("UnicDB-tab-active")).toBe(true);
   });
 
   itIfBundle("switching between accumulated tabs keeps each tab's rows readable", async () => {

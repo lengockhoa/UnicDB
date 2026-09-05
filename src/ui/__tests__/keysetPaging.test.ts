@@ -81,7 +81,7 @@ describe("composeKeysetQuery — case 1: second page keys off the last row", () 
       dialect: "postgres",
     });
     expect(r.sql).toBe(
-      "SELECT * FROM (SELECT * FROM events) vsdb_page WHERE status = 'open' AND (\"id\" > 7) ORDER BY \"id\" ASC LIMIT 100",
+      "SELECT * FROM (SELECT * FROM events) UnicDB_page WHERE status = 'open' AND (\"id\" > 7) ORDER BY \"id\" ASC LIMIT 100",
     );
   });
 });
@@ -260,7 +260,7 @@ describe("composeKeysetQuery — fallback guards keep today's behaviour", () => 
     const r = composeKeysetQuery(opts);
     expect(r.hiddenColumns).toEqual(["id"]);
     expect(r.sql).toBe(
-      `SELECT * FROM (SELECT name, "id" FROM public.users) vsdb_page ORDER BY "name" ASC, "id" ASC LIMIT 500 OFFSET 0`,
+      `SELECT * FROM (SELECT name, "id" FROM public.users) UnicDB_page ORDER BY "name" ASC, "id" ASC LIMIT 500 OFFSET 0`,
     );
   });
 });
@@ -326,7 +326,7 @@ describe("composeKeysetQuery — missing-PK projection widening", () => {
       widenPkWithHidden: true,
     });
     expect(r.sql).toBe(
-      "SELECT * FROM (SELECT name, `id` FROM t WHERE created_at > '2020-01-01' ORDER BY name) vsdb_page ORDER BY `name` ASC, `id` ASC LIMIT 50 OFFSET 100",
+      "SELECT * FROM (SELECT name, `id` FROM t WHERE created_at > '2020-01-01' ORDER BY name) UnicDB_page ORDER BY `name` ASC, `id` ASC LIMIT 50 OFFSET 100",
     );
   });
 
@@ -427,9 +427,9 @@ describe("composeKeysetQuery — NULLS FIRST/LAST survives the live paging lane"
       );
       expect(r.sql).toContain(pageMarker);
       // …and shapes NO strictly-after keyset predicate (the predicate would
-      // make `vsdb_page WHERE (<first comparison>` appear; the fallback with
-      // an empty filter composes `vsdb_page ORDER BY` directly).
-      expect(r.sql).not.toContain("vsdb_page WHERE");
+      // make `UnicDB_page WHERE (<first comparison>` appear; the fallback with
+      // an empty filter composes `UnicDB_page ORDER BY` directly).
+      expect(r.sql).not.toContain("UnicDB_page WHERE");
     },
   );
 
@@ -445,7 +445,7 @@ describe("composeKeysetQuery — NULLS FIRST/LAST survives the live paging lane"
       }),
     );
     expect(r.sql).toBe(
-      'SELECT * FROM (SELECT * FROM t) vsdb_page WHERE (("a" > 1) OR ("a" = 1 AND "id" > 2)) ORDER BY "a" ASC, "id" ASC LIMIT 500',
+      'SELECT * FROM (SELECT * FROM t) UnicDB_page WHERE (("a" > 1) OR ("a" = 1 AND "id" > 2)) ORDER BY "a" ASC, "id" ASC LIMIT 500',
     );
     expect(r.sql).not.toContain("OFFSET");
   });

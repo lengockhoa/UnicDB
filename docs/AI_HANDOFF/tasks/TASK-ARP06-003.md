@@ -124,7 +124,7 @@ RED_OUTPUT: |
 
 Verification Output: |
   1) npx vitest run src/ai/__tests__/provider.test.ts
-     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp06-003
+     RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-arp06-003
      ✓ src/ai/__tests__/provider.test.ts  (34 tests) 10ms
      Test Files  1 passed (1)
           Tests  34 passed (34)
@@ -133,7 +133,7 @@ Verification Output: |
      (exit 0)
 
   2) npm run typecheck
-     > vsdb@1.41.0 typecheck
+     > UnicDB@1.41.0 typecheck
      > tsc --noEmit
      (exit 0)
 

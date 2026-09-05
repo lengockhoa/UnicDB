@@ -15,7 +15,7 @@ fake password, with dispose blocking later adapter use.
 
 - `src/adapters/factory.ts` — add `case "bigquery"` returning `new BigQueryAdapter(cfg)`
   (password argument ignored for this driver); keep the `never` exhaustiveness arm.
-- `src/core/connectionManager.ts` — bigquery guard: skip `vsdb.pass.<id>`
+- `src/core/connectionManager.ts` — bigquery guard: skip `UnicDB.pass.<id>`
   store/get/delete on add/edit/connect paths; dispose sets a closed flag so post-dispose
   adapter construction fails fast (explicit error, no client built); double-dispose no-op.
 
@@ -25,7 +25,7 @@ fake password, with dispose blocking later adapter use.
 |---|------|----------|----------|---------------------|
 | 1 | unit | factory returns BigQueryAdapter for bigquery cfg | `createAdapter(bqCfg, "")` instanceof `BigQueryAdapter`; duck-type has `connect/close/runQuery/testConnection/listSchemas` | bqCfg per TASK-BQ01-001 fixture |
 | 2 | edge-exhaustive | switch stays exhaustive | typecheck passes with `_exhaustive: never` arm intact (negative: removing a case must fail compile — verified by reviewer reading the file, not by a test) | source inspection + typecheck |
-| 3 | edge-admission | manager addConnection(bigqueryCfg) never touches SecretStorage | with spied fake SecretStorage: `get`/`store` never called with key `vsdb.pass.<id>`; metadata persisted; probe via injected factory fake resolves | `connectionManager.test.ts` fake vscode harness + injected factory |
+| 3 | edge-admission | manager addConnection(bigqueryCfg) never touches SecretStorage | with spied fake SecretStorage: `get`/`store` never called with key `UnicDB.pass.<id>`; metadata persisted; probe via injected factory fake resolves | `connectionManager.test.ts` fake vscode harness + injected factory |
 | 4 | edge-concurrent | dispose-during / after dispose | `dispose(); dispose()` idempotent; after dispose, adapter request for the bigquery connection rejects with explicit closed-error and the client factory was NOT invoked again | manager with injected factory spy |
 | 5 | edge-state | edit + connect paths skip password demand | `editConnection(bigqueryId, cfg)` (no password arg) does not throw "password not found"; `getAdapter()` for active bigquery connection does not call `ctx.secrets.get` | fake harness, spy on secrets |
 | 6 | regression | existing pg flow unchanged | pre-existing `connectionManager.test.ts` + `factory.test.ts` suites pass unmodified (SecretStorage flow for postgres identical) | current suites |
@@ -153,7 +153,7 @@ adapter construction fails fast via `ConnectionManagerDisposedError`.
 
 ```text
 $ npx vitest run src/adapters/__tests__/factory.test.ts src/core/__tests__/connectionManager.test.ts
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq01-003
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq01-003
 
  ✓ src/core/__tests__/connectionManager.test.ts  (43 tests) 82ms
  ✓ src/adapters/__tests__/factory.test.ts  (6 tests) 2ms
@@ -166,14 +166,14 @@ $ npx vitest run src/adapters/__tests__/factory.test.ts src/core/__tests__/conne
 
 ```text
 $ npm run typecheck
-> vsdb@1.46.0 typecheck
+> UnicDB@1.46.0 typecheck
 > tsc --noEmit
 (exit 0, no output)
 ```
 
 ```text
 $ npx vitest run src/adapters/__tests__/bigquery.test.ts
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq01-003
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq01-003
 
  ✓ src/adapters/__tests__/bigquery.test.ts  (6 tests) 4ms
 
@@ -191,11 +191,11 @@ $ npx vitest run src/adapters/__tests__/factory.test.ts --reporter verbose
   → Driver "bigquery" is not implemented yet (TASK-004 will add it).
 
 × src/core/__tests__/connectionManager.test.ts > ConnectionManager — TASK-BQ01-003 bigquery admission > TASK-BQ01-003 #3 — addConnection(bigqueryCfg) never touches SecretStorage
-  → expected [ 'vsdb.pass.bq1' ] to not include 'vsdb.pass.bq1'
+  → expected [ 'UnicDB.pass.bq1' ] to not include 'UnicDB.pass.bq1'
 × ... > TASK-BQ01-003 #4 — dispose idempotent + post-dispose adapter use fails fast
   → expected { id: 'bq1', ... } to be null
 × ... > TASK-BQ01-003 #5 — edit + getAdapter paths skip password demand for bigquery
-  → expected [ 'vsdb.pass.bq1' ] to not include 'vsdb.pass.bq1'
+  → expected [ 'UnicDB.pass.bq1' ] to not include 'UnicDB.pass.bq1'
 ```
 
 ### Issues / Notes
@@ -283,7 +283,7 @@ recommended test strengthening.
 
 ```text
 $ npx vitest run src/core/__tests__/connectionManager.test.ts -t "TASK-BQ01-003 #4"
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq01-003-fix
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq01-003-fix
 
  ❯ src/core/__tests__/connectionManager.test.ts > ConnectionManager — TASK-BQ01-003 bigquery admission > TASK-BQ01-003 #4 — dispose idempotent + post-dispose adapter use fails fast
    × TASK-BQ01-003 #4 — dispose idempotent + post-dispose adapter use fails fast
@@ -328,7 +328,7 @@ factory and produced a fake adapter instead of rejecting. RED confirmed.
 
 ```text
 $ npx vitest run src/adapters/__tests__/factory.test.ts src/core/__tests__/connectionManager.test.ts
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq01-003-fix
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq01-003-fix
 
  ✓ src/core/__tests__/connectionManager.test.ts  (43 tests) 72ms
  ✓ src/adapters/__tests__/factory.test.ts  (6 tests) 2ms
@@ -341,7 +341,7 @@ $ npx vitest run src/adapters/__tests__/factory.test.ts src/core/__tests__/conne
 
 ```text
 $ npm run typecheck
-> vsdb@1.46.0 typecheck
+> UnicDB@1.46.0 typecheck
 > tsc --noEmit
 (exit 0, no output)
 ```

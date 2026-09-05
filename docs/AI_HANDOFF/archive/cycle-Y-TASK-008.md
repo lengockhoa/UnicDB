@@ -61,7 +61,7 @@ script. Global constraints: PLAN.md §7.
 
 - Consumes: existing `loadBundle()`, `dispatchState(msg)`, `getGridApi()`, `requeries(received)`,
   and `flushGridEvents()` helpers in `webviewServerSort.test.ts:78-155`; bundle debug getter
-  `window.__vsdb?.gridApi`.
+  `window.__UnicDB?.gridApi`.
 - Produces: deterministic test harness only; no production protocol or API.
 
 ---

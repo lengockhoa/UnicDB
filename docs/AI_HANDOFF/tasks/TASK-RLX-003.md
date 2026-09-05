@@ -70,7 +70,7 @@ EXECUTOR_SUBAGENT: feature-implementer
 RED_OUTPUT: |
   npx vitest run src/core/importer/__tests__/importExecute.test.ts (before implementation):
 
-   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-rlx-003
+   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-rlx-003
 
    ❯ src/core/importer/__tests__/importExecute.test.ts  (15 tests | 2 failed) 9ms
      ❯ executeImport — structural plan gate > declared batch lacks SQL statement → gate error, no transaction
@@ -105,7 +105,7 @@ RED_OUTPUT: |
 Verification Output: |
   Command 1 — npx vitest run src/core/importer/__tests__/importExecute.test.ts (after implementation):
 
-   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-rlx-003
+   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-rlx-003
 
    ✓ src/core/importer/__tests__/importExecute.test.ts  (15 tests) 5ms
 
@@ -116,7 +116,7 @@ Verification Output: |
 
   Command 2 — npm run typecheck:
 
-   > vsdb@1.26.0 typecheck
+   > UnicDB@1.26.0 typecheck
    > tsc --noEmit
 
    TYPECHECK_EXIT=0
@@ -203,7 +203,7 @@ VERIFICATION_RERUN: |
         Tests  15 passed (15)
    Duration  204ms
   $ npm run typecheck
-  > vsdb@1.26.0 typecheck
+  > UnicDB@1.26.0 typecheck
   > tsc --noEmit
   exit 0
 FINDINGS:

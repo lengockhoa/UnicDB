@@ -143,9 +143,9 @@ export interface TunnelProc {
 }
 
 /**
- * Parse one `ps -o pid=,args=` line carrying our `vsdb-tunnel` marker.
+ * Parse one `ps -o pid=,args=` line carrying our `UnicDB-tunnel` marker.
  * Returns null for foreign lines (header, other processes, empty input).
- * The manager tags spawned processes with `vsdb-tunnel:<localPort>` in argv.
+ * The manager tags spawned processes with `UnicDB-tunnel:<localPort>` in argv.
  */
 export function parseTunnelProcLine(line: string): TunnelProc | null {
   const trimmed = line.trim();
@@ -153,8 +153,8 @@ export function parseTunnelProcLine(line: string): TunnelProc | null {
   const m = /^(\d+)\s+(.*)$/.exec(trimmed);
   if (!m) return null;
   const args = m[2];
-  if (!args.includes("vsdb-tunnel")) return null;
-  const portMatch = /vsdb-tunnel:(\d+)/.exec(args);
+  if (!args.includes("UnicDB-tunnel")) return null;
+  const portMatch = /UnicDB-tunnel:(\d+)/.exec(args);
   return {
     pid: Number.parseInt(m[1], 10),
     localPort: portMatch ? Number.parseInt(portMatch[1], 10) : undefined,

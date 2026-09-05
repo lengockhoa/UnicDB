@@ -62,7 +62,7 @@ Host modules:
     / `{ type:"er_error", message }`;
   - webview→host: `{ type:"er_ready" }` / `{ type:"er_export_request" }`
     / `{ type:"er_export_svg", svg, schema }` (host saves via workspace
-    save dialog as `vsdb-er-<schema>.svg`) / unknown types ignored by a
+    save dialog as `UnicDB-er-<schema>.svg`) / unknown types ignored by a
     `isErPanelMessage` guard;
   - host posts model on `er_ready` (webview may load after first post).
 - `src/ui/erPanelHtml.ts` — pure CSP shell (mirror of comparePanelHtml:
@@ -75,11 +75,11 @@ Host modules:
 
 Wiring:
 
-- `src/extension.ts` — `vsdb.relationshipExplorer` command:
-  driver gate (same refusal UX as vsdb.compareTables) + schema QuickPick,
+- `src/extension.ts` — `UnicDB.relationshipExplorer` command:
+  driver gate (same refusal UX as UnicDB.compareTables) + schema QuickPick,
   then `runErExplorer` → `ErPanel.show(result, { schema })`.
-- `package.json` — command `vsdb.relationshipExplorer`
-  (category VSDB, icon `$(circuit-board)`), placed after vsdb.compareTables.
+- `package.json` — command `UnicDB.relationshipExplorer`
+  (category UnicDB, icon `$(circuit-board)`), placed after UnicDB.compareTables.
 - `esbuild.js` — `erPanelConfig` entry (webview/erPanelMain.ts →
   dist/erPanel.js), ctx10 + matching build-list entry.
 
@@ -107,7 +107,7 @@ Wiring:
   insertAdjacentHTML / eval / new Function; word-boundary regexes
   (DBX-03 lesson: comment text like "uses innerHTML" trips naive greps).
 - `src/extension.test.ts` — extend the later-cycles registration list
-  with `vsdb.relationshipExplorer` (T18 wiring contracts).
+  with `UnicDB.relationshipExplorer` (T18 wiring contracts).
 
 ## §4 Task split
 

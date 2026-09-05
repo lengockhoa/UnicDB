@@ -39,7 +39,7 @@ interface EditStateHandle {
   dirtyCount: number;
 }
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
   commit?: () => void;
   simulateCellEdit?: (
@@ -51,22 +51,22 @@ interface VsdbApi {
   editState?: EditStateHandle;
 }
 
-interface VsdbDebug {
+interface UnicDBDebug {
   render?: () => void;
   postToHost?: (msg: unknown) => void;
   formatCell?: (v: unknown) => string;
   gridApi?: GridApi | null;
   editState?: EditStateHandle;
   commit?: () => void;
-  simulateCellEdit?: VsdbApi["simulateCellEdit"];
+  simulateCellEdit?: UnicDBApi["simulateCellEdit"];
 }
 
-function vsdbApi(): VsdbDebug | null {
-  return (window as unknown as { __vsdb?: VsdbDebug }).__vsdb ?? null;
+function UnicDBApi(): UnicDBDebug | null {
+  return (window as unknown as { __UnicDB?: UnicDBDebug }).__UnicDB ?? null;
 }
 
 function getEditState(): EditStateHandle | null {
-  return vsdbApi()?.editState ?? null;
+  return UnicDBApi()?.editState ?? null;
 }
 
 beforeAll(() => {
@@ -112,7 +112,7 @@ function loadBundle(): LoadResult {
     },
   });
   // Reset DOM so each test starts clean.
-  document.body.innerHTML = '<div id="vsdb-root"></div>';
+  document.body.innerHTML = '<div id="UnicDB-root"></div>';
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
   const fn = new Function(bundleSrc ?? "") as () => void;
   fn();
@@ -162,14 +162,14 @@ describeIfBundle("webview/main.ts — keybinding filter (Fix R1)", () => {
 
     const editState = getEditState();
     expect(editState).toBeTruthy();
-    const sim = vsdbApi()?.simulateCellEdit;
+    const sim = UnicDBApi()?.simulateCellEdit;
     expect(sim).toBeTruthy();
     sim!(0, "name", "x", "a");
     await flush();
 
     // Build a stand-alone <input> appended INSIDE the grid wrap (so the
     // capture-phase listener on the wrap actually sees the event).
-    const wrap = document.querySelector(".vsdb-grid-host") as HTMLElement | null;
+    const wrap = document.querySelector(".UnicDB-grid-host") as HTMLElement | null;
     expect(wrap).toBeTruthy();
     const input = document.createElement("input");
     wrap!.appendChild(input);
@@ -199,13 +199,13 @@ describeIfBundle("webview/main.ts — keybinding filter (Fix R1)", () => {
     await flush();
 
     const editState = getEditState();
-    const sim = vsdbApi()?.simulateCellEdit;
+    const sim = UnicDBApi()?.simulateCellEdit;
     sim!(0, "name", "x", "a");
     await flush();
     expect(editState!.dirtyCount).toBe(1);
 
     // The persistent searchInput lives inside the grid wrap toolbar.
-    const wrap = document.querySelector(".vsdb-grid-host") as HTMLElement | null;
+    const wrap = document.querySelector(".UnicDB-grid-host") as HTMLElement | null;
     expect(wrap).toBeTruthy();
     const input = document.createElement("input");
     input.type = "search";
@@ -233,12 +233,12 @@ describeIfBundle("webview/main.ts — keybinding filter (Fix R1)", () => {
     await flush();
 
     const editState = getEditState();
-    const sim = vsdbApi()?.simulateCellEdit;
+    const sim = UnicDBApi()?.simulateCellEdit;
     sim!(0, "name", "x", "a");
     await flush();
     expect(editState!.dirtyCount).toBe(1);
 
-    const wrap = document.querySelector(".vsdb-grid-host") as HTMLElement | null;
+    const wrap = document.querySelector(".UnicDB-grid-host") as HTMLElement | null;
     expect(wrap).toBeTruthy();
 
     received.length = 0;
@@ -273,13 +273,13 @@ describeIfBundle("webview/main.ts — banner refusal persistence (Fix R1)", () =
     });
     await flush();
 
-    const banner = document.querySelector(".vsdb-save-banner");
+    const banner = document.querySelector(".UnicDB-save-banner");
     expect(banner).toBeTruthy();
     expect(banner!.textContent).toContain("PRIMARY KEY");
     // Banner is visible (no hidden attribute).
     const hidden =
-      banner!.classList.contains("vsdb-hidden") ||
-      banner!.classList.contains("vsdb-save-banner-hidden") ||
+      banner!.classList.contains("UnicDB-hidden") ||
+      banner!.classList.contains("UnicDB-save-banner-hidden") ||
       banner!.getAttribute("hidden") !== null;
     expect(hidden).toBe(false);
   });
@@ -297,7 +297,7 @@ describeIfBundle("webview/main.ts — banner refusal persistence (Fix R1)", () =
     });
     await flush();
 
-    const before = document.querySelector(".vsdb-save-banner");
+    const before = document.querySelector(".UnicDB-save-banner");
     expect(before).toBeTruthy();
     const beforeText = before!.textContent;
 
@@ -323,7 +323,7 @@ describeIfBundle("webview/main.ts — banner refusal persistence (Fix R1)", () =
     });
     await flush();
 
-    const after = document.querySelector(".vsdb-save-banner");
+    const after = document.querySelector(".UnicDB-save-banner");
     expect(after).toBeTruthy();
     expect(after!.textContent).toBe(beforeText);
   });

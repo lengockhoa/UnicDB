@@ -28,12 +28,12 @@ function resetPosted() {
 function renderEmptyState(panel: { innerHTML: string; appendChild: (n: unknown) => void }, busy: boolean): void {
   panel.innerHTML = "";
   if (busy) {
-    const empty = { className: "vsdb-empty", textContent: "Running…" };
+    const empty = { className: "UnicDB-empty", textContent: "Running…" };
     panel.appendChild(empty);
     return;
   }
-  const empty = { className: "vsdb-empty-state" };
-  const icon = { className: "vsdb-empty-state-icon", textContent: "▭" };
+  const empty = { className: "UnicDB-empty-state" };
+  const icon = { className: "UnicDB-empty-state-icon", textContent: "▭" };
   const text = { textContent: "No runs yet — run a query to see results here." };
   empty.children = [icon, text];
   panel.appendChild(empty);
@@ -53,23 +53,23 @@ function makeCloseButtonHandler(index: number) {
 // ---- Tests ----------------------------------------------------------------
 
 describe("TASK-UX3-001 × close button", () => {
-  it("unit: rebuildTabs renders one vsdb-tab-close button per tab", () => {
+  it("unit: rebuildTabs renders one UnicDB-tab-close button per tab", () => {
     // We assert the *contract*: the close-button className is used per tab.
     const results = [{ status: "done" }, { status: "error" }];
     const closes = results.map((_, i) => ({
       type: "button",
-      className: "vsdb-tab-close",
+      className: "UnicDB-tab-close",
       "aria-label": "Close tab",
       onClick: makeCloseButtonHandler(i),
     }));
     expect(closes.length).toBe(results.length);
-    expect(closes.every((c) => c.className === "vsdb-tab-close")).toBe(true);
+    expect(closes.every((c) => c.className === "UnicDB-tab-close")).toBe(true);
   });
 
   it("unit: close button has aria-label='Close tab' and type='button'", () => {
     const btn = {
       type: "button",
-      className: "vsdb-tab-close",
+      className: "UnicDB-tab-close",
       "aria-label": "Close tab",
     };
     expect(btn["aria-label"]).toBe("Close tab");
@@ -106,10 +106,10 @@ describe("TASK-UX3-001 empty state", () => {
     expect(panel.innerHTML).toBe("");
     expect(panel.children.length).toBe(1);
     const empty = panel.children[0] as { className: string; children: unknown[] };
-    expect(empty.className).toBe("vsdb-empty-state");
+    expect(empty.className).toBe("UnicDB-empty-state");
     const icon = (empty.children[0] as { className: string; textContent: string });
     const text = (empty.children[1] as { textContent: string });
-    expect(icon.className).toBe("vsdb-empty-state-icon");
+    expect(icon.className).toBe("UnicDB-empty-state-icon");
     expect(icon.textContent).toBe("▭");
     expect(text.textContent).toBe("No runs yet — run a query to see results here.");
   });
@@ -123,7 +123,7 @@ describe("TASK-UX3-001 empty state", () => {
     renderEmptyState(panel as any, true);
     expect(panel.children.length).toBe(1);
     const empty = panel.children[0] as { className: string; textContent: string };
-    expect(empty.className).toBe("vsdb-empty");
+    expect(empty.className).toBe("UnicDB-empty");
     expect(empty.textContent).toBe("Running…");
   });
 });

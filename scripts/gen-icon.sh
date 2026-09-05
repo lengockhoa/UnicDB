@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# scripts/gen-icon.sh — generate media/icon.png (128×128) from media/vsdb.svg.
+# scripts/gen-icon.sh — generate media/icon.png (128×128) from media/UnicDB.svg.
 # Prefers rsvg-convert; falls back to sips+qlmanage or a python3 generator.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SVG="$ROOT/media/vsdb.svg"
+SVG="$ROOT/media/UnicDB.svg"
 PNG="$ROOT/media/icon.png"
 
 fallback_python() {
   python3 - "$SVG" "$PNG" <<'PY'
 import sys, struct, zlib, pathlib
 svg_path, png_path = sys.argv[1], sys.argv[2]
-# VSDB mandate: 128x128 icon regardless of SVG viewBox.
+# UnicDB mandate: 128x128 icon regardless of SVG viewBox.
 W = H = 128
 
 def png_solid(w, h, rgb):
@@ -53,7 +53,7 @@ fi
 if command -v rsvg-convert >/dev/null 2>&1; then
   rsvg-convert -w 128 -h 128 "$SVG" -o "$PNG"
 elif command -v qlmanage >/dev/null 2>&1; then
-  TMP="${TMPDIR:-/tmp}/vsdb-icon-$$.png"
+  TMP="${TMPDIR:-/tmp}/UnicDB-icon-$$.png"
   if qlmanage -t -s 128 -o "${TMPDIR:-/tmp}" "$SVG" >/dev/null 2>&1 && [[ -f "$TMP" ]]; then
     mv "$TMP" "$PNG"
   else

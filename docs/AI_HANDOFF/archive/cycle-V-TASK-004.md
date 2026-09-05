@@ -152,7 +152,7 @@ deliberate known gap recorded in PLAN.md, not a bug for the reviewer to flag.
 WHERE inside it — TASK-005 passes `buildFilterWhere`'s output through the `where` argument.
 
 **Typed filter values (plan review R1, finding 4).** AG Grid's set-filter model holds
-*display strings*: VSDB builds those entries with `String(v)` in `buildSetFilterEntries`
+*display strings*: UnicDB builds those entries with `String(v)` in `buildSetFilterEntries`
 (`src/ui/resultsGridModel.ts:1151-1176`), and `formatCell` (`:341`) turns `Date` into an
 ISO string and objects into JSON. If `buildFilterWhere` pushed those strings straight
 through `sqlLiteral`, every predicate would be a **string** literal:
@@ -209,7 +209,7 @@ EXECUTOR_SUBAGENT: feature-implementer
 ### RED_OUTPUT (fresh, before implementation)
 
 ```
-RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-004
+RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-004
 ❯ src/ui/__tests__/queryComposer.test.ts  (0 test)
 FAIL  src/ui/__tests__/queryComposer.test.ts
 Error: Failed to load url ../queryComposer (resolved id: ../queryComposer)
@@ -252,7 +252,7 @@ Baseline 1327 passed / 2 skipped / 0 failed → +19 (this task's cases) = 1346, 
   require the module to import nothing from `src/adapters/*`, and importing postgres.ts would
   drag the `pg` driver into the webview bundle (esbuild browser platform). I composed the
   postgres arm of `composeSortQuery` inline, byte-identical to `getTableSortQuery`
-  (`SELECT * FROM (inner) vsdb_sort[ WHERE …] ORDER BY quoteIdent(col,"postgres") ASC|DESC`).
+  (`SELECT * FROM (inner) UnicDB_sort[ WHERE …] ORDER BY quoteIdent(col,"postgres") ASC|DESC`).
   Case 13 compares against the real helper and passes. mssql arm likewise inline (TASK-006 may
   later replace it with a delegation to its adapter export). No `NotImplementedError` thrown.
 - **Temporal normalization (case 16)** handles both `Date` instances and canonical

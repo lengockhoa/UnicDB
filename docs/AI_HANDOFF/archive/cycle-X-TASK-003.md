@@ -17,7 +17,7 @@ Make `resultsGridModelNull.test.ts` deterministic by evaluating the webview bund
 
 | # | Type | Test Name | Expected | Pre-state / Fixture |
 |---|---|---|---|---|
-| 1 | happy | Long read-only value opens one viewer | After replacing column `s` with `editable: false`, a double-click creates exactly one `.vsdb-value-viewer` whose text is exactly 500 `x` characters. | One evaluated bundle; `GridApi.flushAllAnimationFrames()` then `vi.waitFor` |
+| 1 | happy | Long read-only value opens one viewer | After replacing column `s` with `editable: false`, a double-click creates exactly one `.UnicDB-value-viewer` whose text is exactly 500 `x` characters. | One evaluated bundle; `GridApi.flushAllAnimationFrames()` then `vi.waitFor` |
 | 2 | edge — ordering/load | Shuffled suite remains deterministic | Five single-thread shuffled seeds pass all NULL/viewer cases with no retry and no fixed 50 ms waits. | Seeds 1–5 after `npm run compile` |
 | 3 | edge — cleanup/state | Prior editor/viewer cannot leak | Before each case there is no active editor and no viewer; after editable-null double-click editing count is `> 0` and viewer count is `0`. | Previous case may have opened viewer/editor |
 | 4 | regression | Bundle installs one message lifecycle | Bundle evaluation occurs once for the describe block rather than once per `it`; case 6 no longer races five stale message handlers/timer closures. | Existing six cases currently call `loadBundle()` independently |
@@ -54,7 +54,7 @@ npm run typecheck
 
 ## Interfaces
 
-- Consumes: existing `GridApi` methods `getEditingCells(): CellPosition[]`, `stopEditing(...)`, `setGridOption(...)`, and `flushAllAnimationFrames(): void`; bundle debug getter `window.__vsdb.gridApi`.
+- Consumes: existing `GridApi` methods `getEditingCells(): CellPosition[]`, `stopEditing(...)`, `setGridOption(...)`, and `flushAllAnimationFrames(): void`; bundle debug getter `window.__UnicDB.gridApi`.
 - Produces: deterministic test harness only; no production interface.
 
 ---
@@ -65,7 +65,7 @@ npm run typecheck
 Confirmed source evidence: each current `loadBundle()` executes the whole bundle, whose anonymous `window.addEventListener("message", ...)` cannot be removed by the test. Case 6 is the sixth evaluation. Preserve behavior while fixing this lifecycle leak.
 
 ### 2026-08-26 · executor · claude-code/bao-sonnet
-Implemented the single-evaluation/shared-grid approach. The reset uses the existing host message lifecycle plus `stopEditing`, Escape, row cleanup, and `flushAllAnimationFrames`; observable DOM/API boundaries are awaited with bounded `vi.waitFor`. No retry or fixed 50 ms waits remain. The initial RED exposed stale DOM/state after per-test bundle evaluation: test 2 saw one unexpected `.vsdb-null`, and test 3 saw two spans instead of one; this confirmed the lifecycle problem before the reset harness was completed.
+Implemented the single-evaluation/shared-grid approach. The reset uses the existing host message lifecycle plus `stopEditing`, Escape, row cleanup, and `flushAllAnimationFrames`; observable DOM/API boundaries are awaited with bounded `vi.waitFor`. No retry or fixed 50 ms waits remain. The initial RED exposed stale DOM/state after per-test bundle evaluation: test 2 saw one unexpected `.UnicDB-null`, and test 3 saw two spans instead of one; this confirmed the lifecycle problem before the reset harness was completed.
 
 ---
 
@@ -76,18 +76,18 @@ EXECUTOR_SUBAGENT: feature-implementer
 RED_OUTPUT: |
   Targeted RED after the first failing-state harness change (single bundle evaluation plus shared reset still incomplete):
 
-  FAIL src/ui/__tests__/resultsGridModelNull.test.ts > TASK-004 — NULL cell display + value viewer > 2. non-null value renders normally (no .vsdb-null)
+  FAIL src/ui/__tests__/resultsGridModelNull.test.ts > TASK-004 — NULL cell display + value viewer > 2. non-null value renders normally (no .UnicDB-null)
   AssertionError: expected 1 to be +0 // Object.is equality
   ❯ src/ui/__tests__/resultsGridModelNull.test.ts:296:58
       294|     getGridApi()?.flushAllAnimationFrames();
       295|     await waitForGrid(() =>
-      296|       expect(root.querySelectorAll(".vsdb-null").length).toBe(0),
+      296|       expect(root.querySelectorAll(".UnicDB-null").length).toBe(0),
       297|     );
 
   FAIL src/ui/__tests__/resultsGridModelNull.test.ts > TASK-004 — NULL cell display + value viewer > 3. undefined value renders "(NULL)" same as null
   AssertionError: expected 2 to be 1 // Object.is equality
   ❯ src/ui/__tests__/resultsGridModelNull.test.ts:328:30
-      326|     const nullSpans = root.querySelectorAll(".vsdb-null");
+      326|     const nullSpans = root.querySelectorAll(".UnicDB-null");
       327|     expect(nullSpans.length).toBe(1);
 
   This was the deterministic RED from stale shared bundle/grid state; after completing the observable reset boundary, the targeted suite passed.

@@ -37,7 +37,7 @@ private handleClear(): void {
 
 // runBuiltinTurn catch (keep the abort branch intact) — surface the standard message:
 // err.message === "AI is not configured" → post error bubble:
-//   "AI is not configured — open VSDB: Open AI Settings to configure baseUrl/model/API key"
+//   "AI is not configured — open UnicDB: Open AI Settings to configure baseUrl/model/API key"
 // (original message stays as the prefix; do NOT change the runAgent throw — only enrich it at the panel.)
 
 // webview/aiChatPanelMain.ts — NEW applyInit:
@@ -92,7 +92,7 @@ npx tsc --noEmit
 ## Interfaces
 
 - Consumes: `AiChatPanelInit { type:"init"; hasHistory: boolean }`, `setBusy(busy: boolean): void`, `deStreamOpenBubble(): void` (already present in the webview); panel private fields `token/currentAbort/turnDonePosted/history` + `cancelAllPending()`/`post()`.
-- Produces: new contract — "every `init{hasHistory:false}` from the host ⇒ webview goes idle + de-streams" (webview+host lockstep, locked by jsdom test); standard error message `"AI is not configured — open VSDB: Open AI Settings to configure baseUrl/model/API key"`. The wire protocol shape is unchanged (init/done stay the same) — TASK-002/004 do not depend on it.
+- Produces: new contract — "every `init{hasHistory:false}` from the host ⇒ webview goes idle + de-streams" (webview+host lockstep, locked by jsdom test); standard error message `"AI is not configured — open UnicDB: Open AI Settings to configure baseUrl/model/API key"`. The wire protocol shape is unchanged (init/done stay the same) — TASK-002/004 do not depend on it.
 
 ---
 
@@ -121,7 +121,7 @@ Implemented TASK-003 (D2 Clear mid-stream recovery + D3 not-configured error sur
 cancels pending ACP requests, then posts `init{hasHistory:false}+done` as a belt. The
 webview `applyInit` now also `setBusy(false)` + `deStreamOpenBubble()` on `hasHistory:false`
 (defense-in-depth vs. host's `done`). `runBuiltinTurn` enriches the literal
-`"AI is not configured"` provider error with the VSDB: Open AI Settings menu path.
+`"AI is not configured"` provider error with the UnicDB: Open AI Settings menu path.
 
 ### RED output (tests against unmodified base 547880b)
 
@@ -194,7 +194,7 @@ EXIT: 0
 - [x] Clear mid-stream: input re-enabled (webview busy=false on init),
       turn aborted (currentAbort.abort + token/currentAbort nulled),
       next turn runs fresh.
-- [x] Not-configured: error bubble contains "AI is not configured — open VSDB:
+- [x] Not-configured: error bubble contains "AI is not configured — open UnicDB:
       Open AI Settings to configure baseUrl/model/API key"; panel not hung.
 - [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR (pending — this is the
       executor report; reviewer will append §Reviewer Verdict next).
@@ -202,7 +202,7 @@ EXIT: 0
 ### Issues / Notes
 
 - Test infra in worktree: `node_modules/.bin/esbuild` was missing — fixed by
-  symlinking `node_modules -> /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/node_modules`
+  symlinking `node_modules -> /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/node_modules`
   (parent already had it installed). Same fix as sibling worktrees (T8/T9).
 - Wire-protocol shape is unchanged (init/done preserved). Other agents (T2/T4/T7)
   are unaffected.

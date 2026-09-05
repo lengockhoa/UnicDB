@@ -226,7 +226,7 @@ function makeValidSnapshot(): ConsoleDraftSnapshot {
 
 describe("CONSOLE_DRAFTS_* constants (ARP-08)", () => {
   it("exports the persisted-draft storage key, schema version, and caps", () => {
-    expect(CONSOLE_DRAFTS_KEY).toBe("vsdb.consoleDrafts");
+    expect(CONSOLE_DRAFTS_KEY).toBe("UnicDB.consoleDrafts");
     expect(CONSOLE_DRAFT_SNAPSHOT_VERSION).toBe(1);
     expect(CONSOLE_DRAFTS_MAX_TABS).toBe(20);
     expect(CONSOLE_DRAFTS_MAX_BUFFER_CHARS).toBe(64_000);

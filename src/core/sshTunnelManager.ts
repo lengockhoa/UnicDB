@@ -35,7 +35,7 @@ export interface TunnelExitSubscription {
 }
 
 /** Marker token added to spawned argv so `ps` parsing can identify our tunnels. */
-const MARKER = "vsdb-tunnel";
+const MARKER = "UnicDB-tunnel";
 
 /**
  * Bind an ephemeral port, read it, and release it for ssh to re-bind.
@@ -209,7 +209,7 @@ export class SshTunnelManager {
     const args = [
       ...buildTunnelArgs({ ...cfg, localPort }),
       "-o",
-      `SetEnv=VSDB_TUNNEL=${MARKER}:${key}`,
+      `SetEnv=UnicDB_TUNNEL=${MARKER}:${key}`,
     ];
 
     const child = spawn(this.sshPath, args, {

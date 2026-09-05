@@ -107,7 +107,7 @@ RED_OUTPUT: |
 
 Verification Output: |
   $ npm run typecheck
-  > vsdb@1.6.3 typecheck
+  > UnicDB@1.6.3 typecheck
   > tsc --noEmit
   (clean, no output)
 

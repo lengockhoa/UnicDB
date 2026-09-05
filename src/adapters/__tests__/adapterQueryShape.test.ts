@@ -21,8 +21,8 @@ function cfg(driver: ConnectionConfig["driver"] = "postgres"): ConnectionConfig 
     driver,
     host: "127.0.0.1",
     port: 5433,
-    user: "vsdb",
-    database: "vsdb",
+    user: "UnicDB",
+    database: "UnicDB",
   };
 }
 

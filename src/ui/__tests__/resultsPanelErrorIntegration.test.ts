@@ -93,8 +93,8 @@ vi.mock("vscode", () => {
     },
     workspace: {
       // confirmDangerousStatements reads two getConfiguration keys:
-      //   vsdb.confirmDestructive  (default true)
-      //   vsdb.admin.confirmGrant  (default true)
+      //   UnicDB.confirmDestructive  (default true)
+      //   UnicDB.admin.confirmGrant  (default true)
       // For SELECT 1 (a safe statement) neither prompt is shown, so the
       // get() function only needs to return undefined for these keys.
       getConfiguration: vi.fn(() => ({

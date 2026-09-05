@@ -354,7 +354,7 @@ describe("AcpClient", () => {
     const client = new AcpClient(transport);
     const descriptor = {
       type: "http",
-      name: "vsdb",
+      name: "UnicDB",
       url: "http://127.0.0.1:54321",
       headers: [{ name: "Authorization", value: "Bearer test-token" }],
     };

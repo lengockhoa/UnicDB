@@ -1,6 +1,6 @@
 {
-  "name": "vsdb",
-  "displayName": "VSDB — Run SQL from VS Code",
+  "name": "UnicDB",
+  "displayName": "UnicDB — Run SQL from VS Code",
   "description": "Run SQL against PostgreSQL, MySQL/MariaDB and SQL Server directly from VS Code. Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) executes the selected statement.",
   "version": "1.51.5",
   "publisher": "lengockhoa",
@@ -26,396 +26,396 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/lengockhoa/VSDB"
+    "url": "https://github.com/lengockhoa/UnicDB"
   },
   "bugs": {
-    "url": "https://github.com/lengockhoa/VSDB/issues"
+    "url": "https://github.com/lengockhoa/UnicDB/issues"
   },
-  "homepage": "https://github.com/lengockhoa/VSDB#readme",
+  "homepage": "https://github.com/lengockhoa/UnicDB#readme",
   "activationEvents": [
     "onLanguage:sql",
-    "onCommand:vsdb.addConnection",
-    "onCommand:vsdb.editConnection",
-    "onCommand:vsdb.deleteConnection",
-    "onCommand:vsdb.selectConnection",
-    "onCommand:vsdb.runQuery",
-    "onCommand:vsdb.cancelQuery",
-    "onCommand:vsdb.generateSelect",
-    "onCommand:vsdb.copyQualifiedName",
-    "onCommand:vsdb.refreshSchema",
-    "onCommand:vsdb.runScript",
+    "onCommand:UnicDB.addConnection",
+    "onCommand:UnicDB.editConnection",
+    "onCommand:UnicDB.deleteConnection",
+    "onCommand:UnicDB.selectConnection",
+    "onCommand:UnicDB.runQuery",
+    "onCommand:UnicDB.cancelQuery",
+    "onCommand:UnicDB.generateSelect",
+    "onCommand:UnicDB.copyQualifiedName",
+    "onCommand:UnicDB.refreshSchema",
+    "onCommand:UnicDB.runScript",
     "onLanguage:shellscript",
-    "onCommand:vsdb.runStatement",
-    "onCommand:vsdb.newTable",
-    "onCommand:vsdb.modifyTable",
-    "onCommand:vsdb.copyCreateDdl",
-    "onCommand:vsdb.generateSampleData",
-    "onCommand:vsdb.analyzeTable",
-    "onCommand:vsdb.vacuumTable",
-    "onCommand:vsdb.openAiSettings",
-    "onCommand:vsdb.openUserGuide",
-    "onCommand:vsdb.aiChat",
-    "onCommand:vsdb.ai.useWithOmp",
-    "onCommand:vsdb.ai.refreshDbContext",
-    "onCommand:vsdb.ai.showPolicy",
-    "onCommand:vsdb.ai.exportTrace",
-    "onCommand:vsdb.ai.clearTrace",
-    "onCommand:vsdb.browseTableData",
-    "onCommand:vsdb.renameTable",
-    "onCommand:vsdb.renameColumn",
-    "onCommand:vsdb.createSchema",
-    "onCommand:vsdb.exportStructure",
-    "onCommand:vsdb.exportAllStructures",
-    "onCommand:vsdb.openConsole",
-    "onCommand:vsdb.consoleNewTab",
-    "onCommand:vsdb.refreshAdmin",
-    "onCommand:vsdb.openSessionsPanel",
-    "onCommand:vsdb.importCsv",
-    "onCommand:vsdb.importJson",
-    "onCommand:vsdb.openFormView",
-    "onCommand:vsdb.editLargeValue",
-    "onCommand:vsdb.diagnostics.show",
-    "onCommand:vsdb.diagnostics.clear",
-    "onCommand:vsdb.generateViewDdl",
-    "onCommand:vsdb.generateFunctionDdl",
-    "onCommand:vsdb.openSettings"
+    "onCommand:UnicDB.runStatement",
+    "onCommand:UnicDB.newTable",
+    "onCommand:UnicDB.modifyTable",
+    "onCommand:UnicDB.copyCreateDdl",
+    "onCommand:UnicDB.generateSampleData",
+    "onCommand:UnicDB.analyzeTable",
+    "onCommand:UnicDB.vacuumTable",
+    "onCommand:UnicDB.openAiSettings",
+    "onCommand:UnicDB.openUserGuide",
+    "onCommand:UnicDB.aiChat",
+    "onCommand:UnicDB.ai.useWithOmp",
+    "onCommand:UnicDB.ai.refreshDbContext",
+    "onCommand:UnicDB.ai.showPolicy",
+    "onCommand:UnicDB.ai.exportTrace",
+    "onCommand:UnicDB.ai.clearTrace",
+    "onCommand:UnicDB.browseTableData",
+    "onCommand:UnicDB.renameTable",
+    "onCommand:UnicDB.renameColumn",
+    "onCommand:UnicDB.createSchema",
+    "onCommand:UnicDB.exportStructure",
+    "onCommand:UnicDB.exportAllStructures",
+    "onCommand:UnicDB.openConsole",
+    "onCommand:UnicDB.consoleNewTab",
+    "onCommand:UnicDB.refreshAdmin",
+    "onCommand:UnicDB.openSessionsPanel",
+    "onCommand:UnicDB.importCsv",
+    "onCommand:UnicDB.importJson",
+    "onCommand:UnicDB.openFormView",
+    "onCommand:UnicDB.editLargeValue",
+    "onCommand:UnicDB.diagnostics.show",
+    "onCommand:UnicDB.diagnostics.clear",
+    "onCommand:UnicDB.generateViewDdl",
+    "onCommand:UnicDB.generateFunctionDdl",
+    "onCommand:UnicDB.openSettings"
   ],
   "contributes": {
     "commands": [
       {
-        "command": "vsdb.addConnection",
-        "title": "VSDB: Add Connection",
-        "category": "VSDB",
+        "command": "UnicDB.addConnection",
+        "title": "UnicDB: Add Connection",
+        "category": "UnicDB",
         "icon": "$(add)"
       },
       {
-        "command": "vsdb.editConnection",
-        "title": "VSDB: Edit Connection",
-        "category": "VSDB",
+        "command": "UnicDB.editConnection",
+        "title": "UnicDB: Edit Connection",
+        "category": "UnicDB",
         "icon": "$(edit)"
       },
       {
-        "command": "vsdb.deleteConnection",
-        "title": "VSDB: Delete Connection",
-        "category": "VSDB",
+        "command": "UnicDB.deleteConnection",
+        "title": "UnicDB: Delete Connection",
+        "category": "UnicDB",
         "icon": "$(trash)"
       },
       {
-        "command": "vsdb.selectConnection",
-        "title": "VSDB: Select Active Connection",
-        "category": "VSDB",
+        "command": "UnicDB.selectConnection",
+        "title": "UnicDB: Select Active Connection",
+        "category": "UnicDB",
         "icon": "$(plug)"
       },
       {
-        "command": "vsdb.runQuery",
-        "title": "VSDB: Run Query",
-        "category": "VSDB",
+        "command": "UnicDB.runQuery",
+        "title": "UnicDB: Run Query",
+        "category": "UnicDB",
         "icon": "$(play)"
       },
       {
-        "command": "vsdb.cancelQuery",
-        "title": "VSDB: Cancel Query",
-        "category": "VSDB",
+        "command": "UnicDB.cancelQuery",
+        "title": "UnicDB: Cancel Query",
+        "category": "UnicDB",
         "icon": "$(debug-stop)"
       },
       {
-        "command": "vsdb.generateSelect",
-        "title": "VSDB: Generate SELECT",
-        "category": "VSDB",
+        "command": "UnicDB.generateSelect",
+        "title": "UnicDB: Generate SELECT",
+        "category": "UnicDB",
         "icon": "$(preview)"
       },
       {
-        "command": "vsdb.copyQualifiedName",
-        "title": "VSDB: Copy Qualified Name",
-        "category": "VSDB",
+        "command": "UnicDB.copyQualifiedName",
+        "title": "UnicDB: Copy Qualified Name",
+        "category": "UnicDB",
         "icon": "$(copy)"
       },
       {
-        "command": "vsdb.refreshSchema",
-        "title": "VSDB: Refresh Schema",
-        "category": "VSDB",
+        "command": "UnicDB.refreshSchema",
+        "title": "UnicDB: Refresh Schema",
+        "category": "UnicDB",
         "icon": "$(refresh)"
       },
       {
-        "command": "vsdb.runStatement",
-        "title": "VSDB: Run Statement",
-        "category": "VSDB",
+        "command": "UnicDB.runStatement",
+        "title": "UnicDB: Run Statement",
+        "category": "UnicDB",
         "icon": "$(play)"
       },
       {
-        "command": "vsdb.filterSchemaTree",
+        "command": "UnicDB.filterSchemaTree",
         "title": "Filter Schema Tree",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(filter)"
       },
       {
-        "command": "vsdb.clearSchemaTreeFilter",
+        "command": "UnicDB.clearSchemaTreeFilter",
         "title": "Clear Schema Tree Filter",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(close)"
       },
       {
-        "command": "vsdb.runScript",
-        "title": "VSDB: Run Script",
-        "category": "VSDB",
+        "command": "UnicDB.runScript",
+        "title": "UnicDB: Run Script",
+        "category": "UnicDB",
         "icon": "$(play)"
       },
       {
-        "command": "vsdb.newTable",
+        "command": "UnicDB.newTable",
         "title": "New Table…",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(add)"
       },
       {
-        "command": "vsdb.modifyTable",
+        "command": "UnicDB.modifyTable",
         "title": "Modify Table…",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(edit)"
       },
       {
-        "command": "vsdb.renameTable",
+        "command": "UnicDB.renameTable",
         "title": "Rename Table…",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(replace)"
       },
       {
-        "command": "vsdb.renameColumn",
+        "command": "UnicDB.renameColumn",
         "title": "Rename Column…",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(replace)"
       },
       {
-        "command": "vsdb.copyCreateDdl",
+        "command": "UnicDB.copyCreateDdl",
         "title": "Copy Create Query",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(copy)"
       },
       {
-        "command": "vsdb.generateSampleData",
+        "command": "UnicDB.generateSampleData",
         "title": "Insert Sample Data…",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(file-text)"
       },
       {
-        "command": "vsdb.analyzeTable",
+        "command": "UnicDB.analyzeTable",
         "title": "Analyze Table",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(graph)"
       },
       {
-        "command": "vsdb.vacuumTable",
+        "command": "UnicDB.vacuumTable",
         "title": "Vacuum Table",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(trash)"
       },
       {
-        "command": "vsdb.openAiSettings",
+        "command": "UnicDB.openAiSettings",
         "title": "Open AI Settings…",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(gear)"
       },
       {
-        "command": "vsdb.aiChat",
-        "title": "VSDB: AI Chat",
-        "category": "VSDB",
+        "command": "UnicDB.aiChat",
+        "title": "UnicDB: AI Chat",
+        "category": "UnicDB",
         "icon": "$(comment-discussion)"
       },
       {
-        "command": "vsdb.ai.useWithOmp",
-        "title": "VSDB: Use AI with OMP",
-        "category": "VSDB",
+        "command": "UnicDB.ai.useWithOmp",
+        "title": "UnicDB: Use AI with OMP",
+        "category": "UnicDB",
         "icon": "$(terminal)"
       },
       {
-        "command": "vsdb.ai.refreshDbContext",
-        "title": "VSDB: Refresh AI DB Context",
-        "category": "VSDB",
+        "command": "UnicDB.ai.refreshDbContext",
+        "title": "UnicDB: Refresh AI DB Context",
+        "category": "UnicDB",
         "icon": "$(refresh)"
       },
       {
-        "command": "vsdb.ai.showPolicy",
-        "title": "VSDB: Show AI Policy",
-        "category": "VSDB",
+        "command": "UnicDB.ai.showPolicy",
+        "title": "UnicDB: Show AI Policy",
+        "category": "UnicDB",
         "icon": "$(shield)"
       },
       {
-        "command": "vsdb.ai.exportTrace",
-        "title": "VSDB: Export AI Audit Trace",
-        "category": "VSDB",
+        "command": "UnicDB.ai.exportTrace",
+        "title": "UnicDB: Export AI Audit Trace",
+        "category": "UnicDB",
         "icon": "$(export)"
       },
       {
-        "command": "vsdb.ai.clearTrace",
-        "title": "VSDB: Clear AI Audit Trace",
-        "category": "VSDB",
+        "command": "UnicDB.ai.clearTrace",
+        "title": "UnicDB: Clear AI Audit Trace",
+        "category": "UnicDB",
         "icon": "$(clear-all)"
       },
       {
-        "command": "vsdb.browseTableData",
-        "title": "VSDB: Browse Table Data",
-        "category": "VSDB",
+        "command": "UnicDB.browseTableData",
+        "title": "UnicDB: Browse Table Data",
+        "category": "UnicDB",
         "icon": "$(preview)"
       },
       {
-        "command": "vsdb.createSchema",
-        "title": "VSDB: Create New Schema",
-        "category": "VSDB",
+        "command": "UnicDB.createSchema",
+        "title": "UnicDB: Create New Schema",
+        "category": "UnicDB",
         "icon": "$(add)"
       },
       {
-        "command": "vsdb.postmanPayload",
-        "title": "VSDB: Postman Payload",
-        "category": "VSDB",
+        "command": "UnicDB.postmanPayload",
+        "title": "UnicDB: Postman Payload",
+        "category": "UnicDB",
         "icon": "$(copy)"
       },
       {
-        "command": "vsdb.exportStructure",
-        "title": "VSDB: Export Structure",
-        "category": "VSDB",
+        "command": "UnicDB.exportStructure",
+        "title": "UnicDB: Export Structure",
+        "category": "UnicDB",
         "icon": "$(output)"
       },
       {
-        "command": "vsdb.exportAllStructures",
-        "title": "VSDB: Export All Structures (Copy DDL)",
-        "category": "VSDB",
+        "command": "UnicDB.exportAllStructures",
+        "title": "UnicDB: Export All Structures (Copy DDL)",
+        "category": "UnicDB",
         "icon": "$(output)"
       },
       {
-        "command": "vsdb.openConsole",
-        "title": "VSDB: Open Console",
-        "category": "VSDB",
+        "command": "UnicDB.openConsole",
+        "title": "UnicDB: Open Console",
+        "category": "UnicDB",
         "icon": "$(window)"
       },
       {
-        "command": "vsdb.consoleNewTab",
-        "title": "VSDB: Console — New Tab",
-        "category": "VSDB",
+        "command": "UnicDB.consoleNewTab",
+        "title": "UnicDB: Console — New Tab",
+        "category": "UnicDB",
         "icon": "$(add)"
       },
       {
-        "command": "vsdb.openConsoleForObject",
-        "title": "VSDB: Open Console for Object",
-        "category": "VSDB",
+        "command": "UnicDB.openConsoleForObject",
+        "title": "UnicDB: Open Console for Object",
+        "category": "UnicDB",
         "icon": "$(window)"
       },
       {
-        "command": "vsdb.openUserGuide",
-        "title": "VSDB: Open User Guide",
-        "category": "VSDB",
+        "command": "UnicDB.openUserGuide",
+        "title": "UnicDB: Open User Guide",
+        "category": "UnicDB",
         "icon": "$(notebook)"
       },
       {
-        "command": "vsdb.openHelpGrid",
-        "title": "VSDB: Open Help Grid",
-        "category": "VSDB",
+        "command": "UnicDB.openHelpGrid",
+        "title": "UnicDB: Open Help Grid",
+        "category": "UnicDB",
         "icon": "$(book)"
       },
       {
-        "command": "vsdb.refreshAdmin",
-        "title": "VSDB: Refresh Admin",
-        "category": "VSDB",
+        "command": "UnicDB.refreshAdmin",
+        "title": "UnicDB: Refresh Admin",
+        "category": "UnicDB",
         "icon": "$(refresh)"
       },
       {
-        "command": "vsdb.openSessionsPanel",
-        "title": "VSDB: Open Sessions Panel",
-        "category": "VSDB",
+        "command": "UnicDB.openSessionsPanel",
+        "title": "UnicDB: Open Sessions Panel",
+        "category": "UnicDB",
         "icon": "$(pulse)"
       },
       {
-        "command": "vsdb.killSession",
-        "title": "VSDB: Kill Session (Cancel Query)",
-        "category": "VSDB",
+        "command": "UnicDB.killSession",
+        "title": "UnicDB: Kill Session (Cancel Query)",
+        "category": "UnicDB",
         "icon": "$(debug-stop)"
       },
       {
-        "command": "vsdb.terminateSession",
-        "title": "VSDB: Terminate Session",
-        "category": "VSDB",
+        "command": "UnicDB.terminateSession",
+        "title": "UnicDB: Terminate Session",
+        "category": "UnicDB",
         "icon": "$(trash)"
       },
       {
-        "command": "vsdb.runGrantSql",
-        "title": "VSDB: Run GRANT/REVOKE SQL",
-        "category": "VSDB",
+        "command": "UnicDB.runGrantSql",
+        "title": "UnicDB: Run GRANT/REVOKE SQL",
+        "category": "UnicDB",
         "icon": "$(shield)"
       },
       {
-        "command": "vsdb.importCsv",
-        "title": "VSDB: Import CSV into Table",
-        "category": "VSDB",
+        "command": "UnicDB.importCsv",
+        "title": "UnicDB: Import CSV into Table",
+        "category": "UnicDB",
         "icon": "$(arrow-down-to-line)"
       },
       {
-        "command": "vsdb.importJson",
-        "title": "VSDB: Import JSON into Table",
-        "category": "VSDB",
+        "command": "UnicDB.importJson",
+        "title": "UnicDB: Import JSON into Table",
+        "category": "UnicDB",
         "icon": "$(arrow-down-to-line)"
       },
       {
-        "command": "vsdb.openFormView",
-        "title": "VSDB: Open Form View",
-        "category": "VSDB",
+        "command": "UnicDB.openFormView",
+        "title": "UnicDB: Open Form View",
+        "category": "UnicDB",
         "icon": "$(notebook)"
       },
       {
-        "command": "vsdb.editLargeValue",
-        "title": "VSDB: Edit Large Value",
-        "category": "VSDB",
+        "command": "UnicDB.editLargeValue",
+        "title": "UnicDB: Edit Large Value",
+        "category": "UnicDB",
         "icon": "$(expand-all)"
       },
       {
-        "command": "vsdb.compareTables",
+        "command": "UnicDB.compareTables",
         "title": "Compare Tables (Schema & Data)",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(diff)"
       },
       {
-        "command": "vsdb.relationshipExplorer",
+        "command": "UnicDB.relationshipExplorer",
         "title": "Relationship Explorer (FK Diagram)",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(circuit-board)"
       },
       {
-        "command": "vsdb.diagnostics.show",
-        "title": "VSDB: Show Diagnostics",
-        "category": "VSDB",
+        "command": "UnicDB.diagnostics.show",
+        "title": "UnicDB: Show Diagnostics",
+        "category": "UnicDB",
         "icon": "$(output)"
       },
       {
-        "command": "vsdb.diagnostics.clear",
-        "title": "VSDB: Clear Diagnostics",
-        "category": "VSDB",
+        "command": "UnicDB.diagnostics.clear",
+        "title": "UnicDB: Clear Diagnostics",
+        "category": "UnicDB",
         "icon": "$(clear-all)"
       },
       {
-        "command": "vsdb.generateViewDdl",
+        "command": "UnicDB.generateViewDdl",
         "title": "SQL Generator",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(eye)"
       },
       {
-        "command": "vsdb.generateFunctionDdl",
+        "command": "UnicDB.generateFunctionDdl",
         "title": "SQL Generator",
-        "category": "VSDB",
+        "category": "UnicDB",
         "icon": "$(symbol-function)"
       },
       {
-        "command": "vsdb.openSettings",
-        "title": "VSDB: Open Settings",
-        "category": "VSDB",
+        "command": "UnicDB.openSettings",
+        "title": "UnicDB: Open Settings",
+        "category": "UnicDB",
         "icon": "$(settings-gear)"
       }
     ],
     "keybindings": [
       {
-        "command": "vsdb.runQuery",
+        "command": "UnicDB.runQuery",
         "key": "cmd+enter",
         "mac": "cmd+enter",
         "when": "editorTextFocus && resourceLangId == sql"
       },
       {
-        "command": "vsdb.runQuery",
+        "command": "UnicDB.runQuery",
         "key": "ctrl+enter",
         "win": "ctrl+enter",
         "linux": "ctrl+enter",
@@ -423,199 +423,199 @@
       }
     ],
     "menus": {
-      "webview/vsdb.console/context": [
+      "webview/UnicDB.console/context": [
         {
-          "command": "vsdb.openHelpGrid",
+          "command": "UnicDB.openHelpGrid",
           "when": "true",
-          "group": "vsdbHelp"
+          "group": "UnicDBHelp"
         }
       ],
-      "webview/vsdb.results/context": [
+      "webview/UnicDB.results/context": [
         {
-          "command": "vsdb.openHelpGrid",
+          "command": "UnicDB.openHelpGrid",
           "when": "true",
-          "group": "vsdbHelp"
+          "group": "UnicDBHelp"
         }
       ],
-      "webview/vsdb.aiChatPanel/context": [
+      "webview/UnicDB.aiChatPanel/context": [
         {
-          "command": "vsdb.openHelpGrid",
+          "command": "UnicDB.openHelpGrid",
           "when": "true",
-          "group": "vsdbHelp"
+          "group": "UnicDBHelp"
         }
       ],
       "editor/title": [
         {
-          "command": "vsdb.runQuery",
+          "command": "UnicDB.runQuery",
           "when": "editorTextFocus && resourceLangId == sql",
           "group": "navigation"
         },
         {
-          "command": "vsdb.cancelQuery",
+          "command": "UnicDB.cancelQuery",
           "when": "editorTextFocus && resourceLangId == sql",
           "group": "navigation"
         },
         {
-          "command": "vsdb.runScript",
+          "command": "UnicDB.runScript",
           "when": "resourceLangId == shellscript",
           "group": "navigation"
         }
       ],
       "view/item/context": [
         {
-          "command": "vsdb.generateSelect",
-          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
+          "command": "UnicDB.generateSelect",
+          "when": "view == UnicDB.schemaTree && (viewItem == table || viewItem == view)",
           "group": "inline"
         },
         {
-          "command": "vsdb.copyQualifiedName",
-          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view || viewItem == column || viewItem == routine)",
+          "command": "UnicDB.copyQualifiedName",
+          "when": "view == UnicDB.schemaTree && (viewItem == table || viewItem == view || viewItem == column || viewItem == routine)",
           "group": "inline"
         },
         {
-          "command": "vsdb.openConsoleForObject",
-          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
+          "command": "UnicDB.openConsoleForObject",
+          "when": "view == UnicDB.schemaTree && (viewItem == table || viewItem == view)",
           "group": "inline"
         },
         {
-          "command": "vsdb.refreshSchema",
-          "when": "view == vsdb.schemaTree",
-          "group": "vsdb"
+          "command": "UnicDB.refreshSchema",
+          "when": "view == UnicDB.schemaTree",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.editConnection",
-          "when": "view == vsdb.schemaTree && viewItem == connection",
-          "group": "vsdb"
+          "command": "UnicDB.editConnection",
+          "when": "view == UnicDB.schemaTree && viewItem == connection",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.deleteConnection",
-          "when": "view == vsdb.schemaTree && viewItem == connection",
-          "group": "vsdb"
+          "command": "UnicDB.deleteConnection",
+          "when": "view == UnicDB.schemaTree && viewItem == connection",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.newTable",
-          "when": "view == vsdb.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",
-          "group": "vsdb",
+          "command": "UnicDB.newTable",
+          "when": "view == UnicDB.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",
+          "group": "UnicDB",
           "order": "1"
         },
         {
-          "command": "vsdb.modifyTable",
-          "when": "view == vsdb.schemaTree && viewItem == table",
-          "group": "vsdb",
+          "command": "UnicDB.modifyTable",
+          "when": "view == UnicDB.schemaTree && viewItem == table",
+          "group": "UnicDB",
           "order": "2"
         },
         {
-          "command": "vsdb.renameTable",
-          "when": "view == vsdb.schemaTree && viewItem == table",
-          "group": "vsdb"
+          "command": "UnicDB.renameTable",
+          "when": "view == UnicDB.schemaTree && viewItem == table",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.renameColumn",
-          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == column)",
-          "group": "vsdb"
+          "command": "UnicDB.renameColumn",
+          "when": "view == UnicDB.schemaTree && (viewItem == table || viewItem == column)",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.copyCreateDdl",
-          "when": "view == vsdb.schemaTree && viewItem == table",
-          "group": "vsdb"
+          "command": "UnicDB.copyCreateDdl",
+          "when": "view == UnicDB.schemaTree && viewItem == table",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.generateSampleData",
-          "when": "view == vsdb.schemaTree && viewItem == table",
-          "group": "vsdb"
+          "command": "UnicDB.generateSampleData",
+          "when": "view == UnicDB.schemaTree && viewItem == table",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.analyzeTable",
-          "when": "view == vsdb.schemaTree && viewItem == table",
-          "group": "vsdb"
+          "command": "UnicDB.analyzeTable",
+          "when": "view == UnicDB.schemaTree && viewItem == table",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.vacuumTable",
-          "when": "view == vsdb.schemaTree && viewItem == table",
-          "group": "vsdb"
+          "command": "UnicDB.vacuumTable",
+          "when": "view == UnicDB.schemaTree && viewItem == table",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.createSchema",
-          "when": "view == vsdb.schemaTree && (viewItem == connection || viewItem == schema)",
-          "group": "vsdb"
+          "command": "UnicDB.createSchema",
+          "when": "view == UnicDB.schemaTree && (viewItem == connection || viewItem == schema)",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.postmanPayload",
-          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view || viewItem == routine)",
-          "group": "vsdb"
+          "command": "UnicDB.postmanPayload",
+          "when": "view == UnicDB.schemaTree && (viewItem == table || viewItem == view || viewItem == routine)",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.exportStructure",
-          "when": "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
-          "group": "vsdb"
+          "command": "UnicDB.exportStructure",
+          "when": "view == UnicDB.schemaTree && (viewItem == table || viewItem == view)",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.exportAllStructures",
-          "when": "view == vsdb.schemaTree && (viewItem == connection || viewItem == schema)",
-          "group": "vsdb"
+          "command": "UnicDB.exportAllStructures",
+          "when": "view == UnicDB.schemaTree && (viewItem == connection || viewItem == schema)",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.generateViewDdl",
-          "when": "view == vsdb.schemaTree && viewItem == view",
-          "group": "vsdb"
+          "command": "UnicDB.generateViewDdl",
+          "when": "view == UnicDB.schemaTree && viewItem == view",
+          "group": "UnicDB"
         },
         {
-          "command": "vsdb.generateFunctionDdl",
-          "when": "view == vsdb.schemaTree && viewItem == routine",
-          "group": "vsdb"
+          "command": "UnicDB.generateFunctionDdl",
+          "when": "view == UnicDB.schemaTree && viewItem == routine",
+          "group": "UnicDB"
         }
       ],
       "view/title": [
         {
-          "command": "vsdb.refreshSchema",
-          "when": "view == vsdb.schemaTree",
+          "command": "UnicDB.refreshSchema",
+          "when": "view == UnicDB.schemaTree",
           "group": "navigation"
         },
         {
-          "command": "vsdb.addConnection",
-          "when": "view == vsdb.schemaTree",
+          "command": "UnicDB.addConnection",
+          "when": "view == UnicDB.schemaTree",
           "group": "navigation"
         },
         {
-          "command": "vsdb.filterSchemaTree",
-          "when": "view == vsdb.schemaTree",
+          "command": "UnicDB.filterSchemaTree",
+          "when": "view == UnicDB.schemaTree",
           "group": "navigation"
         },
         {
-          "command": "vsdb.openAiSettings",
-          "when": "view == vsdb.schemaTree",
+          "command": "UnicDB.openAiSettings",
+          "when": "view == UnicDB.schemaTree",
           "group": "navigation"
         },
         {
-          "command": "vsdb.aiChat",
-          "when": "view == vsdb.schemaTree",
+          "command": "UnicDB.aiChat",
+          "when": "view == UnicDB.schemaTree",
           "group": "navigation"
         },
         {
-          "command": "vsdb.clearSchemaTreeFilter",
-          "when": "view == vsdb.schemaTree && vsdb.schemaTreeFilterActive",
+          "command": "UnicDB.clearSchemaTreeFilter",
+          "when": "view == UnicDB.schemaTree && UnicDB.schemaTreeFilterActive",
           "group": "navigation"
         },
         {
-          "command": "vsdb.openSettings",
-          "when": "view == vsdb.schemaTree",
+          "command": "UnicDB.openSettings",
+          "when": "view == UnicDB.schemaTree",
           "group": "navigation"
         },
         {
-          "command": "vsdb.openUserGuide",
-          "when": "view == vsdb.schemaTree",
+          "command": "UnicDB.openUserGuide",
+          "when": "view == UnicDB.schemaTree",
           "group": "navigation"
         }
       ]
     },
     "views": {
-      "vsdb": [
+      "UnicDB": [
         {
-          "id": "vsdb.schemaTree",
+          "id": "UnicDB.schemaTree",
           "name": "Schema Explorer"
         },
         {
-          "id": "vsdb.adminTree",
+          "id": "UnicDB.adminTree",
           "name": "Admin (Roles / Sessions / Locks)"
         }
       ]
@@ -623,70 +623,70 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "vsdb",
-          "title": "VSDB",
-          "icon": "media/vsdb.svg"
+          "id": "UnicDB",
+          "title": "UnicDB",
+          "icon": "media/UnicDB.svg"
         }
       ]
     },
     "viewsWelcome": [
       {
-        "view": "vsdb.schemaTree",
-        "contents": "No connections yet.\n[Add Connection](command:vsdb.addConnection)"
+        "view": "UnicDB.schemaTree",
+        "contents": "No connections yet.\n[Add Connection](command:UnicDB.addConnection)"
       }
     ],
     "configuration": {
-      "title": "VSDB",
+      "title": "UnicDB",
       "properties": {
-        "vsdb.showRunLens": {
+        "UnicDB.showRunLens": {
           "type": "boolean",
           "default": true,
           "description": "Hiển thị CodeLens ▶ Run phía trên mỗi SQL statement trong file .sql."
         },
-        "vsdb.import.batchSize": {
+        "UnicDB.import.batchSize": {
           "type": "number",
           "default": 1000,
           "minimum": 1,
           "maximum": 10000,
           "description": "Rows per INSERT statement during CSV/JSON import (DBX-01)."
         },
-        "vsdb.showRunLensSh": {
+        "UnicDB.showRunLensSh": {
           "type": "boolean",
           "default": true,
           "description": "Hiển thị CodeLens ▶ Run ở đầu file .sh (shellscript)."
         },
-        "vsdb.batchSize": {
+        "UnicDB.batchSize": {
           "type": "number",
           "default": 500,
           "minimum": 50,
           "maximum": 10000,
           "description": "Số rows tải về mỗi lần (Load 500 more)."
         },
-        "vsdb.admin.confirmGrant": {
+        "UnicDB.admin.confirmGrant": {
           "type": "boolean",
           "default": true,
           "description": "TASK-AHL-004 — ask for confirmation before running GRANT/REVOKE/KILL/TERMINATE statements (admin DCL). Always ON by default; set to false to skip the confirm modal at your own risk."
         },
-        "vsdb.confirmDestructive": {
+        "UnicDB.confirmDestructive": {
           "type": "boolean",
           "default": true,
           "description": "Hỏi xác nhận trước khi chạy câu lệnh phá hoại (DELETE/UPDATE không WHERE, TRUNCATE, DROP)."
         },
-        "vsdb.hideSystemSchemas": {
+        "UnicDB.hideSystemSchemas": {
           "type": "boolean",
           "default": true,
           "description": "Hide system schemas such as pg_catalog and information_schema in the Schema Explorer."
         },
-        "vsdb.ai.engine": {
+        "UnicDB.ai.engine": {
           "type": "string",
           "enum": [
             "builtin",
             "omp"
           ],
           "default": "builtin",
-          "description": "Cycle AE — chat engine selection. \"omp\" routes the AI Chat panel through the in-process OmpChatEngine (requires the `omp` CLI installed and >= 17.0.0). \"builtin\" runs runAgent against the configured OpenAI-compatible provider. When \"omp\" is selected but the binary is missing or too old, VSDB silently degrades to \"builtin\" and shows a one-time install/update notice."
+          "description": "Cycle AE — chat engine selection. \"omp\" routes the AI Chat panel through the in-process OmpChatEngine (requires the `omp` CLI installed and >= 17.0.0). \"builtin\" runs runAgent against the configured OpenAI-compatible provider. When \"omp\" is selected but the binary is missing or too old, UnicDB silently degrades to \"builtin\" and shows a one-time install/update notice."
         },
-        "vsdb.resultsPlacement": {
+        "UnicDB.resultsPlacement": {
           "type": "string",
           "enum": [
             "below",
@@ -694,14 +694,14 @@
             "top"
           ],
           "default": "below",
-          "description": "AI-001 — vị trí của panel VSDB Results cho các lần chạy MỚI: \"below\" mở vertical split ngay dưới editor đang active, \"beside\" mở side-by-side bên cạnh, \"top\" mở vertical split ngay trên editor đang active. Setting chỉ áp dụng khi panel được tạo mới; panel đang mở không bao giờ bị di chuyển (reveal giữ nguyên group người dùng đã kéo). Default là \"below\"; \"top\" là opt-in."
+          "description": "AI-001 — vị trí của panel UnicDB Results cho các lần chạy MỚI: \"below\" mở vertical split ngay dưới editor đang active, \"beside\" mở side-by-side bên cạnh, \"top\" mở vertical split ngay trên editor đang active. Setting chỉ áp dụng khi panel được tạo mới; panel đang mở không bao giờ bị di chuyển (reveal giữ nguyên group người dùng đã kéo). Default là \"below\"; \"top\" là opt-in."
         }
       }
     },
     "grammars": [
       {
-        "scopeName": "source.sql.vsdb",
-        "path": "./syntaxes/vsdb-sql-injection.tmLanguage.json",
+        "scopeName": "source.sql.UnicDB",
+        "path": "./syntaxes/UnicDB-sql-injection.tmLanguage.json",
         "injectTo": [
           "source.sql"
         ]

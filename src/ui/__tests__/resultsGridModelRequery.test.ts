@@ -2,7 +2,7 @@
 // TASK-504 — Pure-logic tests for composeRequery (WHERE/ORDER BY bar helper).
 //
 // `composeRequery(sql, where, orderBy)` wraps the ORIGINAL statement SQL in
-//   SELECT * FROM (<stmt>) vsdb_sub WHERE <where> ORDER BY <orderBy>
+//   SELECT * FROM (<stmt>) UnicDB_sub WHERE <where> ORDER BY <orderBy>
 // so the user can re-run the statement with a quick filter and ordering.
 //
 //   - Both empty         → return the original statement (with trailing `;`
@@ -125,11 +125,11 @@ describe("TASK-007 cycle Y — parseOrderBy positional ordinals", () => {
 // 1. composeRequery — happy path (Test #1)
 // =============================================================================
 describe("composeRequery — happy path", () => {
-  it("Test #1 — where + orderBy wraps as SELECT * FROM (<stmt>) vsdb_sub WHERE … ORDER BY …", () => {
+  it("Test #1 — where + orderBy wraps as SELECT * FROM (<stmt>) UnicDB_sub WHERE … ORDER BY …", () => {
     const sql = "SELECT a FROM t";
     const out = composeRequery(sql, "a>1", "a DESC");
     expect(out).toBe(
-      "SELECT * FROM (SELECT a FROM t) vsdb_sub WHERE a>1 ORDER BY a DESC",
+      "SELECT * FROM (SELECT a FROM t) UnicDB_sub WHERE a>1 ORDER BY a DESC",
     );
   });
 
@@ -137,7 +137,7 @@ describe("composeRequery — happy path", () => {
     const inner = "WITH cte AS (SELECT 1) SELECT * FROM cte";
     const out = composeRequery(inner, "1=1", "");
     expect(out).toBe(
-      `SELECT * FROM (${inner}) vsdb_sub WHERE 1=1`,
+      `SELECT * FROM (${inner}) UnicDB_sub WHERE 1=1`,
     );
   });
 
@@ -145,7 +145,7 @@ describe("composeRequery — happy path", () => {
     const sql = "SELECT a FROM t";
     const out = composeRequery(sql, "  a > 1  ", "  a DESC  ");
     expect(out).toBe(
-      "SELECT * FROM (SELECT a FROM t) vsdb_sub WHERE a > 1 ORDER BY a DESC",
+      "SELECT * FROM (SELECT a FROM t) UnicDB_sub WHERE a > 1 ORDER BY a DESC",
     );
   });
 });
@@ -157,7 +157,7 @@ describe("composeRequery — single fragment", () => {
   it("Test #2a — where only: emits WHERE but no ORDER BY clause", () => {
     const sql = "SELECT a FROM t";
     const out = composeRequery(sql, "a>1", "");
-    expect(out).toBe("SELECT * FROM (SELECT a FROM t) vsdb_sub WHERE a>1");
+    expect(out).toBe("SELECT * FROM (SELECT a FROM t) UnicDB_sub WHERE a>1");
     expect(out).not.toContain("ORDER BY");
   });
 
@@ -165,7 +165,7 @@ describe("composeRequery — single fragment", () => {
     const sql = "SELECT a FROM t";
     const out = composeRequery(sql, "", "a DESC");
     expect(out).toBe(
-      "SELECT * FROM (SELECT a FROM t) vsdb_sub ORDER BY a DESC",
+      "SELECT * FROM (SELECT a FROM t) UnicDB_sub ORDER BY a DESC",
     );
     expect(out).not.toContain(" WHERE ");
   });
@@ -175,7 +175,7 @@ describe("composeRequery — single fragment", () => {
     expect(composeRequery("SELECT 1", "", "   \t  ")).toBe("SELECT 1");
     // Mixed — whitespace-only where + non-empty orderBy → only ORDER BY clause.
     expect(composeRequery("SELECT 1", "   ", "a")).toBe(
-      "SELECT * FROM (SELECT 1) vsdb_sub ORDER BY a",
+      "SELECT * FROM (SELECT 1) UnicDB_sub ORDER BY a",
     );
   });
 });
@@ -219,7 +219,7 @@ describe("composeRequery — literal-preserving (Fix Round 2 important #1)", () 
     const sql = "SELECT 'a;b' AS x FROM t";
     const out = composeRequery(sql, "x IS NOT NULL", "");
     expect(out).toBe(
-      "SELECT * FROM (SELECT 'a;b' AS x FROM t) vsdb_sub WHERE x IS NOT NULL",
+      "SELECT * FROM (SELECT 'a;b' AS x FROM t) UnicDB_sub WHERE x IS NOT NULL",
     );
     // Sanity: the inner literal `'a;b'` must round-trip intact.
     expect(out).toContain("'a;b'");
@@ -229,7 +229,7 @@ describe("composeRequery — literal-preserving (Fix Round 2 important #1)", () 
     const sql = "SELECT 'x;y;z' AS a, id FROM t";
     const out = composeRequery(sql, "id > 0", "a DESC");
     expect(out).toBe(
-      "SELECT * FROM (SELECT 'x;y;z' AS a, id FROM t) vsdb_sub WHERE id > 0 ORDER BY a DESC",
+      "SELECT * FROM (SELECT 'x;y;z' AS a, id FROM t) UnicDB_sub WHERE id > 0 ORDER BY a DESC",
     );
   });
 
@@ -237,7 +237,7 @@ describe("composeRequery — literal-preserving (Fix Round 2 important #1)", () 
     const sql = "SELECT $$hello;world$$ AS greeting, id FROM t";
     const out = composeRequery(sql, "id = 1", "");
     expect(out).toBe(
-      "SELECT * FROM (SELECT $$hello;world$$ AS greeting, id FROM t) vsdb_sub WHERE id = 1",
+      "SELECT * FROM (SELECT $$hello;world$$ AS greeting, id FROM t) UnicDB_sub WHERE id = 1",
     );
   });
 
@@ -253,7 +253,7 @@ describe("composeRequery — literal-preserving (Fix Round 2 important #1)", () 
     // The trailing `;` must not nest inside the subquery — interior
     // literal `;` survives, only the terminator goes.
     expect(out).toBe(
-      "SELECT * FROM (SELECT 'a;b' AS x FROM t) vsdb_sub WHERE x IS NOT NULL",
+      "SELECT * FROM (SELECT 'a;b' AS x FROM t) UnicDB_sub WHERE x IS NOT NULL",
     );
   });
 });

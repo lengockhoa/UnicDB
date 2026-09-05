@@ -79,25 +79,25 @@ npx vitest run src/ai/omp/__tests__/acpProcess.test.ts src/extension.test.ts && 
   command: `npx vitest run src/ai/omp/__tests__/acpProcess.test.ts src/extension.test.ts && npm run compile && npm run typecheck`
   result: 44 tests pass / 0 fail; esbuild build complete; tsc --noEmit exit 0
   output_excerpt: |
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
      ✓ src/ai/omp/__tests__/acpProcess.test.ts  (9 tests) 5ms
      ✓ src/extension.test.ts  (35 tests) 93ms
      Test Files  2 passed (2)
           Tests  44 passed (44)
-    > vsdb@1.5.1 compile
+    > UnicDB@1.5.1 compile
     > node esbuild.js
     esbuild: build complete
-    > vsdb@1.5.1 typecheck
+    > UnicDB@1.5.1 typecheck
     > tsc --noEmit
 - ISSUES: none.
 - HANDOFF_TO_REVIEWER: yes — task §Test Cases #1..#5 verified; production code is real (no stubs / no TODOs); unit tests drive the actual AcpProcess through a fake child covering the entire handshake (initialize → initialized → session/new) plus notification + server-request routing.
 - NEXT: TASK-003 / TASK-004 may consume AcpProcess from the panel; legacy rpc.ts/process.ts remain in place until TASK-004 cutover.
 - RED OUTPUT (verbatim, captured before implementation):
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
      ❯ src/ai/omp/__tests__/acpProcess.test.ts  (0 test)
      Failed Suites 1
      FAIL  src/ai/omp/__tests__/acpProcess.test.ts
-     Error: Failed to load url ../acpProcess (resolved id: ../acpProcess) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/src/ai/omp/__tests__/acpProcess.test.ts. Does the file exist?
+     Error: Failed to load url ../acpProcess (resolved id: ../acpProcess) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/src/ai/omp/__tests__/acpProcess.test.ts. Does the file exist?
 - LIVE-PROBE EVIDENCE (inherited from TASK-001; no new probe run by this task — AcpProcess.start() is built on AcpClient which was already verified against `omp 18.0.1`):
   - `omp acp` accepts NDJSON `initialize` / `initialized` / `session/new` (TASK-001 §LIVE-PROBE EVIDENCE).
   - `--cwd` accepted by `omp acp`; `supportCwdFlag=true` here matches the verified 18.0.1 path.

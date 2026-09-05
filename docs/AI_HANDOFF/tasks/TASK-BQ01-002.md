@@ -153,14 +153,14 @@ VERIFICATION:
   command: npx vitest run src/adapters/__tests__/bigquery.test.ts
   result: 6 pass / 0 fail / exit 0
   output_excerpt: |
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq01-002
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq01-002
      ✓ src/adapters/__tests__/bigquery.test.ts  (6 tests) 6ms
      Test Files  1 passed (1)
           Tests  6 passed (6)
   command: npm run typecheck
   result: exit 0 (no errors)
   output_excerpt: |
-    > vsdb@1.46.0 typecheck
+    > UnicDB@1.46.0 typecheck
     > tsc --noEmit
   command (sanity): npx vitest run src/adapters/__tests__/bigqueryAdc.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryConfig.test.ts src/adapters/__tests__/bigqueryPackage.test.ts
   result: 33 pass / 0 fail / exit 0 (BQ-00 and BQ-01-001 surfaces still green)
@@ -197,14 +197,14 @@ VERIFICATION:
   command: npx vitest run src/adapters/__tests__/bigquery.test.ts
   result: 6 pass / 0 fail / exit 0
   output_excerpt: |
-    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq01-002
+    RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq01-002
      ✓ src/adapters/__tests__/bigquery.test.ts  (6 tests) 3ms
      Test Files  1 passed (1)
           Tests  6 passed (6)
   command: npm run typecheck
   result: exit 0 (no errors)
   output_excerpt: |
-    > vsdb@1.46.0 typecheck
+    > UnicDB@1.46.0 typecheck
     > tsc --noEmit
   command (sanity): npx vitest run src/adapters/__tests__/bigqueryAdc.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryConfig.test.ts src/adapters/__tests__/bigqueryPackage.test.ts src/adapters/__tests__/factory.test.ts
   result: 37 pass / 0 fail / exit 0 (5 files, BQ-00 + BQ-01-001 + factory surfaces all green)
@@ -262,7 +262,7 @@ VERIFICATION:
   command: npm run typecheck
     result: exit 0 (no errors)
     output_excerpt: |
-      > vsdb@1.46.0 typecheck
+      > UnicDB@1.46.0 typecheck
       > tsc --noEmit
   command (sanity): npx vitest run src/adapters/__tests__/bigqueryAdc.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryConfig.test.ts src/adapters/__tests__/bigqueryPackage.test.ts src/adapters/__tests__/factory.test.ts
     result: 39 pass / 0 fail / exit 0 (5 files, BQ-00 + BQ-01-001 + factory surfaces all green)
@@ -350,7 +350,7 @@ VERIFICATION:
   command: npm run typecheck
     result: exit 0 (no errors)
     output_excerpt: |
-      > vsdb@1.46.0 typecheck
+      > UnicDB@1.46.0 typecheck
       > tsc --noEmit
   command (sanity): npx vitest run src/adapters/__tests__/bigqueryAdc.test.ts src/adapters/__tests__/bigqueryTypes.test.ts src/adapters/__tests__/bigqueryConfig.test.ts src/adapters/__tests__/bigqueryPackage.test.ts src/adapters/__tests__/factory.test.ts
     result: 39 pass / 0 fail / exit 0 (5 files, BQ-00 + BQ-01-001 + factory surfaces all green)

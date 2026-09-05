@@ -21,7 +21,7 @@ function cfg(overrides: Partial<ConnectionConfig>): ConnectionConfig {
 }
 
 function tmpCert(content: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vsdb-ssl-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "UnicDB-ssl-"));
   const p = path.join(dir, "c.pem");
   fs.writeFileSync(p, content);
   return p;

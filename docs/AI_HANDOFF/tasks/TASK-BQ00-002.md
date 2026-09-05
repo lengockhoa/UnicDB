@@ -7,7 +7,7 @@
 
 ## Goal
 
-Define the pure boundary types that map BigQuery's async job + paged-result API into VSDB's adapter world — without importing the client and without touching `DbAdapter`. The contract must make continuation ownership explicit and make NUMERIC/BIGNUMERIC/INT64 precision preservation contractual (canonical strings, never JS `number`).
+Define the pure boundary types that map BigQuery's async job + paged-result API into UnicDB's adapter world — without importing the client and without touching `DbAdapter`. The contract must make continuation ownership explicit and make NUMERIC/BIGNUMERIC/INT64 precision preservation contractual (canonical strings, never JS `number`).
 
 ## Target Files
 
@@ -18,7 +18,7 @@ Define the pure boundary types that map BigQuery's async job + paged-result API 
 
 | # | Type | Test name | Expected | Pre-state / Fixture |
 |---|------|----------|----------|---------------------|
-| 1 | happy | `toBigQueryPage maps fixture to BigQueryPage preserving jobRef identity` | calling the exported `toBigQueryPage(rawFixture)` returns a `BigQueryPage`; `jobRef` `{projectId:"vsdb-it", location:"US", jobId:"job_abc"}` deep-equals verbatim; mapped `schema`/`rows`/`pageToken` match the fixture's raw values — the subject is the real function, not the type (a types-only implementation cannot pass) | synthetic job/page fixture (roadmap §8.1: no `{rows:[]}`-only mocks) |
+| 1 | happy | `toBigQueryPage maps fixture to BigQueryPage preserving jobRef identity` | calling the exported `toBigQueryPage(rawFixture)` returns a `BigQueryPage`; `jobRef` `{projectId:"UnicDB-it", location:"US", jobId:"job_abc"}` deep-equals verbatim; mapped `schema`/`rows`/`pageToken` match the fixture's raw values — the subject is the real function, not the type (a types-only implementation cannot pass) | synthetic job/page fixture (roadmap §8.1: no `{rows:[]}`-only mocks) |
 | 2 | edge (empty) | `empty final page has no next` | `rows:[]`, `pageToken:null` → `hasNextPage(page) === false` | empty terminal page |
 | 3 | edge (empty-vs-token) | `empty page can still continue` | `rows:[]` + non-null token → `hasNextPage(page) === true` (token — not row count — owns continuation) | empty non-terminal page |
 | 4 | edge (continuation/ownership) | `page token round-trips opaquely` | token `"BE5BABA0ODA0MjcuMDgwMDA6MQ"` flows into a `BigQueryPageRequest` unmodified — no parse/trim/truncate | opaque token string |
@@ -144,7 +144,7 @@ EXECUTOR_SUBAGENT: feature-implementer
 RED_OUTPUT: |
   FAIL  src/adapters/__tests__/bigqueryTypes.test.ts [ src/adapters/__tests__/bigqueryTypes.test.ts ]
   Error: Failed to load url ../bigqueryTypes (resolved id: ../bigqueryTypes) in
-  /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-bq00-002/src/adapters/__tests__/bigqueryTypes.test.ts.
+  /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-bq00-002/src/adapters/__tests__/bigqueryTypes.test.ts.
   Does the file exist?
     Test Files  1 failed (1)
     Tests  no tests
@@ -152,7 +152,7 @@ Verification Output: |
   # focused
     ✓ src/adapters/__tests__/bigqueryTypes.test.ts  (7 tests) 2ms
   # typecheck
-    > vsdb@1.45.0 typecheck
+    > UnicDB@1.45.0 typecheck
     > tsc --noEmit
     (no output, exit 0)
   # compile
@@ -189,7 +189,7 @@ Verification Output:
     Tests  7 passed (7)
     Type Errors  no errors
   # typecheck (npm run typecheck — production tsc)
-    > vsdb@1.45.0 typecheck
+    > UnicDB@1.45.0 typecheck
     > tsc --noEmit
     (no output, exit 0)
   # compile (npm run compile)

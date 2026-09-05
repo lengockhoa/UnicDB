@@ -66,7 +66,7 @@ npm run compile
 ## Interfaces
 
 - Consumes: `splitStatements(...)` from `src/core/statementParser.ts`; `formatSql(sql, opts?)` from `src/core/sqlFormat.ts` (TASK-AF-003); existing destructive-statement gate (`analyzeStatement`); existing query runner path used by ConsolePanel.
-- Produces: webview↔host message contract (documented in consolePanel.ts header): `{type:"runStatement", index}`, `{type:"runSelection", text}`, `{type:"explain", sql, analyze:boolean}`, `{type:"format"}`, `{type:"historyPush", sql}`, `{type:"historyList"}`; Memento key `"vsdb.consoleHistory"` (string[] capped 200).
+- Produces: webview↔host message contract (documented in consolePanel.ts header): `{type:"runStatement", index}`, `{type:"runSelection", text}`, `{type:"explain", sql, analyze:boolean}`, `{type:"format"}`, `{type:"historyPush", sql}`, `{type:"historyList"}`; Memento key `"UnicDB.consoleHistory"` (string[] capped 200).
 
 ---
 
@@ -84,15 +84,15 @@ STATUS: DONE
 EXECUTOR_TOOL: claude-code
 EXECUTOR_MODEL: unic-code
 EXECUTOR_SUBAGENT: ExecAF004
-SUMMARY: SQL Console v2 — host-side multi-tab registry with per-tab buffers, per-statement/selection run, Memento-persisted history (cap 200) with recall, EXPLAIN/EXPLAIN ANALYZE behind a modal confirm gate, Format round-trip via formatSql; webview gained tab bar, plan pane, history recall, Format/Explain buttons; extension.ts wires globalState + `vsdb.consoleNewTab`.
+SUMMARY: SQL Console v2 — host-side multi-tab registry with per-tab buffers, per-statement/selection run, Memento-persisted history (cap 200) with recall, EXPLAIN/EXPLAIN ANALYZE behind a modal confirm gate, Format round-trip via formatSql; webview gained tab bar, plan pane, history recall, Format/Explain buttons; extension.ts wires globalState + `UnicDB.consoleNewTab`.
 TEST_PLAN_FOLLOWED: task §Test Cases 1-12
 FILES_CHANGED:
   - src/ui/consolePanel.ts: tab registry, history (Memento), message handlers, isExplainAnalyze, confirm gate, formatSql round-trip
   - src/ui/consolePanelMessages.ts: extended wire contract + guards, CONSOLE_HISTORY_KEY/CAP, newTabId
   - webview/consolePanelMain.ts: tab bar, Run/Run Selection/Explain/Explain Analyze/Format/History buttons, ArrowUp/Down recall, plan pane, TASK-002 context menu preserved
   - webview/styles.css: tab bar, plan pane, history pane styles
-  - src/extension.ts: pass context.globalState to ConsolePanel; vsdb.consoleNewTab command
-  - package.json: activation event + contributed command vsdb.consoleNewTab (with icon)
+  - src/extension.ts: pass context.globalState to ConsolePanel; UnicDB.consoleNewTab command
+  - package.json: activation event + contributed command UnicDB.consoleNewTab (with icon)
   - CHANGELOG.md: Unreleased cycle AF entry (console v2)
 TESTS_ADDED:
   - src/ui/__tests__/consoleTabs.test.ts: cases 1,2,3,5,6,7,8,9 (8 tests)

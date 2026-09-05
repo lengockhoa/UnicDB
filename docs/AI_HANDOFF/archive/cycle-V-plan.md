@@ -4,16 +4,16 @@
 
 Three queued items from cycle U's `INDEX.md` "Next cycles" list, run together:
 
-1. **SQL syntax coloring.** The user's complaint: SQL text inside VSDB surfaces is not
+1. **SQL syntax coloring.** The user's complaint: SQL text inside UnicDB surfaces is not
    colorized the way DataGrip colorizes it. Today the extension contributes **zero**
    `languages` / `grammars` entries in `package.json` (verified: `contributes` keys are
    `commands, keybindings, menus, views, viewsContainers, viewsWelcome, configuration`),
    so `.sql` files rely purely on VS Code's built-in `sql` TextMate grammar — which does
    not know the connected schema, does not distinguish table names from columns, and does
-   not colorize SQL echoed inside VSDB's own webviews (the Messages tab `pre.vsdb-msg-sql`
+   not colorize SQL echoed inside UnicDB's own webviews (the Messages tab `pre.UnicDB-msg-sql`
    at `webview/main.ts:2758-2761` renders `r.sql` as flat text; the AI chat bubble's
    fenced code block at `webview/aiChatPanelMain.ts:139` emits
-   `<code class="vsdb-md-code-lang-sql">` with no token markup).
+   `<code class="UnicDB-md-code-lang-sql">` with no token markup).
 2. **Server-side column filter + paging.** Today's per-column set filter
    (`SetFilterComponent`, `webview/main.ts:1104`) filters only rows already loaded in the
    grid, and `colFilterActive` (`webview/main.ts:220`) *blocks* `loadMore` entirely while
@@ -26,7 +26,7 @@ Three queued items from cycle U's `INDEX.md` "Next cycles" list, run together:
 
 **Success definition**
 
-- SQL rendered anywhere in VSDB (editor `.sql` documents, Messages-tab statement text,
+- SQL rendered anywhere in UnicDB (editor `.sql` documents, Messages-tab statement text,
   AI-chat fenced `sql` blocks) carries per-token coloring, and connected-schema table /
   column names are colorized distinctly from plain identifiers.
 - A per-column filter on a browsed table produces a **server-side** `WHERE`: the host
@@ -102,7 +102,7 @@ TASK-005, 006 (both depend on TASK-004 only).
 | File | Wave 1 owner | Wave 2 owner |
 |------|--------------|--------------|
 | `package.json` | TASK-001 | — |
-| `syntaxes/vsdb-sql-injection.tmLanguage.json` (new) | TASK-001 | — |
+| `syntaxes/UnicDB-sql-injection.tmLanguage.json` (new) | TASK-001 | — |
 | `src/__tests__/sqlGrammar.test.ts` (new) | TASK-001 | — |
 | `src/ui/sqlSemanticTokens.ts` (new) | TASK-002 | — |
 | `src/extension.ts` | TASK-002 | — |
@@ -126,7 +126,7 @@ TASK-005, 006 (both depend on TASK-004 only).
 Every column above is collision-free: no file has two owners **in the same wave**. The
 three cross-wave files are safe because a wave boundary serializes them:
 
-- `webview/main.ts` — TASK-003 (wave 1, Messages-tab `pre.vsdb-msg-sql` colorization) then
+- `webview/main.ts` — TASK-003 (wave 1, Messages-tab `pre.UnicDB-msg-sql` colorization) then
   TASK-005 (wave 2, filter/paging wiring). TASK-005 must **re-read** the file rather than
   work from a cached copy or a pre-computed line number.
 - `src/ui/queryComposer.ts` and its test — TASK-004 creates both in wave 1; TASK-006
@@ -186,7 +186,7 @@ Three complementary layers, because no single layer covers all three surfaces:
 ### Server-side filter + paging (TASK-004 / 005)
 
 `composeRequery` (`src/ui/resultsGridModel.ts:1090`) already wraps a statement as
-`SELECT * FROM (<sql>) vsdb_sub [WHERE …] [ORDER BY …]`. TASK-004 extends that idea into a
+`SELECT * FROM (<sql>) UnicDB_sub [WHERE …] [ORDER BY …]`. TASK-004 extends that idea into a
 dialect-aware module rather than editing `resultsGridModel.ts`, so the webview bundle does
 not grow and so `resultsGridModel.ts` (already 1214 lines) stops accreting host concerns:
 
@@ -229,7 +229,7 @@ not grow and so `resultsGridModel.ts` (already 1214 lines) stops accreting host 
 
 Mirror the Postgres contract exactly:
 `getTableSortQuery(originalSql, whereFromBar, column, direction) => string`, wrapping in
-`SELECT * FROM (<inner>) vsdb_sort [WHERE …] ORDER BY [col] ASC|DESC`, with `]`-doubling
+`SELECT * FROM (<inner>) UnicDB_sort [WHERE …] ORDER BY [col] ASC|DESC`, with `]`-doubling
 and an ASC/DESC whitelist.
 
 Both adapters end up exporting the same-named symbol, so something must dispatch by
@@ -268,7 +268,7 @@ Baseline: `1327 passed / 2 skipped / 0 failed`. Every task must leave that green
 |------|-----------|----------|
 | happy | `grammar contributes an injection for source.sql` | `package.json` `contributes.grammars[0].injectTo` contains `"source.sql"`; the referenced `syntaxes/*.json` path exists on disk |
 | happy | `grammar JSON parses and every pattern has a name+match` | `JSON.parse` succeeds; every entry in `patterns` has both `name` and (`match` or `begin`) |
-| edge (packaging) | `.vscodeignore does not exclude syntaxes/` | packaged file list still contains `syntaxes/vsdb-sql-injection.tmLanguage.json` |
+| edge (packaging) | `.vscodeignore does not exclude syntaxes/` | packaged file list still contains `syntaxes/UnicDB-sql-injection.tmLanguage.json` |
 | edge (regex safety) | `no grammar pattern matches the empty string` | for every `match`, `new RegExp(m).exec("")` is `null` (an empty-matching rule hangs the TextMate engine) |
 | happy | `semantic tokens mark a known table as class` | `SELECT * FROM users` with `users` in cache → one token at the `users` range with type `class` |
 | happy | `semantic tokens mark a known column as property` | `SELECT email FROM users` → token for `email` typed `property` |
@@ -298,13 +298,13 @@ Baseline: `1327 passed / 2 skipped / 0 failed`. Every task must leave that green
 | edge (concurrency) | `a second requery while one is in flight does not interleave` | the older run's result never overwrites the newer one's `lastResults` entry |
 | edge (cursor) | `previous batched cursor is closed before a filtered requery` | `batched.close()` called exactly once before `runSql` |
 | edge (back-compat) | `requery without filters/offset behaves exactly as today` | composed SQL is byte-identical to `composeRequery(sql, where, orderBy)` |
-| happy | `mssql getTableSortQuery wraps and orders` | `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY [name] ASC` |
+| happy | `mssql getTableSortQuery wraps and orders` | `SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY [name] ASC` |
 | edge (injection) | `column name with ] is doubled, stays one identifier` | `name]; DROP TABLE users--` → `[name]]; DROP TABLE users--]` |
 | edge (direction) | `direction is whitelisted` | direction `"ASC; DROP"` cast → falls back to `ASC` |
 | edge (dispatch) | `composeSortQuery routes by dialect` | postgres → `"name"`, mysql → `` `name` ``, mssql → `[name]` |
 | happy (liveness) | `a requery-bar ORDER BY reaches the adapter helper` | driver mssql + `orderBy:"name DESC"` → SQL at `runner.runSql` contains `ORDER BY [name] DESC`; driver postgres → `ORDER BY "name" DESC`. Fails if the helpers are dead code |
 | edge (passthrough) | `a complex ORDER BY is not mangled` | `"a, b DESC"` / `"lower(name)"` / `"1"` → composed SQL byte-identical to `composeRequery(sql, where, orderBy)` |
-| edge (no duplication) | `the composer's mssql arm is a delegation, not a copy` | `queryComposer.ts` source contains no `vsdb_sort` / bracket-quoting string building, yet `composeSortQuery("mssql", …)` returns full T-SQL |
+| edge (no duplication) | `the composer's mssql arm is a delegation, not a copy` | `queryComposer.ts` source contains no `UnicDB_sort` / bracket-quoting string building, yet `composeSortQuery("mssql", …)` returns full T-SQL |
 | regression | `full suite stays at 1327 passed / 2 skipped` | `npm test` reports no fewer passing tests than baseline |
 
 ## §5 Verification
@@ -349,14 +349,14 @@ Notes for executors:
 
   ```bash
   npx tsc -p tsconfig.webview.json --noEmit 2>&1 \
-    | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/vsdb-webview-tsc-before.txt
+    | grep -oE '^[a-zA-Z0-9_/.-]+\.ts' | sort | uniq -c | sort -rn > /tmp/UnicDB-webview-tsc-before.txt
   ```
 
-  After editing, run the same pipeline into `/tmp/vsdb-webview-tsc-after.txt` and assert
+  After editing, run the same pipeline into `/tmp/UnicDB-webview-tsc-after.txt` and assert
   the two are identical:
 
   ```bash
-  diff /tmp/vsdb-webview-tsc-before.txt /tmp/vsdb-webview-tsc-after.txt && echo "WEBVIEW TSC BASELINE UNCHANGED"
+  diff /tmp/UnicDB-webview-tsc-before.txt /tmp/UnicDB-webview-tsc-after.txt && echo "WEBVIEW TSC BASELINE UNCHANGED"
   ```
 
   The gate is **`diff` exits 0**. Any count that rises — including on a file already in
@@ -371,13 +371,13 @@ Notes for executors:
 
 ## §6 Acceptance
 
-- [ ] `node -e "JSON.parse(require('fs').readFileSync('syntaxes/vsdb-sql-injection.tmLanguage.json','utf8'))"` exits 0.
+- [ ] `node -e "JSON.parse(require('fs').readFileSync('syntaxes/UnicDB-sql-injection.tmLanguage.json','utf8'))"` exits 0.
 - [ ] `node -e "const c=require('./package.json').contributes; if(!c.grammars) process.exit(1)"` exits 0.
 - [ ] `src/ui/sqlSemanticTokens.ts` exists and `src/extension.ts` registers it behind a
       `typeof vscode.languages.registerDocumentSemanticTokensProvider === "function"` guard.
 - [ ] `SqlSemanticTokensProvider` exposes `onDidChangeSemanticTokens` + `refresh()`, and
       `src/extension.ts` calls `refresh()` from both cache-invalidation sites (`:141`
-      `onDidChangeActive`, `:233-237` `vsdb.refreshSchema`) — without this the first open of
+      `onDidChangeActive`, `:233-237` `UnicDB.refreshSchema`) — without this the first open of
       a `.sql` file paints against a cold, empty `SchemaCache` and stays uncolored.
 - [ ] `webview/sqlHighlight.ts` exists, exports `highlightSql(sql: string): DocumentFragment`,
       and contains no `innerHTML`. Gate command (exits 0 on success — `grep -c` on zero
@@ -394,7 +394,7 @@ Notes for executors:
       No sort helper ships as an orphan export this cycle.
 - [ ] `npm run typecheck` → clean.
 - [ ] Webview typecheck snapshot diff is empty — see §5. Command:
-      `diff /tmp/vsdb-webview-tsc-before.txt /tmp/vsdb-webview-tsc-after.txt` exits 0
+      `diff /tmp/UnicDB-webview-tsc-before.txt /tmp/UnicDB-webview-tsc-after.txt` exits 0
       (61 pre-existing errors across six files, unchanged).
 - [ ] `npm run compile` → **7** bundles written, no esbuild error (`esbuild.js` defines
       `dist/extension.js`, `webview.js`, `connectionForm.js`, `newTableForm.js`,
@@ -456,7 +456,7 @@ Coverage
 4. Unhappy paths planned: no-connection / adapter-rejection (TASK-002 #6-7), unterminated literal (TASK-003 #5), empty filter model and empty `IN ()` (TASK-004 #4,#7), failed append leaves rows intact (TASK-005 #8), missing-API registration guard (TASK-002 #8). PASS.
 
 Correctness
-5. Every Target File verified on disk; the four new files (`syntaxes/vsdb-sql-injection.tmLanguage.json`, `src/ui/queryComposer.ts`, `src/ui/sqlSemanticTokens.ts`, `webview/sqlHighlight.ts`) are marked `(new)` and their parent dirs exist (`syntaxes/` is created by TASK-001). PASS.
+5. Every Target File verified on disk; the four new files (`syntaxes/UnicDB-sql-injection.tmLanguage.json`, `src/ui/queryComposer.ts`, `src/ui/sqlSemanticTokens.ts`, `webview/sqlHighlight.ts`) are marked `(new)` and their parent dirs exist (`syntaxes/` is created by TASK-001). PASS.
 6. Every verification command is a real script: `typecheck`, `compile`, `test` are defined in `package.json`; `npx vitest run <path>` and `npx tsc -p tsconfig.webview.json --noEmit` both verified to run. No lint script exists — stated in §5 rather than omitted. PASS.
 7. No same-wave file sharing. Wave 1 owners are disjoint (001: `package.json`+`syntaxes/`; 002: `src/extension.ts`+`src/ui/sqlSemanticTokens.ts`; 003: `webview/*`; 004: `src/ui/queryComposer.ts`). Wave 2: 005 owns `src/ui/messages.ts`/`resultsPanel.ts`/`webview/main.ts`, 006 owns `src/adapters/*` + the `queryComposer.ts` mssql arm — disjoint. `webview/main.ts` is 003 (wave 1) then 005 (wave 2); `queryComposer.ts` is 004 (wave 1) then 006 (wave 2). Both serialized by wave, not concurrent. PASS.
 8. No task depends on a symbol no earlier task creates: TASK-005/006 consume only TASK-004 exports plus HEAD symbols. PASS.
@@ -528,7 +528,7 @@ intact above. Reviewer not re-run (orchestrated separately).
 | # | Finding | Applied |
 |---|---------|---------|
 | 1 | §5 webview-typecheck baseline wrong + gate inert | §5 now carries a **measured** per-file baseline (61 error lines across 6 files, mixed codes: `TS2393`×21, `TS2451`×14, `TS2339`×7, `TS2304`/`TS2678`×3, others; 77 raw output lines) and replaces "no new filename" with a snapshot diff: capture per-file counts before and after, gate on `diff` exiting 0. §6 checkbox updated. TASK-003 and TASK-005 verification blocks carry the same commands, each naming why a filename check is inert for the file *it* edits. TASK-003 additionally requires `webview/sqlHighlight.ts` to be absent from the after-snapshot (a new file must add zero errors). |
-| 2 | Cold `SchemaCache` → no coloring on first open | TASK-002 now specifies `onDidChangeSemanticTokens` + `refresh()` + `dispose()` on the provider, `refresh()` calls wired into the two existing invalidation sites (`src/extension.ts:141` `onDidChangeActive`, `:233-237` `vsdb.refreshSchema`), and a guarded one-shot re-fire when a provide call hits a cold cache (with an "already scheduled" boolean, since fire→re-request→still-cold loops). New cases 9 (cold cache → refresh → token appears, listener fired exactly once) and 10 (event lifecycle: safe with zero listeners, does not coalesce). §4, §6 and the Interfaces block updated; the vscode mock now needs `EventEmitter`. |
+| 2 | Cold `SchemaCache` → no coloring on first open | TASK-002 now specifies `onDidChangeSemanticTokens` + `refresh()` + `dispose()` on the provider, `refresh()` calls wired into the two existing invalidation sites (`src/extension.ts:141` `onDidChangeActive`, `:233-237` `UnicDB.refreshSchema`), and a guarded one-shot re-fire when a provide call hits a cold cache (with an "already scheduled" boolean, since fire→re-request→still-cold loops). New cases 9 (cold cache → refresh → token appears, listener fired exactly once) and 10 (event lifecycle: safe with zero listeners, does not coalesce). §4, §6 and the Interfaces block updated; the vscode mock now needs `EventEmitter`. |
 | 3 | §1 claimed MSSQL sort ships; audit said it stays orphaned | Resolved by **making it true rather than softening it**: §1 now says MSSQL sort ships as a live path — TASK-005's `handleRequery` routes a single-identifier requery-bar ORDER BY through `composeSortQuery`, so both adapter helpers get a real call site (this also retires the Postgres orphan from cycle U). §1, §3 and §6 all state the same thing, and column-header-click wiring is explicitly out of scope for **every** dialect in §2. New TASK-005 cases 15 (liveness: mssql → `ORDER BY [name] DESC` at `runner.runSql`), 16 (complex ORDER BY passes through byte-identically), 17 (empty ORDER BY — the post-save auto-requery path). |
 | 4 | `String()`-coerced filter values break MSSQL/MySQL typing | `ColumnFilterModel` entries gain `typed?: unknown[]`, used only when `typed.length === values.length`, routed through the existing `sqlLiteral` (already emits unquoted numbers, `TRUE`/`FALSE`, `NULL`). New TASK-004 cases 15 (numerics unquoted on all 3 dialects), 16 (ISO timestamp normalized per dialect — PG verbatim, MySQL/MSSQL `T`→space and `Z` stripped), 17 (booleans/nulls typed), 18 (**no** type sniffing: `"007"` without `typed` stays `'007'`), 19 (length mismatch falls back, never `IN (1, undefined)`). TASK-005 owns population (cases 12-14) and must omit `typed` wholesale when a selected value's row is no longer loaded. §4 gained 5 rows; §6 gained a criterion; the UTC-naive timestamp assumption is logged in TASK-004's Discussion and in Known gaps. |
 | 5 | §2 owner table stale | Rebuilt as a wave-1/wave-2 two-column table listing all 22 files including every test file, followed by an explicit note on the three cross-wave files (`webview/main.ts`, `queryComposer.ts`, `queryComposer.test.ts`) and why a wave boundary makes them safe. |
@@ -551,7 +551,7 @@ owned. Nothing known to be inconsistent.
 ### Round 3 — 2026-08-25 · bao-opus
 Status: Approved
 
-Verified against repo: `package.json` scripts/contributes/deps/engines ✓; 7 esbuild bundles ✓; `contributes` keys (no `grammars`/`languages` at HEAD) ✓; `getTableSortQuery` at `postgres.ts:167` — zero production call sites confirmed ✓; `sqlLiteral` at `resultsGridModel.ts:378` handles null/number/boolean/bigint/Date/string ✓; `quoteIdent` at `saveStatements.ts:136` covers mysql/mssql/postgres ✓; `SET_FILTER_BLANKS_DISPLAY` at `resultsGridModel.ts:1138` ✓; `composeRequery` at `resultsGridModel.ts:1090` ✓; `SchemaCache` async + 60 s TTL confirmed ✓; `vsdb.refreshSchema` command at `extension.ts:233`, `onDidChangeActive` at `extension.ts:139` ✓; webview baseline: 61 error lines across 6 files, 77 raw lines, codes match plan ✓; full test suite: 1327 passed / 2 skipped / 0 failed ✓; `grep -c` replaced with `! grep -q` ✓.
+Verified against repo: `package.json` scripts/contributes/deps/engines ✓; 7 esbuild bundles ✓; `contributes` keys (no `grammars`/`languages` at HEAD) ✓; `getTableSortQuery` at `postgres.ts:167` — zero production call sites confirmed ✓; `sqlLiteral` at `resultsGridModel.ts:378` handles null/number/boolean/bigint/Date/string ✓; `quoteIdent` at `saveStatements.ts:136` covers mysql/mssql/postgres ✓; `SET_FILTER_BLANKS_DISPLAY` at `resultsGridModel.ts:1138` ✓; `composeRequery` at `resultsGridModel.ts:1090` ✓; `SchemaCache` async + 60 s TTL confirmed ✓; `UnicDB.refreshSchema` command at `extension.ts:233`, `onDidChangeActive` at `extension.ts:139` ✓; webview baseline: 61 error lines across 6 files, 77 raw lines, codes match plan ✓; full test suite: 1327 passed / 2 skipped / 0 failed ✓; `grep -c` replaced with `! grep -q` ✓.
 
 Round 1 findings resolution (8 of 8 verified):
 1. §5 webview baseline — RESOLVED: measured per-file snapshot diff, 61 errors / 6 files / 77 lines / 12 codes, correct gates for TASK-003/TASK-005.

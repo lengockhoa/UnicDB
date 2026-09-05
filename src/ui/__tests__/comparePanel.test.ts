@@ -68,6 +68,6 @@ describe("ComparePanel", () => {
     panel.show(result, req);
     const created = (vscode.window.createWebviewPanel as ReturnType<typeof vi.fn>).mock.results[0]?.value;
     const posted = created.webview.postMessage as ReturnType<typeof vi.fn>;
-    expect(posted).toHaveBeenCalledWith(expect.objectContaining({ type: "vsdb-compare", result, request: req }));
+    expect(posted).toHaveBeenCalledWith(expect.objectContaining({ type: "UnicDB-compare", result, request: req }));
   });
 });

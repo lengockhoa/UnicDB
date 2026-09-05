@@ -57,10 +57,10 @@ export function fileOpsDeniedEnvelope(): string {
  * snapshot it rendered; the registration (aiChatPanel) binds that snapshot
  * to THE individual permission request, so two concurrent cards for the
  * same path can never approve against each other's snapshot. The snapshot
- * rides on the execute args as `__vsdbExpectedOld` (stripped before the
+ * rides on the execute args as `__UnicDBExpectedOld` (stripped before the
  * model-visible envelope contract; also passed to the host writeFile CAS).
  */
-const SNAPSHOT_ARG = "__vsdbExpectedOld";
+const SNAPSHOT_ARG = "__UnicDBExpectedOld";
 
 export interface FileOpsPreview {
   card: string | undefined;

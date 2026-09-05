@@ -97,7 +97,7 @@ Error: Failed to load url ../ddl/pgIntrospect (resolved id: ../ddl/pgIntrospect)
 
 ### GREEN Output (after implementation)
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-002
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-002
  ✓ src/core/__tests__/pgIntrospect.test.ts  (13 tests) 2ms
  Test Files  1 passed (1)
       Tests  13 passed (13)
@@ -123,7 +123,7 @@ EXIT=0   # no output, no errors
 - **originalName on every column**: spec requires modify-mode support; we set `originalName: r.column_name` for every column regardless of nullability/default presence.
 - **isPrimaryKey on PK member columns**: set as out-of-band `ColumnSpec & { isPrimaryKey?: boolean }` property (typed widening at construction site).
 - **No vscode/pg imports**: SQL strings + pure row mappers only (per Acceptance §All §Test Cases PASS).
-- **Node_modules symlink**: worktree `node_modules` was missing; symlinked to repo root (`/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/node_modules`) so vitest/tsc resolve.
+- **Node_modules symlink**: worktree `node_modules` was missing; symlinked to repo root (`/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/node_modules`) so vitest/tsc resolve.
 
 ### Issues
 - None blocking. Minor contract divergence noted (PK `name`, FK `references` vs `refTable`/`refColumns`) — orchestrator resolution plan and review will resolve against TASK-001.

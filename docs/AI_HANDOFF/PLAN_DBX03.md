@@ -27,7 +27,7 @@ Pure modules in `src/core/compare/` (no vscode import):
 2. `dataDiff.ts` — `diffData(keys, sourceRows, targetRows, columns): DataDiffResult` — key-tuple maps, rows-only-in-A / only-in-B / changed (per-column cell diffs). Requires `keys` non-empty; empty keys → `DataDiffResult {skipped: "no-key"}`. Rows arrive as ordered arrays from keyset queries; the HOST fetches rows (pure module never queries).
 3. `syncPlan.ts` — `buildSyncPlan(shapeDiff, dataDiff, opts): SyncPlan` — ordered, grouped statements: schema DDL first (add columns → alter type/nullability/default → drop columns), then data (INSERT missing-in-target → UPDATE changed → DELETE extra-in-target), each with a human `summary` line. `direction`: "source→target" only. `executable` flag false when shape incompatible or no key (plan carries reason, statements empty for that group).
 4. `compareService.ts` (host, src/ui/) — fetches shapes via `adapter.listTableDetail`, rows via keyset-ordered SELECTs (`ORDER BY key`; row cap constant `COMPARE_ROW_LIMIT=10000`), calls pure modules, hands `CompareResult` to panel.
-5. `comparePanel.ts` (host) + `webview/comparePanelMain.ts` — CSP-clean rendering (textContent only, no innerHTML/eval/inline script; `acquireVsCodeApi().postMessage` single channel `vsdb-compare`).
+5. `comparePanel.ts` (host) + `webview/comparePanelMain.ts` — CSP-clean rendering (textContent only, no innerHTML/eval/inline script; `acquireVsCodeApi().postMessage` single channel `UnicDB-compare`).
 
 **Auto-mapping note (from DBX-01):** mapping list is authoritative; same principle here — source shape is authoritative for ordering; target-only columns surface as "dropped in target direction".
 
@@ -56,7 +56,7 @@ Principles: parameterized SQL everywhere ($N or pg-pool bound params via listTab
 | T15 | compareService | non-postgres driver → refusal result, zero adapter calls beyond driver check | guard |
 | T16 | compareService | missing table on target → actionable error result | `table not found` |
 | T17 | compareService | > COMPARE_ROW_LIMIT rows → `truncated: true`, diff computed on fetched prefix | boundary |
-| T18 | panel wiring | `vsdb.compareTables` registered; activation partial-mock safe | smoke |
+| T18 | panel wiring | `UnicDB.compareTables` registered; activation partial-mock safe | smoke |
 | T19 | scaffold | manifest + no-second-cache/no-timer grep guard on compare modules | grep |
 
 ## §5 Verification Commands

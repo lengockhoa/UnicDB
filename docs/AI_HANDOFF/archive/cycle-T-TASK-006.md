@@ -252,7 +252,7 @@ Baseline (from `main`, before this task): 1044 passed, 2 skipped, 81 files passe
 1054 = 1044 + 10 new tests added by this task (4 in acpProcess.test.ts, 3 in acp.test.ts, 3 in
 detect.test.ts). Zero regressions — every previously-passing test still passes.
 
-`acpLiveSmoke.test.ts` was not run (requires `VSDB_OMP_SMOKE=1` + a real `omp` binary, per the
+`acpLiveSmoke.test.ts` was not run (requires `UnicDB_OMP_SMOKE=1` + a real `omp` binary, per the
 task's explicit DO NOT RUN instruction and its own gate).
 
 ## Files Changed

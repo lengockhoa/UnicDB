@@ -68,7 +68,7 @@ beforeAll(() => {
 const distPath = resolve(process.cwd(), "dist", "webview.js");
 const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -82,16 +82,16 @@ function loadBundle(): {
     );
   }
 
-  document.body.innerHTML = '<div id="vsdb-root" class="vsdb-webview"></div>';
-  const root = document.getElementById("vsdb-root") as HTMLDivElement;
+  document.body.innerHTML = '<div id="UnicDB-root" class="UnicDB-webview"></div>';
+  const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
   // The bundle is an IIFE — running it under jsdom installs globals + listeners.
@@ -105,13 +105,13 @@ function dispatchState(msg: Record<string, unknown>): void {
 }
 
 function getGridApi(): GridApi | null {
-  const w = window as unknown as { __vsdb?: { gridApi?: GridApi } };
-  return w.__vsdb?.gridApi ?? null;
+  const w = window as unknown as { __UnicDB?: { gridApi?: GridApi } };
+  return w.__UnicDB?.gridApi ?? null;
 }
 
 function checkLoadMoreForHost(): void {
-  const fn = (window as unknown as { __vsdbCheckLoadMoreForHost?: () => void })
-    .__vsdbCheckLoadMoreForHost;
+  const fn = (window as unknown as { __UnicDBCheckLoadMoreForHost?: () => void })
+    .__UnicDBCheckLoadMoreForHost;
   if (typeof fn === "function") fn();
 }
 
@@ -167,7 +167,7 @@ describeIfBundle("webview resultLimited UX (TASK-ARP03-004)", () => {
     const { root } = loadBundle();
     dispatchState(selectState({ results: [limitedResult({ rowCount: 20 })] }));
 
-    const footer = root.querySelector(".vsdb-grid-footer");
+    const footer = root.querySelector(".UnicDB-grid-footer");
     expect(footer).toBeTruthy();
     const text = footer!.textContent ?? "";
     // Truncation copy must WIN over footerText's "20 of 20" total branch:
@@ -175,7 +175,7 @@ describeIfBundle("webview resultLimited UX (TASK-ARP03-004)", () => {
     expect(text).toMatch(/truncated/i);
     expect(text).not.toMatch(/\d+ of \d+/);
     // Not an error presentation — truncation is its own state.
-    expect(root.querySelector(".vsdb-error")).toBeNull();
+    expect(root.querySelector(".UnicDB-error")).toBeNull();
   });
 
   it("2. limited statement never posts loadMore (rowCount: null — gate closed by flag)", () => {
@@ -214,7 +214,7 @@ describeIfBundle("webview resultLimited UX (TASK-ARP03-004)", () => {
         ],
       }),
     );
-    const footer = root.querySelector(".vsdb-grid-footer");
+    const footer = root.querySelector(".UnicDB-grid-footer");
     expect(footer).toBeTruthy();
     const text = footer!.textContent ?? "";
     // Plain footerText output ("20 of 20" total branch) — NOT the truncation marker.
@@ -222,11 +222,11 @@ describeIfBundle("webview resultLimited UX (TASK-ARP03-004)", () => {
     expect(text).not.toMatch(/truncated/i);
   });
 
-  it("4. distinct from empty — empty results keep the .vsdb-empty placeholder", () => {
+  it("4. distinct from empty — empty results keep the .UnicDB-empty placeholder", () => {
     const { root } = loadBundle();
     dispatchState(selectState({ results: [] }));
 
-    const empty = root.querySelector(".vsdb-empty");
+    const empty = root.querySelector(".UnicDB-empty");
     expect(empty).toBeTruthy();
     expect(empty!.textContent).toBe("No results yet.");
     expect(root.textContent ?? "").not.toMatch(/truncated/i);
@@ -251,16 +251,16 @@ describeIfBundle("webview resultLimited UX (TASK-ARP03-004)", () => {
     expect(root.textContent ?? "").not.toMatch(/truncated/i);
 
     // TASK-UX2-002 — tabBadge returns "" for non-error statuses; cancelled
-    // has no badge but still carries the .vsdb-tab-cancelled CSS class.
-    const tab = root.querySelector(".vsdb-tab.vsdb-tab-cancelled");
+    // has no badge but still carries the .UnicDB-tab-cancelled CSS class.
+    const tab = root.querySelector(".UnicDB-tab.UnicDB-tab-cancelled");
     expect(tab).toBeTruthy();
     expect(tab!.textContent ?? "").not.toMatch(/[⌀✗⚠]/);
 
     // ...and the cancelled message card on the Messages tab.
-    const tabs = root.querySelectorAll(".vsdb-tab");
+    const tabs = root.querySelectorAll(".UnicDB-tab");
     expect(tabs.length).toBe(2);
     (tabs[tabs.length - 1] as HTMLButtonElement).click();
-    const card = root.querySelector(".vsdb-msg-card.vsdb-msg-cancelled");
+    const card = root.querySelector(".UnicDB-msg-card.UnicDB-msg-cancelled");
     expect(card).toBeTruthy();
     expect(card!.textContent ?? "").toContain("Statement 1 — CANCELLED");
   });

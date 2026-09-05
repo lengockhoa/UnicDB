@@ -2,7 +2,7 @@
 // TASK-003 — Host tests for SchemaForm (Create New Schema dialog).
 // Pattern mirrors src/ui/__tests__/newTableForm.test.ts (mock vscode, capture
 // panel + onDidReceiveMessage). Form contract:
-//   - panel id "vsdb.schemaForm"
+//   - panel id "UnicDB.schemaForm"
 //   - name up top, CREATE SCHEMA "<name>" preview below
 //   - empty name → preview "—" + error listed + OK disabled
 //   - duplicate name (case-insensitive) → error + OK disabled
@@ -173,7 +173,7 @@ describe("SchemaForm — preview", () => {
 // #2 — OK → runDdl + refresh + reveal + toast
 // ============================================================================
 describe("SchemaForm — submit", () => {
-  it("#2 OK → runDdl(CREATE SCHEMA \"x\";) awaited → onOk → info 'VSDB: schema \"x\" created'", async () => {
+  it("#2 OK → runDdl(CREATE SCHEMA \"x\";) awaited → onOk → info 'UnicDB: schema \"x\" created'", async () => {
     const runDdl = vi.fn().mockResolvedValue(undefined);
     let refreshCalled = false;
     let revealCalled = false;
@@ -188,7 +188,7 @@ describe("SchemaForm — submit", () => {
       onOk: (sql, name) => {
         refreshCalled = true;
         revealCalled = true;
-        infoMsg = `VSDB: schema "${name}" created`;
+        infoMsg = `UnicDB: schema "${name}" created`;
         // runDdl invoked BEFORE onOk
         return runDdl(sql, name);
       },

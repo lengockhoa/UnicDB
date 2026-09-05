@@ -123,7 +123,7 @@ FILES_CHANGED:
     preserves realType when selection maps to original form value; auto-fill
     skipped for host-loaded columns; reindexTracking/swapTracking keep
     tracking valid across remove/up/down; auto-init now respects
-    `data-vsdb-skip-auto-init` for source-level test isolation.
+    `data-UnicDB-skip-auto-init` for source-level test isolation.
   - webview/newTableFormColumnHelpers.ts (new): pure `mapTypeToForm` and
     `defaultColumnDefault`.
   - src/ui/__tests__/newTableFormColumnDefault.test.ts (new): jsdom
@@ -145,7 +145,7 @@ VERIFICATION:
     esbuild: build complete
     Test Files  1 passed (1)
          Tests  8 passed (8)
-    > vsdb@1.6.0 typecheck
+    > UnicDB@1.6.0 typecheck
     > tsc --noEmit
 
 ISSUES: none
@@ -184,7 +184,7 @@ repeated dynamic imports crashing on detached DOM) by replacing the
 `window.addEventListener("message", ...)` and `window.addEventListener("keydown",
 ...)` calls in `webview/newTableFormMain.ts` with a self-replacing pattern:
 each module instance removes the previously-registered handler (stashed on
-`window.__vsdbMsgListener` / `__vsdbKeyListener`) before installing its own.
+`window.__UnicDBMsgListener` / `__UnicDBKeyListener`) before installing its own.
 This guarantees one listener per window AND that the live listener always
 closes over the live `root` element. Added regression test #8 that
 exercises the double-dynamic-import lifecycle.
@@ -223,8 +223,8 @@ backfilled by including the pre-fix output above).
 
 FILES_CHANGED:
   - webview/newTableFormMain.ts: window message + keydown listeners
-    wrapped in self-replacing pattern keyed on `window.__vsdbMsgListener` /
-    `__vsdbKeyListener`. Each re-import removes the previous handler and
+    wrapped in self-replacing pattern keyed on `window.__UnicDBMsgListener` /
+    `__UnicDBKeyListener`. Each re-import removes the previous handler and
     installs the new one, so exactly one listener per window and the
     listener always closes over the module's live `root`. No behavior
     change for normal (single-load) usage.
@@ -254,7 +254,7 @@ VERIFICATION:
      Test Files  1 passed (1)
           Tests  9 passed (9)
        Duration  470ms
-    > vsdb@1.6.0 typecheck
+    > UnicDB@1.6.0 typecheck
     > tsc --noEmit
 
 ISSUES: none. Out-of-scope scaffold test failure (1 in src/scaffold.test.ts)

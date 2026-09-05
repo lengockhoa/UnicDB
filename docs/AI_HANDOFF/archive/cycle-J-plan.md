@@ -2,7 +2,7 @@
 
 ## §1 Intent
 
-VSDB needs one place to configure an OpenAI-compatible AI backend and a core that uses it —
+UnicDB needs one place to configure an OpenAI-compatible AI backend and a core that uses it —
 the kernel every later AI-assist capability builds on. User requirements (verbatim
 intent, from `queue/AI-CORE-spec.md`):
 
@@ -28,14 +28,14 @@ seam, (d) all unit-tested with fake fetch/secret storage — no network, no PG c
   `aiSettingsErrors`, `normalizeBaseUrl`, `defaultAiSettings`, `redactAiConfig`). No vscode
   import → importable from webview bundle.
 - `src/ai/config.ts` — `AiConfigStore` (vscode): settings JSON in globalState, apiKey in
-  SecretStorage key `vsdb.ai.apiKey`, fresh `loadConfig()` per call (no instance cache).
+  SecretStorage key `UnicDB.ai.apiKey`, fresh `loadConfig()` per call (no instance cache).
 - `src/ai/provider.ts` — pure OpenAI-compatible client, injected `fetch`, method switch,
   exported pure body-builders/response-parsers, `ProviderError` (status/timeout/endpoint,
   apiKey-scrubbed snippet).
 - `src/ai/agent.ts` — pure `runAgent` loop: config snapshot per run, role→modelId routing,
   tool registry seam (`EMPTY_TOOL_REGISTRY`), max-steps budget, vision guard.
 - `src/ui/aiSettingsForm.ts` + `src/ui/aiSettingsFormMessages.ts` + `webview/aiSettingsFormMain.ts`
-  (mirror ConnectionForm/NewTableForm pattern), esbuild entry, `vsdb.openAiSettings` command
+  (mirror ConnectionForm/NewTableForm pattern), esbuild entry, `UnicDB.openAiSettings` command
   wiring in `package.json` + `src/extension.ts`, README privacy/egress section.
 - Unit tests only (vitest; fake vscode / fake fetch / fake registry). No integration tests.
 
@@ -61,7 +61,7 @@ chat panel (after the core is stable), Anthropic protocol (not requested).
 **Architecture — three pure modules under `src/ai/` + one webview form (established patterns):**
 
 - **Storage split (mirrors `src/core/connectionManager.ts`):** non-secret settings JSON →
-  globalState key `vsdb.ai.settings`; apiKey → SecretStorage key `vsdb.ai.apiKey` (never in
+  globalState key `UnicDB.ai.settings`; apiKey → SecretStorage key `UnicDB.ai.apiKey` (never in
   globalState, logs, errors, telemetry, or test snapshots beyond the store itself). AI config
   is machine-global, not per-workspace — one place for the entire extension. `save()` validates via
   `aiSettingsErrors` FIRST, stores the secret, then the settings (secret failure ⇒ nothing
@@ -114,7 +114,7 @@ signatures):
 | `AiSettings` | `src/ai/settings.ts` | `interface AiSettings { baseUrl: string; method: AiCompletionMethod; timeoutMs: number; maxSteps: number; models: Record<AiModelRole, AiModelConfig> }` |
 | `AiConfig` | `src/ai/settings.ts` | `interface AiConfig extends AiSettings { apiKey: string }` |
 | pure fns | `src/ai/settings.ts` | `defaultAiSettings(): AiSettings` · `aiSettingsErrors(s: AiSettings): string[]` · `normalizeBaseUrl(url: string): string` · `redactAiConfig(cfg: AiConfig): AiSettings` |
-| store | `src/ai/config.ts` | `class AiConfigStore { constructor(ctx: vscode.ExtensionContext); loadSettings(): Promise<AiSettings \| null>; loadApiKey(): Promise<string \| undefined>; loadConfig(): Promise<AiConfig \| null>; save(settings: AiSettings, apiKey: string): Promise<void>; clear(): Promise<void> }` + `KEY_AI_SETTINGS = "vsdb.ai.settings"`, `KEY_AI_API_KEY = "vsdb.ai.apiKey"` |
+| store | `src/ai/config.ts` | `class AiConfigStore { constructor(ctx: vscode.ExtensionContext); loadSettings(): Promise<AiSettings \| null>; loadApiKey(): Promise<string \| undefined>; loadConfig(): Promise<AiConfig \| null>; save(settings: AiSettings, apiKey: string): Promise<void>; clear(): Promise<void> }` + `KEY_AI_SETTINGS = "UnicDB.ai.settings"`, `KEY_AI_API_KEY = "UnicDB.ai.apiKey"` |
 | provider types | `src/ai/provider.ts` | `FetchLike`, `ChatMessage`, `ChatContentPart`, `ToolCall`, `ToolDef`, `ProviderRequest`, `ProviderResult`, `ProviderError`, `ProviderOptions` (full shapes in TASK-002) |
 | provider fns | `src/ai/provider.ts` | `createProviderClient(opts): { complete(req): Promise<ProviderResult> }` + the 4 pure builders/parsers |
 | agent types | `src/ai/agent.ts` | `AgentTool`, `ToolRegistry`, `EMPTY_TOOL_REGISTRY`, `AgentInput`, `AgentDeps`, `AgentStep`, `AgentRunResult` |
@@ -177,13 +177,13 @@ typecheck gate is `npx tsc --noEmit` (identical to `npm run typecheck`).
 ## §6 Acceptance
 
 1. AI Settings form stores settings + apiKey; apiKey lands ONLY in SecretStorage
-   (`vsdb.ai.apiKey`); settings JSON in globalState contains no key material. — T1, T4
+   (`UnicDB.ai.apiKey`); settings JSON in globalState contains no key material. — T1, T4
 2. `loadConfig()` is cache-free: any store change is visible on the next call. — T1
 3. Provider speaks both methods against any baseUrl with timeout, error mapping, and
    apiKey-scrubbed errors; vision parts map on both. — T2
 4. Agent loop: config snapshot per run, role→model routing, multi-turn tool calls, budget
    cap, vision guard, unknown/throwing tool recovery. — T3
-5. `vsdb.openAiSettings` command opens the form; Test button validates the endpoint
+5. `UnicDB.openAiSettings` command opens the form; Test button validates the endpoint
    end-to-end (user-facing smoke for real-endpoint compat). — T4
 6. All §5 commands PASS fresh; wave-boundary full `npx vitest run` green. — all
 7. README documents the privacy/egress contract (key storage, single-endpoint egress, no
@@ -231,7 +231,7 @@ Test plans: TDD-viable. T1 #1–13, T2 #1–13, T3 #1–12, T4 #1–13 all asser
 
 Verification commands: REAL — `npx vitest run` (vitest ^1.6.0 devDep, include covers `src/**/*.test.ts`), `npx tsc --noEmit` (= `npm run typecheck`, typescript ^5.4.5), `npm run compile` (= `node esbuild.js`); all script names exist in package.json. "No lint script" claim verified true (scripts: compile/watch/test/test:integration/typecheck/package/vscode:prepublish) — stated, not silently omitted, per `requireLintOrTypecheckInVerification`. jsdom ^29.1.1 present for bundle tests. `src/extension.test.ts` exists with registerCommand tracking (T4 #12 edit plausible). Referenced house patterns all exist: `src/core/__tests__/connectionManager.test.ts`, `src/ui/__tests__/newTableFormBundle.test.ts` (jsdom + skip-if-dist-missing), `connectionForm.test.ts`.
 
-Spec compliance: apiKey → SecretStorage `vsdb.ai.apiKey` only, never in globalState JSON (T1 save ordering + test #5/#10), never logged, scrubbed from ProviderError snippets (T2 #10), never round-trips to webview (`hasApiKey` only — T4 #1). Re-read per run: T1 cache-free `loadConfig()` (test #12) + T3 `deps.loadConfig()` exactly-once-per-run (test #4). OpenAI-compatible only; method enum exactly `responses | chat/completions`; roles exactly `work`(vision default true) + `smart`. Privacy egress contract → README (T4 #13). Out-of-scope guard table covers DB tools/streaming/chat panel/Anthropic — honored in task acceptance criteria.
+Spec compliance: apiKey → SecretStorage `UnicDB.ai.apiKey` only, never in globalState JSON (T1 save ordering + test #5/#10), never logged, scrubbed from ProviderError snippets (T2 #10), never round-trips to webview (`hasApiKey` only — T4 #1). Re-read per run: T1 cache-free `loadConfig()` (test #12) + T3 `deps.loadConfig()` exactly-once-per-run (test #4). OpenAI-compatible only; method enum exactly `responses | chat/completions`; roles exactly `work`(vision default true) + `smart`. Privacy egress contract → README (T4 #13). Out-of-scope guard table covers DB tools/streaming/chat panel/Anthropic — honored in task acceptance criteria.
 
 COMPLETENESS:
   - none — no TODO/TBD/placeholders; every task has Goal/Target Files/frozen contract/Test Cases/Test Files/Verification/Acceptance/Interfaces Consumes+Produces.

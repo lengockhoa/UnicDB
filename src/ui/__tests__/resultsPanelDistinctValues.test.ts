@@ -172,14 +172,14 @@ function makePanel(opts: PanelOpts = {}) {
 // =============================================================================
 
 describe("TASK-004 case 1 — requestDistinctValues runs the DISTINCT SQL", () => {
-  it("runSql called once with SELECT DISTINCT \"name\" over vsdb_distinct", async () => {
+  it("runSql called once with SELECT DISTINCT \"name\" over UnicDB_distinct", async () => {
     const { runSql, fake } = makePanel();
     fake.webview.dispatch({ type: "requestDistinctValues", index: 0, column: "name" });
     await waitForDistinct(fake, 1);
     expect(runSql).toHaveBeenCalledTimes(1);
     const sql = runSql.mock.calls[0]![0] as string;
     expect(sql).toContain('SELECT DISTINCT "name"');
-    expect(sql).toContain("vsdb_distinct");
+    expect(sql).toContain("UnicDB_distinct");
   });
 });
 
@@ -553,7 +553,7 @@ async function drainRequery(): Promise<void> {
 function distinctSqlCalls(runSql: ReturnType<typeof vi.fn>): string[] {
   return runSql.mock.calls
     .map((c) => c[0] as string)
-    .filter((s) => s.includes("vsdb_distinct"));
+    .filter((s) => s.includes("UnicDB_distinct"));
 }
 
 describe("TASK-006 case 1 — DISTINCT for one column retains bar WHERE plus other filters", () => {
@@ -577,7 +577,7 @@ describe("TASK-006 case 1 — DISTINCT for one column retains bar WHERE plus oth
     expect(calls).toHaveLength(1);
     // Bar WHERE retained VERBATIM, other-column filter predicate AND-ed.
     expect(calls[0]).toContain(
-      `vsdb_distinct WHERE archived = false AND "b" IN ('x') ORDER BY 1`,
+      `UnicDB_distinct WHERE archived = false AND "b" IN ('x') ORDER BY 1`,
     );
   });
 });
@@ -631,7 +631,7 @@ describe("TASK-006 case 2 — requested column's own filter never self-narrows",
     expect(calls).toHaveLength(1);
     // Only own predicate existed → excluded list leaves bare base statement,
     // byte-identical to today's shape.
-    expect(calls[0]).toContain("vsdb_distinct ORDER BY 1 LIMIT 1001");
+    expect(calls[0]).toContain("UnicDB_distinct ORDER BY 1 LIMIT 1001");
     expect(calls[0]).not.toContain("WHERE");
   });
 });
@@ -647,7 +647,7 @@ describe("TASK-006 case 5 (regression) — no recorded source state keeps where=
     const calls = distinctSqlCalls(runSql);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toBe(
-      'SELECT DISTINCT "name" FROM (SELECT id, name FROM t) vsdb_distinct ORDER BY 1 LIMIT 1001',
+      'SELECT DISTINCT "name" FROM (SELECT id, name FROM t) UnicDB_distinct ORDER BY 1 LIMIT 1001',
     );
   });
 });

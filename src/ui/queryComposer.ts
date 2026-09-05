@@ -186,9 +186,9 @@ export function buildFilterWhere(
  * Wrap a composed inner SELECT with paging.
  *
  *   buildPagedQuery("SELECT * FROM t", "", "", 1000, 500, "postgres")
- *     → `SELECT * FROM (SELECT * FROM t) vsdb_page LIMIT 500 OFFSET 1000`
+ *     → `SELECT * FROM (SELECT * FROM t) UnicDB_page LIMIT 500 OFFSET 1000`
  *
- * The inner SQL is wrapped verbatim in a `vsdb_page` subquery so the
+ * The inner SQL is wrapped verbatim in a `UnicDB_page` subquery so the
  * caller-supplied WHERE / ORDER BY / paging clauses apply at the outer
  * level regardless of what the inner query already contains. A trailing
  * `;` on the inner SQL is stripped before wrapping.
@@ -219,7 +219,7 @@ export function buildPagedQuery(
     dialect === "mssql"
       ? ` OFFSET ${offset} ROWS FETCH NEXT ${limit} ROWS ONLY`
       : ` LIMIT ${limit} OFFSET ${offset}`;
-  return `SELECT * FROM (${inner}) vsdb_page${whereClause}${orderClause}${pageClause}`;
+  return `SELECT * FROM (${inner}) UnicDB_page${whereClause}${orderClause}${pageClause}`;
 }
 
 /**
@@ -526,11 +526,11 @@ export function buildPagedQueryTerms(
  * attach to.
  *
  *   composeSortQuery("postgres", "SELECT 1", "", "name", "ASC")
- *     → `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY "name" ASC`
+ *     → `SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY "name" ASC`
  *   composeSortQuery("mysql", "SELECT 1", "", "name", "ASC")
- *     → `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY `name` ASC`
+ *     → `SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY `name` ASC`
  *   composeSortQuery("mssql", "SELECT 1", "", "name", "ASC")
- *     → `SELECT * FROM (SELECT 1) vsdb_sort ORDER BY [name] ASC`
+ *     → `SELECT * FROM (SELECT 1) UnicDB_sort ORDER BY [name] ASC`
  */
 export function composeSortQuery(
   dialect: Dialect,
@@ -551,5 +551,5 @@ export function composeSortQuery(
   const whereClause = whereFromBar.trim().length
     ? ` WHERE ${whereFromBar.trim()}`
     : "";
-  return `SELECT * FROM (${inner}) vsdb_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`;
+  return `SELECT * FROM (${inner}) UnicDB_sort${whereClause} ORDER BY ${quotedColumn} ${dir}`;
 }

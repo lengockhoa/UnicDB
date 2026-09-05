@@ -174,16 +174,16 @@ function requeryMsg(overrides: Record<string, unknown> = {}) {
 }
 
 // =============================================================================
-// Case 7 — multi-term ORDER BY via the pinned AS vsdb_sub wrapper
+// Case 7 — multi-term ORDER BY via the pinned AS UnicDB_sub wrapper
 // =============================================================================
 
-describe("TASK-004 case 7 — multi-term ORDER BY uses the pinned AS vsdb_sub wrapper", () => {
+describe("TASK-004 case 7 — multi-term ORDER BY uses the pinned AS UnicDB_sub wrapper", () => {
   it("postgres 'a, b DESC' composes the exact multi-term wrap with no LIMIT/OFFSET", async () => {
     const { runSql, fake } = makePanel({ sql: "SELECT id FROM t", columns: ["id"] });
     fake.webview.dispatch(requeryMsg({ orderBy: "a, b DESC" }));
     await waitForTerminal(fake);
     expect(runSql.mock.calls[0]![0]).toBe(
-      'SELECT * FROM (SELECT id FROM t) AS vsdb_sub ORDER BY "a" ASC, "b" DESC',
+      'SELECT * FROM (SELECT id FROM t) AS UnicDB_sub ORDER BY "a" ASC, "b" DESC',
     );
   });
 });
@@ -198,7 +198,7 @@ describe("TASK-004 case 8 — same wrapper on mssql and with a bar WHERE", () =>
     fake.webview.dispatch(requeryMsg({ orderBy: "a, b DESC" }));
     await waitForTerminal(fake);
     expect(runSql.mock.calls[0]![0]).toBe(
-      "SELECT * FROM (SELECT id FROM t) AS vsdb_sub ORDER BY [a] ASC, [b] DESC",
+      "SELECT * FROM (SELECT id FROM t) AS UnicDB_sub ORDER BY [a] ASC, [b] DESC",
     );
   });
 
@@ -207,7 +207,7 @@ describe("TASK-004 case 8 — same wrapper on mssql and with a bar WHERE", () =>
     fake.webview.dispatch(requeryMsg({ where: "id > 0", orderBy: "a, b DESC" }));
     await waitForTerminal(fake);
     expect(runSql.mock.calls[0]![0]).toBe(
-      "SELECT * FROM (SELECT id FROM t) AS vsdb_sub WHERE id > 0 ORDER BY [a] ASC, [b] DESC",
+      "SELECT * FROM (SELECT id FROM t) AS UnicDB_sub WHERE id > 0 ORDER BY [a] ASC, [b] DESC",
     );
   });
 });
@@ -259,9 +259,9 @@ describe("TASK-004 case 8c (TASK-005) — NULLS native on postgres, emulated on 
     expect(runSql).toHaveBeenCalledTimes(1);
     const sql = runSql.mock.calls[0]![0] as string;
     if (driver === "mysql") {
-      expect(sql).toBe("SELECT * FROM (SELECT id FROM t) AS vsdb_sub ORDER BY `a` IS NULL ASC, `a` ASC");
+      expect(sql).toBe("SELECT * FROM (SELECT id FROM t) AS UnicDB_sub ORDER BY `a` IS NULL ASC, `a` ASC");
     } else {
-      expect(sql).toBe("SELECT * FROM (SELECT id FROM t) AS vsdb_sub ORDER BY CASE WHEN [a] IS NULL THEN 1 ELSE 0 END ASC, [a] ASC");
+      expect(sql).toBe("SELECT * FROM (SELECT id FROM t) AS UnicDB_sub ORDER BY CASE WHEN [a] IS NULL THEN 1 ELSE 0 END ASC, [a] ASC");
     }
     expect(sql).not.toContain("NULLS");
     // No synthetic error state was posted and no rejection surfaced.
@@ -301,7 +301,7 @@ describe("TASK-004 case 10 — a single identifier still composes as in cycle V"
     await waitForTerminal(fake);
     const sql = runSql.mock.calls[0]![0] as string;
     expect(sql).toContain('ORDER BY "name" DESC');
-    expect(sql).toContain("vsdb_sort");
+    expect(sql).toContain("UnicDB_sort");
   });
 
   it("mssql 'name DESC' → ORDER BY [name] DESC via composeSortQuery", async () => {
@@ -312,13 +312,13 @@ describe("TASK-004 case 10 — a single identifier still composes as in cycle V"
     expect(sql).toContain("ORDER BY [name] DESC");
   });
 
-  it("postgres quoted single term '\"First Name\" DESC' round-trips via vsdb_sort", async () => {
+  it("postgres quoted single term '\"First Name\" DESC' round-trips via UnicDB_sort", async () => {
     const { runSql, fake } = makePanel({ sql: "SELECT id FROM t", columns: ["id", "First Name"] });
     fake.webview.dispatch(requeryMsg({ orderBy: '"First Name" DESC' }));
     await waitForTerminal(fake);
     const sql = runSql.mock.calls[0]![0] as string;
     expect(sql).toContain('ORDER BY "First Name" DESC');
-    expect(sql).toContain("vsdb_sort");
+    expect(sql).toContain("UnicDB_sort");
   });
 });
 

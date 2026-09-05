@@ -2,7 +2,7 @@
 
 - Status: **Accepted** (gating BQ-01 — this ADR lands before any BQ-01 source change; TASK-BQ00-001/002/003 produced the evidence it cites; BQ-01 implements against this contract and any deviation must open a new ADR)
 - Date: 2026-09-02
-- Deciders: VSDB maintainers (recorded in `docs/AI_HANDOFF/PLAN.md` §3, cycle BQ-00 commissioning brief; source roadmap `docs/plans/2026-09-01-vsdb-additive-roadmap.md` §BQ-00)
+- Deciders: UnicDB maintainers (recorded in `docs/AI_HANDOFF/PLAN.md` §3, cycle BQ-00 commissioning brief; source roadmap `docs/plans/2026-09-01-UnicDB-additive-roadmap.md` §BQ-00)
 - Scope: `src/adapters/bigqueryTypes.ts` (boundary types + `toBigQueryPage` mapper + `hasNextPage` helper, written by TASK-BQ00-002), `src/adapters/bigqueryAdc.ts` (ADC diagnostic classifier + client seam + smoke, written by TASK-BQ00-003). The ADR itself changes no source; BQ-01 implements against it.
 
 ## 1. Context and problem
@@ -39,10 +39,10 @@ and the probe-args assertions.
 
 ## 3. Decision — continuation ownership
 
-**Decision.** VSDB owns the **opaque page token + `BigQueryJobRef` triple**
+**Decision.** UnicDB owns the **opaque page token + `BigQueryJobRef` triple**
 (`{ projectId, location, jobId }`) across pages. The client is **stateless per
 page**: each `GetQueryResults` call carries the job reference plus the next
-token verbatim; the library does not hold any per-VSDB session state.
+token verbatim; the library does not hold any per-UnicDB session state.
 
 **Token decides continuation — NEVER row count.** An empty page with a
 non-null token still has more pages; a non-empty page with a `null` token is
@@ -63,9 +63,9 @@ overload); `src/adapters/bigqueryTypes.ts` `BigQueryPage.pageToken`/`hasNextPage
 
 ## 4. Decision — cancellation mapping
 
-**Decision.** Cancellation in VSDB operates on the **active job ID only**,
+**Decision.** Cancellation in UnicDB operates on the **active job ID only**,
 which is `projectId + location + jobId` (the `BigQueryJobRef`). There are no
-guessed job IDs: VSDB only ever calls `cancel` on a `Job` handle it received
+guessed job IDs: UnicDB only ever calls `cancel` on a `Job` handle it received
 from `createQueryJob` (or one re-derived from a `jobReference` carried in a
 paged response, where the triple is exactly what `GetQueryResults` echoed
 back).
@@ -77,21 +77,21 @@ before cancelling.
 
 **No row cancellation, no statement cancellation.** BigQuery's cancel is
 **job-scoped**; the API has no per-page or per-statement cancel. The existing
-`RunResult.batched.cancel()` path remains a VSDB-level concern (it must close
+`RunResult.batched.cancel()` path remains a UnicDB-level concern (it must close
 the cursor + release the in-flight guard at `src/core/queryRunner.ts`), and
 the BigQuery driver side calls `job.cancel()` when it sees that signal.
 
 **Evidence:** `docs/decisions/_bq00-evidence.md` §"`Job.cancel` — on `Job`"
-and the VSDB-side `BatchedQuery.cancel` contract at `src/adapters/types.ts:65`.
+and the UnicDB-side `BatchedQuery.cancel` contract at `src/adapters/types.ts:65`.
 
 ## 5. Decision — safe scalar conversion
 
 **Decision.** The contract scalar set is the **wire types BigQuery actually
-emits**, not JS coercion targets. Each type has a fixed VSDB representation;
+emits**, not JS coercion targets. Each type has a fixed UnicDB representation;
 no JS-level coercion is allowed across the boundary that would silently lose
 precision.
 
-| BigQuery type | VSDB representation | Notes |
+| BigQuery type | UnicDB representation | Notes |
 |---|---|---|
 | `STRING` | `string` | verbatim |
 | `INT64` | `string` | canonical string; never `Number` (silently loses precision past `Number.MAX_SAFE_INTEGER`) |
@@ -135,7 +135,7 @@ no inline credentials, no environment-variable probing.
 in the SQL), any OAuth/token/refresh field, any ADC path override.
 
 **ADC source itself is owned by the runtime** — `gcloud auth application-default login`
-or the standard Google Auth library environment. VSDB never logs, persists, or
+or the standard Google Auth library environment. UnicDB never logs, persists, or
 echoes the resolved credential path.
 
 **Evidence:** TASK-BQ00-003 `src/adapters/bigqueryAdc.ts` — the `createBigQueryClient(projectId?, impl?)`
@@ -145,7 +145,7 @@ enforcing redaction by construction.
 
 ## 7. Decision — required IAM
 
-**Decision.** The minimum IAM set VSDB documents for users is the
+**Decision.** The minimum IAM set UnicDB documents for users is the
 **least-privilege set below**. Nothing broader.
 
 | Permission | Why |
@@ -160,7 +160,7 @@ enforcing redaction by construction.
 **Prohibited:** `bigquery.jobs.delete`, `bigquery.tables.delete`,
 `bigquery.tables.update`, `bigquery.datasets.delete`, `bigquery.datasets.update`,
 any `roles/bigquery.admin`, `roles/owner`, `roles/editor`, or wildcard `*`.
-VSDB's adapter is read-only by design; no write/owner grants should be needed.
+UnicDB's adapter is read-only by design; no write/owner grants should be needed.
 
 **Evidence:** the four methods enumerated in §10 (whose citations point back
 to `docs/decisions/_bq00-evidence.md`); IAM set derived from those surfaces.
@@ -204,7 +204,7 @@ no credential paths, no token-shaped strings, no raw error output.
 4. **Authenticate locally** with ADC using the standard Google tooling:
    `gcloud auth application-default login` (interactive — required for
    user-flow credentials; uses the disposable test identity).
-5. **Point VSDB at the disposable project** via the config fields in §6
+5. **Point UnicDB at the disposable project** via the config fields in §6
    (`projectId`, `location`, `maximumBytesBilled`).
 6. **Run the smoke** — the adapter's `runAdcSmoke` calls
    `client.listDatasets()`; success resolves to `"ok"`, failure resolves to an
@@ -272,7 +272,7 @@ query(query: Query, callback?: SimpleQueryRowsCallback): void;
   paged form — same type as `getQueryResults`). The object-`Query` form
   resolves to `SimpleQueryRowsResponse`, which `bigquery.d.ts:51` defines as
   `[RowMetadata[], bigquery.IJob]` — a tuple of `[rows, job]` rather than a
-  paginated response object. **Difference VSDB must respect:** the string
+  paginated response object. **Difference UnicDB must respect:** the string
   form auto-paginates, the object form returns the raw `[rows, job]` tuple.
 
 ### `BigQuery.createQueryJob` — on `BigQuery`
@@ -289,7 +289,7 @@ createQueryJob(options: Query | string, callback: JobCallback): void;
 - **Return shape:** Promise overload resolves to `JobResponse` — defined as
   `[Job, bigquery.IJob]` in the `table.d.ts` import line
   (`bigquery.d.ts:22` imports `JobResponse, JobCallback` from `./table`). The
-  `Job` instance returned in the tuple is the handle VSDB needs to call
+  `Job` instance returned in the tuple is the handle UnicDB needs to call
   `cancel()` and `getQueryResults()` on. **A BigQuery driver must destructure
   the tuple (`const [job] = await bq.createQueryJob(...);`) and operate on
   the `Job`, not the raw API response.**
@@ -313,7 +313,7 @@ cancel(callback: CancelCallback): void;
   acknowledgement). `CancelCallback` (`job.d.ts:26`) is
   `RequestCallback<bigquery.IJobCancelResponse>` — the standard
   `(err, response) => void` node-style callback.
-- **Implication for VSDB:** `job.cancel()` is **not** `void`. It returns a
+- **Implication for UnicDB:** `job.cancel()` is **not** `void`. It returns a
   promise that resolves to a tuple; the cancel acknowledgement is wrapped in
   `[apiResponse]`. To know whether cancellation succeeded the caller must
   inspect the tuple element (no `job.status` is bundled in the response —
@@ -327,7 +327,7 @@ signature or return shape invalidates this ADR and triggers a new one.
 
 ## 11. Grid continuation mapping
 
-The existing VSDB grid continuation contract is independent of the underlying
+The existing UnicDB grid continuation contract is independent of the underlying
 adapter: `RunResult` at `src/adapters/types.ts:76` carries a `results` array
 plus an optional `batched?: BatchedQuery` handle (the `batched` field is
 declared at line 78), and the results panel's webview "Load more" button
@@ -339,7 +339,7 @@ BigQuery's continuation handle — the `pageToken` on `BigQueryPage` plus the
 panel or `queryRunner.ts`. The mapping is: the BigQuery driver, on its first
 `runQuery` call, creates the job (via `createQueryJob`), receives a `Job`
 handle, awaits the first page of results, and stores **both** the `Job` and
-the current `pageToken` in a VSDB-owned `BatchedQuery` implementation;
+the current `pageToken` in a UnicDB-owned `BatchedQuery` implementation;
 subsequent `loadMore(index)` calls (which reach the driver via
 `runner.loadMore` → `batched.fetchBatch`) call `getQueryResults` on the same
 `Job` with the current token, then update the stored token — `null` token

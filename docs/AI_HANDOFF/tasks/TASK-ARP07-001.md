@@ -84,7 +84,7 @@ RED_OUTPUT (TDD step 1 — `npx vitest run src/core/__tests__/schemaImpact.test.
 ```
  FAIL  src/core/__tests__/schemaImpact.test.ts [ src/core/__tests__/schemaImpact.test.ts ]
 Error: Failed to load url ../schemaImpact (resolved id: ../schemaImpact) in
-/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp07-001/src/core/__tests__/schemaImpact.test.ts. Does the file exist?
+/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-arp07-001/src/core/__tests__/schemaImpact.test.ts. Does the file exist?
 
  Test Files  1 failed (1)
       Tests  no tests
@@ -95,7 +95,7 @@ Verification Output (TDD step 3 — §Verification Commands, fresh in worktree):
 
 Command 1: `npm test src/core/__tests__/schemaImpact.test.ts`
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-arp07-001
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-arp07-001
 
  ✓ src/core/__tests__/schemaImpact.test.ts  (11 tests) 2ms
 
@@ -107,7 +107,7 @@ Command 1: `npm test src/core/__tests__/schemaImpact.test.ts`
 
 Command 2: `npm run typecheck`
 ```
-> vsdb@1.42.0 typecheck
+> UnicDB@1.42.0 typecheck
 > tsc --noEmit
 ```
 (exit 0, no errors)

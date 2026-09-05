@@ -104,8 +104,8 @@ function makeCfg(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
     driver: overrides.driver ?? "postgres",
     host: overrides.host ?? "127.0.0.1",
     port: overrides.port ?? 5432,
-    user: overrides.user ?? "vsdb",
-    database: overrides.database ?? "vsdb",
+    user: overrides.user ?? "UnicDB",
+    database: overrides.database ?? "UnicDB",
     ...overrides,
   };
 }
@@ -155,7 +155,7 @@ describe("createStatusBar", () => {
     expect(item.item.hide).toHaveBeenCalled();
   });
 
-  it("có active → text '$(database) <name> [<driver>]', command 'vsdb.selectConnection'", async () => {
+  it("có active → text '$(database) <name> [<driver>]', command 'UnicDB.selectConnection'", async () => {
     const secret = new FakeSecretStorage();
     const ws = new FakeMemento();
     const g = new FakeMemento();
@@ -171,7 +171,7 @@ describe("createStatusBar", () => {
 
     const item = createStatusBar(mgr);
     expect(item.item.text).toBe("$(database) Local [postgres]");
-    expect(item.item.command).toBe("vsdb.selectConnection");
+    expect(item.item.command).toBe("UnicDB.selectConnection");
     expect(item.item.show).toHaveBeenCalled();
   });
 
@@ -209,10 +209,10 @@ describe("createStatusBar", () => {
       tunnel: { host: "bastion", port: 22 },
     });
     const other = makeCfg({ id: "b", name: "Other", driver: "postgres" });
-    ws.update("vsdb.connections", [tunneled, other]);
-    ws.update("vsdb.activeConnection", "a");
-    await secret.store("vsdb.pass.a", "pwA");
-    await secret.store("vsdb.pass.b", "pwB");
+    ws.update("UnicDB.connections", [tunneled, other]);
+    ws.update("UnicDB.activeConnection", "a");
+    await secret.store("UnicDB.pass.a", "pwA");
+    await secret.store("UnicDB.pass.b", "pwB");
 
     const oldA = makeAdapter();
     const newA = makeAdapter();
@@ -274,9 +274,9 @@ describe("createStatusBar", () => {
       driver: "postgres",
       tunnel: { host: "bastion", port: 22 },
     });
-    ws.update("vsdb.connections", [tunneled]);
-    ws.update("vsdb.activeConnection", "f");
-    await secret.store("vsdb.pass.f", "pwF");
+    ws.update("UnicDB.connections", [tunneled]);
+    ws.update("UnicDB.activeConnection", "f");
+    await secret.store("UnicDB.pass.f", "pwF");
 
     const oldA = makeAdapter();
     const failA1 = makeAdapter();
@@ -327,7 +327,7 @@ describe("createStatusBar", () => {
 
     wrapper.setErrorBadge("ECONNREFUSED");
     expect(wrapper.item.text).toBe("$(error) Local [postgres]");
-    expect(wrapper.item.tooltip).toBe("vsdb: error: ECONNREFUSED");
+    expect(wrapper.item.tooltip).toBe("UnicDB: error: ECONNREFUSED");
 
     wrapper.setErrorBadge(null);
     // Back to the normal render path.
@@ -356,7 +356,7 @@ describe("createStatusBar", () => {
     // `text` / `command` / `dispose` etc. for legacy call sites.
     expect(wrapper.item).toBeDefined();
     expect(typeof wrapper.item.text).toBe("string");
-    expect(wrapper.item.command).toBe("vsdb.selectConnection");
+    expect(wrapper.item.command).toBe("UnicDB.selectConnection");
     expect(wrapper.item.text).toBe("$(database) Local [postgres]");
 
     // `.dispose()` is the canonical cleanup — must dispose the underlying

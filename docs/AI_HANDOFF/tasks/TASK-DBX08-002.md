@@ -116,7 +116,7 @@ ddlView.test.ts (4 failed):
     AssertionError: expected 'CREATE VIEW v AS SELECT 1;' to contain 'object DDL'
     (legacy adapter with structural catalog but no capabilities retrieved DDL)
   FAIL declared objectDdl with missing callable API →
-    AssertionError: expected '-- vsdb-ddl: failed to load ddl\n-- c…' to contain 'unavailable'
+    AssertionError: expected '-- UnicDB-ddl: failed to load ddl\n-- c…' to contain 'unavailable'
     (defensive path routed into the generic catalog error document instead of an
      accurate unavailable document)
 ```
@@ -134,7 +134,7 @@ Verification Output:
  Start at  03:56:35    Duration  319ms
 
 # 2. npm run typecheck
- > vsdb@1.28.0 typecheck
+ > UnicDB@1.28.0 typecheck
  > tsc --noEmit
  (exit 0, no output)
 

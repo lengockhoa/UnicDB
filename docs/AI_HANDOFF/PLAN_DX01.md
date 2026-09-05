@@ -35,7 +35,7 @@ Success is: a maintainer can run `npm run verify:release` on a clean checkout, g
 - Changing existing test, typecheck, compile, integration, or package scripts.
 - Adding a new test framework, ESLint, or any dependency.
 - Touching `src/extension.ts` (no activation/command registration changes — we only *test* the existing surface).
-- Cross-platform (Windows `.cmd`/`.bat`) runner — POSIX-only is the documented contract; ARP-09.5 is already marked as "only if approved" and the project ships `install-vsdb.sh`/`build.sh`/`gen-icon.sh` as POSIX-only siblings.
+- Cross-platform (Windows `.cmd`/`.bat`) runner — POSIX-only is the documented contract; ARP-09.5 is already marked as "only if approved" and the project ships `install-UnicDB.sh`/`build.sh`/`gen-icon.sh` as POSIX-only siblings.
 
 ## §3 Approach
 
@@ -52,7 +52,7 @@ This in-wave order resolves the apparent 001↔003 cycle: 003 is a TDD contract 
 - **TASK-DX01-002 `scripts/verify-release.sh` POSIX runner** — owns `scripts/verify-release.sh` only. POSIX-only (`/bin/sh`), 200 ms or less wall-clock when every command is mocked at the shell level, deterministic order, non-zero propagation, prints `PASS <stage>`/`FAIL <stage>` lines plus a final `OK verify:release` or `FAIL verify:release` summary. Testable by `npx vitest run` with a Vitest fixture that runs the script in a temp dir with stubbed `npm`/`tsc`/`node`/`esbuild` — so the test never requires the real TypeScript or Vitest binaries. **Dependencies: TASK-DX01-001 (sub-command names the runner hardcodes), TASK-DX01-003 (the contract test for the runner — same TDD-RED-then-GREEN order as 001).**
 - **TASK-DX01-003 `releaseVerify` Vitest** — owns `src/__tests__/releaseVerify.test.ts` only (deliberately NOT `releaseHygiene.test.ts`, which already exists and guards a different contract — TASK-703 version-lock — and must be left untouched). Pure contract tests on `package.json` and `scripts/verify-release.sh` content; no `npm`/`tsc` execution, no filesystem side effects beyond reading. **Dependencies: none (it is the RED-first contract for the other two; 001 and 002 make it GREEN).**
 
-The release itself (R5) is a 4th conventional step handled by the orchestrator, not a TASK: update CHANGELOG, bump `package.json` to 1.36.0, commit, tag `v1.36.0`, push, package `vsdb-1.36.0.vsix`. The R5 commit appends the "How to verify a release" subsection under the v1.36.0 entry.
+The release itself (R5) is a 4th conventional step handled by the orchestrator, not a TASK: update CHANGELOG, bump `package.json` to 1.36.0, commit, tag `v1.36.0`, push, package `UnicDB-1.36.0.vsix`. The R5 commit appends the "How to verify a release" subsection under the v1.36.0 entry.
 
 ## §4 Test Plan
 
@@ -81,7 +81,7 @@ node -e 'const p=require("./package.json"); for (const k of ["verify:fast","veri
 # TASK-DX01-002
 npx vitest run src/__tests__/releaseVerify.test.ts -t "verify-release.sh"
 # + a manual invocation with stubbed PATH (only when iterating on the runner; not in CI)
-mkdir -p /tmp/dx01 && cd /tmp/dx01 && PATH="$(pwd)/stubbin:$PATH" /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/scripts/verify-release.sh ; echo "exit=$?"
+mkdir -p /tmp/dx01 && cd /tmp/dx01 && PATH="$(pwd)/stubbin:$PATH" /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/scripts/verify-release.sh ; echo "exit=$?"
 
 # TASK-DX01-003
 npx vitest run src/__tests__/releaseVerify.test.ts
@@ -116,7 +116,7 @@ PLAN_REVIEW: not yet — see §7 P2.5 reviewer.
 Status: Issues Found
 
 COMPLETENESS:
-  - important: TASK-DX01-003 targets `src/__tests__/releaseHygiene.test.ts` as "(new)" (TASK-DX01-003:14; PLAN_DX01 §2:27, §3:46), but that file ALREADY exists on main at the plan's own base `1e441f9` (committed `9ac114e`, TASK-703) with 3 shipped guards: package.json↔package-lock version lock, README `vsdb-<version>.vsix` pattern, semver shape. An executor following the task literally will either overwrite it (silently deleting 3 shipped tests — the §6 "2940+ | 2 skipped" lower-bound acceptance at PLAN_DX01:94 does NOT catch a 3-test drop since the suite would sit at 2948) or append to a file the plan insists is new. Fix: rename the new contract file (e.g. `src/__tests__/releaseVerify.test.ts`) and update every reference in PLAN_DX01 §2/§3/§4/§5/§6 and TASK-DX01-002/003 verification commands; or explicitly plan an in-place extension that PRESERVES the 3 TASK-703 guards and restate the case count (8 → 11).
+  - important: TASK-DX01-003 targets `src/__tests__/releaseHygiene.test.ts` as "(new)" (TASK-DX01-003:14; PLAN_DX01 §2:27, §3:46), but that file ALREADY exists on main at the plan's own base `1e441f9` (committed `9ac114e`, TASK-703) with 3 shipped guards: package.json↔package-lock version lock, README `UnicDB-<version>.vsix` pattern, semver shape. An executor following the task literally will either overwrite it (silently deleting 3 shipped tests — the §6 "2940+ | 2 skipped" lower-bound acceptance at PLAN_DX01:94 does NOT catch a 3-test drop since the suite would sit at 2948) or append to a file the plan insists is new. Fix: rename the new contract file (e.g. `src/__tests__/releaseVerify.test.ts`) and update every reference in PLAN_DX01 §2/§3/§4/§5/§6 and TASK-DX01-002/003 verification commands; or explicitly plan an in-place extension that PRESERVES the 3 TASK-703 guards and restate the case count (8 → 11).
   - important: §1 (PLAN_DX01:9) promises "a tiny activation/command-contract smoke derived from `src/extension.ts`'s registration surface", and the anchor (PLAN.md:75) demands a contract "from existing extension wiring AND scripts" — but §2 out-of-scope:37 forbids touching `src/extension.ts` and no task/test/verification in §4/§5 asserts anything about the extension activation/command registration surface. Either add a minimal static contract assertion (e.g. the hygiene test asserts the commands/activation referenced by the release flow exist among `contributes.commands` / extension.ts registrations) or rewrite §1 to drop the extension.ts promise so the plan does not claim what no task delivers.
 
 CONSISTENCY:

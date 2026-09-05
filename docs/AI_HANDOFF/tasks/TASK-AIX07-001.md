@@ -23,7 +23,7 @@ Create the pure, default-deny source of truth for effective AI provider, sensiti
 | 2 | edge — resolver/default builtin | `valid configured builtin remains allowed when resolveEngine selects OMP` | `resolvePolicy` returns effective provider `omp`, enables its declared sensitive classes and audit export, and has no denial notice; it does not treat the valid user default as a conflict. | `{ workspaceTrusted: true, configuredEngine: "builtin", resolvedEngine: { engine: "omp", requiresConfig: false } }`, matching `resolveEngine()`'s detection-first branch. |
 | 3 | edge — permission | `untrusted workspace defaults to no sensitive context or tools` | Schema/workspace/row context, database/workspace tool classes, and audit export are all denied even with a valid resolver choice. | Same valid route with `workspaceTrusted: false`. |
 | 4 | edge — invalid/migration | `unknown configured value or invalid resolver fails closed with notice` | An unsupported raw setting and a missing/invalid resolver choice each deny sensitive capabilities and return a concrete notice. | Trusted workspace with `configuredEngine: "legacy"`; then a resolver input without a valid `engine`. |
-| 5 | edge — path classification | `credential and generated configuration paths are excluded centrally` | `.env`, `.git/config`, and `.vscode/vsdb-ai-config.yml` are rejected; `src/feature.ts` is not rejected. | Relative workspace paths using `/` separators. |
+| 5 | edge — path classification | `credential and generated configuration paths are excluded centrally` | `.env`, `.git/config`, and `.vscode/UnicDB-ai-config.yml` are rejected; `src/feature.ts` is not rejected. | Relative workspace paths using `/` separators. |
 
 Write the tests first and record the actual failing RED command output in the Executor Report before implementation; then make the same tests GREEN.
 
@@ -77,14 +77,14 @@ EXECUTOR_SUBAGENT: feature-implementer
 RED_OUTPUT:
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-aix07-001
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-aix07-001
 
  ❯ src/ai/__tests__/policy.test.ts  (0 test)
 
 ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
 
  FAIL  src/ai/__tests__/policy.test.ts [ src/ai/__tests__/policy.test.ts ]
-Error: Failed to load url ../policy (resolved id: ../policy) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-aix07-001/src/ai/__tests__/policy.test.ts. Does the file exist?
+Error: Failed to load url ../policy (resolved id: ../policy) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-aix07-001/src/ai/__tests__/policy.test.ts. Does the file exist?
  ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
 
 ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
@@ -102,7 +102,7 @@ Verification Output:
 1) `npm test -- src/ai/__tests__/policy.test.ts`
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.worktrees/task-aix07-001
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-aix07-001
 
  ✓ src/ai/__tests__/policy.test.ts  (7 tests) 3ms
 
@@ -115,7 +115,7 @@ Verification Output:
 2) `npm run typecheck`
 
 ```
-> vsdb@1.27.0 typecheck
+> UnicDB@1.27.0 typecheck
 > tsc --noEmit
 ```
 (exit 0, no diagnostics)
@@ -166,7 +166,7 @@ EXECUTOR_MODEL: unic-code
 RED_OUTPUT:
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
 
  ❯ src/ai/__tests__/policy.test.ts  (10 tests | 3 failed) 5ms
    ❯ isExcludedWorkspacePath — centralized path policy > conventional .env variants are excluded, not only the exact .env basename
@@ -187,7 +187,7 @@ Verification Output:
 1) `npx vitest run src/ai/__tests__/policy.test.ts`
 
 ```
- RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
 
  ✓ src/ai/__tests__/policy.test.ts  (10 tests) 2ms
 
@@ -198,7 +198,7 @@ Verification Output:
 2) `npm run typecheck`
 
 ```
-> vsdb@1.28.0 typecheck
+> UnicDB@1.28.0 typecheck
 > tsc --noEmit
 ```
 

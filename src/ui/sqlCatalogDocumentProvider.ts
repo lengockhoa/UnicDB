@@ -1,6 +1,6 @@
 // src/ui/sqlCatalogDocumentProvider.ts
 //
-// TASK-DBX02-003 — Lazy `vsdb-sql-catalog:` virtual document provider.
+// TASK-DBX02-003 — Lazy `UnicDB-sql-catalog:` virtual document provider.
 // The navigation provider hands this provider a `vscode.Uri` and the
 // populated metadata / DDL string via `put(...)`; when VS Code asks for the
 // document content of that URI (after a definition jump), we serve it back
@@ -16,7 +16,7 @@
 // language server, controller, or debounce here.
 import * as vscode from "vscode";
 
-export const CATALOG_SCHEME = "vsdb-sql-catalog";
+export const CATALOG_SCHEME = "UnicDB-sql-catalog";
 
 /**
  * Object kinds the virtual catalog documents can describe. Tables, columns,
@@ -73,7 +73,7 @@ export class SqlCatalogDocumentProvider
 }
 
 /**
- * Build the canonical `vsdb-sql-catalog:` URI for one object identity.
+ * Build the canonical `UnicDB-sql-catalog:` URI for one object identity.
  * The path encodes `(kind, schema, name)` so VS Code's tab label is
  * human-readable (e.g. `/view/public/v_orders`).
  */

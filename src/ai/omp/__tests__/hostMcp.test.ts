@@ -79,7 +79,7 @@ const FIVE_DB_TOOL_NAMES = [
   "get_table_relationships",
 ] as const;
 
-const HOST_INFO = { name: "vsdb-host-mcp", version: "1.11.0" };
+const HOST_INFO = { name: "UnicDB-host-mcp", version: "1.11.0" };
 
 // ---------------------------------------------------------------------------
 // HTTP probe helper — plain Node http client to mirror omp's wire path.

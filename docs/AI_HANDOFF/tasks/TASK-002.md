@@ -12,7 +12,7 @@ Constraint: no same-wave file overlap (this is the only wave-2 task).
 
 2. **Hidden file input** (`<input type="file" accept="image/*" multiple>`) appended to `<body>` once. The attach button click opens it. The `change` event reads every file via `FileReader.readAsDataURL`, then runs the local-cap validator. Rejection → warning bubble without host send.
 
-3. **Attachments strip** above the textarea (inside `.vsdb-chat-input`, before the textarea row):
+3. **Attachments strip** above the textarea (inside `.UnicDB-chat-input`, before the textarea row):
    - Horizontal flex row, gap 8px, max-height 80px, scroll-x overflow.
    - One thumbnail per attachment: 56×56, object-fit cover, border-radius 6px.
    - Each thumbnail has a small remove button overlay (top-right, 16×16).
@@ -21,7 +21,7 @@ Constraint: no same-wave file overlap (this is the only wave-2 task).
 4. **Paste handler** on the textarea (`paste` event):
    - Iterate `e.clipboardData.items`.
    - For each item with `kind === "file"` and `type.startsWith("image/")`: read via `FileReader.readAsDataURL`, run through the same thumbnail pipeline as the attach button.
-   - If `visionCapable === false`: do NOT add to the strip; instead render an amber `.vsdb-chat-attach-warning` inline bubble with the message: "Current model does not support images. Remove attachment to send text only."
+   - If `visionCapable === false`: do NOT add to the strip; instead render an amber `.UnicDB-chat-attach-warning` inline bubble with the message: "Current model does not support images. Remove attachment to send text only."
    - Text paste (`kind === "string"`) is unaffected — let the browser default behavior insert the text.
 
 ### Send-with-attachments
@@ -60,11 +60,11 @@ TASK-001 owns the wire types. TASK-002 consumes:
 - `AiChatPanelWebviewSend.attachments` — outgoing payload.
 
 TASK-003 (CSS) consumes the class names TASK-002 emits:
-- `.vsdb-chat-attach-btn` — attach button.
-- `.vsdb-chat-attachments` — strip container.
-- `.vsdb-chat-thumb` — each thumbnail.
-- `.vsdb-chat-thumb-remove` — remove button overlay.
-- `.vsdb-chat-attach-warning` — warning bubble.
+- `.UnicDB-chat-attach-btn` — attach button.
+- `.UnicDB-chat-attachments` — strip container.
+- `.UnicDB-chat-thumb` — each thumbnail.
+- `.UnicDB-chat-thumb-remove` — remove button overlay.
+- `.UnicDB-chat-attach-warning` — warning bubble.
 
 ## §Verification Commands
 
@@ -107,18 +107,18 @@ npm run typecheck
 - **FILES_CHANGED**:
   - `webview/attachLimits.ts` (new, 30 lines — mirror caps verbatim from src/ui/aiChatAttachments.ts)
   - `webview/aiChatPanelMain.ts` (extended: InitMsg.visionCapable, AttachErrorMsg, State.visionCapable+attachments, attachBtn + hidden fileInput + paste handler + strip renderer + attach_error case + setBusy guards)
-  - `src/ui/__tests__/aiChatPanelWebviewTask002.test.ts` (extended: 8 new describe blocks #13-#20 covering attachBtn class/enabled, visionCapable:false disables, mirror caps equality, text-only send unchanged, paste-image → 1 thumb → send carries 1 att, 2-image paste → 2 thumbs → send carries attachments[2] with correct mime/base64/bytes, attachBtn click invokes fileInput.click, host attach_error → .vsdb-chat-attach-warning bubble)
+  - `src/ui/__tests__/aiChatPanelWebviewTask002.test.ts` (extended: 8 new describe blocks #13-#20 covering attachBtn class/enabled, visionCapable:false disables, mirror caps equality, text-only send unchanged, paste-image → 1 thumb → send carries 1 att, 2-image paste → 2 thumbs → send carries attachments[2] with correct mime/base64/bytes, attachBtn click invokes fileInput.click, host attach_error → .UnicDB-chat-attach-warning bubble)
 - **RED_OUTPUT (baseline, before any implementation)**:
   ```
   $ npx vitest run src/ui/__tests__/aiChatPanelWebviewTask002.test.ts
-  FAIL  #13 attachBtn exists with class .vsdb-chat-attach-btn — element not found
+  FAIL  #13 attachBtn exists with class .UnicDB-chat-attach-btn — element not found
   FAIL  #14 visionCapable:false disables attach button — attachBtn exists but never disabled
   FAIL  #15 webview/attachLimits.ts mirror equality — file does not exist
   FAIL  #16 text-only send unchanged — text content shape mismatch (parts array expected by legacy)
   FAIL  #17 paste-image → 1 thumb → send carries 1 att — paste handler not wired
   FAIL  #18 2-image paste → 2 thumbs → send carries attachments[2] — paste handler missing
   FAIL  #19 attachBtn click invokes fileInput.click — click handler missing
-  FAIL  #20 host attach_error → .vsdb-chat-attach-warning bubble — no renderer
+  FAIL  #20 host attach_error → .UnicDB-chat-attach-warning bubble — no renderer
   ... 7 failed | 21 passed (28 tests)
   ```
 - **GREEN_CONFIRMED**: 28/28 in aiChatPanelWebviewTask002.test.ts; 80/80 across regression set (aiChatPanelWebview 27/27, aiChatPanelAttachments 11/11, aiChatPanelThoughtRegen 15/15, aiChatPanelWebviewTask002 28/28); `npm run typecheck` exit 0. Cycle-AA Enter=send / Shift+Enter=newline keybind preserved (no edits in wireControls keydown).
@@ -195,7 +195,7 @@ NEXT_STATUS_FOR_INDEX: approved_minor
 - COMMIT: 57fe767 (src/ai/omp/ompChatEngine.ts NEW 333 ln; src/ai/omp/__tests__/ompChatEngine.test.ts NEW 318 ln; identical at HEAD, reachable from main)
 - SCOPE: cycle AE TASK-002 chat glue only. Anchors: PLAN_AE §Acceptance 1 (routing), 4 (streaming parity), 5 (crash fallback).
 - VERIFICATION_RERUN: `npx vitest run src/ai/omp/__tests__/ompChatEngine.test.ts` → 7/7 pass (181 ms).
-- ANCHORS MET: send() → acp.sessionNew({cwd, mcpServers:[{type:"http",name:"vsdb",url,headers:[]}]}) exact-shape pinned (test #1, src :258-263, :158-169 — privacy clean: URL only, no apiKey); agent_message_chunk → onDelta (#2); agent_thought_chunk → onThought (#3, matches cycle-AB live-thought contract); tool_call → onToolStart + hostMcp.call (#4); tool_call_update → onToolEnd (#5); crash mid-turn → onError ×1 + send resolves undefined, onDone NOT called (#6); resume() → sessionLoad with same mcpServers descriptor (#7, B11b lesson applied).
+- ANCHORS MET: send() → acp.sessionNew({cwd, mcpServers:[{type:"http",name:"UnicDB",url,headers:[]}]}) exact-shape pinned (test #1, src :258-263, :158-169 — privacy clean: URL only, no apiKey); agent_message_chunk → onDelta (#2); agent_thought_chunk → onThought (#3, matches cycle-AB live-thought contract); tool_call → onToolStart + hostMcp.call (#4); tool_call_update → onToolEnd (#5); crash mid-turn → onError ×1 + send resolves undefined, onDone NOT called (#6); resume() → sessionLoad with same mcpServers descriptor (#7, B11b lesson applied).
 - VERDICT: CHANGES-REQUESTED
 - FINDINGS (important):
   1. src/ai/omp/ompChatEngine.ts:77-88 vs src/ai/omp/hostMcp.ts:54-69 — engine's `HostMcp` interface requires `call(name,args)`, but merged T1 exports `start/stop/respond/handle` only; no `call` exists. `createOmpChatEngine({hostMcp: <real T1 server>})` is a TS error today — typecheck stays green ONLY because no production call site exists (extension.ts:586-596 constructs AiChatPanel without `ompChatEngine`). The sibling-contract T2 was told to depend on was stubbed, not matched. Same for `AcpSession` (sessionNew/sessionPrompt/sessionLoad): no production object implements it — AcpProcessHandle exposes AcpClient.request/notify. The module is an island; acceptance "tool_call bridges to hostMcp" is proven only against a hand-written fake. Fix: add `call()` to hostMcp.ts (delegate to `handle({method:"tools/call", params:{name, arguments}})`, normalize `content[0].text`/`isError`) or adapt the engine to `handle()`, plus an AcpSession adapter over AcpClient — then wire it (T3) and re-run typecheck against the REAL objects.

@@ -1080,8 +1080,8 @@ interface DirtyEntry {
 }
 
 /** True if `value` is a TASK-007 row marker emitted by Add Row / Delete Row.
- *  Markers are plain object literals (`{__vsdb_new_row__: true, ...}` /
- *  `{__vsdb_deleted__: true, ...}`) so a structural `__vsdb_*__` field
+ *  Markers are plain object literals (`{__UnicDB_new_row__: true, ...}` /
+ *  `{__UnicDB_deleted__: true, ...}`) so a structural `__UnicDB_*__` field
  *  discriminates from regular cell values (string / number / Date / etc.). */
 function isRowMarker(
   value: unknown,
@@ -1090,8 +1090,8 @@ function isRowMarker(
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   return kind === "new"
-    ? v.__vsdb_new_row__ === true
-    : v.__vsdb_deleted__ === true;
+    ? v.__UnicDB_new_row__ === true
+    : v.__UnicDB_deleted__ === true;
 }
 
 export class EditState {
@@ -1151,7 +1151,7 @@ export class EditState {
   /** Drop the dirty entry for the given (rowId, colIndex). Used by the
    *  TASK-008 unified undo stack — when the stack pops a cell-edit and
    *  reverts the cell to oldValue, the dirty entry for THAT cell must
-   *  disappear (so cellClassRules strips `vsdb-cell-dirty`). Does
+   *  disappear (so cellClassRules strips `UnicDB-cell-dirty`). Does
    *  nothing when no entry exists for that key. */
   clearCell(rowId: number, colIndex: number): void {
     this.dirty.delete(`${rowId}:${colIndex}`);
@@ -1173,14 +1173,14 @@ export class EditState {
   // ---- TASK-007: commit-flow row-level selectors -------------------------
 
   /** True if a dirty entry exists for the given (rowId, colIndex) cell.
-   *  Used by AG Grid cellClassRules to apply the `vsdb-cell-dirty` class. */
+   *  Used by AG Grid cellClassRules to apply the `UnicDB-cell-dirty` class. */
   isCellDirty(rowId: number, colIndex: number): boolean {
     return this.dirty.has(`${rowId}:${colIndex}`);
   }
 
   /** True if any dirty entry for `rowId` carries the new-row marker
-   *  (`{__vsdb_new_row__: true, ...}`) emitted by Add Row. Drives AG Grid
-   *  getRowClass to apply `vsdb-row-new`. */
+   *  (`{__UnicDB_new_row__: true, ...}`) emitted by Add Row. Drives AG Grid
+   *  getRowClass to apply `UnicDB-row-new`. */
   isRowNew(rowId: number): boolean {
     for (const e of this.dirty.values()) {
       if (e.rowId !== rowId) continue;
@@ -1190,8 +1190,8 @@ export class EditState {
   }
 
   /** True if any dirty entry for `rowId` carries the delete-row marker
-   *  (`{__vsdb_deleted__: true, ...}`) emitted by Delete Row. Drives AG Grid
-   *  getRowClass to apply `vsdb-row-deleted` (strikethrough + opacity). */
+   *  (`{__UnicDB_deleted__: true, ...}`) emitted by Delete Row. Drives AG Grid
+   *  getRowClass to apply `UnicDB-row-deleted` (strikethrough + opacity). */
   isRowDeleted(rowId: number): boolean {
     for (const e of this.dirty.values()) {
       if (e.rowId !== rowId) continue;
@@ -1302,7 +1302,7 @@ export function applyPasteToDirty(
 // compose a new SQL the host runs through the QueryRunner.
 //
 // Shape:
-//   SELECT * FROM (<stmt>) vsdb_sub WHERE <where> ORDER BY <orderBy>
+//   SELECT * FROM (<stmt>) UnicDB_sub WHERE <where> ORDER BY <orderBy>
 //
 // Behavior:
 //   - Both empty         → return the original statement with a trailing
@@ -1319,7 +1319,7 @@ export function applyPasteToDirty(
 // is literal-aware upstream — multi-statement handling is dead code).
 //
 // Injection policy:
-//   The `where` and `orderBy` fragments are USER-INTENDED SQL — VSDB is a
+//   The `where` and `orderBy` fragments are USER-INTENDED SQL — UnicDB is a
 //   SQL client; the user already runs arbitrary SQL via the editor. We do
 //   not escape / quote these fragments. No validation pass; an invalid
 //   fragment surfaces as a database error from the runner.
@@ -1341,7 +1341,7 @@ export function composeRequery(
   const inner = stripTrailingSemicolon(sql).trimEnd();
   const whereClause = w ? ` WHERE ${w}` : "";
   const orderClause = o ? ` ORDER BY ${o}` : "";
-  return `SELECT * FROM (${inner}) vsdb_sub${whereClause}${orderClause}`;
+  return `SELECT * FROM (${inner}) UnicDB_sub${whereClause}${orderClause}`;
 }
 
 // ---- Set filter (TASK-601) --------------------------------------------------

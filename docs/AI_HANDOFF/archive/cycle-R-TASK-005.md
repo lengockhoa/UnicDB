@@ -33,7 +33,7 @@ Handler audit (src/extension.ts:405-441 `runQueryFromEditor`):
 - `document.offsetAt(selection.active)` — absolute multi-line offset is correct.
 - `runStatements` only runs the statements returned by sqlToRun (read the body to confirm it does not accidentally run the whole file).
 
-CodeLens path: `vsdb.runStatement` (extension.ts:129-134) receives the stmt from the lens argument — confirm that no path truncates by cursor.
+CodeLens path: `UnicDB.runStatement` (extension.ts:129-134) receives the stmt from the lens argument — confirm that no path truncates by cursor.
 
 ```ts
 // src/core/statementParser.ts — fix (only if #2 is RED):
@@ -68,7 +68,7 @@ export function statementAtCursor(sql: string, offset: number): ParsedStatement 
 | 6 | regression | selection mode is UNCHANGED | existing selection tests still pass (append a guard test: `sqlToRun(sql,{start,end},0)` returns statements inside the range) | select stmt 2 range |
 | 7 | edge | CRLF document | cursor after the `\r\n` gap → stmt BEFORE cursor; range matches the text | sql with `\r\n` |
 | 8 | regression-lock | CodeLens range = statement bounds | every lens range start/end === positionAt(stmt.start/end) | existing codeLensProvider pattern |
-| 9 | regression | handler runs the correct cursor statement | `vsdb.runQuery` with a fake activeTextEditor cursor between stmt 1 of 2 → runner.runQuery called once with stmt 1's SQL | vi.mock pattern from src/extension.test.ts |
+| 9 | regression | handler runs the correct cursor statement | `UnicDB.runQuery` with a fake activeTextEditor cursor between stmt 1 of 2 → runner.runQuery called once with stmt 1's SQL | vi.mock pattern from src/extension.test.ts |
 
 ## Test Files
 
@@ -137,7 +137,7 @@ Handler audit (`src/extension.ts` `runQueryFromEditor` lines 405-441):
 - `document.offsetAt(selection.active)` yields an absolute multi-line offset (line 428). CONFIRMED.
 - `runStatements` only runs the statements returned by sqlToRun (line 440). CONFIRMED — `runner.run(rewritten, ...)` takes exactly the `statements` from `sqlToRun(sql, sel, cursorOffset)`.
 
-CodeLens path (`vsdb.runStatement`, `extension.ts:129-134`):
+CodeLens path (`UnicDB.runStatement`, `extension.ts:129-134`):
 - Receives `stmt: ParsedStatement` from the lens argument (the closure calls `runStatement(mgr, runner, panel, stmt)`).
 - CodeLensProvider (`codeLensProvider.ts:67-77`) builds range = `document.positionAt(stmt.start/end)` → does NOT truncate by cursor; cycle-R test #8 locks the invariant range.start/end === positionAt(stmt.start/end).
 - `runStatement` (line 444-455) calls `runStatements(..., [stmt])` — exactly 1 stmt, does not run the whole file.
@@ -178,7 +178,7 @@ task §4 (Test Plan table #1-#9) — every item implemented per the fixture spec
 
 1. Test #2 RED confirmation on the old code (`expected 'SELECT 2' to be 'SELECT 1'`) — the deviation described in the task is confirmed. After the fix (new gap-fallback rule) it is GREEN.
 2. Test #5 has the same root cause as #2 but a different scenario (offset 0 before the first stmt in leading whitespace) — RED → confirmed the new rule "FIRST stmt when before the first stmt".
-3. The worktree did NOT have `dist/schemaForm.js` available (it is a build artefact); the "npm run compile emits dist/schemaForm.js" test inside `extension.test.ts > TASK-003 — vsdb.createSchema extension wiring` initially failed inside the fresh worktree. Rebuilding via `npm run compile` made it pass. This is environment setup, unrelated to TASK-005.
+3. The worktree did NOT have `dist/schemaForm.js` available (it is a build artefact); the "npm run compile emits dist/schemaForm.js" test inside `extension.test.ts > TASK-003 — UnicDB.createSchema extension wiring` initially failed inside the fresh worktree. Rebuilding via `npm run compile` made it pass. This is environment setup, unrelated to TASK-005.
 
 ### Handoff to Reviewer
 

@@ -4,8 +4,8 @@
 // Quy tắc lưu trữ:
 //   - Metadata (name/driver/host/port/user/database/ssl) → Memento
 //     workspaceState nếu có workspace mở, globalState nếu không (design §8).
-//   - Password → SecretStorage với key `vsdb.pass.<id>`.
-//   - Active connection id → Memento `vsdb.activeConnection` (cùng scope với metadata).
+//   - Password → SecretStorage với key `UnicDB.pass.<id>`.
+//   - Active connection id → Memento `UnicDB.activeConnection` (cùng scope với metadata).
 //
 // Test-connect: gọi adapter.testConnection() trước khi lưu (add/edit). Fail → throw, không lưu.
 //
@@ -28,9 +28,9 @@ import type { SqlDialect } from "./statementParser";
 import { SshTunnelManager } from "./sshTunnelManager";
 import type { TunnelExit } from "./sshTunnelManager";
 
-const KEY_CONNECTIONS = "vsdb.connections";
-const KEY_ACTIVE = "vsdb.activeConnection";
-const KEY_PASS_PREFIX = "vsdb.pass.";
+const KEY_CONNECTIONS = "UnicDB.connections";
+const KEY_ACTIVE = "UnicDB.activeConnection";
+const KEY_PASS_PREFIX = "UnicDB.pass.";
 
 /** 10 phút idle. */
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000;
@@ -180,7 +180,7 @@ export class ConnectionManager {
    *
    * TASK-BQ01-003 — BigQuery is password-less. `tryStorePassword` /
    * `tryGetPassword` / `tryDeletePassword` are SKIPPED entirely for
-   * `driver === "bigquery"`: no `vsdb.pass.<id>` SecretStorage key is ever
+   * `driver === "bigquery"`: no `UnicDB.pass.<id>` SecretStorage key is ever
    * created, queried, or deleted on the bigquery path. ADC is fetched
    * externally by the BigQuery adapter (BQ-00 boundary).
    */

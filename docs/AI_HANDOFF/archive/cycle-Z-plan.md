@@ -4,7 +4,7 @@ Base: `main` (clean tree). Executor: `unic-code`. Reviewer: `bao-opus` (must dif
 
 ## §1 Intent
 
-VSDB lacks a DataGrip-style **Console**: a disposable scratchpad where a user types ad-hoc SQL, runs it, then closes it. Success is: Command Palette command **VSDB: Open Console** opens an empty panel with Run and Save controls plus a right-click **Save as SQL file** action; Run/Cmd+Enter executes SQL through the existing run pipeline and displays output in the existing ResultsPanel; Save writes the current SQL through VS Code's OS dialog; cancelling does nothing; closing and reopening is empty.
+UnicDB lacks a DataGrip-style **Console**: a disposable scratchpad where a user types ad-hoc SQL, runs it, then closes it. Success is: Command Palette command **UnicDB: Open Console** opens an empty panel with Run and Save controls plus a right-click **Save as SQL file** action; Run/Cmd+Enter executes SQL through the existing run pipeline and displays output in the existing ResultsPanel; Save writes the current SQL through VS Code's OS dialog; cancelling does nothing; closing and reopening is empty.
 
 **P0 decisions (RESOLVED — recorded verbatim):**
 
@@ -63,9 +63,9 @@ Alternative rejected: syntax highlighting via `webview/sqlHighlight.ts`. It is o
 
 Create `src/ui/consolePanel.ts` matching existing standalone `vscode.WebviewPanel` patterns: idempotent `show()`, `createWebviewPanel`, `enableScripts`, local resource root at `dist`, strict CSP (`default-src 'none'` and local script/style URIs), and disposal that clears the panel reference. Following `SchemaForm.buildHtml`, its HTML must construct `scriptUri` for `dist/consolePanel.js` and `styleUri` for `dist/webview.css` with `webview.asWebviewUri`, then emit both `<link rel="stylesheet" href="${styleUri}" />` and `<script src="${scriptUri}"></script>` under `style-src ${webview.cspSource} 'unsafe-inline'` and `script-src ${webview.cspSource}`. It never embeds AG Grid or stores textarea contents.
 
-Inject a run callback from `src/extension.ts`. Register `vsdb.openConsole` with disposables and instantiate one ConsolePanel during `activate()`. Console Run is explicitly full-buffer execution: for received `sql`, call `sqlToRun(sql, { start: 0, end: sql.length }, 0, mgr.getActive()?.driver)`, then pass its `statements` to `runStatements(mgr, runner, resultsPanel, statements)`. `sqlToRun`'s real signature is `sqlToRun(sql, selection, cursorOffset, dialect)`; the full-length selection selects every parsed statement (`mode: "selection"`), and `0` is required but unused on that selection branch. The active driver's dialect preserves MySQL/MSSQL splitting. Retain the existing zero-statement information message before delegation, preserving dangerous-statement confirmation, keyword qualification, busy state, runner updates, and ResultsPanel rendering.
+Inject a run callback from `src/extension.ts`. Register `UnicDB.openConsole` with disposables and instantiate one ConsolePanel during `activate()`. Console Run is explicitly full-buffer execution: for received `sql`, call `sqlToRun(sql, { start: 0, end: sql.length }, 0, mgr.getActive()?.driver)`, then pass its `statements` to `runStatements(mgr, runner, resultsPanel, statements)`. `sqlToRun`'s real signature is `sqlToRun(sql, selection, cursorOffset, dialect)`; the full-length selection selects every parsed statement (`mode: "selection"`), and `0` is required but unused on that selection branch. The active driver's dialect preserves MySQL/MSSQL splitting. Retain the existing zero-statement information message before delegation, preserving dangerous-statement confirmation, keyword qualification, busy state, runner updates, and ResultsPanel rendering.
 
-For save, mirror the verified ResultsPanel export pattern: `showSaveDialog` with the helper's suggested URI and `{ SQL: ["sql"], "All Files": ["*"] }`, return on `undefined`, then `workspace.fs.writeFile(uri, new TextEncoder().encode(sql))`. Contribute only `onCommand:vsdb.openConsole` and the palette-visible `VSDB: Open Console` command in `package.json`; add no menu contribution.
+For save, mirror the verified ResultsPanel export pattern: `showSaveDialog` with the helper's suggested URI and `{ SQL: ["sql"], "All Files": ["*"] }`, return on `undefined`, then `workspace.fs.writeFile(uri, new TextEncoder().encode(sql))`. Contribute only `onCommand:UnicDB.openConsole` and the palette-visible `UnicDB: Open Console` command in `package.json`; add no menu contribution.
 
 Alternative rejected: separate Console execution or ResultsPanel changes. The existing shared flow is an explicit product decision, and independently rendering results would duplicate behavior and add AG Grid scope.
 
@@ -106,7 +106,7 @@ npm test
 
 - [ ] TASK-001: only valid string-bearing Console run/save messages reach the host; suggested `.sql` filenames are deterministic and zero-padded.
 - [ ] TASK-002: `dist/consolePanel.js` is emitted; the UI has an empty textarea, visible Run/Save controls, Cmd/Ctrl+Enter handling, and custom right-click `Save as SQL file` handling.
-- [ ] TASK-003: `VSDB: Open Console` is accessible from Command Palette and opens/reveals a secure standalone Console panel.
+- [ ] TASK-003: `UnicDB: Open Console` is accessible from Command Palette and opens/reveals a secure standalone Console panel.
 - [ ] TASK-003: Console HTML links `dist/webview.css` through `asWebviewUri` under the established local-only CSP, so TASK-002's shared Console styles reach the panel.
 - [ ] TASK-003: every Console buffer is parsed as `sqlToRun(sql, { start: 0, end: sql.length }, 0, mgr.getActive()?.driver)` and all resulting statements run through `runStatements(mgr, runner, resultsPanel, statements)`; results remain exclusively in ResultsPanel.
 - [ ] TASK-003: save cancellation is a no-op; accepted saves use VS Code's OS dialog and write exact UTF-8 SQL with SQL file filters.

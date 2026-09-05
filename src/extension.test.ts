@@ -36,11 +36,11 @@ const state = {
   registeredContentProviders: [] as Array<{ scheme: string; provider: unknown }>,
   onDidChangeConfigSubscribers: [] as Array<(e: { affectsConfiguration: (s: string) => boolean }) => void>,
   workspaceFolders: undefined as unknown,
-  // TASK-606: giá trị setting vsdb.confirmDestructive (undefined = default true).
+  // TASK-606: giá trị setting UnicDB.confirmDestructive (undefined = default true).
   confirmDestructive: undefined as boolean | undefined,
 
   /**
-   * Cycle AE R4.5 — value returned by `vscode.workspace.getConfiguration("vsdb").get("ai.engine")`.
+   * Cycle AE R4.5 — value returned by `vscode.workspace.getConfiguration("UnicDB").get("ai.engine")`.
    * undefined → default arg `"builtin"` applies. Tests that exercise the omp
    * path set this to `"omp"` to mirror the user-toggled setting.
    */
@@ -66,7 +66,7 @@ const state = {
     exitStatus: { code: number } | undefined;
   }>,
   // TASK-ARP09-003: recording fake OutputChannel instances returned by
-  // `vscode.window.createOutputChannel("VSDB")`. Every `appendLine` argument
+  // `vscode.window.createOutputChannel("UnicDB")`. Every `appendLine` argument
   // is captured so the privacy byte-scan can assert no raw secret / SQL /
   // connection config ever reaches the channel.
   createdOutputChannels: [] as Array<{
@@ -140,7 +140,7 @@ vi.mock("vscode", () => {
       // TASK-ARP09-003: recording fake OutputChannel. `appendLine` stores its
       // argument in `lines`; the rest are no-op vi.fn() so test asserts can
       // count invocations. The host wiring is expected to call
-      // `createOutputChannel("VSDB")` exactly once on the first real
+      // `createOutputChannel("UnicDB")` exactly once on the first real
       // diagnostic write (NEVER on plain activate, NEVER twice).
       createOutputChannel: vi.fn((name: string) => {
         const lines: string[] = [];
@@ -216,7 +216,7 @@ vi.mock("vscode", () => {
         return state.workspaceFolders;
       },
       // TASK-AF-002: DDL viewer registers a TextDocumentContentProvider for the
-      // `vsdb-ddl:` URI scheme at activate(). The default mock returns a
+      // `UnicDB-ddl:` URI scheme at activate(). The default mock returns a
       // disposable so registration is a no-op (no provider body needed) for
       // the smoke tests; ddlView.test.ts builds its own richer provider mock.
       registerTextDocumentContentProvider: vi.fn((scheme: string, provider: unknown) => {
@@ -257,7 +257,7 @@ vi.mock("vscode", () => {
       clipboard: {
         writeText: vi.fn().mockResolvedValue(undefined),
       },
-      // PUBLISH-01: vsdb.openUserGuide fallback opens the GitHub URL when the
+      // PUBLISH-01: UnicDB.openUserGuide fallback opens the GitHub URL when the
       // guide is missing locally. Default: resolves true; individual tests
       // can override to simulate a failure path.
       openExternal: vi.fn(async () => true),
@@ -278,7 +278,7 @@ vi.mock("vscode", () => {
 
 // TASK-011 (B3/B8): `commandOpenAiChat` now calls the REAL `detectOmp()`
 // before deciding whether AI chat needs config. Every extension.test.ts test
-// that invokes `vsdb.aiChat` must not shell out to a real `which omp` on the
+// that invokes `UnicDB.aiChat` must not shell out to a real `which omp` on the
 // machine running the suite — that would make tests nondeterministic (and
 // slow) depending on whatever happens to be on the test runner's PATH.
 // Default: omp NOT installed, so all pre-existing "unconfigured → interstitial"
@@ -367,23 +367,23 @@ describe("extension.activate — wiring smoke", () => {
     const ctx = makeCtx();
     activate(ctx as never);
     const expected = [
-      "vsdb.addConnection",
-      "vsdb.editConnection",
-      "vsdb.deleteConnection",
-      "vsdb.selectConnection",
-      "vsdb.runQuery",
-      "vsdb.cancelQuery",
-      "vsdb.generateSelect",
-      "vsdb.copyQualifiedName",
-      "vsdb.refreshSchema",
-      "vsdb.runStatement",
-      "vsdb.runScript",
-      "vsdb.newTable",
-      "vsdb.modifyTable",
-      "vsdb.copyCreateDdl",
-      "vsdb.generateSampleData",
-      "vsdb.analyzeTable",
-      "vsdb.vacuumTable",
+      "UnicDB.addConnection",
+      "UnicDB.editConnection",
+      "UnicDB.deleteConnection",
+      "UnicDB.selectConnection",
+      "UnicDB.runQuery",
+      "UnicDB.cancelQuery",
+      "UnicDB.generateSelect",
+      "UnicDB.copyQualifiedName",
+      "UnicDB.refreshSchema",
+      "UnicDB.runStatement",
+      "UnicDB.runScript",
+      "UnicDB.newTable",
+      "UnicDB.modifyTable",
+      "UnicDB.copyCreateDdl",
+      "UnicDB.generateSampleData",
+      "UnicDB.analyzeTable",
+      "UnicDB.vacuumTable",
     ];
     for (const cmd of expected) {
       expect(state.registeredCommands.has(cmd)).toBe(true);
@@ -392,24 +392,24 @@ describe("extension.activate — wiring smoke", () => {
     // + relationship explorer commands must all register during
     // activate() without throwing.
     const laterCycles = [
-      "vsdb.importCsv",
-      "vsdb.importJson",
-      "vsdb.openFormView",
-      "vsdb.editLargeValue",
-      "vsdb.compareTables",
-      "vsdb.relationshipExplorer",
+      "UnicDB.importCsv",
+      "UnicDB.importJson",
+      "UnicDB.openFormView",
+      "UnicDB.editLargeValue",
+      "UnicDB.compareTables",
+      "UnicDB.relationshipExplorer",
     ];
     for (const cmd of laterCycles) {
       expect(state.registeredCommands.has(cmd)).toBe(true);
     }
   });
 
-  it("SchemaTreeProvider được register cho view vsdb.schemaTree", () => {
+  it("SchemaTreeProvider được register cho view UnicDB.schemaTree", () => {
     const ctx = makeCtx();
     activate(ctx as never);
     expect(state.createdTreeViews.length).toBeGreaterThanOrEqual(1);
     const view = state.createdTreeViews[0] as { id: string };
-    expect(view.id).toBe("vsdb.schemaTree");
+    expect(view.id).toBe("UnicDB.schemaTree");
   });
 
   it("StatusBar created (>= 1)", () => {
@@ -452,11 +452,11 @@ describe("extension.activate — wiring smoke", () => {
   });
 
   // TASK-DBX02-005 — SQL intelligence navigation wiring.
-  it("DBX-02: catalog document provider đăng ký cho scheme vsdb-sql-catalog", () => {
+  it("DBX-02: catalog document provider đăng ký cho scheme UnicDB-sql-catalog", () => {
     const ctx = makeCtx();
     activate(ctx as never);
     const catalog = state.registeredContentProviders.find(
-      (r) => r.scheme === "vsdb-sql-catalog",
+      (r) => r.scheme === "UnicDB-sql-catalog",
     );
     expect(catalog).toBeDefined();
     const provider = catalog!.provider as { provideTextDocumentContent: unknown };
@@ -493,7 +493,7 @@ describe("Spec test #5 — runQuery without connection prompts QuickPick with 'A
     state.createdOutputChannels.length = 0;
   });
 
-  it("vsdb.runQuery với editor .sql và manager active=null → showQuickPick được gọi với option 'Add Connection'", async () => {
+  it("UnicDB.runQuery với editor .sql và manager active=null → showQuickPick được gọi với option 'Add Connection'", async () => {
     const ctx = makeCtx();
     activate(ctx as never);
 
@@ -519,7 +519,7 @@ describe("Spec test #5 — runQuery without connection prompts QuickPick with 'A
     const showQuickPickSpy = vi.mocked(vscodeMock.window.showQuickPick);
     showQuickPickSpy.mockResolvedValueOnce(undefined);
 
-    const runQueryFn = state.registeredCommands.get("vsdb.runQuery");
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
     expect(runQueryFn).toBeDefined();
     await runQueryFn!();
 
@@ -530,7 +530,7 @@ describe("Spec test #5 — runQuery without connection prompts QuickPick with 'A
     expect(labels.some((l) => /Add Connection/i.test(l))).toBe(true);
   });
 
-  it("vsdb.runQuery với editor .sql và manager active=null → option 'Select existing' cũng có", async () => {
+  it("UnicDB.runQuery với editor .sql và manager active=null → option 'Select existing' cũng có", async () => {
     const ctx = makeCtx();
     activate(ctx as never);
     const doc = {
@@ -545,7 +545,7 @@ describe("Spec test #5 — runQuery without connection prompts QuickPick with 'A
     };
     const showQuickPickSpy = vi.mocked(vscodeMock.window.showQuickPick);
     showQuickPickSpy.mockResolvedValueOnce(undefined);
-    const runQueryFn = state.registeredCommands.get("vsdb.runQuery");
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
     await runQueryFn!();
     const args = showQuickPickSpy.mock.calls[0][0] as Array<{ label: string }>;
     const labels = args.map((o) => o.label);
@@ -593,8 +593,8 @@ describe("TASK-303 — filter command + view/title menu", () => {
       title: string;
       icon: string;
     }>;
-    const filterCmd = commands.find((c) => c.command === "vsdb.filterSchemaTree");
-    const clearCmd = commands.find((c) => c.command === "vsdb.clearSchemaTreeFilter");
+    const filterCmd = commands.find((c) => c.command === "UnicDB.filterSchemaTree");
+    const clearCmd = commands.find((c) => c.command === "UnicDB.clearSchemaTreeFilter");
     expect(filterCmd).toBeDefined();
     expect(filterCmd!.title).toBe("Filter Schema Tree");
     expect(filterCmd!.icon).toBe("$(filter)");
@@ -607,23 +607,23 @@ describe("TASK-303 — filter command + view/title menu", () => {
       when: string;
       group: string;
     }>;
-    const filterMenu = viewTitle.find((m) => m.command === "vsdb.filterSchemaTree");
-    const clearMenu = viewTitle.find((m) => m.command === "vsdb.clearSchemaTreeFilter");
+    const filterMenu = viewTitle.find((m) => m.command === "UnicDB.filterSchemaTree");
+    const clearMenu = viewTitle.find((m) => m.command === "UnicDB.clearSchemaTreeFilter");
     expect(filterMenu).toBeDefined();
-    expect(filterMenu!.when).toBe("view == vsdb.schemaTree");
+    expect(filterMenu!.when).toBe("view == UnicDB.schemaTree");
     expect(filterMenu!.group).toBe("navigation");
     expect(clearMenu).toBeDefined();
     expect(clearMenu!.when).toBe(
-      "view == vsdb.schemaTree && vsdb.schemaTreeFilterActive",
+      "view == UnicDB.schemaTree && UnicDB.schemaTreeFilterActive",
     );
     expect(clearMenu!.group).toBe("navigation");
   });
 
-  it("register 2 command mới: vsdb.filterSchemaTree + vsdb.clearSchemaTreeFilter", () => {
+  it("register 2 command mới: UnicDB.filterSchemaTree + UnicDB.clearSchemaTreeFilter", () => {
     const ctx = makeCtx();
     activate(ctx as never);
-    expect(state.registeredCommands.has("vsdb.filterSchemaTree")).toBe(true);
-    expect(state.registeredCommands.has("vsdb.clearSchemaTreeFilter")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.filterSchemaTree")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.clearSchemaTreeFilter")).toBe(true);
   });
 
   it("showInputBox trả undefined (Esc) → setFilter KHÔNG được gọi", async () => {
@@ -634,7 +634,7 @@ describe("TASK-303 — filter command + view/title menu", () => {
     const showInputBoxSpy = vi.mocked(vscodeMock.window.showInputBox);
     showInputBoxSpy.mockResolvedValueOnce(undefined);
 
-    const fn = state.registeredCommands.get("vsdb.filterSchemaTree");
+    const fn = state.registeredCommands.get("UnicDB.filterSchemaTree");
     expect(fn).toBeDefined();
     await fn!();
 
@@ -646,7 +646,7 @@ describe("TASK-303 — filter command + view/title menu", () => {
 });
 
 // =============================================================================
-// TASK-505: vsdb.runScript — send active shell script to a reused terminal.
+// TASK-505: UnicDB.runScript — send active shell script to a reused terminal.
 // =============================================================================
 describe("TASK-505 — runScript command + terminal reuse", () => {
   beforeEach(() => {
@@ -673,13 +673,13 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
     await mod.activate(ctx as never);
   }
 
-  it("Test #1: command 'vsdb.runScript' được register khi activate", async () => {
+  it("Test #1: command 'UnicDB.runScript' được register khi activate", async () => {
     const ctx = makeCtx();
     await activateFresh(ctx);
-    expect(state.registeredCommands.has("vsdb.runScript")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.runScript")).toBe(true);
   });
 
-  it("Test #2: handler tạo terminal 'VSDB Script' + sendText full content của document shellscript", async () => {
+  it("Test #2: handler tạo terminal 'UnicDB Script' + sendText full content của document shellscript", async () => {
     const ctx = makeCtx();
     await activateFresh(ctx);
 
@@ -699,13 +699,13 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
       insertSnippet: vi.fn().mockResolvedValue(undefined),
     };
 
-    const fn = state.registeredCommands.get("vsdb.runScript");
+    const fn = state.registeredCommands.get("UnicDB.runScript");
     expect(fn).toBeDefined();
     await fn!();
 
-    // createTerminal được gọi đúng 1 lần với name "VSDB Script"
+    // createTerminal được gọi đúng 1 lần với name "UnicDB Script"
     expect(state.createdTerminals.length).toBe(1);
-    expect(state.createdTerminals[0].name).toBe("VSDB Script");
+    expect(state.createdTerminals[0].name).toBe("UnicDB Script");
     // sendText nhận full document text + newline (paste full file)
     const term = state.createdTerminals[0];
     expect(term.sendText).toHaveBeenCalledTimes(1);
@@ -733,7 +733,7 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
       insertSnippet: vi.fn().mockResolvedValue(undefined),
     };
 
-    const fn = state.registeredCommands.get("vsdb.runScript");
+    const fn = state.registeredCommands.get("UnicDB.runScript");
     expect(fn).toBeDefined();
     await expect(fn!()).resolves.toBeUndefined();
 
@@ -765,7 +765,7 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
       insertSnippet: vi.fn().mockResolvedValue(undefined),
     };
 
-    const fn = state.registeredCommands.get("vsdb.runScript");
+    const fn = state.registeredCommands.get("UnicDB.runScript");
     expect(fn).toBeDefined();
 
     // First call: tạo terminal mới (mock alive-by-default).
@@ -801,7 +801,7 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
       insertSnippet: vi.fn().mockResolvedValue(undefined),
     };
 
-    const fn = state.registeredCommands.get("vsdb.runScript");
+    const fn = state.registeredCommands.get("UnicDB.runScript");
     expect(fn).toBeDefined();
 
     // First call: module runScriptTerminal = null → tạo terminal mới.
@@ -819,8 +819,8 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
     const secondTerm = state.createdTerminals[1];
     // Instance khác nhau (không reuse).
     expect(secondTerm).not.toBe(firstTerm);
-    // Terminal mới cũng tên "VSDB Script".
-    expect(secondTerm.name).toBe("VSDB Script");
+    // Terminal mới cũng tên "UnicDB Script".
+    expect(secondTerm.name).toBe("UnicDB Script");
     // Terminal cũ không nhận text lần 2.
     expect(firstTerm.sendText).toHaveBeenCalledTimes(1);
     // Terminal mới nhận text lần 2.
@@ -831,13 +831,13 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
 
   // ===== TASK-605 #6: no-editor guard =====
 
-  it("Test #6 — vsdb.runScript với NO active editor → showWarningMessage, KHÔNG tạo terminal", async () => {
+  it("Test #6 — UnicDB.runScript với NO active editor → showWarningMessage, KHÔNG tạo terminal", async () => {
     const ctx = makeCtx();
     await activateFresh(ctx);
 
     state.activeEditor = undefined;
 
-    const fn = state.registeredCommands.get("vsdb.runScript");
+    const fn = state.registeredCommands.get("UnicDB.runScript");
     expect(fn).toBeDefined();
     await expect(fn!()).resolves.toBeUndefined();
 
@@ -852,7 +852,7 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
     expect(state.createdTerminals.length).toBe(0);
   });
 
-  it("Test #6b — vsdb.runScript với editor không phải shellscript (sql) vẫn gửi text như cũ (không guard theo language)", async () => {
+  it("Test #6b — UnicDB.runScript với editor không phải shellscript (sql) vẫn gửi text như cũ (không guard theo language)", async () => {
     const ctx = makeCtx();
     await activateFresh(ctx);
 
@@ -871,7 +871,7 @@ describe("TASK-505 — runScript command + terminal reuse", () => {
       insertSnippet: vi.fn().mockResolvedValue(undefined),
     };
 
-    const fn = state.registeredCommands.get("vsdb.runScript");
+    const fn = state.registeredCommands.get("UnicDB.runScript");
     expect(fn).toBeDefined();
     await fn!();
 
@@ -913,7 +913,7 @@ describe("TASK-606 — destructive confirm guard", () => {
   function makeSeededCtx(driver: string = "postgres") {
     const ctx = makeCtx();
     ctx.globalState.get = vi.fn((key: string) => {
-      if (key === "vsdb.connections") {
+      if (key === "UnicDB.connections") {
         return [
           {
             id: "c1",
@@ -926,7 +926,7 @@ describe("TASK-606 — destructive confirm guard", () => {
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "c1";
+      if (key === "UnicDB.activeConnection") return "c1";
       return undefined;
     }) as never;
     return ctx;
@@ -977,7 +977,7 @@ describe("TASK-606 — destructive confirm guard", () => {
     setEditor("DELETE FROM t WHERE id = 1;");
     warnSpy().mockResolvedValueOnce("Run");
 
-    await state.registeredCommands.get("vsdb.runQuery")!();
+    await state.registeredCommands.get("UnicDB.runQuery")!();
 
     expect(warnSpy()).toHaveBeenCalledTimes(1);
     const [msg, opts, ...items] = warnCalls()[0];
@@ -993,7 +993,7 @@ describe("TASK-606 — destructive confirm guard", () => {
     setEditor("TRUNCATE TABLE t;");
     warnSpy().mockResolvedValueOnce(undefined);
 
-    await state.registeredCommands.get("vsdb.runQuery")!();
+    await state.registeredCommands.get("UnicDB.runQuery")!();
 
     expect(warnSpy()).toHaveBeenCalledTimes(1);
     const [msg, opts, ...items] = warnCalls()[0];
@@ -1011,7 +1011,7 @@ describe("TASK-606 — destructive confirm guard", () => {
     setEditor("DELETE FROM t;");
     warnSpy().mockResolvedValueOnce("Vẫn chạy (nguy hiểm)");
 
-    await state.registeredCommands.get("vsdb.runQuery")!();
+    await state.registeredCommands.get("UnicDB.runQuery")!();
 
     expect(warnCalls()[0][0]).toMatch(/NGUY HIỂM/);
     expect(runSpy).toHaveBeenCalled();
@@ -1022,7 +1022,7 @@ describe("TASK-606 — destructive confirm guard", () => {
     await activateFresh606();
     setEditor("DELETE FROM t;");
 
-    await state.registeredCommands.get("vsdb.runQuery")!();
+    await state.registeredCommands.get("UnicDB.runQuery")!();
 
     expect(warnSpy()).not.toHaveBeenCalled();
     expect(runSpy).toHaveBeenCalled();
@@ -1034,7 +1034,7 @@ describe("TASK-606 — destructive confirm guard", () => {
     setEditor(sql, { start: 0, end: sql.length });
     warnSpy().mockResolvedValueOnce(undefined);
 
-    await state.registeredCommands.get("vsdb.runQuery")!();
+    await state.registeredCommands.get("UnicDB.runQuery")!();
 
     expect(warnSpy()).toHaveBeenCalledTimes(1);
     expect(warnCalls()[0][0]).toMatch(/NGUY HIỂM/);
@@ -1045,7 +1045,7 @@ describe("TASK-606 — destructive confirm guard", () => {
     await activateFresh606();
     setEditor("SELECT 1;");
 
-    await state.registeredCommands.get("vsdb.runQuery")!();
+    await state.registeredCommands.get("UnicDB.runQuery")!();
 
     expect(warnSpy()).not.toHaveBeenCalled();
     expect(runSpy).toHaveBeenCalled();
@@ -1066,7 +1066,7 @@ describe("TASK-606 — destructive confirm guard", () => {
     setEditor("UPDATE t SET c = 'x\\' WHERE id=1' ;");
     warnSpy().mockResolvedValueOnce("Vẫn chạy (nguy hiểm)");
 
-    await state.registeredCommands.get("vsdb.runQuery")!();
+    await state.registeredCommands.get("UnicDB.runQuery")!();
 
     expect(warnSpy()).toHaveBeenCalledTimes(1);
     expect(warnCalls()[0][0]).toMatch(/NGUY HIỂM/);
@@ -1083,7 +1083,7 @@ describe("TASK-606 — destructive confirm guard", () => {
     const sql = "SELECT 1\nGO\nSELECT 2\nGO";
     setEditor(sql, { start: 0, end: sql.length });
 
-    await state.registeredCommands.get("vsdb.runQuery")!();
+    await state.registeredCommands.get("UnicDB.runQuery")!();
 
     expect(runSpy).toHaveBeenCalled();
     const ranStatements = runSpy.mock.calls[0][0] as Array<{ text: string }>;
@@ -1099,7 +1099,7 @@ describe("TASK-606 — destructive confirm guard", () => {
     // spy on that instance's prototype rather than the file-wide import.
     const { ResultsPanel: ResultsPanelModule } = await import("./ui/resultsPanel");
     const renderSpy = vi.spyOn(ResultsPanelModule.prototype, "render");
-    await state.registeredCommands.get("vsdb.runQuery")!();
+    await state.registeredCommands.get("UnicDB.runQuery")!();
 
     expect(runSpy).toHaveBeenCalledWith(
       expect.any(Array),
@@ -1114,14 +1114,14 @@ describe("TASK-606 — destructive confirm guard", () => {
     renderSpy.mockRestore();
   });
 
-  it("B15 — package.json khai báo vsdb.confirmDestructive default true", () => {
+  it("B15 — package.json khai báo UnicDB.confirmDestructive default true", () => {
     const props = pkgJson.contributes.configuration.properties as Record<
       string,
       { type: string; default: unknown }
     >;
-    expect(props["vsdb.confirmDestructive"]).toBeDefined();
-    expect(props["vsdb.confirmDestructive"].type).toBe("boolean");
-    expect(props["vsdb.confirmDestructive"].default).toBe(true);
+    expect(props["UnicDB.confirmDestructive"]).toBeDefined();
+    expect(props["UnicDB.confirmDestructive"].type).toBe("boolean");
+    expect(props["UnicDB.confirmDestructive"].default).toBe(true);
   });
 });
 
@@ -1135,16 +1135,16 @@ describe("TASK-005 — extension wiring smoke", () => {
     state.registeredCommands.clear();
   });
 
-  it("register đủ 6 command mới: vsdb.newTable/modifyTable/copyCreateDdl/generateSampleData/analyzeTable/vacuumTable", () => {
+  it("register đủ 6 command mới: UnicDB.newTable/modifyTable/copyCreateDdl/generateSampleData/analyzeTable/vacuumTable", () => {
     const ctx = makeCtx();
     activate(ctx as never);
     const six = [
-      "vsdb.newTable",
-      "vsdb.modifyTable",
-      "vsdb.copyCreateDdl",
-      "vsdb.generateSampleData",
-      "vsdb.analyzeTable",
-      "vsdb.vacuumTable",
+      "UnicDB.newTable",
+      "UnicDB.modifyTable",
+      "UnicDB.copyCreateDdl",
+      "UnicDB.generateSampleData",
+      "UnicDB.analyzeTable",
+      "UnicDB.vacuumTable",
     ];
     for (const cmd of six) {
       expect(state.registeredCommands.has(cmd)).toBe(true);
@@ -1154,12 +1154,12 @@ describe("TASK-005 — extension wiring smoke", () => {
   it("package.json activationEvents có đủ 6 entry mới (onCommand)", () => {
     const evts = pkgJson.activationEvents as string[];
     const six = [
-      "onCommand:vsdb.newTable",
-      "onCommand:vsdb.modifyTable",
-      "onCommand:vsdb.copyCreateDdl",
-      "onCommand:vsdb.generateSampleData",
-      "onCommand:vsdb.analyzeTable",
-      "onCommand:vsdb.vacuumTable",
+      "onCommand:UnicDB.newTable",
+      "onCommand:UnicDB.modifyTable",
+      "onCommand:UnicDB.copyCreateDdl",
+      "onCommand:UnicDB.generateSampleData",
+      "onCommand:UnicDB.analyzeTable",
+      "onCommand:UnicDB.vacuumTable",
     ];
     for (const e of six) {
       expect(evts).toContain(e);
@@ -1168,56 +1168,56 @@ describe("TASK-005 — extension wiring smoke", () => {
 });
 
 // =============================================================================
-// TASK-004 — vsdb.openAiSettings command + activationEvent + contributes
+// TASK-004 — UnicDB.openAiSettings command + activationEvent + contributes
 // =============================================================================
-describe("TASK-004 — vsdb.openAiSettings wiring", () => {
+describe("TASK-004 — UnicDB.openAiSettings wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.registeredCommands.clear();
   });
 
-  it("registers vsdb.openAiSettings handler on activate", () => {
+  it("registers UnicDB.openAiSettings handler on activate", () => {
     const ctx = makeCtx();
     activate(ctx as never);
-    expect(state.registeredCommands.has("vsdb.openAiSettings")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.openAiSettings")).toBe(true);
   });
 
-  it("package.json contributes.commands declares vsdb.openAiSettings", () => {
+  it("package.json contributes.commands declares UnicDB.openAiSettings", () => {
     const cmds = (pkgJson.contributes as { commands: Array<{ command: string }> })
       .commands;
-    const entry = cmds.find((c) => c.command === "vsdb.openAiSettings");
+    const entry = cmds.find((c) => c.command === "UnicDB.openAiSettings");
     expect(entry).toBeDefined();
     expect(entry!.title).toMatch(/AI Settings/i);
   });
 
-  it("package.json activationEvents contains onCommand:vsdb.openAiSettings", () => {
+  it("package.json activationEvents contains onCommand:UnicDB.openAiSettings", () => {
     const evts = pkgJson.activationEvents as string[];
-    expect(evts).toContain("onCommand:vsdb.openAiSettings");
+    expect(evts).toContain("onCommand:UnicDB.openAiSettings");
   });
 });
 // Avoid path-imports lint complaints.
 void path;
 
 // =============================================================================
-// TASK-UX1-007 — vsdb.openSettings gear on the schema-tree title bar (R8b).
-// Hub command: opens VS Code's Settings UI filtered to VSDB extension
-// (`@ext:lengockhoa.vsdb`). Distinct icon (`$(settings-gear)`) from
-// `vsdb.openAiSettings`'s `$(gear)` so the two title-bar buttons never
+// TASK-UX1-007 — UnicDB.openSettings gear on the schema-tree title bar (R8b).
+// Hub command: opens VS Code's Settings UI filtered to UnicDB extension
+// (`@ext:lengockhoa.UnicDB`). Distinct icon (`$(settings-gear)`) from
+// `UnicDB.openAiSettings`'s `$(gear)` so the two title-bar buttons never
 // collide visually. Structural cases pin the package.json contribution
 // (command + view/title entry) so a future icon swap cannot silently
 // regress the hub into a duplicate of AI Settings.
 // =============================================================================
-describe("TASK-UX1-007 — vsdb.openSettings wiring", () => {
+describe("TASK-UX1-007 — UnicDB.openSettings wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.registeredCommands.clear();
   });
 
   // Case 1 — happy path: command opens settings filtered to the extension.
-  it("case 1: invokes vsdb.openSettings → executeCommand('workbench.action.openSettings', '@ext:lengockhoa.vsdb')", async () => {
+  it("case 1: invokes UnicDB.openSettings → executeCommand('workbench.action.openSettings', '@ext:lengockhoa.UnicDB')", async () => {
     const ctx = makeCtx();
     activate(ctx as never);
-    const fn = state.registeredCommands.get("vsdb.openSettings");
+    const fn = state.registeredCommands.get("UnicDB.openSettings");
     expect(fn).toBeDefined();
 
     const executeCommandSpy = vi.mocked(vscodeMock.commands.executeCommand);
@@ -1229,14 +1229,14 @@ describe("TASK-UX1-007 — vsdb.openSettings wiring", () => {
       (c) => c[0] === "workbench.action.openSettings",
     );
     expect(called).toBeDefined();
-    expect(called![1]).toBe("@ext:lengockhoa.vsdb");
+    expect(called![1]).toBe("@ext:lengockhoa.UnicDB");
   });
 
   // Case 2 — edge A: executeCommand rejects → caught, toast, no throw.
   it("case 2: executeCommand rejects → caught + showErrorMessage, handler does not throw", async () => {
     const ctx = makeCtx();
     activate(ctx as never);
-    const fn = state.registeredCommands.get("vsdb.openSettings");
+    const fn = state.registeredCommands.get("UnicDB.openSettings");
     expect(fn).toBeDefined();
 
     const executeCommandSpy = vi.mocked(vscodeMock.commands.executeCommand);
@@ -1252,28 +1252,28 @@ describe("TASK-UX1-007 — vsdb.openSettings wiring", () => {
   });
 
   // Case 3 — edge B: structural wiring — package.json declares command + title entry.
-  it("case 3: package.json declares vsdb.openSettings command + view/title entry on vsdb.schemaTree", () => {
+  it("case 3: package.json declares UnicDB.openSettings command + view/title entry on UnicDB.schemaTree", () => {
     interface CmdEntry { command: string; title?: string; icon?: string }
     const commands = pkgJson.contributes.commands as CmdEntry[];
-    const entry = commands.find((c) => c.command === "vsdb.openSettings");
+    const entry = commands.find((c) => c.command === "UnicDB.openSettings");
     expect(entry).toBeDefined();
     expect(entry!.title).toMatch(/Open Settings/i);
     expect(entry!.icon).toBe("$(settings-gear)");
 
     interface MenuEntry { command: string; when?: string; group?: string }
     const viewTitle = (pkgJson.contributes.menus["view/title"] ?? []) as MenuEntry[];
-    const menu = viewTitle.find((m) => m.command === "vsdb.openSettings");
+    const menu = viewTitle.find((m) => m.command === "UnicDB.openSettings");
     expect(menu).toBeDefined();
-    expect(menu!.when).toBe("view == vsdb.schemaTree");
+    expect(menu!.when).toBe("view == UnicDB.schemaTree");
     expect(menu!.group).toBe("navigation");
   });
 
   // Case 4 — edge C: no icon collision with AI settings entry.
-  it("case 4: vsdb.openAiSettings keeps $(gear) and vsdb.openSettings uses $(settings-gear)", () => {
+  it("case 4: UnicDB.openAiSettings keeps $(gear) and UnicDB.openSettings uses $(settings-gear)", () => {
     interface CmdEntry { command: string; icon?: string }
     const commands = pkgJson.contributes.commands as CmdEntry[];
-    const ai = commands.find((c) => c.command === "vsdb.openAiSettings");
-    const hub = commands.find((c) => c.command === "vsdb.openSettings");
+    const ai = commands.find((c) => c.command === "UnicDB.openAiSettings");
+    const hub = commands.find((c) => c.command === "UnicDB.openSettings");
     expect(ai).toBeDefined();
     expect(hub).toBeDefined();
     expect(ai!.icon).toBe("$(gear)");
@@ -1282,40 +1282,40 @@ describe("TASK-UX1-007 — vsdb.openSettings wiring", () => {
   });
 
   // Case 5 — regression: command registration smoke (mirror the "register đủ command" pattern).
-  it("case 5: extension.activate registers vsdb.openSettings", () => {
+  it("case 5: extension.activate registers UnicDB.openSettings", () => {
     const ctx = makeCtx();
     activate(ctx as never);
-    expect(state.registeredCommands.has("vsdb.openSettings")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.openSettings")).toBe(true);
   });
 
   // activationEvents pin — keeps the lazy activation guard in sync.
-  it("package.json activationEvents contains onCommand:vsdb.openSettings", () => {
+  it("package.json activationEvents contains onCommand:UnicDB.openSettings", () => {
     const evts = pkgJson.activationEvents as string[];
-    expect(evts).toContain("onCommand:vsdb.openSettings");
+    expect(evts).toContain("onCommand:UnicDB.openSettings");
   });
 });
 
 // =============================================================================
-// TASK-004 — vsdb.aiChat command wiring + unconfigured fallback.
+// TASK-004 — UnicDB.aiChat command wiring + unconfigured fallback.
 // =============================================================================
-describe("TASK-004 — vsdb.aiChat wiring", () => {
+describe("TASK-004 — UnicDB.aiChat wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.registeredCommands.clear();
   });
 
-  it("Test #5 — vsdb.aiChat được register trong subscriptions sau activate()", () => {
+  it("Test #5 — UnicDB.aiChat được register trong subscriptions sau activate()", () => {
     const ctx = makeCtx();
     activate(ctx as never);
-    expect(state.registeredCommands.has("vsdb.aiChat")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.aiChat")).toBe(true);
     // Command handler phải thuộc context.subscriptions (để dispose dọn dẹp).
     expect(ctx.subscriptions.length).toBeGreaterThan(0);
   });
 
-  it("Test #5b — dispose() sạch: deactivate() không throw sau khi gọi vsdb.aiChat", async () => {
+  it("Test #5b — dispose() sạch: deactivate() không throw sau khi gọi UnicDB.aiChat", async () => {
     const ctx = makeCtx();
     activate(ctx as never);
-    const fn = state.registeredCommands.get("vsdb.aiChat");
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
     expect(fn).toBeDefined();
     // Gọi handler trước khi dispose — không crash, không throw.
     await fn!();
@@ -1331,7 +1331,7 @@ describe("TASK-004 — vsdb.aiChat wiring", () => {
     showInfoSpy.mockClear();
     executeCommandSpy.mockClear();
 
-    const fn = state.registeredCommands.get("vsdb.aiChat");
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
     expect(fn).toBeDefined();
     await fn!();
 
@@ -1340,9 +1340,9 @@ describe("TASK-004 — vsdb.aiChat wiring", () => {
     const infoArgs = showInfoSpy.mock.calls[0];
     const infoText = (infoArgs?.[0] ?? "") as string;
     expect(infoText.toLowerCase()).toMatch(/configure|ai|settings/i);
-    // Mở form settings qua executeCommand('vsdb.openAiSettings').
+    // Mở form settings qua executeCommand('UnicDB.openAiSettings').
     const called = executeCommandSpy.mock.calls.some(
-      (c) => c[0] === "vsdb.openAiSettings",
+      (c) => c[0] === "UnicDB.openAiSettings",
     );
     expect(called).toBe(true);
   });
@@ -1397,7 +1397,7 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
     showInfoSpy.mockClear();
     executeCommandSpy.mockClear();
 
-    const fn = state.registeredCommands.get("vsdb.aiChat");
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
     expect(fn).toBeDefined();
     await fn!();
 
@@ -1405,7 +1405,7 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
     // "configure AI first" info message, because omp needs zero config.
     expect(showInfoSpy).not.toHaveBeenCalled();
     const routedToSettings = executeCommandSpy.mock.calls.some(
-      (c) => c[0] === "vsdb.openAiSettings",
+      (c) => c[0] === "UnicDB.openAiSettings",
     );
     expect(routedToSettings).toBe(false);
     // The chat panel actually opened, wired for the omp engine.
@@ -1428,13 +1428,13 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
     showInfoSpy.mockClear();
     executeCommandSpy.mockClear();
 
-    const fn = state.registeredCommands.get("vsdb.aiChat");
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
     expect(fn).toBeDefined();
     await fn!();
 
     expect(showInfoSpy).toHaveBeenCalled();
     const routedToSettings = executeCommandSpy.mock.calls.some(
-      (c) => c[0] === "vsdb.openAiSettings",
+      (c) => c[0] === "UnicDB.openAiSettings",
     );
     expect(routedToSettings).toBe(true);
     expect(panelConstructorCalls.length).toBe(0);
@@ -1449,7 +1449,7 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
   // reference before this fix — so the guard kept short-circuiting into a
   // disposed instance forever, and a later omp install/config change was
   // never picked up without a full window reload.
-  it("R(Finding7) regression: closing the webview tab (onDispose) lets the NEXT vsdb.aiChat re-detect the engine and open a fresh panel", async () => {
+  it("R(Finding7) regression: closing the webview tab (onDispose) lets the NEXT UnicDB.aiChat re-detect the engine and open a fresh panel", async () => {
     state.aiEngine = "omp";
     detectOmpState.impl = async () => ({
       available: true,
@@ -1460,7 +1460,7 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
     const ctx = makeCtx();
     activate(ctx as never);
 
-    const fn = state.registeredCommands.get("vsdb.aiChat");
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
     expect(fn).toBeDefined();
 
     await fn!();
@@ -1490,7 +1490,7 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
   // ---- TASK-AIX03-102 case 5: dispose + re-subscription ---------------------
   // REAL panel disposal: the first panel's teardown must dispose its
   // recovery subscription EXACTLY ONCE (listener count back to zero on the
-  // host emitter), and the next vsdb.aiChat command must construct a SECOND
+  // host emitter), and the next UnicDB.aiChat command must construct a SECOND
   // panel that registers one FRESH listener on the SAME
   // ConnectionManager.onDidChangeRecoveryStatus event reference (proves the
   // host wired the activation-scoped `mgr`, not a fresh closure).
@@ -1571,7 +1571,7 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
     (liveMgr as { onDidChangeRecoveryStatus: unknown }).onDidChangeRecoveryStatus =
       countingEvent;
 
-    const fn = state.registeredCommands.get("vsdb.aiChat");
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
     expect(fn).toBeDefined();
 
     await fn!();
@@ -1622,46 +1622,46 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
 });
 
 // =============================================================================
-// TASK-002 (wave 2) — wire `vsdb.browseTableData` from schemaTree nodes:
+// TASK-002 (wave 2) — wire `UnicDB.browseTableData` from schemaTree nodes:
 //   * extension.activate() registers the command via registerBrowseCommands.
 //   * package.json declares contributes.commands entry + activationEvent.
 //   * invoking the registered handler with no argument must not throw
 //     (palette fallback → showInformationMessage, see browseCommands.test.ts #5).
 // =============================================================================
-describe("TASK-002 — vsdb.browseTableData extension wiring", () => {
+describe("TASK-002 — UnicDB.browseTableData extension wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.registeredCommands.clear();
   });
 
-  it("registers vsdb.browseTableData handler trong activate() (case 3)", () => {
+  it("registers UnicDB.browseTableData handler trong activate() (case 3)", () => {
     const ctx = makeCtx();
     activate(ctx as never);
-    expect(state.registeredCommands.has("vsdb.browseTableData")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.browseTableData")).toBe(true);
   });
 
-  it("invoking vsdb.browseTableData handler không throw khi palette (no arg) (case 3)", async () => {
+  it("invoking UnicDB.browseTableData handler không throw khi palette (no arg) (case 3)", async () => {
     const ctx = makeCtx();
     activate(ctx as never);
-    const fn = state.registeredCommands.get("vsdb.browseTableData");
+    const fn = state.registeredCommands.get("UnicDB.browseTableData");
     expect(fn).toBeDefined();
     await expect(fn!()).resolves.not.toThrow();
     await expect(fn!(undefined)).resolves.not.toThrow();
     await expect(fn!({})).resolves.not.toThrow();
   });
-  it("package.json contributes.commands có vsdb.browseTableData entry với category VSDB (case 4)", () => {
+  it("package.json contributes.commands có UnicDB.browseTableData entry với category UnicDB (case 4)", () => {
     // pkgJson đã là typed JSON.parse output; ép kiểu 1 lần tại ranh giới rồi truy cập thuộc tính đã được kiểm tra.
     interface CmdEntry { command: string; title?: string; category?: string }
     const commands = pkgJson.contributes.commands as CmdEntry[];
-    const entry = commands.find((c) => c.command === "vsdb.browseTableData");
+    const entry = commands.find((c) => c.command === "UnicDB.browseTableData");
     expect(entry).toBeDefined();
     expect(entry!.title).toMatch(/Browse Table Data/i);
-    expect(entry!.category).toBe("VSDB");
+    expect(entry!.category).toBe("UnicDB");
   });
 
-  it("package.json activationEvents có onCommand:vsdb.browseTableData (case 4)", () => {
+  it("package.json activationEvents có onCommand:UnicDB.browseTableData (case 4)", () => {
     const evts = pkgJson.activationEvents as string[];
-    expect(evts).toContain("onCommand:vsdb.browseTableData");
+    expect(evts).toContain("onCommand:UnicDB.browseTableData");
   });
 });
 
@@ -1700,18 +1700,18 @@ describe("TASK-002 — AcpProcess importable + extension activation regression",
     activate(ctx as never);
     // All commands through TASK-005 + TASK-004 must still be present.
     const expected = [
-      "vsdb.runQuery",
-      "vsdb.addConnection",
-      "vsdb.editConnection",
-      "vsdb.deleteConnection",
-      "vsdb.selectConnection",
-      "vsdb.cancelQuery",
-      "vsdb.generateSelect",
-      "vsdb.copyQualifiedName",
-      "vsdb.refreshSchema",
-      "vsdb.openAiSettings",
-      "vsdb.aiChat",
-      "vsdb.runScript",
+      "UnicDB.runQuery",
+      "UnicDB.addConnection",
+      "UnicDB.editConnection",
+      "UnicDB.deleteConnection",
+      "UnicDB.selectConnection",
+      "UnicDB.cancelQuery",
+      "UnicDB.generateSelect",
+      "UnicDB.copyQualifiedName",
+      "UnicDB.refreshSchema",
+      "UnicDB.openAiSettings",
+      "UnicDB.aiChat",
+      "UnicDB.runScript",
     ];
     for (const id of expected) {
       expect(state.registeredCommands.has(id)).toBe(true);
@@ -1750,13 +1750,13 @@ describe("TASK-003 — extension wires streamComplete for builtin streaming", ()
     vi.resetModules();
   });
 
-  it("#6 activate → vsdb.aiChat → AiChatPanel is constructed with deps whose streamComplete is a function (5-arg)", async () => {
+  it("#6 activate → UnicDB.aiChat → AiChatPanel is constructed with deps whose streamComplete is a function (5-arg)", async () => {
     const ext = await import("./extension");
     const ctx = makeConfiguredCtx();
     await ext.activate(ctx as never);
-    const fn = state.registeredCommands.get("vsdb.aiChat");
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
     expect(fn).toBeDefined();
-    expect(state.registeredCommands.has("vsdb.aiChat")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.aiChat")).toBe(true);
 
     await fn!();
 
@@ -1777,7 +1777,7 @@ describe("TASK-003 — extension wires streamComplete for builtin streaming", ()
     const ext = await import("./extension");
     const ctx = makeConfiguredCtx();
     await ext.activate(ctx as never);
-    const fn = state.registeredCommands.get("vsdb.aiChat");
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
     expect(fn).toBeDefined();
     await fn!();
     const opts = panelConstructorCalls[panelConstructorCalls.length - 1] as {
@@ -1832,7 +1832,7 @@ function makeConfiguredCtx() {
     globalState: {
       // Only the key path AiConfigStore reads returns a valid payload.
       get: vi.fn((key: string) =>
-        key === "vsdb.ai.settings" ? settings : undefined,
+        key === "UnicDB.ai.settings" ? settings : undefined,
       ),
       update: vi.fn().mockResolvedValue(undefined),
     },
@@ -1840,45 +1840,45 @@ function makeConfiguredCtx() {
 }
 
 // =============================================================================
-// TASK-003 (wave 3) — vsdb.createSchema: register the command, declare in
+// TASK-003 (wave 3) — UnicDB.createSchema: register the command, declare in
 // package.json contributes.commands + activationEvents, add view/item/context
 // entry for connection + schema viewItem when-clause, ensure esbuild emits
 // dist/schemaForm.js.
 // =============================================================================
-describe("TASK-003 — vsdb.createSchema extension wiring", () => {
+describe("TASK-003 — UnicDB.createSchema extension wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.registeredCommands.clear();
   });
 
-  it("registers vsdb.createSchema handler on activate (case 9)", () => {
+  it("registers UnicDB.createSchema handler on activate (case 9)", () => {
     const ctx = makeCtx();
     activate(ctx as never);
-    expect(state.registeredCommands.has("vsdb.createSchema")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.createSchema")).toBe(true);
   });
 
-  it("package.json contributes.commands declares vsdb.createSchema with category VSDB", () => {
+  it("package.json contributes.commands declares UnicDB.createSchema with category UnicDB", () => {
     interface CmdEntry { command: string; title?: string; category?: string }
     const commands = pkgJson.contributes.commands as CmdEntry[];
-    const entry = commands.find((c) => c.command === "vsdb.createSchema");
+    const entry = commands.find((c) => c.command === "UnicDB.createSchema");
     expect(entry).toBeDefined();
     expect(entry!.title).toMatch(/Create.*Schema/i);
-    expect(entry!.category).toBe("VSDB");
+    expect(entry!.category).toBe("UnicDB");
   });
 
-  it("package.json activationEvents contains onCommand:vsdb.createSchema", () => {
+  it("package.json activationEvents contains onCommand:UnicDB.createSchema", () => {
     const evts = pkgJson.activationEvents as string[];
-    expect(evts).toContain("onCommand:vsdb.createSchema");
+    expect(evts).toContain("onCommand:UnicDB.createSchema");
   });
 
-  it("package.json menus.view/item/context contains connection+schema entry for vsdb.createSchema", () => {
+  it("package.json menus.view/item/context contains connection+schema entry for UnicDB.createSchema", () => {
     interface MenuEntry { command: string; when?: string; group?: string }
     const ctxMenus = (pkgJson.contributes.menus as { "view/item/context": MenuEntry[] })[
       "view/item/context"
     ];
-    const entry = ctxMenus.find((m) => m.command === "vsdb.createSchema");
+    const entry = ctxMenus.find((m) => m.command === "UnicDB.createSchema");
     expect(entry).toBeDefined();
-    expect(entry!.when).toMatch(/view\s*==\s*vsdb\.schemaTree/);
+    expect(entry!.when).toMatch(/view\s*==\s*UnicDB\.schemaTree/);
     expect(entry!.when).toMatch(/connection/);
     expect(entry!.when).toMatch(/schema/);
   });
@@ -1890,7 +1890,7 @@ describe("TASK-003 — vsdb.createSchema extension wiring", () => {
 
 
 // =============================================================================
-// TASK-007 — vsdb.runStatement applies qualifyKeywordTables at the
+// TASK-007 — UnicDB.runStatement applies qualifyKeywordTables at the
 // runStatements choke point. Active adapter's listTables("public") determines
 // whether reserved-keyword table names get rewritten to "public"."<name>".
 import { qualifyKeywordTables } from "./core/keywordQualify";
@@ -1918,12 +1918,12 @@ describe("TASK-007 — runStatement rewrites reserved-keyword tables to public s
     vi.resetModules();
   });
 
-  it("#2 vsdb.runStatement with `SELECT * FROM order;` rewrites to `SELECT * FROM \"public\".\"order\";`", async () => {
+  it("#2 UnicDB.runStatement with `SELECT * FROM order;` rewrites to `SELECT * FROM \"public\".\"order\";`", async () => {
     const ctx = makeCtx();
     // Seed an active connection so getActive() returns truthy and the run
     // path proceeds past the QuickPick fallback.
     ctx.globalState.get = vi.fn((key: string) => {
-      if (key === "vsdb.connections") {
+      if (key === "UnicDB.connections") {
         return [
           {
             id: "c1",
@@ -1936,7 +1936,7 @@ describe("TASK-007 — runStatement rewrites reserved-keyword tables to public s
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "c1";
+      if (key === "UnicDB.activeConnection") return "c1";
       return undefined;
     }) as never;
 
@@ -1962,7 +1962,7 @@ describe("TASK-007 — runStatement rewrites reserved-keyword tables to public s
     const ext = await import("./extension");
     await ext.activate(ctx as never);
 
-    const runStatementFn = state.registeredCommands.get("vsdb.runStatement");
+    const runStatementFn = state.registeredCommands.get("UnicDB.runStatement");
     expect(runStatementFn).toBeDefined();
 
     const stmt: ParsedStatement = {
@@ -1993,7 +1993,7 @@ describe("TASK-007 — runStatement rewrites reserved-keyword tables to public s
   it("#3 D1: multi-statement run reuses ONE cache — listTables called once (not once per statement)", async () => {
     const ctx = makeCtx();
     ctx.globalState.get = vi.fn((key: string) => {
-      if (key === "vsdb.connections") {
+      if (key === "UnicDB.connections") {
         return [
           {
             id: "c1",
@@ -2006,7 +2006,7 @@ describe("TASK-007 — runStatement rewrites reserved-keyword tables to public s
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "c1";
+      if (key === "UnicDB.activeConnection") return "c1";
       return undefined;
     }) as never;
 
@@ -2045,7 +2045,7 @@ describe("TASK-007 — runStatement rewrites reserved-keyword tables to public s
       insertSnippet: vi.fn().mockResolvedValue(undefined),
     };
 
-    const runQueryFn = state.registeredCommands.get("vsdb.runQuery");
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
     expect(runQueryFn).toBeDefined();
     await runQueryFn!();
 
@@ -2061,7 +2061,7 @@ describe("TASK-007 — runStatement rewrites reserved-keyword tables to public s
 });
 
 // =============================================================================
-// TASK-005 — `vsdb.runQuery` cursor mode (no selection). Cursor nằm giữa 2
+// TASK-005 — `UnicDB.runQuery` cursor mode (no selection). Cursor nằm giữa 2
 // statement → handler chỉ chạy statement chứa con trỏ, KHÔNG chạy cả file.
 // =============================================================================
 describe("TASK-005 — runQueryFromEditor cursor mode", () => {
@@ -2088,7 +2088,7 @@ describe("TASK-005 — runQueryFromEditor cursor mode", () => {
     const ctx = makeCtx();
     // Seed active connection để runQuery qua màn QuickPick.
     ctx.globalState.get = vi.fn((key: string) => {
-      if (key === "vsdb.connections") {
+      if (key === "UnicDB.connections") {
         return [
           {
             id: "c1",
@@ -2101,7 +2101,7 @@ describe("TASK-005 — runQueryFromEditor cursor mode", () => {
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "c1";
+      if (key === "UnicDB.activeConnection") return "c1";
       return undefined;
     }) as never;
 
@@ -2124,7 +2124,7 @@ describe("TASK-005 — runQueryFromEditor cursor mode", () => {
     const ext = await import("./extension");
     await ext.activate(ctx as never);
 
-    const runQueryFn = state.registeredCommands.get("vsdb.runQuery");
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
     expect(runQueryFn).toBeDefined();
 
     const sql = "SELECT 1;\nSELECT 2;";
@@ -2156,34 +2156,34 @@ describe("TASK-005 — runQueryFromEditor cursor mode", () => {
 });
 
 // =============================================================================
-// TASK-004 — vsdb.exportAllStructures wiring smoke: command id registered by
+// TASK-004 — UnicDB.exportAllStructures wiring smoke: command id registered by
 // activate(), package.json contributes.commands declares it, activationEvents
 // has the onCommand entry, contributes.menus["view/item/context"] has an
 // entry covering connection + schema viewItems. Lock-in match (Reviewer block).
 // =============================================================================
-describe("TASK-004 — vsdb.exportAllStructures wiring", () => {
+describe("TASK-004 — UnicDB.exportAllStructures wiring", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.registeredCommands.clear();
   });
 
-  it("Test #4 — vsdb.exportAllStructures được register trong subscriptions khi activate()", () => {
+  it("Test #4 — UnicDB.exportAllStructures được register trong subscriptions khi activate()", () => {
     const ctx = makeCtx();
     activate(ctx as never);
-    expect(state.registeredCommands.has("vsdb.exportAllStructures")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.exportAllStructures")).toBe(true);
   });
 
-  it("Test #4b — package.json contributes.commands declares vsdb.exportAllStructures", () => {
+  it("Test #4b — package.json contributes.commands declares UnicDB.exportAllStructures", () => {
     const cmds = (pkgJson.contributes as { commands: Array<{ command: string; title: string }> })
       .commands;
-    const entry = cmds.find((c) => c.command === "vsdb.exportAllStructures");
+    const entry = cmds.find((c) => c.command === "UnicDB.exportAllStructures");
     expect(entry).toBeDefined();
     expect(entry!.title).toMatch(/Export All Structures/i);
   });
 
-  it("Test #4c — package.json activationEvents contains onCommand:vsdb.exportAllStructures", () => {
+  it("Test #4c — package.json activationEvents contains onCommand:UnicDB.exportAllStructures", () => {
     const evts = pkgJson.activationEvents as string[];
-    expect(evts).toContain("onCommand:vsdb.exportAllStructures");
+    expect(evts).toContain("onCommand:UnicDB.exportAllStructures");
   });
 
   it("Test #4d — package.json view/item/context menu covers connection + schema viewItem", () => {
@@ -2191,23 +2191,23 @@ describe("TASK-004 — vsdb.exportAllStructures wiring", () => {
       (pkgJson.contributes as { menus: Record<string, Array<{ command: string; when: string }>> })
         .menus["view/item/context"] ?? []
     );
-    const entry = menuItems.find((m) => m.command === "vsdb.exportAllStructures");
+    const entry = menuItems.find((m) => m.command === "UnicDB.exportAllStructures");
     expect(entry).toBeDefined();
-    expect(entry!.when).toMatch(/view == vsdb\.schemaTree/);
+    expect(entry!.when).toMatch(/view == UnicDB\.schemaTree/);
     expect(entry!.when).toMatch(/viewItem == connection/);
     expect(entry!.when).toMatch(/viewItem == schema/);
   });
 });
 
 // =============================================================================
-// TASK-003 (cycle Z) — vsdb.openConsole: command registration, package.json
+// TASK-003 (cycle Z) — UnicDB.openConsole: command registration, package.json
 // contribution, activationEvent, and full-buffer execution delegation.
 // The registered handler routes runConsole through sqlToRun with a FULL-BUFFER
 // selection ({start:0,end:sql.length}) and the active dialect, then hands EVERY
 // parsed statement to the existing shared runStatements flow (dangerous
 // confirm + keyword qualify + runner + ResultsPanel render all still apply).
 // =============================================================================
-describe("TASK-003 — vsdb.openConsole wiring", () => {
+describe("TASK-003 — UnicDB.openConsole wiring", () => {
   let runSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -2237,7 +2237,7 @@ describe("TASK-003 — vsdb.openConsole wiring", () => {
   async function activateWithConsole(driver = "postgres") {
     const ctx = makeCtx();
     ctx.globalState.get = vi.fn((key: string) => {
-      if (key === "vsdb.connections") {
+      if (key === "UnicDB.connections") {
         return [
           {
             id: "c1",
@@ -2250,7 +2250,7 @@ describe("TASK-003 — vsdb.openConsole wiring", () => {
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "c1";
+      if (key === "UnicDB.activeConnection") return "c1";
       return undefined;
     }) as never;
 
@@ -2275,18 +2275,18 @@ describe("TASK-003 — vsdb.openConsole wiring", () => {
     return ctx;
   }
 
-  it("#C1 registers vsdb.openConsole on activate", async () => {
+  it("#C1 registers UnicDB.openConsole on activate", async () => {
     await activateWithConsole();
-    expect(state.registeredCommands.has("vsdb.openConsole")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.openConsole")).toBe(true);
   });
 
-  it("#C2 package.json contributes 'VSDB: Open Console' with matching activationEvent", () => {
+  it("#C2 package.json contributes 'UnicDB: Open Console' with matching activationEvent", () => {
     interface CmdEntry { command: string; title?: string; category?: string }
     const commands = pkgJson.contributes.commands as CmdEntry[];
-    const entry = commands.find((c) => c.command === "vsdb.openConsole");
+    const entry = commands.find((c) => c.command === "UnicDB.openConsole");
     expect(entry).toBeDefined();
     expect(entry!.title).toMatch(/Open Console/i);
-    expect(entry!.category).toBe("VSDB");
+    expect(entry!.category).toBe("UnicDB");
     // Palette-only per plan §3.3: no view/title or other menu entry.
     const menus = pkgJson.contributes.menus as Record<
       string,
@@ -2294,34 +2294,34 @@ describe("TASK-003 — vsdb.openConsole wiring", () => {
     >;
     for (const [menu, entries] of Object.entries(menus)) {
       expect(
-        entries.some((m) => m.command === "vsdb.openConsole"),
-        `vsdb.openConsole must not appear in ${menu}`,
+        entries.some((m) => m.command === "UnicDB.openConsole"),
+        `UnicDB.openConsole must not appear in ${menu}`,
       ).toBe(false);
     }
     const evts = pkgJson.activationEvents as string[];
-    expect(evts).toContain("onCommand:vsdb.openConsole");
+    expect(evts).toContain("onCommand:UnicDB.openConsole");
   });
 
-  /** Index of the createWebviewPanel call whose viewType is vsdb.console,
+  /** Index of the createWebviewPanel call whose viewType is UnicDB.console,
    *  plus the created panel instance (shared mock does not tag instances). */
   function findConsolePanelCall(): { callIndex: number; panel: Record<string, unknown> } {
     const calls = (vscodeMock.window.createWebviewPanel as Mock)
       .mock.calls as unknown as Array<[string, string, unknown, unknown]>;
-    const callIndex = calls.findIndex(([viewType]) => viewType === "vsdb.console");
+    const callIndex = calls.findIndex(([viewType]) => viewType === "UnicDB.console");
     expect(callIndex).toBeGreaterThanOrEqual(0);
     const panel = state.createdWebviewPanels[callIndex] as Record<string, unknown>;
     return { callIndex, panel };
   }
 
-  it("#C3 invoking vsdb.openConsole opens exactly one vsdb.console webview panel", async () => {
+  it("#C3 invoking UnicDB.openConsole opens exactly one UnicDB.console webview panel", async () => {
     await activateWithConsole();
-    const fn = state.registeredCommands.get("vsdb.openConsole");
+    const fn = state.registeredCommands.get("UnicDB.openConsole");
     expect(fn).toBeDefined();
     await fn!();
 
     const calls = (vscodeMock.window.createWebviewPanel as Mock)
       .mock.calls as unknown as Array<[string]>;
-    const consoleCalls = calls.filter(([viewType]) => viewType === "vsdb.console");
+    const consoleCalls = calls.filter(([viewType]) => viewType === "UnicDB.console");
     expect(consoleCalls.length).toBe(1);
     // HTML links both assets under the established CSP.
     const { panel } = findConsolePanelCall();
@@ -2335,7 +2335,7 @@ describe("TASK-003 — vsdb.openConsole wiring", () => {
 
   it("#C4 runConsole message runs the WHOLE buffer through the shared flow: sqlToRun(full-span) → every statement to runner.run in source order", async () => {
     await activateWithConsole();
-    const fn = state.registeredCommands.get("vsdb.openConsole");
+    const fn = state.registeredCommands.get("UnicDB.openConsole");
     await fn!();
 
     const { panel } = findConsolePanelCall();
@@ -2365,7 +2365,7 @@ describe("TASK-003 — vsdb.openConsole wiring", () => {
     win.showSaveDialog = vi.fn().mockResolvedValue(undefined);
     try {
       await activateWithConsole();
-      const fn = state.registeredCommands.get("vsdb.openConsole");
+      const fn = state.registeredCommands.get("UnicDB.openConsole");
       await fn!();
       const { panel } = findConsolePanelCall();
       const handler = (
@@ -2386,9 +2386,9 @@ describe("TASK-003 — vsdb.openConsole wiring", () => {
 });
 
 // =============================================================================
-// TASK-AIX07-003 — vsdb.ai.showPolicy / vsdb.ai.exportTrace / vsdb.ai.clearTrace
+// TASK-AIX07-003 — UnicDB.ai.showPolicy / UnicDB.ai.exportTrace / UnicDB.ai.clearTrace
 // (policy + audit command host integration). The host derives the effective
-// policy from `vscode.workspace.isTrusted`, the raw `vsdb.ai.engine`
+// policy from `vscode.workspace.isTrusted`, the raw `UnicDB.ai.engine`
 // preference, and the `resolveEngine()` result. Valid configured + valid
 // resolver + trusted ⇒ admit. Anything else ⇒ deny + concrete notice.
 // show-policy: reports the policy state to the user via showInformationMessage
@@ -2397,7 +2397,7 @@ describe("TASK-003 — vsdb.openConsole wiring", () => {
 // paths post the notice and do NOT touch picker / fs. clear-trace: requires
 // an active panel; absent panel ⇒ concrete notice, no throw.
 // =============================================================================
-describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host integration", () => {
+describe("TASK-AIX07-003 — UnicDB.ai.showPolicy / exportTrace / clearTrace host integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.registeredCommands.clear();
@@ -2444,17 +2444,17 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
     return { ctx, mod };
   }
 
-  it("registers all three vsdb.ai.* commands on activate", async () => {
+  it("registers all three UnicDB.ai.* commands on activate", async () => {
     await activateWithTrust(true);
-    expect(state.registeredCommands.has("vsdb.ai.showPolicy")).toBe(true);
-    expect(state.registeredCommands.has("vsdb.ai.exportTrace")).toBe(true);
-    expect(state.registeredCommands.has("vsdb.ai.clearTrace")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.ai.showPolicy")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.ai.exportTrace")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.ai.clearTrace")).toBe(true);
   });
 
   it("#1 happy — trusted + valid configured + valid resolver → showPolicy reports provider+context+tools+export; exportTrace calls saveDialog and writes envelope; clearTrace calls the panel", async () => {
     const { ctx } = await activateWithTrust(true);
     // Seed an active panel with two turns so the export envelope has body.
-    const aiChatFn = state.registeredCommands.get("vsdb.aiChat");
+    const aiChatFn = state.registeredCommands.get("UnicDB.aiChat");
     expect(aiChatFn).toBeDefined();
     await aiChatFn!();
     // Inspect the constructed panel to grab dumpTrace/clearTrace + a fake
@@ -2483,9 +2483,9 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
     const win = vscodeMock.window as unknown as Record<string, unknown>;
     const writeFileSpy = vi.fn().mockResolvedValue(undefined);
     win.showSaveDialog = vi.fn().mockResolvedValue({
-      fsPath: "/tmp/vsdb-audit.json",
-      toString: () => "file:///tmp/vsdb-audit.json",
-      path: "/tmp/vsdb-audit.json",
+      fsPath: "/tmp/UnicDB-audit.json",
+      toString: () => "file:///tmp/UnicDB-audit.json",
+      path: "/tmp/UnicDB-audit.json",
       scheme: "file",
     });
     (vscodeMock.workspace as unknown as { fs: { writeFile: Mock } }).fs = {
@@ -2495,7 +2495,7 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
     // (a) showPolicy posts an info message reporting provider/context/tools/export.
     const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
     showInfoSpy.mockClear();
-    const showPolicyFn = state.registeredCommands.get("vsdb.ai.showPolicy");
+    const showPolicyFn = state.registeredCommands.get("UnicDB.ai.showPolicy");
     await showPolicyFn!();
     expect(showInfoSpy).toHaveBeenCalled();
     const infoText = (showInfoSpy.mock.calls[0]?.[0] ?? "") as string;
@@ -2505,7 +2505,7 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
     expect(infoText.toLowerCase()).toMatch(/context|tools|export/);
 
     // (b) exportTrace runs save-dialog + writeFile with the redacted envelope.
-    const exportFn = state.registeredCommands.get("vsdb.ai.exportTrace");
+    const exportFn = state.registeredCommands.get("UnicDB.ai.exportTrace");
     expect(exportFn).toBeDefined();
     await exportFn!();
     // saveDialog called once; writeFile called once with the serialized
@@ -2515,14 +2515,14 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
     const written = writeFileSpy.mock.calls[0]?.[1] as Uint8Array;
     const writtenText = new TextDecoder().decode(written);
     // The envelope MUST carry the schema marker from auditExport.ts.
-    expect(writtenText).toContain("vsdb.ai.audit-export");
+    expect(writtenText).toContain("UnicDB.ai.audit-export");
     // Defense in depth: byte-scan the wire for secret-shaped strings —
     // the dumpAll() we planted is already redaction-safe, so this pins
     // the contract regardless of which underlying dump the host called.
     expect(/api[_-]?key|secret|password|token|authorization|cookie|bearer|basic/i.test(writtenText)).toBe(false);
 
     // (c) clearTrace calls the active panel's clearTrace.
-    const clearFn = state.registeredCommands.get("vsdb.ai.clearTrace");
+    const clearFn = state.registeredCommands.get("UnicDB.ai.clearTrace");
     await clearFn!();
     expect(mod.AiChatPanel.prototype.clearTrace).toHaveBeenCalled();
     // Suppress unused-locals lint.
@@ -2537,7 +2537,7 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
     // picks "omp" because the mocked detection reports ok=true. The
     // effective provider is "omp" and admission is granted.
     state.aiEngine = "builtin";
-    const showPolicyFn = state.registeredCommands.get("vsdb.ai.showPolicy");
+    const showPolicyFn = state.registeredCommands.get("UnicDB.ai.showPolicy");
     const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
     showInfoSpy.mockClear();
     await showPolicyFn!();
@@ -2558,7 +2558,7 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
     const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
     showInfoSpy.mockClear();
 
-    const exportFn = state.registeredCommands.get("vsdb.ai.exportTrace");
+    const exportFn = state.registeredCommands.get("UnicDB.ai.exportTrace");
     await exportFn!();
 
     // No picker, no write. Notice is shown.
@@ -2566,7 +2566,7 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
     expect(writeFileSpy).not.toHaveBeenCalled();
     expect(showInfoSpy).toHaveBeenCalled();
     const infoText = (showInfoSpy.mock.calls[0]?.[0] ?? "") as string;
-    expect(infoText).toMatch(/VSDB AI policy|policy/);
+    expect(infoText).toMatch(/UnicDB AI policy|policy/);
   });
 
   it("#5 — invalid configured engine (migrated value) → export denied before side effects", async () => {
@@ -2578,7 +2578,7 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
     const cfgMock = vscodeMock.workspace.getConfiguration as unknown as Mock;
     cfgMock.mockImplementationOnce((section: string) => ({
       get: <T>(key: string, def?: T): T | undefined => {
-        if (section === "vsdb" && key === "ai.engine") {
+        if (section === "UnicDB" && key === "ai.engine") {
           return "old-engine-from-pre-cycle" as unknown as T;
         }
         return def;
@@ -2592,7 +2592,7 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
     };
     const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
     showInfoSpy.mockClear();
-    const exportFn = state.registeredCommands.get("vsdb.ai.exportTrace");
+    const exportFn = state.registeredCommands.get("UnicDB.ai.exportTrace");
     await exportFn!();
     expect(win.showSaveDialog).not.toHaveBeenCalled();
     expect(writeFileSpy).not.toHaveBeenCalled();
@@ -2610,7 +2610,7 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
     };
     const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
     showInfoSpy.mockClear();
-    const exportFn = state.registeredCommands.get("vsdb.ai.exportTrace");
+    const exportFn = state.registeredCommands.get("UnicDB.ai.exportTrace");
     await exportFn!();
     expect(win.showSaveDialog).not.toHaveBeenCalled();
     expect(writeFileSpy).not.toHaveBeenCalled();
@@ -2618,7 +2618,7 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
     const exportInfo = (showInfoSpy.mock.calls[0]?.[0] ?? "") as string;
     expect(exportInfo).toMatch(/open.*AI Chat|AI Chat panel|active|panel/i);
     showInfoSpy.mockClear();
-    const clearFn = state.registeredCommands.get("vsdb.ai.clearTrace");
+    const clearFn = state.registeredCommands.get("UnicDB.ai.clearTrace");
     await clearFn!();
     expect(showInfoSpy).toHaveBeenCalled();
     const clearInfo = (showInfoSpy.mock.calls[0]?.[0] ?? "") as string;
@@ -2630,7 +2630,7 @@ describe("TASK-AIX07-003 — vsdb.ai.showPolicy / exportTrace / clearTrace host 
 // =============================================================================
 // TASK-001 — per-connection manualCommit reaching ConnectionManager.
 // openConnectionForm() builds ConnectionConfig literals for BOTH add and edit
-// paths; these tests drive vsdb.addConnection / vsdb.editConnection through
+// paths; these tests drive UnicDB.addConnection / UnicDB.editConnection through
 // the mocked vscode layer and assert mgr.addConnection/editConnection receive
 // a config whose manualCommit matches the webview submit payload exactly
 // (concrete boolean — never omitted/undefined).
@@ -2658,7 +2658,7 @@ describe("TASK-001 — manualCommit forwarded into connection config (add + edit
     const ctx = makeCtx();
     if (existingConnections !== undefined) {
       ctx.globalState.get = vi.fn((key: string) => {
-        if (key === "vsdb.connections" && existingConnections !== undefined) {
+        if (key === "UnicDB.connections" && existingConnections !== undefined) {
           return existingConnections;
         }
         return undefined;
@@ -2704,7 +2704,7 @@ describe("TASK-001 — manualCommit forwarded into connection config (add + edit
 
   it("#1 checked add-form → addConnection cfg has manualCommit:true", async () => {
     await activateWithSpies();
-    const fn = state.registeredCommands.get("vsdb.addConnection");
+    const fn = state.registeredCommands.get("UnicDB.addConnection");
     expect(fn).toBeDefined();
     await fn!();
 
@@ -2724,7 +2724,7 @@ describe("TASK-001 — manualCommit forwarded into connection config (add + edit
 
   it("#2 untouched add-form (manualCommit:false in payload) → cfg has explicit false", async () => {
     await activateWithSpies();
-    const fn = state.registeredCommands.get("vsdb.addConnection");
+    const fn = state.registeredCommands.get("UnicDB.addConnection");
     await fn!();
 
     postSubmit(false);
@@ -2750,7 +2750,7 @@ describe("TASK-001 — manualCommit forwarded into connection config (add + edit
       // legacy record deliberately OMITS optional manualCommit
     };
     await activateWithSpies([legacyCfg]);
-    const fn = state.registeredCommands.get("vsdb.editConnection");
+    const fn = state.registeredCommands.get("UnicDB.editConnection");
     expect(fn).toBeDefined();
     // Command accepts arg.id → skips the QuickPick and opens the edit form.
     await fn!({ id: "pg-1" });
@@ -2771,15 +2771,15 @@ describe("TASK-001 — manualCommit forwarded into connection config (add + edit
 // TASK-DBX08-003 — extension host entry points gated by DECLARED capabilities.
 //  #1 happy: a declared-PostgreSQL adapter keeps the existing sessions-panel
 //     and GRANT/REVOKE routes (confirmDangerousStatements before runQuery).
-//  #3 edge: false/missing admin declaration blocks vsdb.openSessionsPanel and
-//     vsdb.runGrantSql before AdminSessionsPanel.show / commandOpenGrantWizard /
+//  #3 edge: false/missing admin declaration blocks UnicDB.openSessionsPanel and
+//     UnicDB.runGrantSql before AdminSessionsPanel.show / commandOpenGrantWizard /
 //     getAdapter().runQuery / pg_backend_pid() / any AdminApi call.
 //  #5 edge: no active connection keeps the select-connection warning; no
 //     adapter lookup, no panel creation.
 // =============================================================================
 describe("extension — DBX-08 capability-gated admin host commands", () => {
   const UNSUPPORTED_MESSAGE =
-    "VSDB: Admin tools are not supported by this connection's database.";
+    "UnicDB: Admin tools are not supported by this connection's database.";
 
   function makeAdminApi() {
     return {
@@ -2805,7 +2805,7 @@ describe("extension — DBX-08 capability-gated admin host commands", () => {
   function seededCtx(driver: string) {
     const ctx = makeCtx();
     ctx.globalState.get = vi.fn((key: string) => {
-      if (key === "vsdb.connections") {
+      if (key === "UnicDB.connections") {
         return [
           {
             id: "c1",
@@ -2818,7 +2818,7 @@ describe("extension — DBX-08 capability-gated admin host commands", () => {
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "c1";
+      if (key === "UnicDB.activeConnection") return "c1";
       return undefined;
     }) as never;
     return ctx;
@@ -2843,7 +2843,7 @@ describe("extension — DBX-08 capability-gated admin host commands", () => {
     state.createdTreeViews.length = 0;
   });
 
-  it("#1 declared PostgreSQL adapter keeps vsdb.openSessionsPanel + GRANT/REVOKE confirmation route", async () => {
+  it("#1 declared PostgreSQL adapter keeps UnicDB.openSessionsPanel + GRANT/REVOKE confirmation route", async () => {
     const admin = makeAdminApi();
     const adapter = makeAdapter(
       { catalog: true, objectDdl: true, tableDdl: true, admin: true },
@@ -2852,7 +2852,7 @@ describe("extension — DBX-08 capability-gated admin host commands", () => {
     const ext = await activateWithAdapter(adapter);
 
     // Sessions panel: PG admission → a webview panel is created.
-    await state.registeredCommands.get("vsdb.openSessionsPanel")!();
+    await state.registeredCommands.get("UnicDB.openSessionsPanel")!();
     expect(state.createdWebviewPanels.length).toBe(1);
 
     // GRANT/REVOKE: wizard flow stubs the vscode IO so commandOpenGrantWizard
@@ -2871,7 +2871,7 @@ describe("extension — DBX-08 capability-gated admin host commands", () => {
     vscodeIo.window.showWarningMessage = vi
       .fn()
       .mockResolvedValue("Vẫn chạy (admin)");
-    await state.registeredCommands.get("vsdb.runGrantSql")!("grant");
+    await state.registeredCommands.get("UnicDB.runGrantSql")!("grant");
     expect(adapter.runQuery).toHaveBeenCalled();
     const allSql = (adapter.runQuery as ReturnType<typeof vi.fn>).mock.calls.map(
       (c) => String(c[0]),
@@ -2895,7 +2895,7 @@ describe("extension — DBX-08 capability-gated admin host commands", () => {
     vscodeIo.window.showInputBox = vi.fn().mockResolvedValue("public");
 
     // Sessions panel blocked:
-    await state.registeredCommands.get("vsdb.openSessionsPanel")!();
+    await state.registeredCommands.get("UnicDB.openSessionsPanel")!();
     expect(state.createdWebviewPanels.length).toBe(0);
     expect(
       vi.mocked(vscodeMock.window.showInformationMessage).mock.calls.some(
@@ -2904,7 +2904,7 @@ describe("extension — DBX-08 capability-gated admin host commands", () => {
     ).toBe(true);
 
     // Grant wizard blocked before any input or AdminApi/SQL use:
-    await state.registeredCommands.get("vsdb.runGrantSql")!("grant");
+    await state.registeredCommands.get("UnicDB.runGrantSql")!("grant");
     expect(vscodeIo.window.showInputBox).not.toHaveBeenCalled();
     expect(admin.buildGrantSql).not.toHaveBeenCalled();
     expect(admin.listRoles).not.toHaveBeenCalled();
@@ -2921,7 +2921,7 @@ describe("extension — DBX-08 capability-gated admin host commands", () => {
     const adapter = makeAdapter(undefined, admin);
     await activateWithAdapter(adapter);
 
-    await state.registeredCommands.get("vsdb.openSessionsPanel")!();
+    await state.registeredCommands.get("UnicDB.openSessionsPanel")!();
     expect(state.createdWebviewPanels.length).toBe(0);
     expect(
       vi.mocked(vscodeMock.window.showInformationMessage).mock.calls.some(
@@ -2929,7 +2929,7 @@ describe("extension — DBX-08 capability-gated admin host commands", () => {
       ),
     ).toBe(true);
 
-    await state.registeredCommands.get("vsdb.runGrantSql")!("revoke");
+    await state.registeredCommands.get("UnicDB.runGrantSql")!("revoke");
     expect(admin.buildRevokeSql).not.toHaveBeenCalled();
     expect(adapter.runQuery).not.toHaveBeenCalled();
   });
@@ -2947,7 +2947,7 @@ describe("extension — DBX-08 capability-gated admin host commands", () => {
 
     state.createdWebviewPanels.length = 0;
     vi.mocked(vscodeMock.window.showWarningMessage).mockClear();
-    await state.registeredCommands.get("vsdb.openSessionsPanel")!();
+    await state.registeredCommands.get("UnicDB.openSessionsPanel")!();
     expect(
       vi.mocked(vscodeMock.window.showWarningMessage).mock.calls.some((c) =>
         /select a connection first/i.test(String(c[0])),
@@ -2958,11 +2958,11 @@ describe("extension — DBX-08 capability-gated admin host commands", () => {
 });
 
 // =============================================================================
-// TASK-RLX02-003 — vsdb.cancelQuery command awaits runner.cancel() before the
+// TASK-RLX02-003 — UnicDB.cancelQuery command awaits runner.cancel() before the
 // host clears panel busy state, so the command path can never outrun the
 // dialect-level cancel seam (MySQL/MSSQL best-effort cleanup).
 // =============================================================================
-describe("TASK-RLX02-003 — vsdb.cancelQuery awaits runner.cancel before setBusy(false)", () => {
+describe("TASK-RLX02-003 — UnicDB.cancelQuery awaits runner.cancel before setBusy(false)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.registeredCommands.clear();
@@ -2993,7 +2993,7 @@ describe("TASK-RLX02-003 — vsdb.cancelQuery awaits runner.cancel before setBus
     const ext = await import("./extension");
     await ext.activate(ctx as never);
 
-    const cancelCommand = state.registeredCommands.get("vsdb.cancelQuery");
+    const cancelCommand = state.registeredCommands.get("UnicDB.cancelQuery");
     expect(cancelCommand).toBeDefined();
 
     // Fire the command — the awaited cancel() must block busy(false).
@@ -3052,7 +3052,7 @@ describe("TASK-AIX05-103 — commandOpenAiChat production OMP engine wiring", ()
     const ext = await import("./extension");
     const ctx = makeCtx();
     await ext.activate(ctx as never);
-    const fn = state.registeredCommands.get("vsdb.aiChat");
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
     expect(fn).toBeDefined();
     await fn!();
 
@@ -3088,7 +3088,7 @@ describe("TASK-AIX05-103 — commandOpenAiChat production OMP engine wiring", ()
     // no panel at all.
     const ctx = makeConfiguredCtx();
     await ext.activate(ctx as never);
-    const fn = state.registeredCommands.get("vsdb.aiChat");
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
     expect(fn).toBeDefined();
     await fn!();
 
@@ -3188,7 +3188,7 @@ describe("TASK-ARP02-004 — host-integration: runStatements finally + deactivat
   async function activateFresh004() {
     const ctx = makeCtx();
     ctx.globalState.get = vi.fn((key: string) => {
-      if (key === "vsdb.connections") {
+      if (key === "UnicDB.connections") {
         return [
           {
             id: "c1",
@@ -3201,7 +3201,7 @@ describe("TASK-ARP02-004 — host-integration: runStatements finally + deactivat
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "c1";
+      if (key === "UnicDB.activeConnection") return "c1";
       return undefined;
     }) as never;
 
@@ -3252,7 +3252,7 @@ describe("TASK-ARP02-004 — host-integration: runStatements finally + deactivat
     // Park the adapter so run #1 stays in flight (runner.isRunning() === true).
     runGate = new Promise<void>((r) => { releaseRun = r; });
 
-    const runQuery = state.registeredCommands.get("vsdb.runQuery")!;
+    const runQuery = state.registeredCommands.get("UnicDB.runQuery")!;
     const p1 = (runQuery as () => Promise<void>)();
     // Run #1 is parked inside adapter.runQuery ⇒ its setBusy(true) already
     // fired and the shared QueryRunner is owned by run #1.
@@ -3301,7 +3301,7 @@ describe("TASK-ARP02-004 — host-integration: runStatements finally + deactivat
 
     runGate = new Promise<void>((r) => { releaseRun = r; });
 
-    const runQuery = state.registeredCommands.get("vsdb.runQuery")!;
+    const runQuery = state.registeredCommands.get("UnicDB.runQuery")!;
     const p1 = (runQuery as () => Promise<void>)();
     await until(() => runQueryCalls.length >= 1, "run to reach the adapter");
 
@@ -3328,7 +3328,7 @@ describe("TASK-ARP02-004 — host-integration: runStatements finally + deactivat
     ).toBe(0);
   });
 
-  it("Regression #4 — RLX-02 command await semantics: vsdb.cancelQuery awaits runner.cancel() BEFORE panel.setBusy(false)", async () => {
+  it("Regression #4 — RLX-02 command await semantics: UnicDB.cancelQuery awaits runner.cancel() BEFORE panel.setBusy(false)", async () => {
     const runnerMod = await import("./core/queryRunner");
     let resolveCancel: (() => void) | null = null;
     const cancelSpy = vi.fn(
@@ -3344,7 +3344,7 @@ describe("TASK-ARP02-004 — host-integration: runStatements finally + deactivat
     );
 
     await activateFresh004();
-    const cancelCommand = state.registeredCommands.get("vsdb.cancelQuery");
+    const cancelCommand = state.registeredCommands.get("UnicDB.cancelQuery");
     expect(cancelCommand).toBeDefined();
 
     const commandPromise = (cancelCommand as () => Promise<void>)();
@@ -3441,7 +3441,7 @@ describe("TASK-ARP07-004 — successful-DDL cache invalidation seam", () => {
     // Seed an active connection so the host seam runs past the QuickPick gate.
     const ctx = makeCtx();
     ctx.globalState.get = vi.fn((key: string) => {
-      if (key === "vsdb.connections") {
+      if (key === "UnicDB.connections") {
         return [
           {
             id: "c1",
@@ -3454,7 +3454,7 @@ describe("TASK-ARP07-004 — successful-DDL cache invalidation seam", () => {
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "c1";
+      if (key === "UnicDB.activeConnection") return "c1";
       return undefined;
     }) as never;
 
@@ -3504,7 +3504,7 @@ describe("TASK-ARP07-004 — successful-DDL cache invalidation seam", () => {
     // A pre-captured handler (used by the deactivating test) survives
     // deactivate() — that is the point: the in-flight continuation still
     // holds the closure with concrete mgr/runner/panel refs.
-    const fn = opts.handler ?? state.registeredCommands.get("vsdb.runStatement");
+    const fn = opts.handler ?? state.registeredCommands.get("UnicDB.runStatement");
     expect(fn).toBeDefined();
     await fn!(stmt);
     // Let the seam's microtask chain settle before assertions.
@@ -3602,7 +3602,7 @@ describe("TASK-ARP07-004 — successful-DDL cache invalidation seam", () => {
     // in-flight continuation still holds the closure with concrete
     // mgr/runner/panel refs — exactly the ARP-02 resurrected-write shape.
     const handler = state.registeredCommands.get(
-      "vsdb.runStatement",
+      "UnicDB.runStatement",
     ) as (stmt: ParsedStatement) => Promise<void>;
     // Deactivate flips the `deactivating` sentinel to true AND nulls the
     // module `state` (so `state?.tree` is unreachable too).
@@ -3697,7 +3697,7 @@ describe("TASK-ARP07-004 — successful-DDL cache invalidation seam", () => {
 // so drafts are workspace-scoped while history keeps its global scope.
 // The pins below hold BOTH guarantees:
 //   #1 drafts hydrate from the workspaceState-seeded snapshot (get routing),
-//   #2 singleton retained (exactly one vsdb.console panel per open),
+//   #2 singleton retained (exactly one UnicDB.console panel per open),
 //   #3 key separation: history → globalState.update(CONSOLE_HISTORY_KEY),
 //      drafts → workspaceState.get/update(CONSOLE_DRAFTS_KEY), never crossed,
 //   #4 deactivate still disposes + nulls the singleton; reopen is fresh.
@@ -3745,7 +3745,7 @@ describe("ARP-08 — console draft memento wiring", () => {
   }) {
     const ctx = makeCtx();
     ctx.globalState.get = vi.fn((key: string) => {
-      if (key === "vsdb.connections") {
+      if (key === "UnicDB.connections") {
         return [
           {
             id: "c1",
@@ -3758,7 +3758,7 @@ describe("ARP-08 — console draft memento wiring", () => {
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "c1";
+      if (key === "UnicDB.activeConnection") return "c1";
       return undefined;
     }) as never;
     if (opts?.draftSnapshot !== undefined) {
@@ -3788,14 +3788,14 @@ describe("ARP-08 — console draft memento wiring", () => {
     return { ctx, ext };
   }
 
-  /** Latest vsdb.console panel mock + its registered message handler. */
+  /** Latest UnicDB.console panel mock + its registered message handler. */
   function consolePanelHarness(): {
     panel: Record<string, unknown>;
     handler: (msg: unknown) => void;
   } {
     const calls = (vscodeMock.window.createWebviewPanel as Mock)
       .mock.calls as unknown as Array<[string, string, unknown, unknown]>;
-    const callIndex = calls.findIndex(([viewType]) => viewType === "vsdb.console");
+    const callIndex = calls.findIndex(([viewType]) => viewType === "UnicDB.console");
     expect(callIndex).toBeGreaterThanOrEqual(0);
     const panel = state.createdWebviewPanels[callIndex] as Record<string, unknown>;
     const handler = (
@@ -3824,7 +3824,7 @@ describe("ARP-08 — console draft memento wiring", () => {
       activeTabId: "t1",
     });
     const { ctx } = await activateWithConsole({ draftSnapshot: seeded });
-    const fn = state.registeredCommands.get("vsdb.openConsole");
+    const fn = state.registeredCommands.get("UnicDB.openConsole");
     expect(fn).toBeDefined();
     await fn!();
 
@@ -3840,21 +3840,21 @@ describe("ARP-08 — console draft memento wiring", () => {
     expect(ctx.workspaceState.get).toHaveBeenCalledWith(CONSOLE_DRAFTS_KEY);
   });
 
-  it("#2 happy: invoking vsdb.openConsole twice still opens exactly ONE vsdb.console panel (singleton retained)", async () => {
+  it("#2 happy: invoking UnicDB.openConsole twice still opens exactly ONE UnicDB.console panel (singleton retained)", async () => {
     await activateWithConsole();
-    const fn = state.registeredCommands.get("vsdb.openConsole");
+    const fn = state.registeredCommands.get("UnicDB.openConsole");
     await fn!();
     await fn!();
 
     const calls = (vscodeMock.window.createWebviewPanel as Mock)
       .mock.calls as unknown as Array<[string]>;
-    const consoleCalls = calls.filter(([viewType]) => viewType === "vsdb.console");
+    const consoleCalls = calls.filter(([viewType]) => viewType === "UnicDB.console");
     expect(consoleCalls.length).toBe(1);
   });
 
   it("#3 edge/history-vs-draft scope: run → globalState.update(CONSOLE_HISTORY_KEY); edit+dispose → workspaceState.update(CONSOLE_DRAFTS_KEY); keys never cross", async () => {
     const { ctx, ext } = await activateWithConsole();
-    const fn = state.registeredCommands.get("vsdb.openConsole");
+    const fn = state.registeredCommands.get("UnicDB.openConsole");
     await fn!();
     const { panel, handler } = consolePanelHarness();
 
@@ -3909,27 +3909,27 @@ describe("ARP-08 — console draft memento wiring", () => {
 
   it("#4 edge/teardown: deactivate disposes the console panel and nulls the singleton — reopen builds a fresh panel", async () => {
     const { ext } = await activateWithConsole();
-    const fn = state.registeredCommands.get("vsdb.openConsole");
+    const fn = state.registeredCommands.get("UnicDB.openConsole");
     await fn!();
     const { panel } = consolePanelHarness();
 
     await ext.deactivate();
     expect(panel.dispose).toHaveBeenCalled();
 
-    // Reopen after deactivate: singleton was nulled → a SECOND vsdb.console
+    // Reopen after deactivate: singleton was nulled → a SECOND UnicDB.console
     // createWebviewPanel call (not a reveal of the disposed panel).
     await fn!();
     const calls = (vscodeMock.window.createWebviewPanel as Mock)
       .mock.calls as unknown as Array<[string]>;
-    const consoleCalls = calls.filter(([viewType]) => viewType === "vsdb.console");
+    const consoleCalls = calls.filter(([viewType]) => viewType === "UnicDB.console");
     expect(consoleCalls.length).toBe(2);
   });
 });
 
 // =============================================================================
 // TASK-ARP09-003 — Lazy redacted Output Channel wiring
-//   * `vsdb.window.createOutputChannel("VSDB")` is created LAZILY on the
-//     FIRST real diagnostic write (or on `vsdb.diagnostics.show` invocation).
+//   * `UnicDB.window.createOutputChannel("UnicDB")` is created LAZILY on the
+//     FIRST real diagnostic write (or on `UnicDB.diagnostics.show` invocation).
 //     A plain `activate()` must create ZERO output channels.
 //   * The activate-end lifecycle `info` line is BUFFERED (pending) and
 //     flushed exactly once when the channel is created.
@@ -3938,7 +3938,7 @@ describe("ARP-08 — console draft memento wiring", () => {
 //     raw secret, bearer/basic auth, opaque long run, or SQL fixture text.
 //   * `deactivate()` disposes the channel EXACTLY ONCE; a post-deactivate
 //     `logDiagnostic` is a no-op (no create, no append, no second dispose).
-//   * `vsdb.diagnostics.show` reveals; `vsdb.diagnostics.clear` clears.
+//   * `UnicDB.diagnostics.show` reveals; `UnicDB.diagnostics.clear` clears.
 //   * Connection/AI summary lines land at the real existing seams; the
 //     connection handler never receives a `ConnectionConfig` literal in
 //     its log line (config privacy pin).
@@ -4021,7 +4021,7 @@ describe("TASK-ARP09-003 — lazy redacted Output Channel wiring", () => {
     expect(capturedLines()).toEqual([]);
   });
 
-  it("#17 happy/lazy-create: first real diagnostic write (fire onDidChangeActive) creates the channel exactly once with name 'VSDB' and flushes the pending lifecycle line", async () => {
+  it("#17 happy/lazy-create: first real diagnostic write (fire onDidChangeActive) creates the channel exactly once with name 'UnicDB' and flushes the pending lifecycle line", async () => {
     await activateFresh();
     expect(state.createdOutputChannels.length).toBe(0);
 
@@ -4037,13 +4037,13 @@ describe("TASK-ARP09-003 — lazy redacted Output Channel wiring", () => {
     });
 
     expect(state.createdOutputChannels.length).toBe(1);
-    expect(state.createdOutputChannels[0]!.name).toBe("VSDB");
+    expect(state.createdOutputChannels[0]!.name).toBe("UnicDB");
 
     // Captured lines: lifecycle (flushed) first, then the connection line.
     const lines = capturedLines();
     expect(lines.length).toBe(2);
     expect(lines[0]).toMatch(
-      /^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] \[lifecycle\] \[info\] VSDB activated$/,
+      /^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] \[lifecycle\] \[info\] UnicDB activated$/,
     );
     expect(lines[1]).toMatch(
       /^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\] \[connection\] \[info\] connection changed$/,
@@ -4054,27 +4054,27 @@ describe("TASK-ARP09-003 — lazy redacted Output Channel wiring", () => {
     }
   });
 
-  it("#18 happy/show: invoking vsdb.diagnostics.show creates the channel lazily and calls show()", async () => {
+  it("#18 happy/show: invoking UnicDB.diagnostics.show creates the channel lazily and calls show()", async () => {
     await activateFresh();
     expect(state.createdOutputChannels.length).toBe(0);
 
-    const fn = state.registeredCommands.get("vsdb.diagnostics.show");
+    const fn = state.registeredCommands.get("UnicDB.diagnostics.show");
     expect(fn).toBeDefined();
     await fn!();
 
     expect(state.createdOutputChannels.length).toBe(1);
     const ch = state.createdOutputChannels[0]!;
-    expect(ch.name).toBe("VSDB");
+    expect(ch.name).toBe("UnicDB");
     expect(ch.show).toHaveBeenCalledTimes(1);
   });
 
-  it("#19 happy/clear: invoking vsdb.diagnostics.clear calls clear() on the channel", async () => {
+  it("#19 happy/clear: invoking UnicDB.diagnostics.clear calls clear() on the channel", async () => {
     await activateFresh();
     // Drive a real write so the channel exists.
     fireConnectionChange({ id: "c1", name: "x", driver: "postgres" });
     expect(state.createdOutputChannels.length).toBe(1);
 
-    const fn = state.registeredCommands.get("vsdb.diagnostics.clear");
+    const fn = state.registeredCommands.get("UnicDB.diagnostics.clear");
     expect(fn).toBeDefined();
     await fn!();
 
@@ -4105,7 +4105,7 @@ describe("TASK-ARP09-003 — lazy redacted Output Channel wiring", () => {
     };
     fireConnectionChange(secretCfg);
 
-    // Channel was created once, named "VSDB".
+    // Channel was created once, named "UnicDB".
     expect(state.createdOutputChannels.length).toBe(1);
     const ch = state.createdOutputChannels[0]!;
 
@@ -4174,37 +4174,37 @@ describe("TASK-ARP09-003 — lazy redacted Output Channel wiring", () => {
     expect(ch.dispose).toHaveBeenCalledTimes(1);
   });
 
-  it("#24 happy/AI summary: invoking vsdb.ai.showPolicy appends an [ai]-category line to the channel", async () => {
+  it("#24 happy/AI summary: invoking UnicDB.ai.showPolicy appends an [ai]-category line to the channel", async () => {
     await activateFresh();
     // Drive a real write so the channel exists.
     fireConnectionChange({ id: "c1", name: "x", driver: "postgres" });
     expect(state.createdOutputChannels.length).toBe(1);
 
-    const fn = state.registeredCommands.get("vsdb.ai.showPolicy");
+    const fn = state.registeredCommands.get("UnicDB.ai.showPolicy");
     expect(fn).toBeDefined();
     await fn!();
 
     const lines = capturedLines();
     // One of the captured lines is the [ai] summary emitted by the
-    // vsdb.ai.showPolicy handler.
+    // UnicDB.ai.showPolicy handler.
     const aiLine = lines.find((l) => /\[ai\] \[info\]/.test(l));
-    expect(aiLine, "expected an [ai] [info] line after vsdb.ai.showPolicy").toBeDefined();
+    expect(aiLine, "expected an [ai] [info] line after UnicDB.ai.showPolicy").toBeDefined();
   });
 
-  it("package.json contributes vsdb.diagnostics.show + vsdb.diagnostics.clear with activationEvents", () => {
+  it("package.json contributes UnicDB.diagnostics.show + UnicDB.diagnostics.clear with activationEvents", () => {
     interface CmdEntry { command: string; title?: string; category?: string }
     const commands = pkgJson.contributes.commands as CmdEntry[];
-    const show = commands.find((c) => c.command === "vsdb.diagnostics.show");
-    const clear = commands.find((c) => c.command === "vsdb.diagnostics.clear");
+    const show = commands.find((c) => c.command === "UnicDB.diagnostics.show");
+    const clear = commands.find((c) => c.command === "UnicDB.diagnostics.clear");
     expect(show).toBeDefined();
     expect(show!.title).toMatch(/Show Diagnostics/i);
-    expect(show!.category).toBe("VSDB");
+    expect(show!.category).toBe("UnicDB");
     expect(clear).toBeDefined();
     expect(clear!.title).toMatch(/Clear Diagnostics/i);
-    expect(clear!.category).toBe("VSDB");
+    expect(clear!.category).toBe("UnicDB");
     const evts = pkgJson.activationEvents as string[];
-    expect(evts).toContain("onCommand:vsdb.diagnostics.show");
-    expect(evts).toContain("onCommand:vsdb.diagnostics.clear");
+    expect(evts).toContain("onCommand:UnicDB.diagnostics.show");
+    expect(evts).toContain("onCommand:UnicDB.diagnostics.clear");
   });
 });
 
@@ -4260,7 +4260,7 @@ describe("TASK-BQ03-005 — BigQuery command integration (header + copy-safety)"
     if (opts.location !== undefined) bigquery.location = opts.location;
     if (opts.datasetProject !== undefined) bigquery.datasetProject = opts.datasetProject;
     ctx.globalState.get = vi.fn((key: string) => {
-      if (key === "vsdb.connections") {
+      if (key === "UnicDB.connections") {
         return [
           {
             id: "c1",
@@ -4274,7 +4274,7 @@ describe("TASK-BQ03-005 — BigQuery command integration (header + copy-safety)"
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "c1";
+      if (key === "UnicDB.activeConnection") return "c1";
       return undefined;
     }) as never;
     return ctx;
@@ -4283,7 +4283,7 @@ describe("TASK-BQ03-005 — BigQuery command integration (header + copy-safety)"
   function makeLegacyCtx(driver: string): ReturnType<typeof makeCtx> {
     const ctx = makeCtx();
     ctx.globalState.get = vi.fn((key: string) => {
-      if (key === "vsdb.connections") {
+      if (key === "UnicDB.connections") {
         return [
           {
             id: "c1",
@@ -4296,7 +4296,7 @@ describe("TASK-BQ03-005 — BigQuery command integration (header + copy-safety)"
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "c1";
+      if (key === "UnicDB.activeConnection") return "c1";
       return undefined;
     }) as never;
     return ctx;
@@ -4378,7 +4378,7 @@ describe("TASK-BQ03-005 — BigQuery command integration (header + copy-safety)"
   let mockRunnerResults: unknown[] = [];
 
   /**
-   * Drive a full `vsdb.runQuery` cycle. `mockResultsBuilder` receives the
+   * Drive a full `UnicDB.runQuery` cycle. `mockResultsBuilder` receives the
    * runner's CURRENT results array (already containing any prior runs in
    * append-mode) and returns the array the mocked `runner.run` should
    * resolve with.
@@ -4408,8 +4408,8 @@ describe("TASK-BQ03-005 — BigQuery command integration (header + copy-safety)"
       false,
     );
 
-    const runCmd = state.registeredCommands.get("vsdb.runQuery");
-    expect(runCmd, "vsdb.runQuery must be registered").toBeDefined();
+    const runCmd = state.registeredCommands.get("UnicDB.runQuery");
+    expect(runCmd, "UnicDB.runQuery must be registered").toBeDefined();
     await runCmd!();
     // Settle microtasks.
     for (let i = 0; i < 30; i++) await Promise.resolve();
@@ -4571,7 +4571,7 @@ describe("TASK-BQ03-005 — BigQuery command integration (header + copy-safety)"
     // routes first-connect failures through it instead of a toast.
     const runFailedSpy = vi.spyOn(runnerMod.QueryRunner.prototype, "runFailed");
 
-    await state.registeredCommands.get("vsdb.runQuery")!();
+    await state.registeredCommands.get("UnicDB.runQuery")!();
     for (let i = 0; i < 30; i++) await Promise.resolve();
     await new Promise((r) => setTimeout(r, 5));
 
@@ -4698,10 +4698,10 @@ describe("TASK-BQ03-005 — BigQuery command integration (header + copy-safety)"
 });
 
 // =============================================================================
-// TASK-CONSOLE-FOR-OBJECT: vsdb.openConsoleForObject — right-click on table/view
+// TASK-CONSOLE-FOR-OBJECT: UnicDB.openConsoleForObject — right-click on table/view
 // in the schema tree opens the SQL Console with a fresh tab pre-filled with a
 // driver-aware SELECT * ... LIMIT/TOP 100 snippet.
-describe("vsdb.openConsoleForObject — right-click table/view → Console tab", () => {
+describe("UnicDB.openConsoleForObject — right-click table/view → Console tab", () => {
   beforeEach(() => {
     // consolePanel is a module-level singleton in extension.ts — without
     // resetting the module cache the second test in this block would skip
@@ -4725,35 +4725,35 @@ describe("vsdb.openConsoleForObject — right-click table/view → Console tab",
       title: string;
       icon: string;
     }>;
-    const cmd = commands.find((c) => c.command === "vsdb.openConsoleForObject");
+    const cmd = commands.find((c) => c.command === "UnicDB.openConsoleForObject");
     expect(cmd).toBeDefined();
-    expect(cmd!.title).toBe("VSDB: Open Console for Object");
+    expect(cmd!.title).toBe("UnicDB: Open Console for Object");
     expect(cmd!.icon).toBe("$(window)");
 
     const viewItemContext = pkgJson.contributes.menus[
       "view/item/context"
     ] as Array<{ command: string; when: string; group: string }>;
     const menu = viewItemContext.find(
-      (m) => m.command === "vsdb.openConsoleForObject",
+      (m) => m.command === "UnicDB.openConsoleForObject",
     );
     expect(menu).toBeDefined();
     expect(menu!.when).toBe(
-      "view == vsdb.schemaTree && (viewItem == table || viewItem == view)",
+      "view == UnicDB.schemaTree && (viewItem == table || viewItem == view)",
     );
     expect(menu!.group).toBe("inline");
   });
 
-  it("command vsdb.openConsoleForObject được register khi activate", async () => {
+  it("command UnicDB.openConsoleForObject được register khi activate", async () => {
     const ctx = makeCtx();
     await activateFresh(ctx);
-    expect(state.registeredCommands.has("vsdb.openConsoleForObject")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.openConsoleForObject")).toBe(true);
   });
 
   it("handler với qualified string → tạo webview panel + pre-fill snippet", async () => {
     const ctx = makeCtx();
     await activateFresh(ctx);
 
-    const fn = state.registeredCommands.get("vsdb.openConsoleForObject");
+    const fn = state.registeredCommands.get("UnicDB.openConsoleForObject");
     expect(fn).toBeDefined();
     await fn!("public.users");
 
@@ -4780,7 +4780,7 @@ describe("vsdb.openConsoleForObject — right-click table/view → Console tab",
     const ctx = makeCtx();
     await activateFresh(ctx);
 
-    const fn = state.registeredCommands.get("vsdb.openConsoleForObject");
+    const fn = state.registeredCommands.get("UnicDB.openConsoleForObject");
     await fn!({ meta: { schema: "sales", objectName: "orders" } });
 
     expect(state.createdWebviewPanels.length).toBeGreaterThanOrEqual(1);
@@ -4803,7 +4803,7 @@ describe("vsdb.openConsoleForObject — right-click table/view → Console tab",
     await activateFresh(ctx);
 
     const panelsBefore = state.createdWebviewPanels.length;
-    const fn = state.registeredCommands.get("vsdb.openConsoleForObject");
+    const fn = state.registeredCommands.get("UnicDB.openConsoleForObject");
     await fn!(undefined);
     await fn!(42); // not a string, not a node
     await fn!({ meta: {} }); // meta missing objectName
@@ -4814,10 +4814,10 @@ describe("vsdb.openConsoleForObject — right-click table/view → Console tab",
 });
 
 // =============================================================================
-// TASK-OC4O-002: vsdb.openHelpGrid — VSDB Help Grid webview (responsive grid
+// TASK-OC4O-002: UnicDB.openHelpGrid — UnicDB Help Grid webview (responsive grid
 // of feature cards with one-click "Try it" actions). Pure registry tests live
 // in src/ui/__tests__/helpGrid.test.ts; this block pins the host wiring.
-describe("vsdb.openHelpGrid — Help Grid webview wiring", () => {
+describe("UnicDB.openHelpGrid — Help Grid webview wiring", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
@@ -4835,9 +4835,9 @@ describe("vsdb.openHelpGrid — Help Grid webview wiring", () => {
       title: string;
       icon: string;
     }>;
-    const cmd = commands.find((c) => c.command === "vsdb.openHelpGrid");
+    const cmd = commands.find((c) => c.command === "UnicDB.openHelpGrid");
     expect(cmd).toBeDefined();
-    expect(cmd!.title).toBe("VSDB: Open Help Grid");
+    expect(cmd!.title).toBe("UnicDB: Open Help Grid");
     expect(cmd!.icon).toBe("$(book)");
 
     const menus = pkgJson.contributes.menus as Record<
@@ -4845,35 +4845,35 @@ describe("vsdb.openHelpGrid — Help Grid webview wiring", () => {
       Array<{ command: string }>
     >;
     for (const key of [
-      "webview/vsdb.console/context",
-      "webview/vsdb.results/context",
-      "webview/vsdb.aiChatPanel/context",
+      "webview/UnicDB.console/context",
+      "webview/UnicDB.results/context",
+      "webview/UnicDB.aiChatPanel/context",
     ]) {
       const list = menus[key] ?? [];
       expect(
-        list.some((m) => m.command === "vsdb.openHelpGrid"),
-        `menu key ${key} must reference vsdb.openHelpGrid`,
+        list.some((m) => m.command === "UnicDB.openHelpGrid"),
+        `menu key ${key} must reference UnicDB.openHelpGrid`,
       ).toBe(true);
     }
   });
 
-  it("command vsdb.openHelpGrid được register khi activate", async () => {
+  it("command UnicDB.openHelpGrid được register khi activate", async () => {
     const ctx = makeCtx();
     await activateFresh(ctx);
-    expect(state.registeredCommands.has("vsdb.openHelpGrid")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.openHelpGrid")).toBe(true);
   });
 
   it("handler tạo 1 webview panel + HTML chứa script + cards payload", async () => {
     const ctx = makeCtx();
     await activateFresh(ctx);
 
-    const fn = state.registeredCommands.get("vsdb.openHelpGrid");
+    const fn = state.registeredCommands.get("UnicDB.openHelpGrid");
     expect(fn).toBeDefined();
     await fn!();
 
     expect(state.createdWebviewPanels.length).toBe(1);
     const panel = state.createdWebviewPanels[0]!;
-    expect(panel.webview.html).toContain("vsdb-help-root");
+    expect(panel.webview.html).toContain("UnicDB-help-root");
     expect(panel.webview.html).toContain("helpGrid.js");
     // HTML carries the JSON-encoded cards payload so the webview can render
     // without a follow-up postMessage round trip.
@@ -4884,7 +4884,7 @@ describe("vsdb.openHelpGrid — Help Grid webview wiring", () => {
     const ctx = makeCtx();
     await activateFresh(ctx);
 
-    const fn = state.registeredCommands.get("vsdb.openHelpGrid");
+    const fn = state.registeredCommands.get("UnicDB.openHelpGrid");
     await fn!();
     const panel = state.createdWebviewPanels[0]!;
     const revealBefore = (panel.reveal as Mock).mock.calls.length;
@@ -4897,17 +4897,17 @@ describe("vsdb.openHelpGrid — Help Grid webview wiring", () => {
     const ctx = makeCtx();
     await activateFresh(ctx);
 
-    const fn = state.registeredCommands.get("vsdb.openHelpGrid");
+    const fn = state.registeredCommands.get("UnicDB.openHelpGrid");
     await fn!();
 
     const panel = state.createdWebviewPanels[0]!;
     const onMsg = (panel.webview.onDidReceiveMessage as Mock).mock
       .calls[0]![0] as (msg: unknown) => Promise<void>;
 
-    // vsdb.openConsole is registered by activate — should fire.
-    await onMsg({ type: "runCommand", commandId: "vsdb.openConsole" });
+    // UnicDB.openConsole is registered by activate — should fire.
+    await onMsg({ type: "runCommand", commandId: "UnicDB.openConsole" });
     expect(vscodeMock.commands.executeCommand).toHaveBeenCalledWith(
-      "vsdb.openConsole",
+      "UnicDB.openConsole",
     );
 
     // Unknown prefix must be ignored (defence-in-depth).
@@ -4925,9 +4925,9 @@ describe("vsdb.openHelpGrid — Help Grid webview wiring", () => {
 // TASK-MENU-001 — schema-tree table-node context menu order contract.
 // Pinned against the module-level `pkgJson` (line ~552): the right-click menu
 // on a table node must render `New Table…` as item #1 and `Modify Table…` as
-// item #2; every other vsdb-group entry keeps its current alphabetical
+// item #2; every other UnicDB-group entry keeps its current alphabetical
 // relative order. Mechanism: declarative `"order": "1"` / `"order": "2"` on
-// the `vsdb.newTable` / `vsdb.modifyTable` `view/item/context` entries.
+// the `UnicDB.newTable` / `UnicDB.modifyTable` `view/item/context` entries.
 // =============================================================================
 describe("MENU — table-node context menu: New Table #1, Modify Table #2", () => {
   type ViewItemContextMenu = Array<{
@@ -4940,8 +4940,8 @@ describe("MENU — table-node context menu: New Table #1, Modify Table #2", () =
   const ctxMenus = pkgJson.contributes.menus["view/item/context"] as
     ViewItemContextMenu;
 
-  function vsdbGroup(): ViewItemContextMenu {
-    return ctxMenus.filter((m) => m.group === "vsdb");
+  function UnicDBGroup(): ViewItemContextMenu {
+    return ctxMenus.filter((m) => m.group === "UnicDB");
   }
 
   // VS Code's documented same-group comparator: entries with `order` sort
@@ -4949,14 +4949,14 @@ describe("MENU — table-node context menu: New Table #1, Modify Table #2", () =
   // to alphabetical-by-title. The `zzzz` sentinel keeps unordered entries
   // strictly behind every ordered entry without Number coercion (lexicographic
   // "10" would precede "2" if we used Number).
-  function vsdbTableNodeTitlesSorted(): string[] {
+  function UnicDBTableNodeTitlesSorted(): string[] {
     const commands = pkgJson.contributes.commands as Array<{
       command: string;
       title: string;
     }>;
     const titleOf = (cmd: string): string =>
       commands.find((c) => c.command === cmd)!.title;
-    const subset = vsdbGroup().filter((m) => m.when.includes("viewItem == table"));
+    const subset = UnicDBGroup().filter((m) => m.when.includes("viewItem == table"));
     const sorted = subset.slice().sort((a, b) => {
       const ao = a.order ?? "zzzz";
       const bo = b.order ?? "zzzz";
@@ -4966,65 +4966,69 @@ describe("MENU — table-node context menu: New Table #1, Modify Table #2", () =
     return sorted.map((m) => titleOf(m.command));
   }
 
-  it("vsdb.newTable có order \"1\" + when đúng; vsdb.modifyTable có order \"2\" + when đúng", () => {
-    const newTable = vsdbGroup().find((m) => m.command === "vsdb.newTable");
-    const modifyTable = vsdbGroup().find((m) => m.command === "vsdb.modifyTable");
+  it("UnicDB.newTable có order \"1\" + when đúng; UnicDB.modifyTable có order \"2\" + when đúng", () => {
+    const newTable = UnicDBGroup().find((m) => m.command === "UnicDB.newTable");
+    const modifyTable = UnicDBGroup().find((m) => m.command === "UnicDB.modifyTable");
     expect(newTable).toBeDefined();
     expect(newTable!.order).toBe("1");
     expect(newTable!.when).toBe(
-      "view == vsdb.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",
+      "view == UnicDB.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",
     );
-    expect(newTable!.group).toBe("vsdb");
+    expect(newTable!.group).toBe("UnicDB");
 
     expect(modifyTable).toBeDefined();
     expect(modifyTable!.order).toBe("2");
     expect(modifyTable!.when).toBe(
-      "view == vsdb.schemaTree && viewItem == table",
+      "view == UnicDB.schemaTree && viewItem == table",
     );
-    expect(modifyTable!.group).toBe("vsdb");
+    expect(modifyTable!.group).toBe("UnicDB");
   });
 
-  it("chỉ đúng 2 entry vsdb-group có order — 13 entry còn lại KHÔNG có order (alphabet fallback giữ nguyên)", () => {
-    const ordered = vsdbGroup().filter((m) => m.order !== undefined);
+  it("chỉ đúng 2 entry UnicDB-group có order — 13 entry còn lại KHÔNG có order (alphabet fallback giữ nguyên)", () => {
+    const ordered = UnicDBGroup().filter((m) => m.order !== undefined);
     expect(new Set(ordered.map((m) => m.command))).toEqual(
-      new Set(["vsdb.newTable", "vsdb.modifyTable"]),
+      new Set(["UnicDB.newTable", "UnicDB.modifyTable"]),
     );
     // Spot-check a couple of unordered entries (alphabetical fallback).
     expect(
-      vsdbGroup().find((m) => m.command === "vsdb.analyzeTable")!.order,
+      UnicDBGroup().find((m) => m.command === "UnicDB.analyzeTable")!.order,
     ).toBeUndefined();
     expect(
-      vsdbGroup().find((m) => m.command === "vsdb.copyCreateDdl")!.order,
+      UnicDBGroup().find((m) => m.command === "UnicDB.copyCreateDdl")!.order,
     ).toBeUndefined();
   });
 
-  it("sort mô phỏng VS Code trên table-node vsdb group → New Table… #1, Modify Table… #2, phần còn lại giữ relative alphabet", () => {
-    const titles = vsdbTableNodeTitlesSorted();
+  it("sort mô phỏng VS Code trên table-node UnicDB group → New Table… #1, Modify Table… #2, phần còn lại giữ relative alphabet", () => {
+    const titles = UnicDBTableNodeTitlesSorted();
     expect(titles[0]).toBe("New Table…");
     expect(titles[1]).toBe("Modify Table…");
     // Items 2..(n-1) keep their current alphabetical relative order:
     //   Analyze Table, Copy Create Query, Insert Sample Data…, Rename Column…,
-    //   Rename Table…, Vacuum Table, VSDB: Export Structure, VSDB: Postman Payload.
-    // (VSDB: Refresh Schema + connection-only entries are correctly excluded
+    //   Rename Table…, Vacuum Table, UnicDB: Export Structure, UnicDB: Postman Payload.
+    // (UnicDB: Refresh Schema + connection-only entries are correctly excluded
     // because their `when` does not include `viewItem == table`.)
+    // NOTE on alphabetical ordering: titles beginning with "UnicDB: " sort
+    // AFTER letter-titles in localeCompare ("U" is the highest leading letter
+    // before "V", so "UnicDB: Export" precedes "Vacuum"). Keep this list in
+    // sorted order — re-check after any command title rename.
     expect(titles.slice(2)).toEqual([
       "Analyze Table",
       "Copy Create Query",
       "Insert Sample Data…",
       "Rename Column…",
       "Rename Table…",
+      "UnicDB: Export Structure",
+      "UnicDB: Postman Payload",
       "Vacuum Table",
-      "VSDB: Export Structure",
-      "VSDB: Postman Payload",
     ]);
   });
 });
 
 // =============================================================================
 // TASK-UX1-001 — `commandGenerateSelect` clipboard fallback (R6+R7, cases 5-6).
-// When `vsdb.generateSelect` fires from the left pane with no active text
+// When `UnicDB.generateSelect` fires from the left pane with no active text
 // editor, the host MUST still hand the user a runnable SELECT — write to
-// clipboard + info toast — instead of refusing with "VSDB: no active editor."
+// clipboard + info toast — instead of refusing with "UnicDB: no active editor."
 // Editor-present path is unchanged (untouched; not re-tested here).
 // =============================================================================
 describe("TASK-UX1-001 — generateSelect clipboard fallback when no editor is open", () => {
@@ -5052,7 +5056,7 @@ describe("TASK-UX1-001 — generateSelect clipboard fallback when no editor is o
   function activateWithActivePostgres() {
     const ctx = makeCtx();
     ctx.globalState.get = vi.fn((key: string) => {
-      if (key === "vsdb.connections") {
+      if (key === "UnicDB.connections") {
         return [
           {
             id: "c1",
@@ -5065,14 +5069,14 @@ describe("TASK-UX1-001 — generateSelect clipboard fallback when no editor is o
           },
         ];
       }
-      if (key === "vsdb.activeConnection") return "c1";
+      if (key === "UnicDB.activeConnection") return "c1";
       return undefined;
     }) as never;
     activate(ctx as never);
     return ctx;
   }
 
-  it("#5 regression: vsdb.generateSelect with no editor and a table-node meta → clipboard gets a runnable SELECT, info toast confirms", async () => {
+  it("#5 regression: UnicDB.generateSelect with no editor and a table-node meta → clipboard gets a runnable SELECT, info toast confirms", async () => {
     activateWithActivePostgres();
 
     // No editor open (the bug scenario).
@@ -5081,7 +5085,7 @@ describe("TASK-UX1-001 — generateSelect clipboard fallback when no editor is o
     const writeTextSpy = vi.mocked(vscodeMock.env.clipboard.writeText);
     const infoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
 
-    const gen = state.registeredCommands.get("vsdb.generateSelect");
+    const gen = state.registeredCommands.get("UnicDB.generateSelect");
     expect(gen).toBeDefined();
     // View/item/context menu passes the SchemaTree node argument with `meta`.
     await gen!({
@@ -5117,14 +5121,14 @@ describe("TASK-UX1-001 — generateSelect clipboard fallback when no editor is o
     expect(message).toMatch(/không có editor/i);
   });
 
-  it("#6 boundary: vsdb.generateSelect with NO arg and NO editor → info toast guides the user, clipboard untouched", async () => {
+  it("#6 boundary: UnicDB.generateSelect with NO arg and NO editor → info toast guides the user, clipboard untouched", async () => {
     activateWithActivePostgres();
     state.activeEditor = undefined;
 
     const writeTextSpy = vi.mocked(vscodeMock.env.clipboard.writeText);
     const infoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
 
-    const gen = state.registeredCommands.get("vsdb.generateSelect");
+    const gen = state.registeredCommands.get("UnicDB.generateSelect");
     await gen!(); // no qualifiedOrNode
 
     // Clipboard untouched.
@@ -5189,8 +5193,8 @@ describe("TASK-UX1-002 — SQL Generator on View / Routine nodes", () => {
   function makeSeededCtx() {
     const ctx = makeCtx();
     ctx.globalState.get = vi.fn((key: string) => {
-      if (key === "vsdb.connections") return [makeConnectionConfig()];
-      if (key === "vsdb.activeConnection") return "c1";
+      if (key === "UnicDB.connections") return [makeConnectionConfig()];
+      if (key === "UnicDB.activeConnection") return "c1";
       return undefined;
     }) as never;
     return ctx;
@@ -5267,9 +5271,9 @@ describe("TASK-UX1-002 — SQL Generator on View / Routine nodes", () => {
       title: string;
       icon: string;
     }>;
-    const viewCmd = commands.find((c) => c.command === "vsdb.generateViewDdl");
+    const viewCmd = commands.find((c) => c.command === "UnicDB.generateViewDdl");
     const funcCmd = commands.find(
-      (c) => c.command === "vsdb.generateFunctionDdl",
+      (c) => c.command === "UnicDB.generateFunctionDdl",
     );
     expect(viewCmd).toBeDefined();
     expect(viewCmd!.title).toBe("SQL Generator");
@@ -5284,31 +5288,31 @@ describe("TASK-UX1-002 — SQL Generator on View / Routine nodes", () => {
       group: string;
     }>;
     const viewMenu = itemContext.find(
-      (m) => m.command === "vsdb.generateViewDdl",
+      (m) => m.command === "UnicDB.generateViewDdl",
     );
     const funcMenu = itemContext.find(
-      (m) => m.command === "vsdb.generateFunctionDdl",
+      (m) => m.command === "UnicDB.generateFunctionDdl",
     );
     expect(viewMenu).toBeDefined();
     // CRITICAL pin: viewItem == view (NOT routine) so the entry actually
     // renders on view nodes only. A `viewItem == routine` clause here
     // would never fire (the tree emits contextValue: "view" for views).
     expect(viewMenu!.when).toBe(
-      "view == vsdb.schemaTree && viewItem == view",
+      "view == UnicDB.schemaTree && viewItem == view",
     );
-    expect(viewMenu!.group).toBe("vsdb");
+    expect(viewMenu!.group).toBe("UnicDB");
     expect(funcMenu).toBeDefined();
     // CRITICAL pin: routine, NOT function — schemaTree.ts:565 emits
     // contextValue: "routine" for both. A `viewItem == function` clause
     // would produce a dead menu entry (review-blocking bug).
     expect(funcMenu!.when).toBe(
-      "view == vsdb.schemaTree && viewItem == routine",
+      "view == UnicDB.schemaTree && viewItem == routine",
     );
-    expect(funcMenu!.group).toBe("vsdb");
+    expect(funcMenu!.group).toBe("UnicDB");
 
     const activations = pkgJson.activationEvents as string[];
-    expect(activations).toContain("onCommand:vsdb.generateViewDdl");
-    expect(activations).toContain("onCommand:vsdb.generateFunctionDdl");
+    expect(activations).toContain("onCommand:UnicDB.generateViewDdl");
+    expect(activations).toContain("onCommand:UnicDB.generateFunctionDdl");
   });
 
   it("Test #1 — happy: view node → seedTab called with name 'DDL public.v' and buffer = ddl + ';'", async () => {
@@ -5319,7 +5323,7 @@ describe("TASK-UX1-002 — SQL Generator on View / Routine nodes", () => {
     );
     await activateWithAdapter(adapter);
 
-    const fn = state.registeredCommands.get("vsdb.generateViewDdl");
+    const fn = state.registeredCommands.get("UnicDB.generateViewDdl");
     expect(fn).toBeDefined();
     await fn!(viewNode("public.v"));
 
@@ -5350,7 +5354,7 @@ describe("TASK-UX1-002 — SQL Generator on View / Routine nodes", () => {
     );
     await activateWithAdapter(adapter);
 
-    const fn = state.registeredCommands.get("vsdb.generateFunctionDdl");
+    const fn = state.registeredCommands.get("UnicDB.generateFunctionDdl");
     expect(fn).toBeDefined();
     await fn!(viewNode("public.do_thing"));
 
@@ -5379,7 +5383,7 @@ describe("TASK-UX1-002 — SQL Generator on View / Routine nodes", () => {
     );
     await activateWithAdapter(adapter);
 
-    const fn = state.registeredCommands.get("vsdb.generateViewDdl");
+    const fn = state.registeredCommands.get("UnicDB.generateViewDdl");
     await fn!(viewNode("public.x"));
 
     const catalog = adapter.catalog as unknown as {
@@ -5406,7 +5410,7 @@ describe("TASK-UX1-002 — SQL Generator on View / Routine nodes", () => {
     );
     await activateWithAdapter(adapter);
 
-    const fn = state.registeredCommands.get("vsdb.generateViewDdl");
+    const fn = state.registeredCommands.get("UnicDB.generateViewDdl");
     await fn!(viewNode("public.v"));
 
     const catalog = adapter.catalog as unknown as {
@@ -5430,7 +5434,7 @@ describe("TASK-UX1-002 — SQL Generator on View / Routine nodes", () => {
     );
     await activateWithAdapter(adapter);
 
-    const fn = state.registeredCommands.get("vsdb.generateFunctionDdl");
+    const fn = state.registeredCommands.get("UnicDB.generateFunctionDdl");
     await fn!(undefined);
 
     const catalog = adapter.catalog as unknown as {
@@ -5468,10 +5472,10 @@ describe("TASK-UX1-002 — SQL Generator on View / Routine nodes", () => {
 });
 void detectOmpState;
 
-// TASK-UX1-004 (R2) — vsdb.openUserGuide opens docs/VSDB_USER_GUIDE.md
+// TASK-UX1-004 (R2) — UnicDB.openUserGuide opens docs/UnicDB_USER_GUIDE.md
 // in markdown preview. Re-creates the file lost during the W4 merge
 // (orchestrator cleanup wiped untracked files).
-describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
+describe("TASK-UX1-004 — UnicDB.openUserGuide", () => {
   let executeSpy: ReturnType<typeof vi.fn>;
   let infoSpy: ReturnType<typeof vi.fn>;
 
@@ -5491,9 +5495,9 @@ describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
     for (let i = 0; i < 5; i++) await Promise.resolve();
   }
 
-  it("#1 vsdb.openUserGuide command is registered on activate", async () => {
+  it("#1 UnicDB.openUserGuide command is registered on activate", async () => {
     await activateUserGuide();
-    expect(state.registeredCommands.has("vsdb.openUserGuide")).toBe(true);
+    expect(state.registeredCommands.has("UnicDB.openUserGuide")).toBe(true);
   });
 
   it("#2 invoking the command calls markdown.showPreview with extensionUri-relative path", async () => {
@@ -5505,13 +5509,13 @@ describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
       workspace: { fs: { stat?: ReturnType<typeof vi.fn> } };
     }).workspace.fs;
     fsMock.stat = vi.fn(async () => ({ type: 1, size: 1, ctime: 0, mtime: 0 } as never));
-    const fn = state.registeredCommands.get("vsdb.openUserGuide");
+    const fn = state.registeredCommands.get("UnicDB.openUserGuide");
     expect(fn).toBeDefined();
     await fn!();
     expect(executeSpy).toHaveBeenCalledWith(
       "markdown.showPreview",
       expect.objectContaining({
-        path: expect.stringMatching(/VSDB_USER_GUIDE\.md$/),
+        path: expect.stringMatching(/UnicDB_USER_GUIDE\.md$/),
       }),
     );
   });
@@ -5535,7 +5539,7 @@ describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
     fsMock.stat = vi.fn(async () => {
       throw new Error("ENOENT");
     });
-    const fn = state.registeredCommands.get("vsdb.openUserGuide");
+    const fn = state.registeredCommands.get("UnicDB.openUserGuide");
     await expect(fn!()).resolves.toBeUndefined();
     expect(envMock.openExternal).toHaveBeenCalledTimes(1);
     // The mock Uri.parse in tests does not decompose the URL — match the
@@ -5544,7 +5548,7 @@ describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
     // the fallback URL will be caught.
     const passedUri = envMock.openExternal.mock.calls[0][0] as { toString(): string };
     expect(passedUri.toString()).toBe(
-      "https://github.com/lengockhoa/VSDB/blob/main/docs/VSDB_USER_GUIDE.md",
+      "https://github.com/lengockhoa/UnicDB/blob/main/docs/UnicDB_USER_GUIDE.md",
     );
     // markdown.showPreview must NOT be called when the file is missing.
     expect(executeSpy).not.toHaveBeenCalled();
@@ -5552,7 +5556,7 @@ describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
     expect(infoSpy).not.toHaveBeenCalled();
   });
 
-  it("#4 package.json declares vsdb.openUserGuide with $(notebook) icon (distinct from openHelpGrid's $(book))", () => {
+  it("#4 package.json declares UnicDB.openUserGuide with $(notebook) icon (distinct from openHelpGrid's $(book))", () => {
     // Pin the icon distinctness per test #6 in the spec.
     const pkg = JSON.parse(
       require("node:fs").readFileSync(
@@ -5561,17 +5565,17 @@ describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
       ),
     );
     const guideCmd = pkg.contributes.commands.find(
-      (c: { command: string }) => c.command === "vsdb.openUserGuide",
+      (c: { command: string }) => c.command === "UnicDB.openUserGuide",
     );
     const helpCmd = pkg.contributes.commands.find(
-      (c: { command: string }) => c.command === "vsdb.openHelpGrid",
+      (c: { command: string }) => c.command === "UnicDB.openHelpGrid",
     );
     expect(guideCmd).toBeDefined();
     expect(helpCmd).toBeDefined();
     expect(guideCmd.icon).not.toBe(helpCmd.icon);
   });
 
-  it("#5 view/title entry exists for vsdb.openUserGuide on vsdb.schemaTree", () => {
+  it("#5 view/title entry exists for UnicDB.openUserGuide on UnicDB.schemaTree", () => {
     const pkg = JSON.parse(
       require("node:fs").readFileSync(
         require("node:path").resolve(process.cwd(), "package.json"),
@@ -5583,20 +5587,20 @@ describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
       when: string;
     }>;
     const entry = titleEntries.find(
-      (e) => e.command === "vsdb.openUserGuide",
+      (e) => e.command === "UnicDB.openUserGuide",
     );
     expect(entry).toBeDefined();
-    expect(entry!.when).toContain("vsdb.schemaTree");
+    expect(entry!.when).toContain("UnicDB.schemaTree");
   });
 
-  it("#6 activation event for vsdb.openUserGuide is declared", () => {
+  it("#6 activation event for UnicDB.openUserGuide is declared", () => {
     const pkg = JSON.parse(
       require("node:fs").readFileSync(
         require("node:path").resolve(process.cwd(), "package.json"),
         "utf8",
       ),
     );
-    expect(pkg.activationEvents).toContain("onCommand:vsdb.openUserGuide");
+    expect(pkg.activationEvents).toContain("onCommand:UnicDB.openUserGuide");
   });
 
   it("#7 guide file exists → markdown.showPreview (no GitHub fallback)", async () => {
@@ -5606,12 +5610,12 @@ describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
       workspace: { fs: { stat?: ReturnType<typeof vi.fn> } };
     }).workspace.fs;
     fsMock.stat = vi.fn(async () => ({ type: 1, size: 1, ctime: 0, mtime: 0 } as never));
-    const fn = state.registeredCommands.get("vsdb.openUserGuide");
+    const fn = state.registeredCommands.get("UnicDB.openUserGuide");
     await fn!();
     expect(executeSpy).toHaveBeenCalledWith(
       "markdown.showPreview",
       expect.objectContaining({
-        path: expect.stringMatching(/VSDB_USER_GUIDE\.md$/),
+        path: expect.stringMatching(/UnicDB_USER_GUIDE\.md$/),
       }),
     );
     const envMock = (vscodeMock as unknown as {
@@ -5620,7 +5624,7 @@ describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
     expect(envMock.openExternal).not.toHaveBeenCalled();
   });
 
-  it("#8 .vscodeignore allow-lists docs/VSDB_USER_GUIDE.md so it ships in the .vsix", () => {
+  it("#8 .vscodeignore allow-lists docs/UnicDB_USER_GUIDE.md so it ships in the .vsix", () => {
     // Regression guard: a future edit to .vscodeignore that re-excludes the
     // guide will break the Schema Explorer 📖 icon for installed users.
     const ignore = require("node:fs").readFileSync(
@@ -5628,6 +5632,6 @@ describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
       "utf8",
     );
     expect(ignore).toMatch(/^docs\/\*\*/m); // base exclusion still in place
-    expect(ignore).toMatch(/^!docs\/VSDB_USER_GUIDE\.md/m); // allow-rule present
+    expect(ignore).toMatch(/^!docs\/UnicDB_USER_GUIDE\.md/m); // allow-rule present
   });
 });

@@ -249,10 +249,10 @@ function renderMentionDropdown(
     // dismiss with Enter / Esc instead of being trapped with an invisible
     // dropdown.
     const dropdown = document.createElement("div");
-    dropdown.className = "vsdb-chat-mention-dropdown";
-    dropdown.id = "vsdbMentionDropdown";
+    dropdown.className = "UnicDB-chat-mention-dropdown";
+    dropdown.id = "UnicDBMentionDropdown";
     const row = document.createElement("div");
-    row.className = "vsdb-chat-mention-row vsdb-chat-mention-row-empty";
+    row.className = "UnicDB-chat-mention-row UnicDB-chat-mention-row-empty";
     row.textContent = "No matches";
     dropdown.appendChild(row);
     document.body.appendChild(dropdown);
@@ -260,26 +260,26 @@ function renderMentionDropdown(
     return dropdown;
   }
   const dropdown = document.createElement("div");
-  dropdown.className = "vsdb-chat-mention-dropdown";
-  dropdown.id = "vsdbMentionDropdown";
+  dropdown.className = "UnicDB-chat-mention-dropdown";
+  dropdown.id = "UnicDBMentionDropdown";
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     if (it === undefined) continue;
     const row = document.createElement("div");
-    row.className = "vsdb-chat-mention-row";
+    row.className = "UnicDB-chat-mention-row";
     row.setAttribute("data-token", it.token);
     row.setAttribute("data-index", i.toString());
     if (i === mentionActiveIndex) {
-      row.classList.add("vsdb-chat-mention-row-active");
+      row.classList.add("UnicDB-chat-mention-row-active");
     }
     const kind = document.createElement("span");
-    kind.className = "vsdb-chat-mention-kind";
+    kind.className = "UnicDB-chat-mention-kind";
     kind.textContent = it.kind;
     const label = document.createElement("span");
-    label.className = "vsdb-chat-mention-label";
+    label.className = "UnicDB-chat-mention-label";
     label.textContent = it.label;
     const detail = document.createElement("span");
-    detail.className = "vsdb-chat-mention-detail";
+    detail.className = "UnicDB-chat-mention-detail";
     detail.textContent = it.detail;
     row.appendChild(kind);
     row.appendChild(label);
@@ -311,7 +311,7 @@ function positionDropdown(
 
 /** Remove the dropdown DOM node + clear dropdown state. */
 function disposeMentionDropdown(): void {
-  const existing = document.getElementById("vsdbMentionDropdown");
+  const existing = document.getElementById("UnicDBMentionDropdown");
   if (existing) existing.remove();
   mentionOpen = false;
   mentionActiveIndex = 0;
@@ -346,10 +346,10 @@ function filterMentionDropdown(query: string): void {
 /** Set the active row index and update the DOM class. Wraps around so the
  * user can hold ArrowDown indefinitely without escaping the list. */
 function moveMentionActive(delta: number): void {
-  const dropdown = document.getElementById("vsdbMentionDropdown");
+  const dropdown = document.getElementById("UnicDBMentionDropdown");
   if (!dropdown) return;
   const rows = dropdown.querySelectorAll<HTMLDivElement>(
-    ".vsdb-chat-mention-row",
+    ".UnicDB-chat-mention-row",
   );
   if (rows.length === 0) return;
   let next = mentionActiveIndex + delta;
@@ -357,7 +357,7 @@ function moveMentionActive(delta: number): void {
   if (next >= rows.length) next = 0;
   mentionActiveIndex = next;
   rows.forEach((r, i) => {
-    r.classList.toggle("vsdb-chat-mention-row-active", i === next);
+    r.classList.toggle("UnicDB-chat-mention-row-active", i === next);
   });
 }
 
@@ -452,7 +452,7 @@ function renderMarkdown(text: string): string {
       // data-raw carries the ORIGINAL escaped code so the click handler
       // can grab it via getAttribute and un-escape to recover the raw
       // string the user wants to copy.
-      return `<pre class="vsdb-md-code" data-raw="${escapeHtml(f.code)}"><code class="vsdb-md-code-lang-${escapeHtml(f.lang)}">${f.code}</code><button type="button" class="vsdb-md-copy">Copy</button></pre>`;
+      return `<pre class="UnicDB-md-code" data-raw="${escapeHtml(f.code)}"><code class="UnicDB-md-code-lang-${escapeHtml(f.lang)}">${f.code}</code><button type="button" class="UnicDB-md-copy">Copy</button></pre>`;
     },
   );
 }
@@ -569,11 +569,11 @@ function disposeSlashDropdown(): void {
   slashOpen = false;
   slashActiveIndex = 0;
   slashCandidates = [];
-  document.querySelector(".vsdb-chat-slash-dropdown")?.remove();
+  document.querySelector(".UnicDB-chat-slash-dropdown")?.remove();
 }
 
 function renderSlashDropdown(candidates: AiChatCommand[]): void {
-  document.querySelector(".vsdb-chat-slash-dropdown")?.remove();
+  document.querySelector(".UnicDB-chat-slash-dropdown")?.remove();
   if (candidates.length === 0) {
     slashOpen = false;
     return;
@@ -582,12 +582,12 @@ function renderSlashDropdown(candidates: AiChatCommand[]): void {
   slashCandidates = candidates;
   slashActiveIndex = Math.min(slashActiveIndex, candidates.length - 1);
   const dropdown = document.createElement("div");
-  dropdown.className = "vsdb-chat-slash-dropdown";
+  dropdown.className = "UnicDB-chat-slash-dropdown";
   dropdown.setAttribute("role", "listbox");
   for (const [index, command] of candidates.entries()) {
     const row = document.createElement("button");
     row.type = "button";
-    row.className = "vsdb-chat-slash-row";
+    row.className = "UnicDB-chat-slash-row";
     row.setAttribute("role", "option");
     row.textContent = `/${command}`;
     row.setAttribute("aria-selected", String(index === slashActiveIndex));
@@ -602,7 +602,7 @@ function renderSlashDropdown(candidates: AiChatCommand[]): void {
     });
     dropdown.appendChild(row);
   }
-  document.querySelector(".vsdb-chat-input")?.appendChild(dropdown);
+  document.querySelector(".UnicDB-chat-input")?.appendChild(dropdown);
 }
 
 function updateSlashDropdown(value: string): void {
@@ -621,7 +621,7 @@ function appendLocalNotice(message: string): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   const notice = document.createElement("div");
-  notice.className = "vsdb-chat-local-notice";
+  notice.className = "UnicDB-chat-local-notice";
   notice.textContent = message;
   thread.appendChild(notice);
   autoScroll(notice);
@@ -630,7 +630,7 @@ function appendLocalNotice(message: string): void {
 function exportTranscript(filename?: string): void {
   const thread = document.getElementById("thread");
   const text = thread?.innerText?.trim() ?? "";
-  const safeName = (filename?.trim() || "vsdb-ai-transcript.md").replace(/[\\/:*?\"<>|]/g, "_");
+  const safeName = (filename?.trim() || "UnicDB-ai-transcript.md").replace(/[\\/:*?\"<>|]/g, "_");
   const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -673,18 +673,18 @@ function executeSlashCommand(text: string): boolean {
 
 function renderInitial(): void {
   root.innerHTML = `
-  <div class="vsdb-chat-thread" id="thread" aria-live="polite"></div>
-  <button type="button" id="jumpLatest" class="vsdb-chat-jump" hidden>Jump to latest</button>
-  <div class="vsdb-chat-input">
-    <div class="vsdb-chat-attachments" id="attachStrip" hidden></div>
+  <div class="UnicDB-chat-thread" id="thread" aria-live="polite"></div>
+  <button type="button" id="jumpLatest" class="UnicDB-chat-jump" hidden>Jump to latest</button>
+  <div class="UnicDB-chat-input">
+    <div class="UnicDB-chat-attachments" id="attachStrip" hidden></div>
     <textarea id="prompt" rows="3" placeholder="Ask about your database…"></textarea>
-    <div class="vsdb-chat-actions">
-      ${iconButtonHtml("resumeBtn", "vsdb-chat-secondary")}
+    <div class="UnicDB-chat-actions">
+      ${iconButtonHtml("resumeBtn", "UnicDB-chat-secondary")}
       ${iconButtonHtml("clearBtn", "")}
-      ${iconButtonHtml("regenerateBtn", "vsdb-chat-secondary")}
-      ${iconButtonHtml("stopBtn", "vsdb-chat-secondary")}
-      <button type="button" id="attachBtn" class="vsdb-chat-attach-btn" title="Attach image" aria-label="Attach image">${composerIconSvg("attachBtn")}</button>
-      ${iconButtonHtml("sendBtn", "vsdb-chat-primary")}
+      ${iconButtonHtml("regenerateBtn", "UnicDB-chat-secondary")}
+      ${iconButtonHtml("stopBtn", "UnicDB-chat-secondary")}
+      <button type="button" id="attachBtn" class="UnicDB-chat-attach-btn" title="Attach image" aria-label="Attach image">${composerIconSvg("attachBtn")}</button>
+      ${iconButtonHtml("sendBtn", "UnicDB-chat-primary")}
     </div>
   </div>`;
   // Hidden file input lives on <body> (not inside the composer card) so
@@ -791,9 +791,9 @@ function wireControls(): void {
     if (mentionOpen) {
       if (ev.key === "Enter" || ev.key === "Tab") {
         ev.preventDefault();
-        const dropdown = document.getElementById("vsdbMentionDropdown");
+        const dropdown = document.getElementById("UnicDBMentionDropdown");
         const rows = dropdown?.querySelectorAll<HTMLDivElement>(
-          ".vsdb-chat-mention-row",
+          ".UnicDB-chat-mention-row",
         );
         const row = rows?.[mentionActiveIndex];
         const token = row?.getAttribute("data-token");
@@ -912,7 +912,7 @@ function wireControls(): void {
   document.addEventListener("mousedown", (ev) => {
     if (!mentionOpen) return;
     const target = ev.target as Node | null;
-    const dropdown = document.getElementById("vsdbMentionDropdown");
+    const dropdown = document.getElementById("UnicDBMentionDropdown");
     if (
       target !== null &&
       (target === prompt || (dropdown !== null && dropdown.contains(target)))
@@ -976,13 +976,13 @@ function appendUser(text: string): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   const div = document.createElement("div");
-  div.className = "vsdb-chat-bubble vsdb-chat-user vsdb-chat-queued";
+  div.className = "UnicDB-chat-bubble UnicDB-chat-user UnicDB-chat-queued";
   div.textContent = text;
   // Queued marker — child element with the same class so test #8 can find
   // it via both classList and a descendant selector. Resolved by
   // resolveQueuedUserBubble() on first delta/error/done.
   const queued = document.createElement("span");
-  queued.className = "vsdb-chat-queued";
+  queued.className = "UnicDB-chat-queued";
   queued.setAttribute("aria-label", "queued");
   div.appendChild(queued);
   thread.appendChild(div);
@@ -1008,17 +1008,17 @@ function appendThinking(): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   // Idempotency: never stack multiple thinking rows on the same turn.
-  if (thread.querySelector(".vsdb-chat-thinking-row")) return;
+  if (thread.querySelector(".UnicDB-chat-thinking-row")) return;
   const row = document.createElement("div");
-  row.className = "vsdb-chat-thinking-row";
+  row.className = "UnicDB-chat-thinking-row";
   row.setAttribute("role", "status");
   row.setAttribute("aria-live", "polite");
   const spinner = document.createElement("span");
-  spinner.className = "vsdb-chat-thinking-spinner";
+  spinner.className = "UnicDB-chat-thinking-spinner";
   spinner.setAttribute("aria-hidden", "true");
   row.appendChild(spinner);
   const label = document.createElement("span");
-  label.className = "vsdb-chat-thinking-label";
+  label.className = "UnicDB-chat-thinking-label";
   label.textContent = "AI is thinking…";
   row.appendChild(label);
   thread.appendChild(row);
@@ -1032,7 +1032,7 @@ function removeThinking(): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   for (const row of Array.from(
-    thread.querySelectorAll<HTMLElement>(".vsdb-chat-thinking-row"),
+    thread.querySelectorAll<HTMLElement>(".UnicDB-chat-thinking-row"),
   )) {
     row.remove();
   }
@@ -1048,12 +1048,12 @@ function removeThinking(): void {
  * bubble (e.g. error before any user bubble). */
 function resolveQueuedUserBubble(): void {
   const queued = root.querySelector(
-    ".vsdb-chat-bubble.vsdb-chat-user.vsdb-chat-queued",
+    ".UnicDB-chat-bubble.UnicDB-chat-user.UnicDB-chat-queued",
   ) as HTMLDivElement | null;
   if (!queued) return;
-  queued.classList.remove("vsdb-chat-queued");
+  queued.classList.remove("UnicDB-chat-queued");
   for (const m of Array.from(
-    queued.querySelectorAll(".vsdb-chat-queued"),
+    queued.querySelectorAll(".UnicDB-chat-queued"),
   )) m.remove();
 }
 
@@ -1061,7 +1061,7 @@ function appendStep(label: string): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   const step = document.createElement("div");
-  step.className = "vsdb-chat-step";
+  step.className = "UnicDB-chat-step";
   step.textContent = `→ ${label}`;
   thread.appendChild(step);
 }
@@ -1072,7 +1072,7 @@ function appendToolResult(tool: string, status: string, summary: string): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   const div = document.createElement("div");
-  div.className = `vsdb-chat-tool-result vsdb-chat-tool-result-${status}`;
+  div.className = `UnicDB-chat-tool-result UnicDB-chat-tool-result-${status}`;
   div.textContent = summary; // host already formats "✓ tool — shape"
   thread.appendChild(div);
   autoScroll(div);
@@ -1085,24 +1085,24 @@ function appendChangePlan(msg: ChangePlanMsg): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   const card = document.createElement("div");
-  card.className = "vsdb-chat-plan";
+  card.className = "UnicDB-chat-plan";
   card.setAttribute("role", "region");
   card.setAttribute("aria-label", "reviewed change plan");
 
   const head = document.createElement("div");
-  head.className = "vsdb-chat-plan-head";
+  head.className = "UnicDB-chat-plan-head";
   head.textContent = `Change plan — ${msg.plan.intent || "no intent"}`;
   card.appendChild(head);
 
   for (const st of msg.plan.statements) {
     const row = document.createElement("div");
-    row.className = `vsdb-chat-plan-stmt vsdb-chat-plan-tier-${st.tier}`;
+    row.className = `UnicDB-chat-plan-stmt UnicDB-chat-plan-tier-${st.tier}`;
     const code = document.createElement("code");
     code.textContent = st.sql;
     row.appendChild(code);
     if (st.dangerNote) {
       const note = document.createElement("span");
-      note.className = "vsdb-chat-plan-note";
+      note.className = "UnicDB-chat-plan-note";
       note.textContent = st.dangerNote;
       row.appendChild(note);
     }
@@ -1111,7 +1111,7 @@ function appendChangePlan(msg: ChangePlanMsg): void {
 
   if (msg.plan.drift.length > 0) {
     const driftBox = document.createElement("div");
-    driftBox.className = "vsdb-chat-plan-drift";
+    driftBox.className = "UnicDB-chat-plan-drift";
     const title = document.createElement("div");
     title.textContent = msg.plan.drifted
       ? "Schema drift detected — plan is stale. Re-run the suggestion before approving."
@@ -1126,16 +1126,16 @@ function appendChangePlan(msg: ChangePlanMsg): void {
   }
 
   const actions = document.createElement("div");
-  actions.className = "vsdb-chat-plan-actions";
+  actions.className = "UnicDB-chat-plan-actions";
   const approve = document.createElement("button");
   approve.type = "button";
-  approve.className = "vsdb-chat-plan-approve";
+  approve.className = "UnicDB-chat-plan-approve";
   approve.textContent = "Approve & run";
   approve.disabled = msg.plan.drifted;
   approve.addEventListener("click", () => post({ type: "plan_approve" }));
   const reject = document.createElement("button");
   reject.type = "button";
-  reject.className = "vsdb-chat-plan-reject";
+  reject.className = "UnicDB-chat-plan-reject";
   reject.textContent = "Reject";
   reject.addEventListener("click", () => post({ type: "plan_reject" }));
   actions.appendChild(approve);
@@ -1150,7 +1150,7 @@ function appendAssistant(text: string, markdown: boolean): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   const div = document.createElement("div");
-  div.className = "vsdb-chat-bubble vsdb-chat-assistant";
+  div.className = "UnicDB-chat-bubble UnicDB-chat-assistant";
   // TASK-003: colorize SQL fenced blocks AFTER the escaped HTML is in place.
   // renderMarkdown escapes user text first; reading `textContent` off the
   // already-escaped <code> node decodes entities back to the raw SQL, and
@@ -1160,7 +1160,7 @@ function appendAssistant(text: string, markdown: boolean): void {
   div.innerHTML = markdown ? renderMarkdown(text) : escapeHtml(text);
   if (markdown) {
     for (const code of Array.from(
-      div.querySelectorAll<HTMLElement>("code.vsdb-md-code-lang-sql"),
+      div.querySelectorAll<HTMLElement>("code.UnicDB-md-code-lang-sql"),
     )) {
       const frag = highlightSql(code.textContent ?? "");
       code.replaceChildren(frag);
@@ -1184,7 +1184,7 @@ function appendError(message: string): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   const div = document.createElement("div");
-  div.className = "vsdb-chat-bubble vsdb-chat-error";
+  div.className = "UnicDB-chat-bubble UnicDB-chat-error";
   div.textContent = message;
   thread.appendChild(div);
   autoScroll(div);
@@ -1204,12 +1204,12 @@ function appendDelta(text: string): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   let bubble = thread.querySelector<HTMLDivElement>(
-    ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+    ".UnicDB-chat-bubble.UnicDB-chat-assistant.UnicDB-chat-streaming",
   );
   if (!bubble) {
     bubble = document.createElement("div");
     bubble.className =
-      "vsdb-chat-bubble vsdb-chat-assistant vsdb-chat-streaming";
+      "UnicDB-chat-bubble UnicDB-chat-assistant UnicDB-chat-streaming";
     thread.appendChild(bubble);
   }
   // Streaming content is plain text; full markdown render happens on the
@@ -1231,12 +1231,12 @@ function appendDelta(text: string): void {
   // from textContent on a SECOND closing fence would inline the previous
   // code + the literal word "Copy" into the next markdown pass. Storing
   // the raw stream in a dataset attribute keeps the source intact.
-  // (dataset converts dashed names to camelCase: "vsdbRawStream".)
-  const previous = bubble.dataset.vsdbRawStream ?? "";
+  // (dataset converts dashed names to camelCase: "UnicDBRawStream".)
+  const previous = bubble.dataset.UnicDBRawStream ?? "";
   const accumulated = previous + text;
-  bubble.dataset.vsdbRawStream = accumulated;
+  bubble.dataset.UnicDBRawStream = accumulated;
   if (/```[\s\S]*?```/.test(accumulated)) {
-    const caret = bubble.querySelector(".vsdb-chat-caret");
+    const caret = bubble.querySelector(".UnicDB-chat-caret");
     bubble.innerHTML = renderMarkdown(accumulated);
     if (caret) bubble.appendChild(caret);
     wireCopyButtons(bubble);
@@ -1255,15 +1255,15 @@ function deStreamOpenBubble(): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   const open = thread.querySelectorAll<HTMLDivElement>(
-    ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+    ".UnicDB-chat-bubble.UnicDB-chat-assistant.UnicDB-chat-streaming",
   );
   for (const bubble of Array.from(open)) {
-    bubble.classList.remove("vsdb-chat-streaming");
-    const caret = bubble.querySelector(".vsdb-chat-caret");
+    bubble.classList.remove("UnicDB-chat-streaming");
+    const caret = bubble.querySelector(".UnicDB-chat-caret");
     if (caret) caret.remove();
     // Clear the raw-stream scratch — the streaming bubble is now closed
     // and the terminal assistant message owns the final text.
-    delete bubble.dataset.vsdbRawStream;
+    delete bubble.dataset.UnicDBRawStream;
   }
 }
 
@@ -1311,9 +1311,9 @@ function wireJumpLatest(): void {
  * Idempotent — the bubble only carries one caret at a time. The caret is
  * removed when the bubble is de-streamed (done/error). */
 function ensureStreamingCaret(bubble: HTMLDivElement): void {
-  if (bubble.querySelector(".vsdb-chat-caret")) return;
+  if (bubble.querySelector(".UnicDB-chat-caret")) return;
   const caret = document.createElement("span");
-  caret.className = "vsdb-chat-caret";
+  caret.className = "UnicDB-chat-caret";
   caret.setAttribute("aria-hidden", "true");
   caret.textContent = "\u258D"; // �
   bubble.appendChild(caret);
@@ -1335,13 +1335,13 @@ function applyThought(text: string): void {
   if (text.length === 0) return;
   if (!thinkingBlock) {
     const details = document.createElement("details");
-    details.className = "vsdb-chat-thinking";
+    details.className = "UnicDB-chat-thinking";
     details.id = "thinkingBlock";
     const summary = document.createElement("summary");
     summary.textContent = "Thinking";
     details.appendChild(summary);
     const body = document.createElement("div");
-    body.className = "vsdb-chat-thinking-body";
+    body.className = "UnicDB-chat-thinking-body";
     details.appendChild(body);
     const thread = document.getElementById("thread");
     if (thread) thread.appendChild(details);
@@ -1384,11 +1384,11 @@ function unescapeHtml(s: string): string {
     .replace(/&amp;/g, "&");
 }
 
-/** Wire all `.vsdb-md-copy` buttons inside a bubble root so a click
+/** Wire all `.UnicDB-md-copy` buttons inside a bubble root so a click
  * copies the raw code (data-raw attribute, un-escaped) via clipboard. */
 function wireCopyButtons(rootEl: HTMLElement): void {
   for (const btn of Array.from(
-    rootEl.querySelectorAll<HTMLButtonElement>(".vsdb-md-copy"),
+    rootEl.querySelectorAll<HTMLButtonElement>(".UnicDB-md-copy"),
   )) {
     btn.addEventListener("click", () => {
       const pre = btn.closest("pre");
@@ -1408,7 +1408,7 @@ function wireCopyButtons(rootEl: HTMLElement): void {
 function appendCopyMessageAction(bubble: HTMLElement, rawSource: string): void {
   const action = document.createElement("button");
   action.type = "button";
-  action.className = "vsdb-chat-copy-msg";
+  action.className = "UnicDB-chat-copy-msg";
   action.textContent = "Copy";
   action.title = "Copy message";
   action.addEventListener("click", () => {
@@ -1419,16 +1419,16 @@ function appendCopyMessageAction(bubble: HTMLElement, rawSource: string): void {
   bubble.appendChild(action);
 }
 
-const root = document.getElementById("vsdb-root") as HTMLDivElement;
+const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 /** Show / replace the engine banner (omp active, or builtin fallback with hint). */
 function applyEngine(msg: EngineMsg): void {
-  const root = document.getElementById("vsdb-root");
+  const root = document.getElementById("UnicDB-root");
   if (!root) return;
   let banner = document.getElementById("engineBanner");
   if (banner) banner.remove();
   banner = document.createElement("div");
   banner.id = "engineBanner";
-  banner.className = `vsdb-chat-engine vsdb-chat-engine-${msg.name}`;
+  banner.className = `UnicDB-chat-engine UnicDB-chat-engine-${msg.name}`;
   const label =
     msg.name === "omp"
       ? msg.version
@@ -1452,7 +1452,7 @@ function applyEngine(msg: EngineMsg): void {
  * no banner exists yet). State strings are host-enum values mapped to
  * fixed labels — never rendered verbatim. */
 function applySessionState(state: "connecting" | "running" | "done" | "error"): void {
-  const rootEl = document.getElementById("vsdb-root");
+  const rootEl = document.getElementById("UnicDB-root");
   if (!rootEl) return;
   let chip = document.getElementById("sessionChip") as HTMLSpanElement | null;
   if (!chip) {
@@ -1470,7 +1470,7 @@ function applySessionState(state: "connecting" | "running" | "done" | "error"): 
         : state === "done"
           ? "Done"
           : "Error";
-  chip.className = `vsdb-chat-session vsdb-chat-session-${state}`;
+  chip.className = `UnicDB-chat-session UnicDB-chat-session-${state}`;
   chip.textContent = label;
 }
 
@@ -1482,7 +1482,7 @@ function applySessionState(state: "connecting" | "running" | "done" | "error"): 
  * wire text. `unknown: true` renders an "unknown" label instead of the
  * zeros so unknown usage is never displayed as a confirmed zero cost. */
 function applyUsage(msg: UsageMsg): void {
-  const rootEl = document.getElementById("vsdb-root");
+  const rootEl = document.getElementById("UnicDB-root");
   if (!rootEl) return;
   let chip = document.getElementById("usageChip") as HTMLSpanElement | null;
   if (!chip) {
@@ -1513,8 +1513,8 @@ function applyUsage(msg: UsageMsg): void {
     parts.push(msg.policyNotice);
   }
   chip.className = msg.unknown
-    ? "vsdb-chat-usage vsdb-chat-usage-unknown"
-    : "vsdb-chat-usage vsdb-chat-usage-known";
+    ? "UnicDB-chat-usage UnicDB-chat-usage-unknown"
+    : "UnicDB-chat-usage UnicDB-chat-usage-known";
   chip.textContent = parts.join(" — ");
   chip.title = "AI token usage for this turn and this panel session";
 }
@@ -1524,7 +1524,7 @@ function applyUsage(msg: UsageMsg): void {
  * The state literal is host-enum; the label map is fixed — never rendered
  * verbatim from the wire. */
 function applyEngineState(state: string): void {
-  const rootEl = document.getElementById("vsdb-root");
+  const rootEl = document.getElementById("UnicDB-root");
   if (!rootEl) return;
   let chip = document.getElementById("engineLifecycle") as HTMLSpanElement | null;
   if (!chip) {
@@ -1542,7 +1542,7 @@ function applyEngineState(state: string): void {
     "crashed": "Crashed",
     "fallback-builtin": "Fallback to builtin",
   };
-  chip.className = `vsdb-chat-engine-state vsdb-chat-engine-state-${state}`;
+  chip.className = `UnicDB-chat-engine-state UnicDB-chat-engine-state-${state}`;
   chip.textContent = labels[state] ?? state;
 }
 
@@ -1585,7 +1585,7 @@ function permissionCard(requestId: string): HTMLDivElement | null {
   const thread = document.getElementById("thread");
   if (!thread) return null;
   return thread.querySelector<HTMLDivElement>(
-    `.vsdb-chat-permission[data-request-id="${cssEscape(requestId)}"]`,
+    `.UnicDB-chat-permission[data-request-id="${cssEscape(requestId)}"]`,
   );
 }
 /** Threshold above which the detail collapses into a <details><pre> block.
@@ -1605,12 +1605,12 @@ function permissionDetailNode(
     !detail.includes("\n");
   if (isShort) {
     const div = document.createElement("div");
-    div.className = "vsdb-chat-permission-tool-detail";
+    div.className = "UnicDB-chat-permission-tool-detail";
     div.textContent = detail;
     return div;
   }
   const details = document.createElement("details");
-  details.className = "vsdb-chat-permission-tool-detail";
+  details.className = "UnicDB-chat-permission-tool-detail";
   const summary = document.createElement("summary");
   summary.textContent = "Show tool details";
   details.appendChild(summary);
@@ -1634,21 +1634,21 @@ function renderPermissionRequest(msg: PermissionRequestMsg): void {
     disposePermissionCard(existing, false);
   }
   const card = document.createElement("div");
-  card.className = "vsdb-chat-permission";
+  card.className = "UnicDB-chat-permission";
   card.dataset.requestId = msg.requestId;
 
   const header = document.createElement("div");
-  header.className = "vsdb-chat-permission-header";
+  header.className = "UnicDB-chat-permission-header";
   header.textContent = "Permission required";
   card.appendChild(header);
 
   const toolId = document.createElement("div");
-  toolId.className = "vsdb-chat-permission-tool-id";
+  toolId.className = "UnicDB-chat-permission-tool-id";
   toolId.textContent = msg.tool.id;
   card.appendChild(toolId);
 
   const toolName = document.createElement("div");
-  toolName.className = "vsdb-chat-permission-tool-name";
+  toolName.className = "UnicDB-chat-permission-tool-name";
   toolName.textContent = msg.tool.name;
   card.appendChild(toolName);
 
@@ -1658,13 +1658,13 @@ function renderPermissionRequest(msg: PermissionRequestMsg): void {
   if (detailNode !== null) card.appendChild(detailNode);
 
   const actions = document.createElement("div");
-  actions.className = "vsdb-chat-permission-actions";
+  actions.className = "UnicDB-chat-permission-actions";
   for (const opt of msg.options) {
     const btn = document.createElement("button");
     btn.className =
       opt.optionId === "deny"
-        ? "vsdb-chat-secondary vsdb-chat-permission-deny"
-        : "vsdb-chat-primary vsdb-chat-permission-allow";
+        ? "UnicDB-chat-secondary UnicDB-chat-permission-deny"
+        : "UnicDB-chat-primary UnicDB-chat-permission-allow";
     btn.textContent = opt.label;
     btn.dataset.optionId = opt.optionId;
     btn.addEventListener("click", () => {
@@ -1732,25 +1732,25 @@ function renderResumePicker(msg: ResumeSessionsMsg): void {
   if (!thread) return;
 
   const card = document.createElement("div");
-  card.className = "vsdb-chat-resume-picker";
+  card.className = "UnicDB-chat-resume-picker";
 
   const header = document.createElement("div");
-  header.className = "vsdb-chat-resume-header";
+  header.className = "UnicDB-chat-resume-header";
   header.textContent = "Resume a previous session";
   card.appendChild(header);
 
   for (const s of msg.sessions) {
     const row = document.createElement("div");
-    row.className = "vsdb-chat-resume-row";
+    row.className = "UnicDB-chat-resume-row";
     row.dataset.sessionId = s.sessionId;
 
     const label = document.createElement("div");
-    label.className = "vsdb-chat-resume-row-label";
+    label.className = "UnicDB-chat-resume-row-label";
     label.textContent = s.label;
     row.appendChild(label);
 
     const detail = document.createElement("div");
-    detail.className = "vsdb-chat-resume-row-detail";
+    detail.className = "UnicDB-chat-resume-row-detail";
     detail.textContent = s.detail;
     row.appendChild(detail);
 
@@ -1765,7 +1765,7 @@ function renderResumePicker(msg: ResumeSessionsMsg): void {
   }
 
   const cancelBtn = document.createElement("button");
-  cancelBtn.className = "vsdb-chat-secondary vsdb-chat-resume-cancel";
+  cancelBtn.className = "UnicDB-chat-secondary UnicDB-chat-resume-cancel";
   cancelBtn.textContent = "Cancel";
   cancelBtn.addEventListener("click", () => {
     if (!pickerOpen) return;
@@ -1798,7 +1798,7 @@ function renderResumePicker(msg: ResumeSessionsMsg): void {
 function disposeResumePicker(): void {
   pickerOpen = false;
   pickerConsumed = false;
-  const existing = document.querySelector(".vsdb-chat-resume-picker");
+  const existing = document.querySelector(".UnicDB-chat-resume-picker");
   if (existing) existing.remove();
 }
 
@@ -1813,7 +1813,7 @@ function renderHistory(msg: HistoryMsg): void {
 
   if (msg.truncated && msg.truncatedCount > 0) {
     const notice = document.createElement("div");
-    notice.className = "vsdb-chat-history-truncated";
+    notice.className = "UnicDB-chat-history-truncated";
     notice.textContent = `${msg.truncatedCount} earlier items not shown`;
     thread.appendChild(notice);
   }
@@ -1825,7 +1825,7 @@ function renderHistory(msg: HistoryMsg): void {
       appendAssistant(item.text, true);
     } else if (item.kind === "tool") {
       const row = document.createElement("div");
-      row.className = "vsdb-chat-history-tool";
+      row.className = "UnicDB-chat-history-tool";
       row.textContent = item.text;
       thread.appendChild(row);
     }
@@ -1869,7 +1869,7 @@ function renderHistory(msg: HistoryMsg): void {
       {
         const thread = document.getElementById("thread");
         const streaming = thread?.querySelector(
-          ".vsdb-chat-bubble.vsdb-chat-assistant.vsdb-chat-streaming",
+          ".UnicDB-chat-bubble.UnicDB-chat-assistant.UnicDB-chat-streaming",
         );
         if (streaming) streaming.remove();
       }
@@ -1942,7 +1942,7 @@ function renderMentionMiss(token: string): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   const div = document.createElement("div");
-  div.className = "vsdb-chat-mention-miss";
+  div.className = "UnicDB-chat-mention-miss";
   div.textContent = `Could not resolve @${token}`;
   thread.appendChild(div);
 }
@@ -1950,8 +1950,8 @@ function renderMentionMiss(token: string): void {
 // ---- TASK-002 (cycle AB) — attachment strip + warning bubble ---------------
 //
 // The strip lives above the textarea, inside the composer card, and is
-// rendered as `.vsdb-chat-attachments` with one `.vsdb-chat-thumb` per
-// attachment. Each thumb has a `.vsdb-chat-thumb-remove` button (top-right)
+// rendered as `.UnicDB-chat-attachments` with one `.UnicDB-chat-thumb` per
+// attachment. Each thumb has a `.UnicDB-chat-thumb-remove` button (top-right)
 // that drops the attachment from local state. The strip is hidden when
 // empty (no padding tax for the text-only path).
 
@@ -1977,7 +1977,7 @@ function renderAttachStrip(): void {
   strip.hidden = false;
   for (const att of state.attachments) {
     const thumb = document.createElement("div");
-    thumb.className = "vsdb-chat-thumb";
+    thumb.className = "UnicDB-chat-thumb";
     thumb.dataset.attachId = att.id;
     const img = document.createElement("img");
     img.alt = "";
@@ -1985,7 +1985,7 @@ function renderAttachStrip(): void {
     thumb.appendChild(img);
     const rm = document.createElement("button");
     rm.type = "button";
-    rm.className = "vsdb-chat-thumb-remove";
+    rm.className = "UnicDB-chat-thumb-remove";
     rm.setAttribute("aria-label", "Remove attachment");
     rm.textContent = "×";
     rm.addEventListener("click", () => {
@@ -2003,7 +2003,7 @@ function renderAttachWarning(message: string): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
   const div = document.createElement("div");
-  div.className = "vsdb-chat-attach-warning";
+  div.className = "UnicDB-chat-attach-warning";
   div.textContent = message;
   thread.appendChild(div);
 }
@@ -2098,11 +2098,11 @@ function renderGroundingChips(msg: {
   excludedCount: number;
   turnId: string;
 }): void {
-  let strip = document.getElementById("vsdb-grounding-strip");
+  let strip = document.getElementById("UnicDB-grounding-strip");
   if (!strip) {
     strip = document.createElement("div");
-    strip.id = "vsdb-grounding-strip";
-    strip.className = "vsdb-grounding-strip";
+    strip.id = "UnicDB-grounding-strip";
+    strip.className = "UnicDB-grounding-strip";
     const composer = document.getElementById("composer") ?? document.body;
     composer.appendChild(strip);
     strip.addEventListener("click", () => {
@@ -2119,7 +2119,7 @@ function renderGroundingChips(msg: {
   if (msg.fileCount > 0) bits.push(`${msg.fileCount} file(s)`);
   if (msg.excludedCount > 0) bits.push(`${msg.excludedCount} excluded`);
   const chip = document.createElement("span");
-  chip.className = "vsdb-grounding-chip";
+  chip.className = "UnicDB-grounding-chip";
   chip.textContent = `Grounded in ${bits.join(" · ")} — click to disable`;
   chip.title = "Click to disable workspace grounding for this panel";
   strip.appendChild(chip);

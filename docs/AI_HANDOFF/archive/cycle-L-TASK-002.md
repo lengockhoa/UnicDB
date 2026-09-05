@@ -1,7 +1,7 @@
 # TASK-002 — Host-tool bridge (set_host_tools ↔ ToolRegistry)
 
 ## Goal
-Turn DbToolRegistry (cycle K) into host tools for omp: defs payload for `set_host_tools` + an executor that receives host_tool_call, runs through the registry (read-only guard stays inside VSDB), and returns a result/error string.
+Turn DbToolRegistry (cycle K) into host tools for omp: defs payload for `set_host_tools` + an executor that receives host_tool_call, runs through the registry (read-only guard stays inside UnicDB), and returns a result/error string.
 
 ## Target Files
 - `src/ai/omp/hostTools.ts` (new)

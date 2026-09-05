@@ -103,7 +103,7 @@ Verification Output:
          Tests  12 passed (12)
 
   npm run typecheck
-    > vsdb@1.49.0 typecheck
+    > UnicDB@1.49.0 typecheck
     > tsc --noEmit
     (exit 0, no errors)
 

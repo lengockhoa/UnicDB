@@ -1,4 +1,4 @@
-# VSDB — Project Context
+# UnicDB — Project Context
 
 ## Stack
 
@@ -8,7 +8,7 @@
 
 ## Architecture
 
-VSDB is a **VS Code extension** (single `vscode` host process, no backend server) that turns
+UnicDB is a **VS Code extension** (single `vscode` host process, no backend server) that turns
 the editor into a database client for PostgreSQL / MySQL / MSSQL. Host side (`src/`) wires
 commands (`src/extension.ts`), a schema tree (`src/ui/schemaTree.ts`), and singleton
 WebviewPanels per surface (Results grid, Connection form, Table Designer, AI Chat, SQL
@@ -39,7 +39,7 @@ adapter on pooled clients.
 
 ## Business Rules & Domain Constraints
 
-- Destructive statements (`DELETE` no WHERE, `TRUNCATE`, `DROP`, `UPDATE` no WHERE) MUST pass the red confirm modal before execution (`vsdb.confirmDestructive` opt-out only).
+- Destructive statements (`DELETE` no WHERE, `TRUNCATE`, `DROP`, `UPDATE` no WHERE) MUST pass the red confirm modal before execution (`UnicDB.confirmDestructive` opt-out only).
 - AI-chat `run_sql` tool is SELECT/SHOW/EXPLAIN/clean-CTE only — never receives DML/DDL.
 - Keyset paging may replace OFFSET ONLY when the structural browse gate passes AND no term carries NULLS ordering; every other shape keeps legacy composition byte-identical.
 - A user-visible change is NOT shipped until a GitHub Release exists (merged ≠ shipped); releaseHygiene fails builds when package-lock version drifts.

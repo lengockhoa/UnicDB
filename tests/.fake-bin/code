@@ -1,4 +1,4 @@
 #!/bin/sh
 if [[ "$1" == "--install-extension" ]]; then exit 0; fi
-echo 'lengockhoa.vsdb@9.9.9'
+echo 'lengockhoa.UnicDB@9.9.9'
 exit 0

@@ -1,7 +1,7 @@
 // src/__tests__/extensionConfigExport.test.ts — Cycle AD TASK-003
 //
 // RED-then-GREEN for OMP config injection. Pins:
-//  (a) emitVsdbAiConfig YAML shape + privacy (apiKey NEVER in YAML body)
+//  (a) emitUnicDBAiConfig YAML shape + privacy (apiKey NEVER in YAML body)
 //  (b) ompCommandLine shape: --config, -p, --append-system-prompt, --model
 //  (c) formatSystemPrompt byte-equality with buildMessages[0] (cycle AD §8)
 //
@@ -30,7 +30,7 @@ import { describe, it, expect, vi } from "vitest";
 
 import { defaultAiSettings } from "../ai/settings";
 import type { AiSettings } from "../ai/settings";
-import { emitVsdbAiConfig } from "../extensionConfigExport";
+import { emitUnicDBAiConfig } from "../extensionConfigExport";
 import { buildMessages, formatSystemPrompt } from "../ui/aiChatPanel";
 import type { ChatMessage } from "../ai/provider";
 import type { AdapterFactory } from "../ai/tools/types";
@@ -48,13 +48,13 @@ function settingsWithFakeKey(): AiSettings {
 const NOOP_FACTORY: AdapterFactory = async () => null;
 const NOOP_HISTORY: readonly ChatMessage[] = [];
 
-describe("emitVsdbAiConfig — OMP YAML emitter (cycle AD §8/§9/§10)", () => {
+describe("emitUnicDBAiConfig — OMP YAML emitter (cycle AD §8/§9/§10)", () => {
   it("YAML body MUST NOT contain the apiKey string (privacy lock)", () => {
     const settings = settingsWithFakeKey();
-    const { yaml } = emitVsdbAiConfig(
+    const { yaml } = emitUnicDBAiConfig(
       settings,
-      "/tmp/vsdb-db-context.md",
-      "/tmp/vsdb-ai-config.yml",
+      "/tmp/UnicDB-db-context.md",
+      "/tmp/UnicDB-ai-config.yml",
       NOOP_FACTORY,
       NOOP_HISTORY,
     );
@@ -63,10 +63,10 @@ describe("emitVsdbAiConfig — OMP YAML emitter (cycle AD §8/§9/§10)", () => 
   });
 
   it("YAML exposes the work + smart model ids under `model:`", () => {
-    const { yaml } = emitVsdbAiConfig(
+    const { yaml } = emitUnicDBAiConfig(
       settingsWithFakeKey(),
-      "/tmp/vsdb-db-context.md",
-      "/tmp/vsdb-ai-config.yml",
+      "/tmp/UnicDB-db-context.md",
+      "/tmp/UnicDB-ai-config.yml",
       NOOP_FACTORY,
       NOOP_HISTORY,
     );
@@ -76,11 +76,11 @@ describe("emitVsdbAiConfig — OMP YAML emitter (cycle AD §8/§9/§10)", () => 
   });
 
   it("YAML references the appended system-prompt file path", () => {
-    const ctxPath = "/abs/workspace/.vscode/vsdb-db-context.md";
-    const { yaml } = emitVsdbAiConfig(
+    const ctxPath = "/abs/workspace/.vscode/UnicDB-db-context.md";
+    const { yaml } = emitUnicDBAiConfig(
       settingsWithFakeKey(),
       ctxPath,
-      "/tmp/vsdb-ai-config.yml",
+      "/tmp/UnicDB-ai-config.yml",
       NOOP_FACTORY,
       NOOP_HISTORY,
     );
@@ -90,9 +90,9 @@ describe("emitVsdbAiConfig — OMP YAML emitter (cycle AD §8/§9/§10)", () => 
 
   it("ompCommandLine includes --config, -p, --append-system-prompt, --model", () => {
     const settings = settingsWithFakeKey();
-    const ctxPath = "/abs/workspace/.vscode/vsdb-db-context.md";
-    const configPath = "/abs/workspace/.vscode/vsdb-ai-config.yml";
-    const { ompCommandLine } = emitVsdbAiConfig(
+    const ctxPath = "/abs/workspace/.vscode/UnicDB-db-context.md";
+    const configPath = "/abs/workspace/.vscode/UnicDB-ai-config.yml";
+    const { ompCommandLine } = emitUnicDBAiConfig(
       settings,
       ctxPath,
       configPath,

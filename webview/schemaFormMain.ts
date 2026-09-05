@@ -27,7 +27,7 @@ interface SubmitMsg { type: "submit"; name: string; }
 interface CancelMsg { type: "cancel"; }
 type WebviewMessage = ReadyMsg | NameChangedMsg | SubmitMsg | CancelMsg;
 
-const root = document.getElementById("vsdb-root") as HTMLDivElement;
+const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 let lastName = "";
 let lastErrors: string[] = [];
 let lastSql = "—";
@@ -61,11 +61,11 @@ function el<K extends keyof HTMLElementTagNameMap>(
 function render(): void {
   root.innerHTML = "";
 
-  const header = el("div", { className: "vsdb-form-header" });
+  const header = el("div", { className: "UnicDB-form-header" });
   header.appendChild(el("h2", { text: "Create New Schema" }));
   root.appendChild(header);
 
-  const fieldRow = el("div", { className: "vsdb-form-row" });
+  const fieldRow = el("div", { className: "UnicDB-form-row" });
   fieldRow.appendChild(el("label", { text: "Name" }));
   const input = el("input", {
     id: "schemaName",
@@ -86,21 +86,21 @@ function render(): void {
   const pre = el("pre", { id: "sql-preview", text: lastSql }) as HTMLPreElement;
   root.appendChild(pre);
 
-  const errorsBox = el("div", { id: "vsdb-errors", className: "vsdb-form-errors" });
+  const errorsBox = el("div", { id: "UnicDB-errors", className: "UnicDB-form-errors" });
   for (const e of lastErrors) {
-    const item = el("div", { className: "vsdb-form-error", text: e });
+    const item = el("div", { className: "UnicDB-form-error", text: e });
     errorsBox.appendChild(item);
   }
   root.appendChild(errorsBox);
 
-  const actions = el("div", { className: "vsdb-form-actions" });
-  const ok = el("button", { id: "vsdb-ok", text: "OK" }) as HTMLButtonElement;
+  const actions = el("div", { className: "UnicDB-form-actions" });
+  const ok = el("button", { id: "UnicDB-ok", text: "OK" }) as HTMLButtonElement;
   ok.disabled = !okEnabled;
   ok.addEventListener("click", () => {
     post({ type: "submit", name: lastName });
   });
   actions.appendChild(ok);
-  const cancel = el("button", { id: "vsdb-cancel", text: "Cancel" }) as HTMLButtonElement;
+  const cancel = el("button", { id: "UnicDB-cancel", text: "Cancel" }) as HTMLButtonElement;
   cancel.addEventListener("click", () => {
     post({ type: "cancel" });
   });

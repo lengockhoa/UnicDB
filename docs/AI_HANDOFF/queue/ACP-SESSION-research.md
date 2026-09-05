@@ -1,6 +1,6 @@
 # ACP Session History & Resume Research — Cycle O
 
-> Generated 2026-08-24 from live `omp acp` probes (oh-my-pi 18.0.1, cwd VSDB). Complements queue/ACP-APPROVAL-research.md (Cycle M).
+> Generated 2026-08-24 from live `omp acp` probes (oh-my-pi 18.0.1, cwd UnicDB). Complements queue/ACP-APPROVAL-research.md (Cycle M).
 
 ## Verified facts (live probe evidence)
 
@@ -13,7 +13,7 @@
    - `user_message_chunk` update shape: `{ sessionUpdate, content: { type:"text", text }, messageId }`.
    - `session_info_update` shape: `{ sessionUpdate, title, updatedAt }`.
    - Bad sessionId → `-32603` `ACP session not found: <id>`.
-4. **Resume works end-to-end**: after `session/load`, `session/prompt` on the same sessionId completed with `stopReason: "end_turn"` (probe replied "OK-VSDB"). Continuation uses the loaded context.
+4. **Resume works end-to-end**: after `session/load`, `session/prompt` on the same sessionId completed with `stopReason: "end_turn"` (probe replied "OK-UnicDB"). Continuation uses the loaded context.
 5. `session/fork`, `session/cancel`, `session/close` exist in installed schema; NOT probed this cycle — do not use without evidence.
 
 ## Architecture decision (input to plan)

@@ -20,7 +20,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-interface VsdbApi {
+interface UnicDBApi {
   postMessage: (msg: unknown) => void;
 }
 
@@ -38,14 +38,14 @@ function loadBundle(): BundleHandle {
     );
   }
   document.body.innerHTML =
-    '<div id="vsdb-root" class="vsdb-form-body"><div class="vsdb-form-loading">Loading…</div></div>';
+    '<div id="UnicDB-root" class="UnicDB-form-body"><div class="UnicDB-form-loading">Loading…</div></div>';
   const received: Array<Record<string, unknown>> = [];
-  const api: VsdbApi = {
+  const api: UnicDBApi = {
     postMessage: (msg) => {
       received.push(msg as Record<string, unknown>);
     },
   };
-  (globalThis as unknown as { acquireVsCodeApi: () => VsdbApi }).acquireVsCodeApi =
+  (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
   (0, eval)(bundleSrc);
   return { received };
@@ -99,7 +99,7 @@ function baseExisting(manualCommit?: boolean): Record<string, unknown> {
 describeIfBundle("webview/connectionFormMain.ts bundle — manualCommit (TASK-001)", () => {
   it("#1 checked add-form Save posts {type:'submit', manualCommit:true}", () => {
     const { received } = loadBundle();
-    const root = document.getElementById("vsdb-root") as HTMLElement;
+    const root = document.getElementById("UnicDB-root") as HTMLElement;
     // The form visibly renders the checkbox control.
     const box = root.querySelector<HTMLInputElement>("#manualCommit");
     expect(box).not.toBeNull();
