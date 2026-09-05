@@ -77,6 +77,11 @@ function packageJsonDepsDiff(ref: string): string {
     if (line.startsWith("+++ ") || line.startsWith("--- ")) continue;
     if (
       /^[+-]\s+"version":\s+"[^"]+",?\s*$/.test(line) ||
+      // PUBLISH-01: publishing wrapper scripts (publish:patch|minor|major) are
+      // additive and live next to "package" — they are release plumbing, not
+      // a package manifest surface change. Skip them so frozen-surface guards
+      // don't flag legitimate release-tooling additions.
+      /^[+-]\s+"publish:[a-z]+":\s+".*",?\s*$/.test(line) ||
       contributesKeyPattern.test(line) ||
       contributesMenuKeyPattern.test(line) ||
       onCommandLinePattern.test(line) ||

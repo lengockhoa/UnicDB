@@ -172,6 +172,9 @@ function packageJsonDepsDiff(ref: string): string {
       }
       if (
         /^[+-]\s+"version":\s+"[^"]+",?\s*$/.test(line) ||
+        // PUBLISH-01: publishing wrapper scripts (publish:patch|minor|major)
+        // are additive release plumbing, not a package manifest surface change.
+        /^[+-]\s+"publish:[a-z]+":\s+".*",?\s*$/.test(line) ||
         contributesKeyPattern.test(line) ||
         contributesMenuKeyPattern.test(line) ||
         onCommandLinePattern.test(line) ||
@@ -195,6 +198,9 @@ function packageJsonDepsDiff(ref: string): string {
       }
       if (
         /^[+-]\s+"version":\s+"[^"]+",?\s*$/.test(line) ||
+        // PUBLISH-01: publishing wrapper scripts (publish:patch|minor|major)
+        // are additive release plumbing, not a package manifest surface change.
+        /^[+-]\s+"publish:[a-z]+":\s+".*",?\s*$/.test(line) ||
         contributesKeyPattern.test(line) ||
         contributesMenuKeyPattern.test(line) ||
         onCommandLinePattern.test(line) ||
@@ -441,6 +447,9 @@ describe("TASK-UX1-006 — packageJsonDepsDiff filter extension (R8a)", () => {
       if (insideBlock[i]) continue;
       if (
         /^[+-]\s+"version":\s+"[^"]+",?\s*$/.test(line) ||
+        // PUBLISH-01: publishing wrapper scripts (publish:patch|minor|major)
+        // are additive release plumbing, not a package manifest surface change.
+        /^[+-]\s+"publish:[a-z]+":\s+".*",?\s*$/.test(line) ||
         contributesKeyPattern.test(line) ||
         contributesMenuKeyPattern.test(line) ||
         onCommandLinePattern.test(line) ||

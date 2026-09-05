@@ -127,20 +127,51 @@ Then tell the user to re-run the one-liner and reload the VS Code window
 (`Cmd/Ctrl+Shift+P → Developer: Reload Window`). Merged-to-main without a release =
 not shipped.
 
-## Publishing — OUT OF SCOPE
+## Publishing — to VS Code Marketplace
 
-Publishing to the VS Code Marketplace is a separate step that requires a
-Personal Access Token and is intentionally not part of this release flow.
-To publish later:
+There are two paths. Pick one per release.
+
+### Path 1 (recommended) — push the tag, CI does the rest
+
+`.github/workflows/publish.yml` is triggered by `push` of any `v*` tag.
+The workflow runs `npm run verify:release` (same gate as `scripts/build.sh`)
+and then `npx vsce publish` using the `VSCE_PAT` secret.
+
+**One-time setup** (in the GitHub repo UI):
+
+1. Create a Personal Access Token at https://dev.azure.com/[your-org]/_usersSettings/tokens
+   with scope **Marketplace → Manage**.
+2. Go to repo → **Settings → Secrets and variables → Actions → New repository secret**.
+3. Name: `VSCE_PAT`, value: the token from step 1.
+
+**Per-release** (after the GitHub Release is created in step 6 above):
 
 ```bash
-# Requires $VSCE_PAT (Marketplace PAT) and a verified publisher.
-npm run vsce-publish    # NOT a real script — run `vsce publish` directly:
-npx vsce publish
+git tag v<version>             # tag already pushed alongside main above
+git push origin v<version>     # triggers .github/workflows/publish.yml
 ```
 
-This document does not script publishing because the Marketplace PAT must
-not live in the repository.
+The Marketplace listing (`lengockhoa.vsdb`) updates within ~5–10 minutes.
+Use **Actions → Publish to VS Code Marketplace → Run workflow** to retry a
+failed run without re-pushing the tag.
+
+### Path 2 — manual publish from a dev machine
+
+Use this when CI is unavailable or you want to publish without tagging.
+
+```bash
+export VSCE_PAT="<marketplace-pat>"
+npm run publish:patch          # or :minor / :major
+```
+
+`publish:patch|minor|major` are thin wrappers around `vsce publish <bump>`
+defined in `package.json`. They bump `package.json` + `package-lock.json`
+automatically — re-run `npm install --package-lock-only` if the lockfile
+needs resyncing, then commit before pushing the tag.
+
+This document does not commit the Marketplace PAT to the repository — the
+PAT lives in `VSCE_PAT` (env var on a dev machine) or as a GitHub Actions
+secret (Path 1).
 
 ## Versioning policy
 

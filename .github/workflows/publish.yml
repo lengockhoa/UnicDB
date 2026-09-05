@@ -1,0 +1,31 @@
+name: Publish to VS Code Marketplace
+# Triggered when a maintainer pushes a `v*` tag (e.g. v1.51.5). `workflow_dispatch`
+# lets a maintainer re-run the publish manually if a previous run failed.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      # Same gate as scripts/build.sh — typecheck + tests + compile must pass before
+      # we publish. A green build is the prerequisite; if this step fails, no
+      # marketplace write happens.
+      - name: Verify (typecheck + tests + compile)
+        run: npm run verify:release
+      - name: Publish to VS Code Marketplace
+        # `vsce publish` reads `version` from package.json automatically; no need
+        # to pass it. PAT is read from the `VSCE_PAT` secret in repo settings.
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish -p "$VSCE_PAT"

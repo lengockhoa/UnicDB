@@ -214,8 +214,16 @@ Release (the orchestrator handles this after review):
 
 1. Create Git tag `v<version>`.
 2. Push the tag to `origin/main`.
-3. GitHub Actions / orchestrator publishes a GitHub Release with the `.vsix` file attached.
-4. The team re-runs the install one-liner → automatically picks up the latest version.
+3. GitHub Actions publishes a GitHub Release with the `.vsix` file attached.
+4. **Marketplace auto-publish**: `.github/workflows/publish.yml` is triggered by
+   the tag push and publishes to the VS Code Marketplace via the `VSCE_PAT`
+   secret. Users with the extension installed get the update within ~5–10
+   minutes (no reinstall needed).
+5. The team re-runs the install one-liner → automatically picks up the latest
+   version.
+
+> Manual publish fallback: `npm run publish:patch` (or `:minor` / `:major`)
+> with `$VSCE_PAT` set locally. See `docs/RELEASE.md` §Publishing.
 
 ---
 
