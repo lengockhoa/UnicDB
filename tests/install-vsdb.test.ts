@@ -18,7 +18,14 @@ function runScript(args: string[], envOverrides: Record<string, string> = {}) {
   });
 }
 
-describe("install-vsdb.sh — CLI detection", () => {
+// CLI-detection tests rely on macOS-specific code CLI fallback paths and
+// the absence of `code` on PATH. Skip on non-darwin platforms (Linux CI,
+// Windows) where the assertions become platform-incompatible.
+// Use describe.skip (vitest 1.x) instead of describe.skipIf (vitest 2.x).
+const isMacDev = process.platform === "darwin";
+const platformDescribe = isMacDev ? describe : describe.skip;
+
+platformDescribe("install-vsdb.sh — CLI detection", () => {
   it("Test #1: --dry-run detects PATH code first", () => {
     // Create a fake `code` binary on PATH
     const fakeBin = path.resolve(__dirname, ".fake-bin");
