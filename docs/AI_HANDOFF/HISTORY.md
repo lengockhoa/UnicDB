@@ -12,3 +12,6 @@
 | 2026-08-31-A | 2026-08-31 | DBX-05 Connection Workspace + AIX-02 Safe File Operations — released v1.20.0, v1.21.0 (unic-smart APPROVED both) |
 | 2026-08-22-A | 2026-08-22 | AG Grid Community migration (5 tasks) — fixed empty-grid/scroll/cancel bugs, released v1.3.0 |
 | Cycle R | 2026-08-24 | AI overhaul + Grid Excel-ification (9 tasks) — no-PK ctid save fix (later superseded by Cycle S lazy-ctid), dirty highlight, undo/redo, requery alignment |
+
+## UX3 — 2026-09-05 (v1.51.4, locally shipped; R5 close-out)
+- 3 tasks: webview close affordances + host state methods + message wiring. 4 commits (`bf9e6e6`, `d7c7050`, `4dc28e8`, `0e424a4`). 24 tests (+24 over baseline). R2 review: 3/3 critical_block → R4.5 R1 → 3/3 approved_minor. Frozen surface: UX1/UX2/BQ cycles byte-identical. Per-index cache rebase closes data-loss risk in save-edits post-close.
