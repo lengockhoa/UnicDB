@@ -1049,7 +1049,7 @@ export async function activate(
       commandOpenHelpGrid(disposables),
     ),
   );
-  // TASK-UX1-004 (R2) — open docs/UnicDB_USER_GUIDE.md in VS Code's
+  // TASK-UX1-004 (R2) — open docs/UNICDB_USER_GUIDE.md in VS Code's
   // Markdown preview. Path is resolved against context.extensionUri
   // (NEVER process.cwd()) so it works in both dev and packaged installs.
   //
@@ -1059,12 +1059,17 @@ export async function activate(
   // checkout, or a custom .vsix that re-excluded docs/), we fall back to
   // opening the canonical GitHub URL in the user's browser so they always
   // land on a readable guide rather than seeing nothing.
+  //
+  // NOTE: filename is UNICDB_USER_GUIDE.md (all-caps prefix) — case is
+  // significant because vsce's glob only honours case-sensitive paths on
+  // Linux/Windows. Using "UnicDB_USER_GUIDE.md" silently fails the allow-
+  // list and the file never lands in the .vsix.
   disposables.push(
     vscode.commands.registerCommand("UnicDB.openUserGuide", async () => {
       const guideUri = vscode.Uri.joinPath(
         context.extensionUri,
         "docs",
-        "UnicDB_USER_GUIDE.md",
+        "UNICDB_USER_GUIDE.md",
       );
       const guideExists = await safeFileExists(guideUri);
       if (guideExists) {
@@ -1081,12 +1086,12 @@ export async function activate(
       // Fallback: open the canonical GitHub URL so the user always gets
       // the guide instead of a useless absolute-path toast.
       const githubUrl = vscode.Uri.parse(
-        "https://github.com/lengockhoa/UnicDB/blob/main/docs/UnicDB_USER_GUIDE.md",
+        "https://github.com/lengockhoa/UnicDB/blob/main/docs/UNICDB_USER_GUIDE.md",
       );
       const opened = await vscode.env.openExternal(githubUrl);
       if (!opened) {
         void vscode.window.showInformationMessage(
-          "UnicDB user guide: https://github.com/lengockhoa/UnicDB/blob/main/docs/UnicDB_USER_GUIDE.md",
+          "UnicDB user guide: https://github.com/lengockhoa/UnicDB/blob/main/docs/UNICDB_USER_GUIDE.md",
         );
       }
     }),

@@ -5472,9 +5472,15 @@ describe("TASK-UX1-002 — SQL Generator on View / Routine nodes", () => {
 });
 void detectOmpState;
 
-// TASK-UX1-004 (R2) — UnicDB.openUserGuide opens docs/UnicDB_USER_GUIDE.md
+// TASK-UX1-004 (R2) — UnicDB.openUserGuide opens docs/UNICDB_USER_GUIDE.md
 // in markdown preview. Re-creates the file lost during the W4 merge
-// (orchestrator cleanup wiped untracked files).
+// (orchestrator cleanup wiped untracked files). NOTE: filename case is
+// significant — vsce's .vscodeignore glob is case-sensitive on Linux/Windows
+// (the Marketplace CI runs on ubuntu-latest), and case mismatches between
+// the allow-list and the .md on disk silently drop the file from the .vsix.
+// Historical case `docs/UnicDB_USER_GUIDE.md` (mixed-case UnicDB prefix) was
+// a `.vscodeignore`/`src/extension.ts` typo that caused the User Guide icon
+// to fall back to the GitHub URL even though a guide file existed.
 describe("TASK-UX1-004 — UnicDB.openUserGuide", () => {
   let executeSpy: ReturnType<typeof vi.fn>;
   let infoSpy: ReturnType<typeof vi.fn>;
@@ -5515,7 +5521,7 @@ describe("TASK-UX1-004 — UnicDB.openUserGuide", () => {
     expect(executeSpy).toHaveBeenCalledWith(
       "markdown.showPreview",
       expect.objectContaining({
-        path: expect.stringMatching(/UnicDB_USER_GUIDE\.md$/),
+        path: expect.stringMatching(/UNICDB_USER_GUIDE\.md$/),
       }),
     );
   });
@@ -5548,7 +5554,7 @@ describe("TASK-UX1-004 — UnicDB.openUserGuide", () => {
     // the fallback URL will be caught.
     const passedUri = envMock.openExternal.mock.calls[0][0] as { toString(): string };
     expect(passedUri.toString()).toBe(
-      "https://github.com/lengockhoa/UnicDB/blob/main/docs/UnicDB_USER_GUIDE.md",
+      "https://github.com/lengockhoa/UnicDB/blob/main/docs/UNICDB_USER_GUIDE.md",
     );
     // markdown.showPreview must NOT be called when the file is missing.
     expect(executeSpy).not.toHaveBeenCalled();
@@ -5615,7 +5621,7 @@ describe("TASK-UX1-004 — UnicDB.openUserGuide", () => {
     expect(executeSpy).toHaveBeenCalledWith(
       "markdown.showPreview",
       expect.objectContaining({
-        path: expect.stringMatching(/UnicDB_USER_GUIDE\.md$/),
+        path: expect.stringMatching(/UNICDB_USER_GUIDE\.md$/),
       }),
     );
     const envMock = (vscodeMock as unknown as {
@@ -5624,14 +5630,17 @@ describe("TASK-UX1-004 — UnicDB.openUserGuide", () => {
     expect(envMock.openExternal).not.toHaveBeenCalled();
   });
 
-  it("#8 .vscodeignore allow-lists docs/UnicDB_USER_GUIDE.md so it ships in the .vsix", () => {
+  it("#8 .vscodeignore allow-lists docs/UNICDB_USER_GUIDE.md so it ships in the .vsix", () => {
     // Regression guard: a future edit to .vscodeignore that re-excludes the
     // guide will break the Schema Explorer 📖 icon for installed users.
+    // Filename case must EXACTLY match the on-disk entry — vsce's
+    // .vscodeignore is case-sensitive on Linux/Windows (Marketplace CI
+    // runs on ubuntu-latest).
     const ignore = require("node:fs").readFileSync(
       require("node:path").resolve(process.cwd(), ".vscodeignore"),
       "utf8",
     );
     expect(ignore).toMatch(/^docs\/\*\*/m); // base exclusion still in place
-    expect(ignore).toMatch(/^!docs\/UnicDB_USER_GUIDE\.md/m); // allow-rule present
+    expect(ignore).toMatch(/^!docs\/UNICDB_USER_GUIDE\.md/m); // allow-rule present
   });
 });

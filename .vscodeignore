@@ -11,7 +11,9 @@ node_modules/**
 # Allow the User Guide to ship in the .vsix so the Schema Explorer 📖 icon
 # (UnicDB.openUserGuide → markdown.showPreview) works for installed users.
 # Everything else under docs/ stays excluded (it's repo-internal cycle docs).
-!docs/UnicDB_USER_GUIDE.md
+# NOTE: filename is case-sensitive — must match the on-disk entry as it
+# appears on Linux/Windows (the Marketplace CI runs on ubuntu-latest).
+!docs/UNICDB_USER_GUIDE.md
 .esbuild.js.swp
 *.tsbuildinfo
 
