@@ -15,3 +15,6 @@
 
 ## UX3 — 2026-09-05 (v1.51.4, locally shipped; R5 close-out)
 - 3 tasks: webview close affordances + host state methods + message wiring. 4 commits (`bf9e6e6`, `d7c7050`, `4dc28e8`, `0e424a4`). 24 tests (+24 over baseline). R2 review: 3/3 critical_block → R4.5 R1 → 3/3 approved_minor. Frozen surface: UX1/UX2/BQ cycles byte-identical. Per-index cache rebase closes data-loss risk in save-edits post-close.
+
+## BQ-FOLLOWUP — 2026-09-05 (v1.51.5, locally shipped; R5 close-out)
+- 3 tasks + 1 guard: TASK-BQF-001 pageSize plumbing (clampPageSize [1,10000] + thread through fetcher + adapter + QueryRunner + extension), TASK-BQF-002 useLegacySql UI toggle plumbing (gate rejects legacy SQL with explicit reason; createQueryJob seam honored), TASK-BQF-003 locale-aware temporal formatting in formatBigQueryCell (Intl.DateTimeFormat, BigQuerySchemaFieldLike local alias, verbatim fallback on parse failure), BQF-GUARD frozen-surface guard. 2 commits (`5119ebd`, `62b11c6`). 32 tests (+32 over UX3 baseline 3579). BQ-04 guard base ref advanced 75cdb08 → 8f7e8b4 with runQuery-hunk filter for additive types.ts widening. Frozen surface: BQ-00 + BQ-01 + BQ-02 + BQ-03 + BQ-04 byte-identical vs 8f7e8b4; UX1 + UX2 + UX3 byte-identical.
