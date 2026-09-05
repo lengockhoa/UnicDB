@@ -12,6 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Frozen-surface guards (bq04 / bqf) diff vs base commits like
+          # 8f7e8b4. Default fetch-depth=1 would drop that history. Pin 0
+          # (full history) so the diff has refs to resolve.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -21,8 +26,14 @@ jobs:
       # Same gate as scripts/build.sh — typecheck + tests + compile must pass before
       # we publish. A green build is the prerequisite; if this step fails, no
       # marketplace write happens.
-      - name: Verify (typecheck + tests + compile)
-        run: npm run verify:release
+      # Mirror scripts/build.sh: compile BEFORE tests. Some extension
+      # tests (TASK-003 #9) do an `fs.existsSync(dist/schemaForm.js)` at
+      # module-init time — running compile first lets that pass; running
+      # tests first would spuriously fail.
+      - name: Compile
+        run: npm run compile
+      - name: Typecheck + tests
+        run: npm test && npm run typecheck
       - name: Publish to VS Code Marketplace
         # `vsce publish` reads `version` from package.json automatically; no need
         # to pass it. PAT is read from the `VSCE_PAT` secret in repo settings.
