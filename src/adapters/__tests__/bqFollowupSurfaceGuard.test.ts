@@ -27,8 +27,8 @@
 //   - BQ-04: results panel + runStatements copy-safe header + GoogleSQL
 //            surface — unchanged.
 //
-// We assert frozen surfaces are byte-identical relative to the v1.51.4
-// release commit (8f7e8b4) — the base BEFORE BQ-FOLLOWUP work began.
+// We assert frozen surfaces are byte-identical relative to the v1.51.5
+// release commit (6f3fcc0) — the base BEFORE PUBLISH-02 rename work began.
 //
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
@@ -36,7 +36,7 @@ import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
-const BASE_REF = "8f7e8b4"; // v1.51.4 — UX3 R5 close-out (pre-BQF base).
+const BASE_REF = "6f3fcc0"; // v1.51.5 R5 — PUBLISH-01 close-out (pre-PUBLISH-02 base).
 
 function gitDiff(ref: string, paths: readonly string[]): string {
   const quoted = paths.map((p) => `"${p}"`).join(" ");

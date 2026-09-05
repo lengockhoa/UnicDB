@@ -33,11 +33,11 @@ const REPO_ROOT = resolve(__dirname, "..", "..", "..");
 // Each subsequent BQ cycle is responsible for advancing this base ref
 // AFTER its own R5 release commit so the guard fires only against drift
 // introduced between that release and HEAD. The current base is the
-// v1.51.4 R5 commit (UX3 R5 close-out); BQ-FOLLOWUP cycle adds INTENDED
+// v1.51.5 R5 commit (PUBLISH-01 close-out); PUBLISH-02 cycle adds INTENDED
 // additive opts to `DbAdapter.runQuery` (TASK-BQF-001 / TASK-BQF-002)
 // and is tracked by the new `bqFollowupSurfaceGuard.test.ts` guard at
-// base `8f7e8b4`.
-const BASE_REF = "8f7e8b4";
+// base `6f3fcc0`.
+const BASE_REF = "6f3fcc0";
 
 function gitDiff(ref: string, paths: readonly string[]): string {
   // `git -C <repoRoot>` makes the call independent of the harness cwd.
