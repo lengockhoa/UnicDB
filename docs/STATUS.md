@@ -1,13 +1,14 @@
 # UnicDB Status
 
 - Last meaningful update: 2026-09-06
-- Updated by: Claude (PUBLISH-02 close-out)
+- Updated by: Claude (post-rename folder cleanup)
 - Status confidence: high
 
 ## Current state
 
-- HEAD: `ae5c6c3` (main, in sync with origin/main; tag `v1.51.5` ships UnicDB to Marketplace)
+- HEAD: `4d52360` (main, in sync with origin/main; tag `v1.51.5` ships UnicDB to Marketplace)
 - Latest release: **v1.51.5** — live at https://marketplace.visualstudio.com/items?itemName=lengockhoa.UnicDB as **UnicDB — Run SQL from VS Code** (publisher `lengockhoa`, manifest name `UnicDB`, icon `media/icon.png`)
+- **Post-rename folder cleanup (2026-09-06):** user moved the project folder `VSDB → UnicDB`. Git internals already aligned (remote → `https://github.com/lengockhoa/UnicDB.git`, rename commit `6f3fcc0`, HEAD == origin/main == `4d52360`). Cleaned up 7 stale `git worktree` entries (all `prunable`, pointing to the old `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.claude/worktrees/` path) via `git worktree prune -v`, and removed 33 leftover `vsdb-*.vsix` build artifacts from the repo root (~65MB), keeping only `UnicDB-1.51.5.vsix`. Working tree clean; `npm run typecheck` exit 0.
 - **PUBLISH-02 cycle shipped (3 commits):** rename extension `vsdb` → `UnicDB` (Marketplace name conflict — `vsdb` owned by `bigfish`); full sweep across source (54 commands + 44 activation events), webview, tests, scripts, syntax, icon, and docs/AI_HANDOFF/archive; renamed files via `git mv` so git log preserves rename trail. CI publish run `33983643950` green; `Publishing 'lengockhoa.UnicDB v1.51.5'...` accepted by Marketplace.
 - **PUBLISH-02 case-fix follow-up (1 commit `ae5c6c3`):** `.vscodeignore` allow-list was `!docs/UnicDB_USER_GUIDE.md` (mixed-case UnicDB prefix) but on-disk file is `docs/UNICDB_USER_GUIDE.md` (uppercase UNICDB prefix). vsce's `.vscodeignore` is case-sensitive on Linux/Windows (Marketplace CI runs on ubuntu-latest), so the case mismatch silently dropped the User Guide from the packaged .vsix — the Schema Explorer 📖 icon would have kept falling back to the GitHub URL even though the file existed in the repo. macOS dev (case-insensitive HFS+/APFS) masked the bug because both forms resolved to the same inode. Fix: align `.vscodeignore`, `src/extension.ts` (`guideUri` + `githubUrl` + info message), test fixtures at `src/extension.test.ts:5518,5551,5618`, and `src/ui/__tests__/userGuideContent.test.ts:9-13` to `UNICDB_USER_GUIDE.md`. `unzip -l UnicDB-1.51.5.vsix | grep docs` now lists `extension/docs/UNICDB_USER_GUIDE.md [5.89 KB]`.
 - Suite baseline: **3613 passed | 2 skipped** (no regressions; same as PUBLISH-01); typecheck + compile exit 0.

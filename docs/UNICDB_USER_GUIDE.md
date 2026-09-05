@@ -3,7 +3,7 @@
 > Hướng dẫn toàn bộ các dùng bộ UnicDB — VS Code extension cho PostgreSQL /
 > MySQL / MSSQL / BigQuery.
 
-## Cài đặt & `ukit install`
+## Cài đặt
 
 Cài đặt UnicDB vào VS Code:
 
