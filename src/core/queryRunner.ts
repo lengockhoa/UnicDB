@@ -268,7 +268,7 @@ export class QueryRunner {
   async run(
     statements: ParsedStatement[],
     onUpdate: (results: StatementResult[]) => void,
-    opts: { append?: boolean } = {},
+    opts: { append?: boolean; useLegacySql?: boolean; pageSize?: number } = {},
   ): Promise<StatementResult[]> {
     if (this.running) {
       throw new Error("QueryRunner is already running");
@@ -276,6 +276,9 @@ export class QueryRunner {
     const append = opts.append === true;
     const base = append ? this.results.length : 0;
     const runNo = ++this.runCount;
+    // TASK-BQF-001 / TASK-BQF-002 — capture per-run opts for the inner loop.
+    const runPageSize = opts.pageSize;
+    const runUseLegacySql = opts.useLegacySql;
     // TASK-UX2-003 — cache the onUpdate callback so `runFailed(reason)`
     // can fire the same emit path the panel listens to.
     this.lastOnUpdate = onUpdate;
@@ -321,7 +324,14 @@ export class QueryRunner {
     this.results = append ? [...this.results, ...nextResults] : nextResults;
     onUpdate(this.results.slice());
 
-    const runPromise = this.executeAll(statements, onUpdate, base, append);
+    const runPromise = this.executeAll(
+      statements,
+      onUpdate,
+      base,
+      append,
+      runPageSize,
+      runUseLegacySql,
+    );
     this.running = runPromise;
     try {
       await runPromise;
@@ -346,6 +356,8 @@ export class QueryRunner {
     onUpdate: (results: StatementResult[]) => void,
     base: number,
     append: boolean,
+    runPageSize: number | undefined,
+    runUseLegacySql: boolean | undefined,
   ): Promise<void> {
     const adapter = await this.adapterProvider();
 
@@ -365,7 +377,17 @@ export class QueryRunner {
         // TASK-RLX-001 — PID window MỞ: giữ adapter reference chỉ trong lúc
         // runQuery in-flight để cancel() có thể gọi cancelActiveQuery().
         this.activeAdapter = adapter;
-        const runResult: RunResult = await adapter.runQuery(statements[i].text);
+        // TASK-BQF-001 / TASK-BQF-002 — thread `pageSize` (BQ getQueryResults
+        // maxResults) + `useLegacySql` (BQ GoogleSQL vs legacy SQL) opts.
+        // Adapters that don't recognize these opts ignore them; Pg / Mssql /
+        // MySql paths are byte-identical.
+        const adapterOpts: { pageSize?: number; useLegacySql?: boolean } = {};
+        if (runPageSize !== undefined) adapterOpts.pageSize = runPageSize;
+        if (runUseLegacySql !== undefined) adapterOpts.useLegacySql = runUseLegacySql;
+        const runResult: RunResult = await adapter.runQuery(
+          statements[i].text,
+          adapterOpts,
+        );
         // PID window ĐÓNG: statement đã settle (kể cả khi cancel đã được
         // yêu cầu trong lúc chờ) — cancel() sau điểm này là no-op.
         this.activeAdapter = null;

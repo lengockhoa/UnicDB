@@ -105,7 +105,19 @@ export interface DbTransaction {
 export interface DbAdapter {
   connect(): Promise<void>;
   close(): Promise<void>;
-  runQuery(sql: string): Promise<RunResult>;
+  /**
+   * TASK-BQF-001 / TASK-BQF-002 — optional second arg carries per-statement
+   * options:
+   *   - `pageSize?: number` — BQ `getQueryResults.maxResults` clamp [1,10000].
+   *   - `useLegacySql?: boolean` — BQ GoogleSQL (default false) vs legacy SQL.
+   * Adapters that don't recognize these opts ignore them (Postgres / Mssql /
+   * MySql paths are byte-identical for the absent case). The BQ adapter
+   * (src/adapters/bigquery.ts) is the only consumer that threads them through.
+   */
+  runQuery(
+    sql: string,
+    opts?: { pageSize?: number; useLegacySql?: boolean },
+  ): Promise<RunResult>;
   /**
    * TASK-RLX-001 — best-effort cancel của operation non-cursor đang chạy
    * (statement mà QueryRunner.run() đang chờ qua runQuery). Optional:

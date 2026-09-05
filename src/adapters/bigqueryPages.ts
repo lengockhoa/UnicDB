@@ -33,7 +33,6 @@ import {
   toBigQueryPage,
   type BigQueryPage,
   type BigQueryRawQueryResponse,
-  type BigQuerySchemaField,
   type BigQueryValue,
 } from "./bigqueryTypes";
 
@@ -257,8 +256,11 @@ export function createBigQueryPageFetcher(
  *
  *   - INT64 / NUMERIC / BIGNUMERIC branded strings → canonical string (NO
  *     `Number()` coercion, no scientific notation, no rounding).
- *   - STRING / DATE / TIME / TIMESTAMP / DATETIME / JSON → raw text verbatim.
- *   - BYTES → base64 text verbatim (no decode).
+ *   - STRING / JSON / BYTES → raw text verbatim.
+ *   - DATE / DATETIME / TIME / TIMESTAMP → raw text verbatim when no `field`
+ *     context is provided. When `field.type` matches a temporal BQ type AND
+ *     `field.locale` is set, format via `Intl.DateTimeFormat` (TASK-BQF-003).
+ *     Invalid temporal strings fall back to verbatim.
  *   - BOOLEAN → "true" / "false".
  *   - FLOAT64 (branded `number`) → standard numeric string.
  *   - null → "" (agreed empty marker).
@@ -268,17 +270,157 @@ export function createBigQueryPageFetcher(
  *     order preserved; INT64 children stay strings.
  *
  * The `field` argument is optional context (schema column descriptor). It is
- * currently unused for STRING/NUMERIC-family — those branches are decided by
- * the value's brand, not by the field. Reserved for future schema-aware
- * rendering (e.g. locale-formatted temporal types).
+ * currently used only for the locale-aware temporal branch (TASK-BQF-003);
+ * other branches are decided by the value's brand, not by the field.
+ *
+ * TASK-BQF-003 widening: the parameter type is a local `BigQuerySchemaFieldLike`
+ * structural alias (rather than the frozen `BigQuerySchemaField`) so we can
+ * carry an optional `locale` without editing the frozen `bigqueryTypes.ts`.
+ * `BigQuerySchemaField` remains structurally assignable to this alias
+ * (every key is optional), so callers using the frozen type keep working.
  *
  * Per PLAN.md §2 Out of scope, this helper is NOT wired into the results grid
  * in this cycle (BQ-04 or later). RECORD/REPEATED keep the existing
  * `ResultsPanel` rendering. The function ships tested + exported.
  */
+
+// ---------------------------------------------------------------------------
+// TASK-BQF-003 — locale-aware temporal formatting
+// ---------------------------------------------------------------------------
+
+/**
+ * Temporal BQ types this branch recognizes. The list mirrors the BQ wire
+ * shape: DATE = `YYYY-MM-DD`, TIME = `HH:MM:SS[.fff]`,
+ * DATETIME = `YYYY-MM-DD HH:MM:SS[.fff]`,
+ * TIMESTAMP = `YYYY-MM-DD HH:MM:SS[.fff] [timezone]`.
+ *
+ * Anything not in this set falls through to the verbatim string branch —
+ * we do NOT try to coerce arbitrary strings into dates.
+ */
+const TEMPORAL_TYPES = new Set(["DATE", "TIME", "DATETIME", "TIMESTAMP"]);
+
+/**
+ * Build a `Date` from a BQ temporal wire string. Returns `undefined` when the
+ * string is empty or unparseable, so the caller can fall back to verbatim.
+ *
+ * Behavior:
+ *   - DATE `2024-09-05`                    → parsed as UTC midnight.
+ *   - TIME `12:34:56`                      → synthesized as today + time UTC,
+ *                                            so Intl.DateTimeFormat can render
+ *                                            a time-of-day consistently.
+ *   - DATETIME `2024-09-05 12:34:56`       → parsed as UTC.
+ *   - TIMESTAMP `2024-09-05T12:34:56Z`     → parsed via `new Date(...)` so the
+ *                                            ISO-8601 timezone offset is honored.
+ *
+ * The TIME branch is intentionally narrow: `new Date("12:34:56")` returns an
+ * `Invalid Date`, so we synthesize a UTC anchor. `Intl.DateTimeFormat` with
+ * `hour` / `minute` / `second` renders the time-of-day correctly even though
+ * the anchor date is not the user's local date.
+ */
+function parseBqTemporal(type: string, value: string): Date | undefined {
+  if (!value) return undefined;
+  if (type === "DATE") {
+    // YYYY-MM-DD → Date(UTC midnight).
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!m) return undefined;
+    const [, y, mo, d] = m;
+    const dt = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d)));
+    return Number.isNaN(dt.getTime()) ? undefined : dt;
+  }
+  if (type === "TIME") {
+    // HH:MM:SS[.fff] → synthesize today UTC at that time-of-day.
+    const m = /^(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?$/.exec(value);
+    if (!m) return undefined;
+    const [, hh, mm, ss, frac] = m;
+    const ms = frac ? Number(`0.${frac}`) * 1000 : 0;
+    const dt = new Date(Date.UTC(1970, 0, 1, Number(hh), Number(mm), Number(ss), Math.round(ms)));
+    return Number.isNaN(dt.getTime()) ? undefined : dt;
+  }
+  if (type === "DATETIME") {
+    // YYYY-MM-DD HH:MM:SS[.fff] (no offset) → parsed as UTC.
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?$/.exec(value);
+    if (!m) return undefined;
+    const [, y, mo, d, hh, mm, ss, frac] = m;
+    const ms = frac ? Number(`0.${frac}`) * 1000 : 0;
+    const dt = new Date(
+      Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mm), Number(ss), Math.round(ms)),
+    );
+    return Number.isNaN(dt.getTime()) ? undefined : dt;
+  }
+  if (type === "TIMESTAMP") {
+    // ISO-8601 with offset → `new Date` honors the offset.
+    const dt = new Date(value);
+    return Number.isNaN(dt.getTime()) ? undefined : dt;
+  }
+  return undefined;
+}
+
+/**
+ * Pick the `Intl.DateTimeFormat` options that match a BQ temporal type.
+ * DATE → date only, TIME → time only, DATETIME / TIMESTAMP → both.
+ */
+function temporalFormatOptions(type: string): Intl.DateTimeFormatOptions | undefined {
+  if (type === "DATE") return { year: "numeric", month: "2-digit", day: "2-digit" };
+  if (type === "TIME") return { hour: "2-digit", minute: "2-digit", second: "2-digit" };
+  if (type === "DATETIME" || type === "TIMESTAMP") {
+    return {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    };
+  }
+  return undefined;
+}
+
+/**
+ * Format a BQ temporal string via `Intl.DateTimeFormat` (TASK-BQF-003).
+ *
+ * Returns `undefined` when the type is not temporal OR when parsing fails,
+ * so the caller can fall back to the verbatim string (the safe default).
+ *
+ * `locale` is forwarded as-is to `Intl.DateTimeFormat` — invalid tags fall
+ * back to the runtime default, which is acceptable for display purposes.
+ */
+function formatTemporalString(
+  type: string,
+  value: string,
+  locale: string,
+): string | undefined {
+  if (!TEMPORAL_TYPES.has(type)) return undefined;
+  const dt = parseBqTemporal(type, value);
+  if (!dt) return undefined;
+  const opts = temporalFormatOptions(type);
+  if (!opts) return undefined;
+  try {
+    return new Intl.DateTimeFormat(locale, opts).format(dt);
+  } catch {
+    // Invalid locale tag → Intl throws. Fall back to verbatim.
+    return undefined;
+  }
+}
+
+
+/**
+ * TASK-BQF-003 — local structural alias extending the frozen
+ * `BigQuerySchemaField` with an optional `locale` opt for locale-aware
+ * temporal formatting. The frozen type stays untouched; callers passing
+ * `BigQuerySchemaField` are still assignable (every key is optional here too).
+ */
+export interface BigQuerySchemaFieldLike {
+  name?: string;
+  type?: string;
+  mode?: string;
+  fields?: BigQuerySchemaFieldLike[];
+  /** TASK-BQF-003 — BCP-47 locale tag for `Intl.DateTimeFormat`. */
+  locale?: string;
+}
+
 export function formatBigQueryCell(
   value: BigQueryValue | null | undefined,
-  _field?: BigQuerySchemaField,
+  field?: BigQuerySchemaFieldLike,
 ): string {
   // null / undefined → empty marker.
   if (value === null || value === undefined) return "";
@@ -292,9 +434,18 @@ export function formatBigQueryCell(
   if (typeof value === "number") return String(value);
 
   // All string-typed values stay canonical — NO `Number()` coercion.
-  // INT64 / NUMERIC / BIGNUMERIC / STRING / TIME / DATE / DATETIME / TIMESTAMP
-  // / JSON / BYTES (base64) all flow through this branch verbatim.
-  if (typeof value === "string") return value;
+  // INT64 / NUMERIC / BIGNUMERIC / STRING / JSON / BYTES (base64) flow
+  // through this branch verbatim. Temporal strings (DATE / TIME / DATETIME /
+  // TIMESTAMP) ALSO flow through verbatim UNLESS the `field.locale` opt is
+  // supplied (TASK-BQF-003) — then we attempt locale-aware formatting and
+  // fall back to the raw string on parse failure.
+  if (typeof value === "string") {
+    if (field?.type && field.locale) {
+      const formatted = formatTemporalString(field.type, value, field.locale);
+      if (formatted !== undefined) return formatted;
+    }
+    return value;
+  }
 
   // REPEATED — Array<{ v: BigQueryValue }>. Compact single-line, deterministic
   // child order, recursive cell rendering.

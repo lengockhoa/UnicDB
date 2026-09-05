@@ -29,7 +29,15 @@ import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
-const BASE_REF = "75cdb08";
+// BQ-04 cycle froze the BQ-00 + BQ-01 surfaces at v1.50.0 (75cdb08).
+// Each subsequent BQ cycle is responsible for advancing this base ref
+// AFTER its own R5 release commit so the guard fires only against drift
+// introduced between that release and HEAD. The current base is the
+// v1.51.4 R5 commit (UX3 R5 close-out); BQ-FOLLOWUP cycle adds INTENDED
+// additive opts to `DbAdapter.runQuery` (TASK-BQF-001 / TASK-BQF-002)
+// and is tracked by the new `bqFollowupSurfaceGuard.test.ts` guard at
+// base `8f7e8b4`.
+const BASE_REF = "8f7e8b4";
 
 function gitDiff(ref: string, paths: readonly string[]): string {
   // `git -C <repoRoot>` makes the call independent of the harness cwd.
@@ -283,8 +291,57 @@ describe(`TASK-BQ04-003 frozen-surface guard (base ${BASE_REF})`, () => {
   });
 
   it("2. BigQueryClientLike + BatchedQuery unchanged", () => {
-    const out = gitDiff(BASE_REF, ["src/adapters/types.ts"]);
-    expect(out.trim()).toBe("");
+    // TASK-BQF-001 / TASK-BQF-002 ADDITIVELY extended `DbAdapter.runQuery`
+    // with an optional `opts?: { pageSize?: number; useLegacySql?: boolean }`
+    // parameter. The widening is structurally additive (Pg / Mssql / MySql
+    // paths are byte-identical for the absent case; BQ is the only consumer
+    // that threads through). Drop the runQuery-signature-widening hunk
+    // entirely (header + context + add + remove) before asserting the rest
+    // of `src/adapters/types.ts` is byte-identical to the base ref. This
+    // keeps the BQ-04 surface guard focused on ADAPTER-shape drift (catalog
+    // / admin / capability declarations, BigQueryClientLike, BatchedQuery)
+    // rather than catching per-cycle additive signature extensions tracked
+    // by the BQF-GUARD.
+    const raw = gitDiff(BASE_REF, ["src/adapters/types.ts"]);
+    const lines = raw.split("\n");
+    const hunkHeaderRe = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+    // Identify the runQuery widening hunk by its OLD-side removal line:
+    //   -  runQuery(sql: string): Promise<RunResult>;
+    // The hunk is bounded by the preceding `@@ -...` header and the next
+    // `@@ -...` header (or end of diff). We drop the entire hunk (header +
+    // context + add + remove lines).
+    const runQueryRemovalRe = /^\-\s+runQuery\(sql: string\):\s+Promise<RunResult>;\s*$/;
+    const dropHunkIndices = new Set<number>();
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]!;
+      if (!runQueryRemovalRe.test(line)) continue;
+      // Walk backward to find the most recent hunk header.
+      let start = i - 1;
+      while (start >= 0 && !hunkHeaderRe.test(lines[start]!)) start -= 1;
+      if (start < 0) continue;
+      // Walk forward to find the next hunk header (or end).
+      let end = i + 1;
+      while (end < lines.length && !hunkHeaderRe.test(lines[end]!)) end += 1;
+      // Drop [start, end) — i.e. the current hunk (exclusive of next hunk's
+      // header, which we leave alone).
+      for (let n = start; n < end; n++) dropHunkIndices.add(n);
+    }
+    const filtered = lines.filter((_, idx) => !dropHunkIndices.has(idx));
+    // After dropping the runQuery hunk, the remaining content should be
+    // JUST the pre-hunk file headers (`diff --git`, `index`, `---`, `+++`).
+    // If the hunk we dropped was the ONLY diff hunk in this file, those
+    // headers carry no information — the file would otherwise be byte-
+    // identical to the base ref. Drop them too so the assertion reduces
+    // to an empty string in the no-real-drift case.
+    const nonHeaderLines = filtered.filter(
+      (l) =>
+        l !== "" &&
+        !l.startsWith("diff --git ") &&
+        !l.startsWith("index ") &&
+        !l.startsWith("--- ") &&
+        !l.startsWith("+++ "),
+    );
+    expect(nonHeaderLines.join("\n").trim()).toBe("");
   });
 
   it("3. package.json dependency manifest unchanged (version bumps are allowed)", () => {

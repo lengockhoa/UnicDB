@@ -2515,6 +2515,9 @@ export async function runStatements(
   panel: ResultsPanel,
   statusBar: StatusBarWrapper,
   statements: ParsedStatement[],
+  // TASK-BQF-001 / TASK-BQF-002 — optional opts threaded into QueryRunner.run
+  // → adapter.runQuery. BQ honors them; other drivers ignore them.
+  opts: { useLegacySql?: boolean; pageSize?: number } = {},
 ): Promise<void> {
   const active = mgr.getActive();
   // TASK-606 — Confirm guard TRƯỚC mọi side-effect (kể cả busy state): cancel
@@ -2565,7 +2568,7 @@ export async function runStatements(
       if (!deactivating) {
         panel.render(runner.getResults(), header, { appendBase });
       }
-    }, { append: true });
+    }, { append: true, ...opts });
     if (!deactivating) {
       // TASK-BQ03-005 R4.5 — `runner.run(..., { append: true })` returns the
       // FULL accumulated array (queryRunner.ts:281 — `return this.results.slice()`),
