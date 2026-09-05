@@ -7,6 +7,11 @@ docker/**
 docs/**
 .cache/**
 node_modules/**
+
+# Allow the User Guide to ship in the .vsix so the Schema Explorer 📖 icon
+# (vsdb.openUserGuide → markdown.showPreview) works for installed users.
+# Everything else under docs/ stays excluded (it's repo-internal cycle docs).
+!docs/VSDB_USER_GUIDE.md
 .esbuild.js.swp
 *.tsbuildinfo
 

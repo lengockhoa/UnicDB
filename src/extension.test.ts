@@ -189,6 +189,12 @@ vi.mock("vscode", () => {
         readFile: vi.fn().mockResolvedValue(new Uint8Array()),
         rename: vi.fn().mockResolvedValue(undefined),
         delete: vi.fn().mockResolvedValue(undefined),
+        // Default: stat throws → safeFileExists returns false. Individual tests
+        // can override (vscodeMock.workspace.fs.stat = vi.fn().mockResolvedValue(...))
+        // to simulate the file being present.
+        stat: vi.fn(async () => {
+          throw new Error("ENOENT");
+        }),
       },
       showSaveDialog: undefined,
       onDidChangeConfiguration: vi.fn((cb: (e: { affectsConfiguration: (s: string) => boolean }) => void) => {
@@ -251,6 +257,10 @@ vi.mock("vscode", () => {
       clipboard: {
         writeText: vi.fn().mockResolvedValue(undefined),
       },
+      // PUBLISH-01: vsdb.openUserGuide fallback opens the GitHub URL when the
+      // guide is missing locally. Default: resolves true; individual tests
+      // can override to simulate a failure path.
+      openExternal: vi.fn(async () => true),
     },
     Selection: vi.fn().mockImplementation((start: unknown, end: unknown) => ({
       start,
@@ -5488,6 +5498,13 @@ describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
 
   it("#2 invoking the command calls markdown.showPreview with extensionUri-relative path", async () => {
     await activateUserGuide();
+    // vi.clearAllMocks (run by other tests in the suite) may have reset the
+    // workspace.fs.stat vi.fn — re-install a fresh one before this test so
+    // the markdown.showPreview path is taken.
+    const fsMock = (vscodeMock as unknown as {
+      workspace: { fs: { stat?: ReturnType<typeof vi.fn> } };
+    }).workspace.fs;
+    fsMock.stat = vi.fn(async () => ({ type: 1, size: 1, ctime: 0, mtime: 0 } as never));
     const fn = state.registeredCommands.get("vsdb.openUserGuide");
     expect(fn).toBeDefined();
     await fn!();
@@ -5499,12 +5516,40 @@ describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
     );
   });
 
-  it("#3 missing guide file → toast, no throw", async () => {
+  it("#3 missing guide file → opens GitHub URL via env.openExternal (no toast, no throw)", async () => {
     await activateUserGuide();
-    executeSpy.mockRejectedValueOnce(new Error("file not found"));
+    // Re-install fresh vi.fns in case vi.clearAllMocks (from earlier tests
+    // in the suite) reset them. The implementation: stat throws → fallback
+    // path → env.openExternal(GitHub URL).
+    const envMock = (vscodeMock as unknown as {
+      env: { openExternal?: ReturnType<typeof vi.fn> };
+    }).env;
+    envMock.openExternal = vi.fn(async () => true);
+    // Force the "file missing" path: another earlier test in the suite may
+    // have left fs.stat as a vi.fn that resolves successfully (vi.clearAllMocks
+    // only clears call history, not implementations). Re-install a fresh
+    // stat that throws so safeFileExists → false → openExternal fallback.
+    const fsMock = (vscodeMock as unknown as {
+      workspace: { fs: { stat?: ReturnType<typeof vi.fn> } };
+    }).workspace.fs;
+    fsMock.stat = vi.fn(async () => {
+      throw new Error("ENOENT");
+    });
     const fn = state.registeredCommands.get("vsdb.openUserGuide");
     await expect(fn!()).resolves.toBeUndefined();
-    expect(infoSpy).toHaveBeenCalled();
+    expect(envMock.openExternal).toHaveBeenCalledTimes(1);
+    // The mock Uri.parse in tests does not decompose the URL — match the
+    // toString() string instead. Production VS Code Uri.parse returns a
+    // real Uri; we pin the URL string here so a future refactor that drops
+    // the fallback URL will be caught.
+    const passedUri = envMock.openExternal.mock.calls[0][0] as { toString(): string };
+    expect(passedUri.toString()).toBe(
+      "https://github.com/lengockhoa/VSDB/blob/main/docs/VSDB_USER_GUIDE.md",
+    );
+    // markdown.showPreview must NOT be called when the file is missing.
+    expect(executeSpy).not.toHaveBeenCalled();
+    // No info toast either — openExternal replaces the useless path toast.
+    expect(infoSpy).not.toHaveBeenCalled();
   });
 
   it("#4 package.json declares vsdb.openUserGuide with $(notebook) icon (distinct from openHelpGrid's $(book))", () => {
@@ -5552,5 +5597,37 @@ describe("TASK-UX1-004 — vsdb.openUserGuide", () => {
       ),
     );
     expect(pkg.activationEvents).toContain("onCommand:vsdb.openUserGuide");
+  });
+
+  it("#7 guide file exists → markdown.showPreview (no GitHub fallback)", async () => {
+    await activateUserGuide();
+    // See note in #2: re-install a fresh stat vi.fn.
+    const fsMock = (vscodeMock as unknown as {
+      workspace: { fs: { stat?: ReturnType<typeof vi.fn> } };
+    }).workspace.fs;
+    fsMock.stat = vi.fn(async () => ({ type: 1, size: 1, ctime: 0, mtime: 0 } as never));
+    const fn = state.registeredCommands.get("vsdb.openUserGuide");
+    await fn!();
+    expect(executeSpy).toHaveBeenCalledWith(
+      "markdown.showPreview",
+      expect.objectContaining({
+        path: expect.stringMatching(/VSDB_USER_GUIDE\.md$/),
+      }),
+    );
+    const envMock = (vscodeMock as unknown as {
+      env: { openExternal: ReturnType<typeof vi.fn> };
+    }).env;
+    expect(envMock.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("#8 .vscodeignore allow-lists docs/VSDB_USER_GUIDE.md so it ships in the .vsix", () => {
+    // Regression guard: a future edit to .vscodeignore that re-excludes the
+    // guide will break the Schema Explorer 📖 icon for installed users.
+    const ignore = require("node:fs").readFileSync(
+      require("node:path").resolve(process.cwd(), ".vscodeignore"),
+      "utf8",
+    );
+    expect(ignore).toMatch(/^docs\/\*\*/m); // base exclusion still in place
+    expect(ignore).toMatch(/^!docs\/VSDB_USER_GUIDE\.md/m); // allow-rule present
   });
 });

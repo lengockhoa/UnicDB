@@ -479,3 +479,23 @@ Plan + 4 task contracts (PLAN_AIX05, INDEX_AIX05, 4 tasks). Feature commit 0fe44
 - Frozen surface: BQ-00 (`bigqueryTypes.ts` + `bigqueryAdc.ts`) byte-identical vs `8f7e8b4` (verified by `bqFollowupSurfaceGuard.test.ts` row 1). BQ-01 + BQ-02 + BQ-03 + BQ-04: `BigQueryAdapter.runQuery` happy path (gate admits GoogleSQL, `createQueryJob` called with `{query, useLegacySql: false, location}`, BatchedQuery returns) byte-identical vs `8f7e8b4` (default `useLegacySql: false` path unchanged). The widened `{pageSize?, useLegacySql?}` opts are additive. UX1 + UX2 + UX3 frozen surfaces: not touched.
 - Lessons carried forward: (a) Scope mismatch between `run()` and `executeAll()` methods on `QueryRunner` — captured `runPageSize`/`runUseLegacySql` as `const` in `run()` then used them in `executeAll()`. Fixed by passing them as parameters. (b) Monkey-patching `Intl.DateTimeFormat.prototype.format` directly fails in modern Node because of the `[[DateTimeFormatInternals]]` brand check — replace the constructor at `globalThis.Intl.DateTimeFormat` instead. (c) Frozen-surface guards span BASE_REF → HEAD, NOT a specific cycle's snapshot; each cycle must advance the base ref AND add hunks filters for additive changes. (d) `package-lock.json` root version must follow `package.json` version (TASK-703 releaseHygiene gate); `npm install --package-lock-only` syncs it without re-running scripts.
 - Follow-up cycles queued: Cycle J (AI Core foundation — OpenAI-compatible provider + work/smart model roles + agent loop + SecretStorage), Cycle S (Grid Excel overhaul — no-PK ctid hidden column + Excel editing/undo/redo + requery bar alignment + set-filter alignment). BQ-FOLLOWUP deferrals: UI toggle for useLegacySql (plumbing ships, no checkbox yet), wiring `locale` opt into `StatementResult.schemaFields`, DRY-ing the packageJsonDepsDiff filter.
+
+## PUBLISH-01 — 2026-09-05 (locally shipped; release-tooling housekeeping + User Guide fix)
+
+Two user-visible gaps fixed in one small cycle:
+
+**(A) Auto-publish to VS Code Marketplace.** `.github/workflows/publish.yml` triggers on `push` of any `v*` tag, runs `npm run verify:release` (same gate as `scripts/build.sh`), then `npx vsce publish` using the `VSCE_PAT` secret. `workflow_dispatch` is added as a safety hatch for re-runs without re-pushing the tag. Manual fallback: `npm run publish:patch|minor|major` with `$VSCE_PAT` set locally (3 thin wrapper scripts added to `package.json`). `docs/RELEASE.md` §Publishing rewritten with both paths + Azure DevOps PAT setup link. README release section now mentions auto-publish.
+
+**(B) Fix 📖 User Guide icon (silent no-op for installed users).** `vsdb.openUserGuide` resolved `docs/VSDB_USER_GUIDE.md` from `context.extensionUri`, but `.vscodeignore` excluded `docs/**` wholesale → file never shipped in the .vsix → `markdown.showPreview` silently failed → user saw nothing. Three-part fix:
+- `.vscodeignore` now allow-lists `docs/VSDB_USER_GUIDE.md` while keeping the rest of `docs/` excluded (cycle-internal docs).
+- `src/extension.ts` adds a top-level `safeFileExists` helper; the command now uses `vscode.env.openExternal(GitHub URL)` as a graceful fallback when the local file is missing — preserves offline-first behavior (real local file → markdown preview) and never shows the useless absolute-path toast.
+- Tests: #3 rewritten to assert the GitHub URL fallback; #7 added to cover the local-file happy path; #8 added as a `.vscodeignore` regression guard that pins both `docs/**` exclusion and `!docs/VSDB_USER_GUIDE.md` allow-rule side by side.
+
+**Frozen-surface guard widening:** `packageJsonDepsDiff` filter in both `bq04SurfaceGuard.test.ts` and `bqFollowupSurfaceGuard.test.ts` now drops `+/- "publish:<word>": "..."` lines (additive release plumbing, not a package manifest surface change). Mirrors the existing `version` line carve-out.
+
+**Verification:** typecheck + compile exit 0; full suite **3613 passed | 2 skipped** (was 3611|2 baseline, +2 net: +3 from #3/#7/#8 minus 1 from the rewritten #3 + workspace.fs.stat + env.openExternal mock infrastructure that other tests reuse); 0 regressions in UX1 / UX2 / UX3 / BQ cycles. `unzip -l vsdb-1.51.5.vsix` confirms `extension/docs/VSDB_USER_GUIDE.md` is now packaged. Workflow YAML parses cleanly (PyYAML safe_load: `name`, `on` (as `True` per YAML 1.1 quirk, GitHub accepts), `jobs.publish` with 5 named steps).
+
+**CI activation steps (user-driven, post-merge):**
+1. Create Azure DevOps PAT at https://dev.azure.com/[org]/_usersSettings/tokens with Marketplace → Manage scope.
+2. Add as repo secret `VSCE_PAT` at Settings → Secrets and variables → Actions.
+3. First publish: `git tag v1.51.5 && git push origin v1.51.5` → workflow auto-publishes to `lengockhoa.vsdb` within ~5–10 min.

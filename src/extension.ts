@@ -342,6 +342,18 @@ async function writeWorkspaceFileAtomic(
   }
 }
 
+// Best-effort file existence check used by User Guide fallback. Returns false
+// on any error (permission, missing, broken symlink) rather than throwing —
+// callers treat both "missing" and "broken" the same way.
+async function safeFileExists(uri: vscode.Uri): Promise<boolean> {
+  try {
+    await vscode.workspace.fs.stat(uri);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
@@ -1040,7 +1052,13 @@ export async function activate(
   // TASK-UX1-004 (R2) — open docs/VSDB_USER_GUIDE.md in VS Code's
   // Markdown preview. Path is resolved against context.extensionUri
   // (NEVER process.cwd()) so it works in both dev and packaged installs.
-  // Missing file → info toast (no throw).
+  //
+  // The guide is allow-listed in `.vscodeignore` so it ships inside the
+  // packaged .vsix; in that case markdown.showPreview works directly.
+  // If the file is somehow missing (e.g. dev install with a partial
+  // checkout, or a custom .vsix that re-excluded docs/), we fall back to
+  // opening the canonical GitHub URL in the user's browser so they always
+  // land on a readable guide rather than seeing nothing.
   disposables.push(
     vscode.commands.registerCommand("vsdb.openUserGuide", async () => {
       const guideUri = vscode.Uri.joinPath(
@@ -1048,14 +1066,28 @@ export async function activate(
         "docs",
         "VSDB_USER_GUIDE.md",
       );
-      try {
-        await vscode.commands.executeCommand("markdown.showPreview", guideUri);
-      } catch (err) {
-        // Fallback: show info toast with file path so user can locate it.
+      const guideExists = await safeFileExists(guideUri);
+      if (guideExists) {
+        try {
+          await vscode.commands.executeCommand(
+            "markdown.showPreview",
+            guideUri,
+          );
+          return;
+        } catch (err) {
+          console.warn("[vsdb] markdown.showPreview failed:", err);
+        }
+      }
+      // Fallback: open the canonical GitHub URL so the user always gets
+      // the guide instead of a useless absolute-path toast.
+      const githubUrl = vscode.Uri.parse(
+        "https://github.com/lengockhoa/VSDB/blob/main/docs/VSDB_USER_GUIDE.md",
+      );
+      const opened = await vscode.env.openExternal(githubUrl);
+      if (!opened) {
         void vscode.window.showInformationMessage(
-          `VSDB user guide: ${guideUri.fsPath}`,
+          "VSDB user guide: https://github.com/lengockhoa/VSDB/blob/main/docs/VSDB_USER_GUIDE.md",
         );
-        console.warn("[vsdb] markdown.showPreview failed:", err);
       }
     }),
   );
