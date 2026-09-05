@@ -14,33 +14,37 @@ jumping to an external client. Supports **PostgreSQL**, **MySQL / MariaDB**, and
 
 ## Installation
 
-**One single command** (fresh install and update alike — VS Code only needs to
-have been opened at least once):
+Install from the **VS Code Marketplace** — the extension is published as
+[`lengockhoa.UnicDB`](https://marketplace.visualstudio.com/items?itemName=lengockhoa.UnicDB):
+
+- **VS Code UI** — open the Extensions panel (`Cmd+Shift+X` / `Ctrl+Shift+X`),
+  search **"UnicDB"**, click **Install**.
+- **Command line**:
+  ```bash
+  code --install-extension lengockhoa.UnicDB
+  ```
+
+VS Code handles updates automatically — when a new version ships, the prompt
+appears on the next launch (or run `UnicDB: Check for Extension Update` from
+the Command Palette).
+
+### Install a specific version (CI pinning / offline / no Marketplace access)
+
+If you need to pin to a specific release (CI, air-gapped machine, network
+restriction), download `UnicDB-<version>.vsix` from
+[Releases](https://github.com/lengockhoa/UnicDB/releases) (or build it with
+`scripts/build.sh`), then:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lengockhoa/UnicDB/main/scripts/install-UnicDB.sh | bash
-```
-
-The script will automatically:
-
-1. Find the `code` CLI on `PATH` (fallback: `/Applications/Visual Studio Code.app/.../bin/code` on macOS).
-2. Download the latest `.vsix` from the GitHub Releases of the `lengockhoa/UnicDB` repo.
-3. Call `code --install-extension <vsix> --force`.
-4. Print the installed version. **Idempotent** — running again = update.
-
-When a new version comes out, the team just runs the same command above and it
-self-updates.
-
-### Manual install via `.vsix` file (offline / no GitHub access)
-
-Download `UnicDB-<version>.vsix` from [Releases](https://github.com/lengockhoa/UnicDB/releases)
-(or grab the file the maintainer built with `scripts/build.sh`), then:
-
-```bash
+# Via the bundled installer script (resolves the `code` CLI for you):
 bash scripts/install-UnicDB.sh --local /path/to/UnicDB-<version>.vsix
 # or install directly via VS Code CLI:
-code --install-extension UnicDB-<version>.vsix
+code --install-extension /path/to/UnicDB-<version>.vsix
 ```
+
+The script also has a no-network mode — `bash scripts/install-UnicDB.sh --local <file>` —
+useful on machines where GitHub releases are unreachable but Marketplace
+isn't.
 
 ---
 
@@ -77,7 +81,7 @@ code --install-extension UnicDB-<version>.vsix
 
 ## Documentation
 
-Full user guide (Vietnamese): [`docs/UnicDB_USER_GUIDE.md`](docs/UnicDB_USER_GUIDE.md). Covers connection setup, schema explorer, console, AI chat, settings, SQL Generator, Sample Data, and every shipped feature. You can also open it from VS Code via the 📖 (notebook) icon on the **Schema Explorer** title bar → **UnicDB: Open User Guide**.
+Full user guide (Vietnamese): [`docs/UNICDB_USER_GUIDE.md`](docs/UNICDB_USER_GUIDE.md). Covers connection setup, schema explorer, console, AI chat, settings, SQL Generator, Sample Data, and every shipped feature. You can also open it from VS Code via the 📖 (notebook) icon on the **Schema Explorer** title bar → **UnicDB: Open User Guide**.
 
 ---
 
