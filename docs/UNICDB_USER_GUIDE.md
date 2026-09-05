@@ -144,13 +144,20 @@ tree refresh.
 
 ## Phím tắt
 
-- **Run statement** — F5 hoặc Ctrl+Enter trong editor
-- **Run all** — Ctrl+F5
-- **Cancel** — Esc khi đang chạy
-- **New tab** — Ctrl+Alt+T
-- **Close tab** — Ctrl+W
-- **Toggle Schema Explorer** — Ctrl+Alt+S
-- **Open AI Chat** — Ctrl+Alt+A
+Phím tắt hiện đang được hỗ trợ (xem `package.json → contributes.keybindings`):
+
+| Phím tắt | Lệnh | Phạm vi |
+| --- | --- | --- |
+| **Cmd+Enter** (macOS) / **Ctrl+Enter** (Win/Linux) | Run statement (chạy câu lệnh đang chọn / dưới con trỏ) | Trong file `.sql` |
+
+Trên macOS, phím tắt là `Cmd+Enter`; trên Windows / Linux là `Ctrl+Enter`. VS Code tự động remap
+theo nền tảng — không cần cấu hình thêm.
+
+> **Lưu ý:** các phím tắt cho *Run all*, *Cancel*, *New tab*, *Close tab*, *Toggle Schema
+> Explorer*, *Open AI Chat* đang được lên kế hoạch cho các bản phát hành tiếp theo. Hiện tại
+> chúng có thể chạy qua Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`) bằng tên lệnh
+> (`UnicDB: Cancel Query`, `UnicDB: New Tab`, …). Xem README §Keyboard shortcuts để biết
+> danh sách chính thức luôn đồng bộ với `package.json`.
 
 ## Troubleshooting
 
