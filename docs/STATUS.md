@@ -1,18 +1,18 @@
 # VSDB Status
 
 - Last meaningful update: 2026-09-05
-- Updated by: Claude (UX3 cycle close-out)
+- Updated by: Claude (BQ-FOLLOWUP cycle close-out)
 - Status confidence: high
 
 ## Current state
 
-- HEAD: `0e424a4` (main, ahead of origin/main by 7 commits; tag `v1.51.3` — UX3 not yet released; v1.51.4 pending R5 close-out)
-- Latest release: **v1.51.3** (UX2 — surface SQL + connection errors in Results panel + fix broken `Run N · Stmt M` tab labels; live at https://github.com/lengockhoa/VSDB/releases/tag/v1.51.3)
-- **UX3 cycle shipped locally (4 commits awaiting R5 release):** Closeable tabs in Results panel — × button per tab (visible on `:hover` / `:focus-within`), right-click context menu (Close Tab / Close All Tabs / Close Other Tabs), active-tab close auto-activates nearest tab, host-owned `closeTab` / `closeAllTabs` / `closeOthersTabs` methods on `ResultsPanel`, message wiring through `WebviewMessage` union. **+24 tests** (9 webview DOM contracts + 8 host state transitions + 3 R4.5 cache-rebase cases + 4 real-handleMessage wiring tests).
-- Suite baseline: **3579 passed | 2 skipped** (was 3555|2 at v1.51.3; +24 over the cycle; typecheck + compile exit 0; 0 regressions in UX1 / UX2 / BQ cycles)
-- UX3 R4.5 fix round applied reviewer findings: (1) empty-state copy/class regression reverted to pinned contract `vsdb-empty` + "No results yet." to keep `resultsGridModelNull.test.ts` + `webviewResultLimit.test.ts` green; the friendlier "No runs yet — run a query to see results here." copy from PLAN.md §1 deferred to a follow-up cycle; (2) `ResultsPanel.closeTab/closeAllTabs/closeOthersTabs` now rebases per-index host caches (`tableByStatement`, `columnTypesByStatement`, `whereByStatement`, `distinctCache`) and bumps `statementGeneration` — closes a data-loss vector in the save-edits path (post-close grid edits could have UPDATEd the wrong table because `handleSaveEdits` keys off `tableByStatement.get(index)`); (3) wiring tests rewritten to drive the real `ResultsPanel.handleMessage` (was a hand-copied double that faked coverage).
-- UX3 R2 verdict: 3/3 `approved_minor`. Minor findings logged for follow-up: nested `<button>` inside `<button>` (invalid HTML — defer), no Escape-key dismiss on context menu (defer), empty-state copy change (defer), plan-vs-impl `onUpdate` drift (documented), wiring test "exactly once per close" assertion not strict (defer).
-- **No pending tasks in current AI_HANDOFF cycle.** BQ-FOLLOWUP (3 small BQ backlog items: pageSize configurability + useLegacySql UI toggle + locale-aware temporal formatting), Cycle J (AI Core foundation — OpenAI-compatible provider + work/smart roles + agent loop), and Cycle S (Grid Excel overhaul — no-PK ctid + Excel-like edit/add/delete + undo/redo stack + requery bar alignment + set filter alignment) are queued for future cycles.
+- HEAD: `aba1966` (main, ahead of origin/main by 9 commits; tag `v1.51.5` locally shipped)
+- Latest release: **v1.51.5** (BQ-FOLLOWUP — pageSize + useLegacySql + locale temporal + frozen-surface guard; live at https://github.com/lengockhoa/VSDB/releases/tag/v1.51.5)
+- **BQ-FOLLOWUP cycle shipped locally (3 commits + lockfile sync):** pageSize plumbing (clampPageSize `[1, 10000]` + thread through fetcher + adapter + QueryRunner + extension), useLegacySql UI toggle plumbing (MVP gate rejects legacy SQL with explicit reason; createQueryJob seam honored), locale-aware temporal formatting in `formatBigQueryCell` (`Intl.DateTimeFormat`, `BigQuerySchemaFieldLike` local alias, verbatim fallback on parse failure), BQ-FOLLOWUP frozen-surface guard (base `8f7e8b4`). **+32 tests** (10 pageSize + 6 legacy SQL + 11 locale + 5 surface guard).
+- Suite baseline: **3611 passed | 2 skipped** (was 3579|2 at v1.51.4; +32 over the BQ-FOLLOWUP cycle; typecheck + compile exit 0; 0 regressions in UX1 / UX2 / UX3 / BQ cycles)
+- BQ-04 guard base ref advanced `75cdb08` (v1.50.0) → `8f7e8b4` (v1.51.4) with runQuery-hunk filter for additive `types.ts` widening. The new `bqFollowupSurfaceGuard.test.ts` (base `8f7e8b4`) pins BQ-00 surface + extension.ts copy-safe header + MVP gate reason strings + package.json deps manifest.
+- Frozen surface: BQ-00 (`bigqueryTypes.ts` + `bigqueryAdc.ts`) + BQ-01 (`BigQueryClient` widened seam + `BigQueryPagedQuery` state machine) + BQ-04 (Results panel + runStatements copy-safe header + GoogleSQL surface) byte-identical vs `8f7e8b4`. UX1 + UX2 + UX3 surfaces not touched.
+- **No pending tasks in current AI_HANDOFF cycle.** Cycle J (AI Core foundation — OpenAI-compatible provider + work/smart roles + agent loop) and Cycle S (Grid Excel overhaul — no-PK ctid + Excel-like edit/add/delete + undo/redo stack + requery bar alignment + set filter alignment) are queued for future cycles.
 - No handoff worktrees/branches lingering in the cycle flow
 
 ## Recently shipped (this session's cycles)
