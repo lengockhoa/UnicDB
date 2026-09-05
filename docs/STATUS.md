@@ -1,15 +1,18 @@
 # VSDB Status
 
-- Last meaningful update: 2026-09-04
-- Updated by: Claude (UX2 cycle close-out)
+- Last meaningful update: 2026-09-05
+- Updated by: Claude (UX3 cycle close-out)
 - Status confidence: high
 
 ## Current state
 
-- HEAD: `8d23d19` (main, synced with origin; tag `v1.51.3`)
-- Latest release: **v1.51.3** (UX2 — surface SQL + connection errors in Results panel + fix broken `Run N · Stmt M` tab labels; GitHub release live at https://github.com/lengockhoa/VSDB/releases/tag/v1.51.3, vsix `vsdb-1.51.3.vsix` 2.01 MB / 22 files; 4/4 tasks `done` (UX2-001 `approved`, UX2-002 `approved_minor`, UX2-003 `approved_minor`, UX2-004 `approved_minor` after R4.5 R1 RED-evidence repair + dead-helper removal + `deactivating` gate); original UX2 silent-failure screenshot reproducer now shows synthetic tab with `Run N · Connection failed…` title, inline red error card, Messages auto-opened, status bar red `$(error)` badge; failed SELECT now shows the error card with `Run N · <first 30 chars of SQL>` title)
-- Suite baseline: **3555 passed | 2 skipped** (typecheck + compile exit 0; was 3530|2 at v1.51.2; **+25 new tests** across UX2: 7 in `ddlStatusCard.test.ts` (error-card path) + 7 in `webview/__tests__/mainTabTitle.test.ts` (new, tabTitle + tabBadge) + 5 in `queryRunner.test.ts` (runFailed lifecycle) + 2 in `statusBar.test.ts` (setErrorBadge wrapper) + 4 in `resultsPanelErrorIntegration.test.ts` (new, end-to-end first-connect + post-connect paths + badge lifecycle + healthy-SELECT regression))
-- No pending tasks; UX3 (closeable tabs) is queued in `docs/AI_HANDOFF/PLAN.md` §1 with the user's 4 P0 decisions locked in for the next cycle
+- HEAD: `0e424a4` (main, ahead of origin/main by 7 commits; tag `v1.51.3` — UX3 not yet released; v1.51.4 pending R5 close-out)
+- Latest release: **v1.51.3** (UX2 — surface SQL + connection errors in Results panel + fix broken `Run N · Stmt M` tab labels; live at https://github.com/lengockhoa/VSDB/releases/tag/v1.51.3)
+- **UX3 cycle shipped locally (4 commits awaiting R5 release):** Closeable tabs in Results panel — × button per tab (visible on `:hover` / `:focus-within`), right-click context menu (Close Tab / Close All Tabs / Close Other Tabs), active-tab close auto-activates nearest tab, host-owned `closeTab` / `closeAllTabs` / `closeOthersTabs` methods on `ResultsPanel`, message wiring through `WebviewMessage` union. **+24 tests** (9 webview DOM contracts + 8 host state transitions + 3 R4.5 cache-rebase cases + 4 real-handleMessage wiring tests).
+- Suite baseline: **3579 passed | 2 skipped** (was 3555|2 at v1.51.3; +24 over the cycle; typecheck + compile exit 0; 0 regressions in UX1 / UX2 / BQ cycles)
+- UX3 R4.5 fix round applied reviewer findings: (1) empty-state copy/class regression reverted to pinned contract `vsdb-empty` + "No results yet." to keep `resultsGridModelNull.test.ts` + `webviewResultLimit.test.ts` green; the friendlier "No runs yet — run a query to see results here." copy from PLAN.md §1 deferred to a follow-up cycle; (2) `ResultsPanel.closeTab/closeAllTabs/closeOthersTabs` now rebases per-index host caches (`tableByStatement`, `columnTypesByStatement`, `whereByStatement`, `distinctCache`) and bumps `statementGeneration` — closes a data-loss vector in the save-edits path (post-close grid edits could have UPDATEd the wrong table because `handleSaveEdits` keys off `tableByStatement.get(index)`); (3) wiring tests rewritten to drive the real `ResultsPanel.handleMessage` (was a hand-copied double that faked coverage).
+- UX3 R2 verdict: 3/3 `approved_minor`. Minor findings logged for follow-up: nested `<button>` inside `<button>` (invalid HTML — defer), no Escape-key dismiss on context menu (defer), empty-state copy change (defer), plan-vs-impl `onUpdate` drift (documented), wiring test "exactly once per close" assertion not strict (defer).
+- **No pending tasks in current AI_HANDOFF cycle.** BQ-FOLLOWUP (3 small BQ backlog items: pageSize configurability + useLegacySql UI toggle + locale-aware temporal formatting), Cycle J (AI Core foundation — OpenAI-compatible provider + work/smart roles + agent loop), and Cycle S (Grid Excel overhaul — no-PK ctid + Excel-like edit/add/delete + undo/redo stack + requery bar alignment + set filter alignment) are queued for future cycles.
 - No handoff worktrees/branches lingering in the cycle flow
 
 ## Recently shipped (this session's cycles)
