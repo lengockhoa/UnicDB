@@ -499,3 +499,17 @@ Two user-visible gaps fixed in one small cycle:
 1. Create Azure DevOps PAT at https://dev.azure.com/[org]/_usersSettings/tokens with Marketplace → Manage scope.
 2. Add as repo secret `VSCE_PAT` at Settings → Secrets and variables → Actions.
 3. First publish: `git tag v1.51.5 && git push origin v1.51.5` → workflow auto-publishes to `lengockhoa.UnicDB` within ~5–10 min.
+
+## Post-rename folder cleanup — 2026-09-06 (main @ 4efb079)
+
+User moved project folder `VSDB → UnicDB`. Git internals already aligned by the rename commit (`6f3fcc0`); HEAD == `origin/main` == `4d52360`. Cleanup pass:
+
+- **`git worktree prune -v`**: removed 7 stale worktree entries, all `prunable`, pointing to the old `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/VSDB/.claude/worktrees/` path (now non-existent). `git worktree list` now shows only `main`.
+- **Build-artifact sweep**: removed 33 leftover `vsdb-*.vsix` files from the repo root (~65MB), keeping only `UnicDB-1.51.5.vsix` (matches the gitignored `*.vsix` rule in `.gitignore`).
+- **Source-truth drift fixes**:
+  - `docs/STATUS.md` — stale HEAD ref `ae5c6c3` → `4d52360`; added a "Post-rename folder cleanup" bullet recording the worktree prune + .vsix sweep + typecheck pass.
+  - `docs/UNICDB_USER_GUIDE.md` — install heading simplified from `## Cài đặt & ukit install` → `## Cài đặt`. The Marketplace install (`code --install-extension UnicDB-<version>.vsix`) is the only user-facing install path; `ukit install` is internal developer tooling and does not belong in the user guide. Archive reference in `docs/AI_HANDOFF/archive/UX1-004.md` left as-is (historical snapshot).
+
+**Verification:** `npm run typecheck` → `tsc --noEmit` exit 0; grep `vsdb|VSDB` over source tree (excluding CHANGELOG / STATUS rename notes / install-UnicDB.sh / UnicDB_USER_GUIDE.md) returns 0 hits; `git status` clean post-commit.
+
+**Committed:** `4efb079 docs: post-rename cleanup + drop ukit install from user guide` (2 files, +4/-3). Local `main` is 1 commit ahead of `origin/main`; push pending.
