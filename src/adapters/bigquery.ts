@@ -37,6 +37,7 @@ import {
   type BigQueryPage,
   type BigQueryRawQueryResponse,
 } from "./bigqueryTypes";
+import { clampPageSize } from "./bigqueryPages";
 import {
   NotImplementedError,
   type BatchedQuery,
@@ -527,7 +528,6 @@ function sanitizeDetail(s: string | undefined): string | undefined {
 //
 // Wave-1 uses a local fetcher double (injected via the constructor). In
 // wave 2 the 03.1 executor will swap this for `createBigQueryPageFetcher`
-// from `./bigqueryPages` — the constructor wiring adds ONE line.
 // ===========================================================================
 
 /** Fetcher double shape (wave-1). Returns rows OR `null` for EOF. */
@@ -841,23 +841,32 @@ export class BigQueryAdapter implements DbAdapter {
    * from `./bigqueryPages` (added by TASK-BQ03-002). No public contract
    * change for callers; the only observable change is that the byte-
    * budget `limited` flag now reaches the runner via `resultLimited`.
+   *
+   * TASK-BQF-001: accepts optional `opts.pageSize?: number`. When set, the
+   * value is clamped to `[1, 10000]` and forwarded to `getQueryResults`
+   * as `maxResults` on every page fetch. When omitted, current default
+   * (no `maxResults` override) is preserved byte-identically.
    */
-  async runQuery(sql: string): Promise<RunResult> {
+  async runQuery(
+    sql: string,
+    opts?: { pageSize?: number; useLegacySql?: boolean },
+  ): Promise<RunResult> {
     const client = this.requireClient();
     // MVP SQL gate — pure predicate, called BEFORE any I/O so a rejected
     // SQL never reaches the network.
-    const gate = assertSingleReadOnlyGoogleSql(sql, { useLegacySql: false });
+    // TASK-BQF-002: honor `opts.useLegacySql` (default false → GoogleSQL).
+    const useLegacySql = opts?.useLegacySql ?? false;
+    const gate = assertSingleReadOnlyGoogleSql(sql, { useLegacySql });
     if (gate.ok === false) {
       throw new Error(gate.reason);
     }
 
-    // Forward `{ query, useLegacySql: false, location }` to the widened
-    // `createQueryJob` seam. `location` flows from cfg.bigquery.location;
-    // we never set `useLegacySql: true` from the VSDB UI.
+    // Forward `{ query, useLegacySql, location }` to the widened
+    // `createQueryJob` seam. `location` flows from cfg.bigquery.location.
     const location = this.cfg.bigquery?.location ?? "US";
     const jobOpts: BigQueryCreateQueryJobOptions = {
       query: sql,
-      useLegacySql: false,
+      useLegacySql,
       location,
     };
     let jobTuple: unknown;
@@ -935,9 +944,16 @@ export class BigQueryAdapter implements DbAdapter {
     const captured: { firstRaw: BigQueryRawQueryResponse | null } = {
       firstRaw: null,
     };
+    // TASK-BQF-001 — resolve pageSize once (clamp to [1,10000] per BQ API
+    // limit). When set, the clamped value is forwarded to getQueryResults
+    // as maxResults on every fetch; when undefined, no override (current
+    // default byte-identical).
+    const clampedPageSize = clampPageSize(opts?.pageSize);
     const fetcher: BigQueryPageFetcher = async (callOpts) => {
       const tuple = (await job.getQueryResults({
-        ...(callOpts?.maxResults !== undefined ? { maxResults: callOpts.maxResults } : {}),
+        // Prefer the per-call maxResults (downstream override); fall back
+        // to the configured pageSize when the call didn't pass one.
+        maxResults: callOpts?.maxResults ?? clampedPageSize,
         ...(callOpts?.pageToken !== undefined && callOpts.pageToken !== null
           ? { pageToken: callOpts.pageToken }
           : {}),

@@ -74,10 +74,32 @@ export type BigQueryRawFetch = (
 /**
  * Constructor deps for the page bridge. `byteBudget` is advisory at the seam;
  * omitting it disables byte-budget marking (`limited` is always false).
+ *
+ * TASK-BQF-001: `pageSize` clamps to `[1, 10000]` and is forwarded as
+ * `maxResults` on every `fetch()` call (BQ REST API cap). When omitted, no
+ * `maxResults` override is sent — current default behaviour byte-identical.
  */
 export interface BigQueryPageFetcherDeps {
   fetch: BigQueryRawFetch;
   byteBudget?: number;
+  pageSize?: number;
+}
+
+/**
+ * TASK-BQF-001 — clamp `pageSize` to BQ's `[1, 10000]` window.
+ * Below floor (≤ 0) → 1 (BQ API minimum). Above ceiling → 10000 (BQ API cap).
+ * Non-integer / NaN → undefined (no override; preserves current default).
+ * Exported for direct use by `BigQueryAdapter.runQuery` (which threads the
+ * clamped value into its inline fetcher closure before delegating to
+ * `createBigQueryPageFetcher`).
+ */
+export function clampPageSize(raw: number | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  if (!Number.isFinite(raw)) return undefined;
+  if (!Number.isInteger(raw)) return undefined;
+  if (raw < 1) return 1;
+  if (raw > 10000) return 10000;
+  return raw;
 }
 
 /**
@@ -186,10 +208,15 @@ export function createBigQueryPageFetcher(
   let lastToken: string | null | undefined = undefined;
   let exhaustedFlag = false;
 
+  // TASK-BQF-001 — resolve pageSize once at construction. Clamp to
+  // `[1, 10000]` per BQ REST API limit; undefined when absent or invalid.
+  const clampedPageSize = clampPageSize(deps.pageSize);
+
   const callFetch = async (
     pageToken?: string,
   ): Promise<BigQueryPageFetch> => {
     const raw = (await deps.fetch({
+      ...(clampedPageSize !== undefined ? { maxResults: clampedPageSize } : {}),
       ...(pageToken !== undefined ? { pageToken } : {}),
     })) as BigQueryRawQueryResponse;
     return buildFetchResult(raw, deps.byteBudget);
