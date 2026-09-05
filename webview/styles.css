@@ -175,6 +175,52 @@
   color: var(--vscode-disabledForeground, #888);
   text-decoration: line-through;
 }
+/* TASK-UX3-001 — × close button (hidden by default, visible on hover/focus) */
+.vsdb-tab-close {
+  display: none;
+  margin-left: 6px;
+  padding: 0 4px;
+  background: transparent;
+  color: inherit;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9em;
+  line-height: 1;
+  border-radius: 3px;
+}
+.vsdb-tab:hover .vsdb-tab-close,
+.vsdb-tab:focus-within .vsdb-tab-close {
+  display: inline-block;
+}
+.vsdb-tab-close:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
+}
+.vsdb-tab-close:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+/* TASK-UX3-001 — right-click context menu (inline webview-rendered) */
+.vsdb-tab-menu {
+  position: absolute;
+  z-index: 1000;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  min-width: 160px;
+  background: var(--vscode-menu-background, #252526);
+  border: 1px solid var(--vscode-menu-border, #454545);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  font-size: 0.9em;
+}
+.vsdb-tab-menu-item {
+  padding: 4px 12px;
+  cursor: pointer;
+  color: var(--vscode-menu-foreground, #cccccc);
+}
+.vsdb-tab-menu-item:hover {
+  background: var(--vscode-menu-selectionBackground, #094771);
+  color: var(--vscode-menu-selectionForeground, #ffffff);
+}
 
 /* Content area below the tab strip: fills remaining height and hosts the grid. */
 .vsdb-panel {
@@ -241,6 +287,19 @@
   padding: 16px;
   color: var(--vscode-disabledForeground, #888);
   text-align: center;
+}
+/* TASK-UX3-001 — friendly empty state when no tabs (was generic "No results yet") */
+.vsdb-empty-state {
+  padding: 32px 16px;
+  color: var(--vscode-disabledForeground, #888);
+  text-align: center;
+  font-size: 0.95em;
+}
+.vsdb-empty-state-icon {
+  font-size: 1.5em;
+  display: block;
+  margin-bottom: 8px;
+  opacity: 0.6;
 }
 .vsdb-loading {
   padding: 16px;

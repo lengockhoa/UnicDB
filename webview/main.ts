@@ -213,7 +213,29 @@ type WebviewMsg =
   | RetryFailedRowsMsg
   | RequeryMsg
   | RequestDistinctValuesMsg
-  | ReadyMsg;
+  | ReadyMsg
+  // TASK-UX3-001 — tab close affordances (× button + right-click menu).
+  // Host side (TASK-UX3-002/003) owns the actual close logic.
+  | CloseTabMsg
+  | CloseAllTabsMsg
+  | CloseOthersTabsMsg;
+
+/** Webview → host: close a single tab by index. */
+interface CloseTabMsg {
+  type: "closeTab";
+  index: number;
+}
+
+/** Webview → host: close every tab (empty state follows). */
+interface CloseAllTabsMsg {
+  type: "closeAllTabs";
+}
+
+/** Webview → host: close every tab except the one at `index`. */
+interface CloseOthersTabsMsg {
+  type: "closeOthersTabs";
+  index: number;
+}
 
 // ---- TASK-003: distinct-value round trip (host → webview mirror) ----------
 
@@ -1123,6 +1145,62 @@ function buildPersistentDom(): PersistentDom {
   };
 }
 
+/** TASK-UX3-001 — currently-open context menu (one at a time), or null.
+ *  Kept module-scope so a right-click on a different tab dismisses the
+ *  previous menu before opening a new one. */
+let openTabMenu: HTMLUListElement | null = null;
+
+function closeOpenTabMenu(): void {
+  if (openTabMenu && openTabMenu.parentElement) {
+    openTabMenu.parentElement.removeChild(openTabMenu);
+  }
+  openTabMenu = null;
+}
+
+/** TASK-UX3-001 — right-click context menu (webview-rendered).
+ *  Three items: Close Tab, Close All Tabs, Close Other Tabs.
+ *  Clicking an item posts a message to the host (TASK-UX3-003 wires the
+ *  actual close logic); clicking outside dismisses the menu. */
+function showTabMenu(tabEl: HTMLButtonElement, index: number, x: number, y: number): void {
+  closeOpenTabMenu();
+  const menu = document.createElement("ul");
+  menu.className = "vsdb-tab-menu";
+  menu.setAttribute("role", "menu");
+  const items: Array<{ label: string; action: () => void }> = [
+    { label: "Close Tab", action: () => postToHost({ type: "closeTab", index }) },
+    { label: "Close All Tabs", action: () => postToHost({ type: "closeAllTabs" }) },
+    { label: "Close Other Tabs", action: () => postToHost({ type: "closeOthersTabs", index }) },
+  ];
+  for (const it of items) {
+    const li = document.createElement("li");
+    li.className = "vsdb-tab-menu-item";
+    li.setAttribute("role", "menuitem");
+    li.textContent = it.label;
+    li.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      closeOpenTabMenu();
+      it.action();
+    });
+    menu.appendChild(li);
+  }
+  // Position near cursor; clamp to viewport so the menu never goes off-screen.
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  document.body.appendChild(menu);
+  // Clamp after layout so we know the menu's size.
+  const rect = menu.getBoundingClientRect();
+  const maxX = window.innerWidth - rect.width - 4;
+  const maxY = window.innerHeight - rect.height - 4;
+  if (rect.left > maxX) menu.style.left = `${Math.max(4, maxX)}px`;
+  if (rect.top > maxY) menu.style.top = `${Math.max(4, maxY)}px`;
+  openTabMenu = menu;
+  // Dismiss on any document click (next tick so the right-click that opened
+  // the menu doesn't immediately close it).
+  setTimeout(() => {
+    document.addEventListener("click", closeOpenTabMenu, { once: true });
+  }, 0);
+}
+
 function rebuildTabs(tabsEl: HTMLDivElement): void {
   tabsEl.innerHTML = "";
   results.forEach((r, i) => {
@@ -1139,6 +1217,22 @@ function rebuildTabs(tabsEl: HTMLDivElement): void {
       // Wipe transient state (the panel will be re-populated), but keep the
       // grid host wrapper alive in the panel so the AG Grid stays mounted.
       render();
+    });
+    // TASK-UX3-001 — × close button (visible on hover/focus).
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "vsdb-tab-close";
+    closeBtn.setAttribute("aria-label", "Close tab");
+    closeBtn.textContent = "×";
+    closeBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      postToHost({ type: "closeTab", index: i });
+    });
+    tab.appendChild(closeBtn);
+    // TASK-UX3-001 — right-click context menu (webview-rendered).
+    tab.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      showTabMenu(tab, i, ev.clientX, ev.clientY);
     });
     tabsEl.appendChild(tab);
   });
@@ -1160,13 +1254,28 @@ function renderActivePanel(): void {
   const panel = dom.panel;
 
   if (results.length === 0) {
-    // Empty state — wipe panel and show placeholder.
+    // TASK-UX3-001 — friendly empty state when every tab is closed (or no
+    // run has happened yet). Uses `vsdb-empty-state` with an icon + copy
+    // distinct from the transient `vsdb-empty` ("Running…") branch.
     teardownGridWrap();
     panel.innerHTML = "";
-    const empty = document.createElement("div");
-    empty.className = "vsdb-empty";
-    empty.textContent = busy ? "Running…" : "No results yet.";
-    panel.appendChild(empty);
+    if (busy) {
+      const empty = document.createElement("div");
+      empty.className = "vsdb-empty";
+      empty.textContent = "Running…";
+      panel.appendChild(empty);
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "vsdb-empty-state";
+      const icon = document.createElement("span");
+      icon.className = "vsdb-empty-state-icon";
+      icon.textContent = "▭";
+      const text = document.createElement("div");
+      text.textContent = "No runs yet — run a query to see results here.";
+      empty.appendChild(icon);
+      empty.appendChild(text);
+      panel.appendChild(empty);
+    }
     return;
   }
 
