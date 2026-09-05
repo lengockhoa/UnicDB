@@ -147,6 +147,11 @@ export class ResultsPanel {
   private browseLabel: string | null = null;
   private lastResults: StatementResult[] = [];
   private busy: boolean = false;
+  /** TASK-UX3-002 — host-owned active tab index. The webview tracks its own
+   *  mirror for click handlers; the host is the source of truth so a
+   *  closeTab message can correctly re-activate the nearest tab. -1 means
+   *  "no tabs" (only the empty-state placeholder is rendered). */
+  private activeTab: number = -1;
   /** A session-pinned manual transaction owned by this panel. */
   private transaction: DbTransaction | null = null;
   /** TASK-006 P1-4 — statement index whose save opened the manual window.
@@ -775,6 +780,66 @@ export class ResultsPanel {
         this.setBusy(false);
       }
     }
+  }
+
+  // ---- TASK-UX3-002 — tab close methods (host-owned state) ---------------
+
+  /** Remove the tab at `index`. Adjusts `activeTab` per the rule in
+   *  PLAN.md §3 (right-fallback, then left; -1 if empty). Out-of-range
+   *  index is a silent no-op. Posts a fresh state if anything changed. */
+  public closeTab(index: number): void {
+    if (!Number.isInteger(index) || index < 0 || index >= this.lastResults.length) {
+      return;
+    }
+    const next = this.lastResults.slice();
+    next.splice(index, 1);
+    this.lastResults = next;
+    // Adjust activeTab:
+    //  - removing the active tab → min(index, length-1) gives right-fallback
+    //    (index now points at the element that was to the right) then left
+    //    (clamp).
+    //  - removing a non-active tab → keep active, but clamp if it shifted.
+    if (this.activeTab === index) {
+      this.activeTab = next.length === 0 ? -1 : Math.min(index, next.length - 1);
+    } else if (this.activeTab > index) {
+      this.activeTab = this.activeTab - 1;
+    }
+    this.postMessage({
+      type: "state",
+      header: this.header,
+      results: this.lastResults,
+      busy: this.busy,
+    });
+  }
+
+  /** Remove every tab. Always fires (even when already empty) so the
+   *  webview re-renders the empty-state cleanly. */
+  public closeAllTabs(): void {
+    this.lastResults = [];
+    this.activeTab = -1;
+    this.postMessage({
+      type: "state",
+      header: this.header,
+      results: this.lastResults,
+      busy: this.busy,
+    });
+  }
+
+  /** Remove every tab except the one at `index`. The kept tab becomes
+   *  active (index 0 in the new array). Out-of-range index is a no-op. */
+  public closeOthersTabs(index: number): void {
+    if (!Number.isInteger(index) || index < 0 || index >= this.lastResults.length) {
+      return;
+    }
+    const kept = this.lastResults[index];
+    this.lastResults = [kept];
+    this.activeTab = 0;
+    this.postMessage({
+      type: "state",
+      header: this.header,
+      results: this.lastResults,
+      busy: this.busy,
+    });
   }
 
   private async handleMessage(msg: WebviewMessage): Promise<void> {
