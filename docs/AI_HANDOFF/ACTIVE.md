@@ -1,8 +1,6 @@
-Cycle: UX2   Date: 2026-09-04   Base: main
-Goal: Surface connection + SQL errors in the Results panel so the user can tell
-which query failed and why — fix the broken `Run N · Stmt M` tab labels along the way.
-Tasks: 4 total (TASK-UX2-001..004) — all done, approved/approved_minor, +25 tests.
-Target release: v1.51.3 (shipped — GitHub release published).
-Status: shipped — v1.51.3 live at https://github.com/lengockhoa/VSDB/releases/tag/v1.51.3
-Wave plan: Wave 1 = TASK-001 (foundation). Wave 2 = TASK-002 + TASK-003 (consume
-foundation, parallel — different files). Wave 3 = TASK-004 (integration).
+No active cycle — most recent shipped cycle is BQ-FOLLOWUP (v1.51.5) on 2026-09-05.
+See `INDEX.md` for the in-flight task queue (all done) and `HISTORY.md` for the
+completed-cycle archive. Next cycle candidates (per STATUS §"Next-cycle guidance"):
+UX3 was the natural next after v1.51.3 — but UX3 also shipped (v1.51.4). Remaining
+queued cycles are Cycle J (AI Core foundation) and Cycle S (Grid Excel overhaul).
+No handoff worktrees/branches lingering. Working tree clean at HEAD `aba1966`.
