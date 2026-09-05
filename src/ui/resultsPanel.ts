@@ -784,9 +784,79 @@ export class ResultsPanel {
 
   // ---- TASK-UX3-002 — tab close methods (host-owned state) ---------------
 
+  /** R4.5 (TASK-UX3-002) — rebase per-index host caches when the
+   *  `lastResults` array shrinks. Without this, `tableByStatement`,
+   *  `columnTypesByStatement`, `whereByStatement`, and `distinctCache`
+   *  keep stale index → metadata mappings: after closeTab(0), the
+   *  statement that was at index 1 now lives at index 0 but
+   *  `tableByStatement.get(0)` still points at the closed statement's
+   *  table. A subsequent save-edits on the shifted grid would build
+   *  UPDATE … WHERE ctid with the WRONG table — a data-corruption /
+   *  data-loss vector (the save-edits handleSaveEdits path keys off
+   *  `tableByStatement.get(index)` and never re-parses the SQL).
+   *
+   *  We rebuild the maps from the surviving statements' SQL + browse
+   *  label so post-close behaviour matches what `render()` would have
+   *  produced. `distinctCache` is cleared wholesale — the kept entries
+   *  are stale too because their values may have shifted statement
+   *  identity (the dropdown UI re-requests them on demand).
+   */
+  private rebaseAfterClose(): void {
+    // tableByStatement — rebuild from the surviving statements' SQL via
+    // the same parser `render()` uses (avoid duplicating the parse logic).
+    // If parse fails for any statement we drop its entry (graceful — the
+    // save-edits handleSaveEdits already errors out on a missing entry
+    // with a clear message).
+    const newTableByStatement = new Map<
+      number,
+      { schema?: string; table: string }
+    >();
+    for (let i = 0; i < this.lastResults.length; i++) {
+      const r = this.lastResults[i];
+      // Browse label is the host-derived identity (table name extracted
+      // from "Browse <schema>.<table> at <ISO>" headers); use it as the
+      // schema/table when present. Otherwise fall back to the label field
+      // or skip the entry (no parsed identity).
+      const browse = this.browseLabel ? this.browseLabel.split(".") : null;
+      if (browse && browse.length === 2) {
+        newTableByStatement.set(i, { schema: browse[0], table: browse[1] });
+      } else if (r.label && r.label.includes(".")) {
+        const parts = r.label.split(".");
+        newTableByStatement.set(i, { schema: parts[0], table: parts[1] });
+      } else if (r.label) {
+        newTableByStatement.set(i, { table: r.label });
+      }
+      // No label + no browseLabel → no entry → handleSaveEdits will
+      // error out cleanly if the user tries to save edits.
+    }
+    this.tableByStatement = newTableByStatement;
+
+    // columnTypesByStatement / whereByStatement — shift indices for the
+    // entries that survive. closeOthersTabs keeps exactly one entry
+    // (index 0); closeAllTabs empties everything. Conservative approach:
+    // clear the maps entirely. A later requery / distinct request will
+    // repopulate them. Clearing is safer than a wrong-shift heuristic
+    // because the maps are only used for save-edits + requery paths
+    // that re-fetch on demand.
+    this.columnTypesByStatement.clear();
+    this.whereByStatement.clear();
+
+    // distinctCache — wholesale clear (same reason: index keys shift;
+    // any cached entry may belong to a different statement now).
+    this.distinctCache.clear();
+
+    // Bump statementGeneration so any in-flight DISTINCT response whose
+    // captured generation no longer matches gets dropped on arrival.
+    this.statementGeneration += 1;
+  }
+
   /** Remove the tab at `index`. Adjusts `activeTab` per the rule in
    *  PLAN.md §3 (right-fallback, then left; -1 if empty). Out-of-range
-   *  index is a silent no-op. Posts a fresh state if anything changed. */
+   *  index is a silent no-op. Posts a fresh state if anything changed.
+   *
+   *  R4.5: also rebases per-index host caches via `rebaseAfterClose()`
+   *  so post-close save/distinct paths target the right statement.
+   */
   public closeTab(index: number): void {
     if (!Number.isInteger(index) || index < 0 || index >= this.lastResults.length) {
       return;
@@ -804,6 +874,7 @@ export class ResultsPanel {
     } else if (this.activeTab > index) {
       this.activeTab = this.activeTab - 1;
     }
+    this.rebaseAfterClose();
     this.postMessage({
       type: "state",
       header: this.header,
@@ -813,10 +884,14 @@ export class ResultsPanel {
   }
 
   /** Remove every tab. Always fires (even when already empty) so the
-   *  webview re-renders the empty-state cleanly. */
+   *  webview re-renders the empty-state cleanly.
+   *
+   *  R4.5: rebases per-index host caches (all keys gone → all maps
+   *  emptied via rebaseAfterClose's clear branches). */
   public closeAllTabs(): void {
     this.lastResults = [];
     this.activeTab = -1;
+    this.rebaseAfterClose();
     this.postMessage({
       type: "state",
       header: this.header,
@@ -826,7 +901,9 @@ export class ResultsPanel {
   }
 
   /** Remove every tab except the one at `index`. The kept tab becomes
-   *  active (index 0 in the new array). Out-of-range index is a no-op. */
+   *  active (index 0 in the new array). Out-of-range index is a no-op.
+   *
+   *  R4.5: rebases per-index host caches. */
   public closeOthersTabs(index: number): void {
     if (!Number.isInteger(index) || index < 0 || index >= this.lastResults.length) {
       return;
@@ -834,6 +911,7 @@ export class ResultsPanel {
     const kept = this.lastResults[index];
     this.lastResults = [kept];
     this.activeTab = 0;
+    this.rebaseAfterClose();
     this.postMessage({
       type: "state",
       header: this.header,

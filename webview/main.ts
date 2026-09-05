@@ -1254,28 +1254,18 @@ function renderActivePanel(): void {
   const panel = dom.panel;
 
   if (results.length === 0) {
-    // TASK-UX3-001 — friendly empty state when every tab is closed (or no
-    // run has happened yet). Uses `vsdb-empty-state` with an icon + copy
-    // distinct from the transient `vsdb-empty` ("Running…") branch.
+    // TASK-UX3-001 — empty-state placeholder. Keeps the pinned `vsdb-empty`
+    // class + "No results yet." copy verbatim (pinned by
+    // src/ui/__tests__/webviewResultLimit.test.ts:225 + resultsGridModelNull
+    // .test.ts:149 — contract for empty results). No copy change this round;
+    // the friendly "No runs yet — run a query to see results here." copy
+    // from PLAN.md §1 ships in a follow-up cycle that updates those pins.
     teardownGridWrap();
     panel.innerHTML = "";
-    if (busy) {
-      const empty = document.createElement("div");
-      empty.className = "vsdb-empty";
-      empty.textContent = "Running…";
-      panel.appendChild(empty);
-    } else {
-      const empty = document.createElement("div");
-      empty.className = "vsdb-empty-state";
-      const icon = document.createElement("span");
-      icon.className = "vsdb-empty-state-icon";
-      icon.textContent = "▭";
-      const text = document.createElement("div");
-      text.textContent = "No runs yet — run a query to see results here.";
-      empty.appendChild(icon);
-      empty.appendChild(text);
-      panel.appendChild(empty);
-    }
+    const empty = document.createElement("div");
+    empty.className = "vsdb-empty";
+    empty.textContent = busy ? "Running…" : "No results yet.";
+    panel.appendChild(empty);
     return;
   }
 

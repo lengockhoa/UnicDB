@@ -1,8 +1,8 @@
 # TASK-UX3-002 — Host state methods closeTab/closeAllTabs/closeOthersTabs
 
-- Status: `pending_review`
+- Status: `approved_minor`
 - Owner: feature-implementer (unic-code / sonnet)
-- Reviewer: - (assigned by Phase 4)
+- Reviewer: code-reviewer (opus / unic-smart)
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2/§4
 
 ## Goal

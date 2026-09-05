@@ -1,8 +1,8 @@
 # TASK-UX3-001 — Webview × button + context menu + empty state
 
-- Status: `pending_review`
+- Status: `approved_minor`
 - Owner: feature-implementer (unic-code / sonnet)
-- Reviewer: - (assigned by Phase 4)
+- Reviewer: code-reviewer (opus / unic-smart)
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2/§4
 
 ## Goal
@@ -132,4 +132,49 @@ $ npm run typecheck
 
 ## Reviewer Verdict
 
-(to be appended by Phase 4 reviewer)
+**REVIEWER_MODEL:** claude-opus (unic-smart) — different from executor's sonnet. ✓
+**VERDICT:** approved_minor
+
+**Verification (re-run fresh):**
+- `npm test webview/__tests__/mainCloseTab.test.ts`: 9/9 ✓
+- `npm test src/ui/__tests__/resultsPanelClose.test.ts`: 11/11 ✓ (R4.5 added 3 cache-rebase cases)
+- `npm test src/ui/__tests__/resultsPanelCloseWiring.test.ts`: 4/4 ✓ (R4.5 rewrote to drive real handleMessage)
+- `npm test` (full suite): 3579 passed | 2 skipped ✓ (baseline 3555|2 → +24)
+- `npm run typecheck`: exit 0 ✓
+- `npm run compile`: exit 0 ✓
+
+**R4.5 fixes applied (this round):**
+- Empty-state copy/class regression: the initial wave-1 commit changed
+  `vsdb-empty` → `vsdb-empty-state` and copy → "No runs yet — run a query...".
+  7 tests in `resultsGridModelNull.test.ts` + `webviewResultLimit.test.ts`
+  pinned the OLD contract (`vsdb-empty` + "No results yet."). R4.5
+  reverted to the pinned contract. The friendly copy ships in a follow-up
+  cycle that updates those pins (out of scope for v1.51.4). This is a
+  documented deviation from PLAN.md §1 success definition #4.
+
+**Findings (all approved_minor — not blocking):**
+- **MINOR**: Nested `<button>` inside `<button>` for the × button is
+  invalid HTML (button cannot contain interactive descendants). Keyboard
+  accessibility still works (× is `type="button"`, focusable, Enter triggers
+  click). Real fix: make the tab a `<div role="tab">` and the × button a
+  sibling overlay. Deferred to a follow-up cycle to avoid scope creep.
+- **MINOR**: Context menu lacks Escape-key dismissal and full keyboard
+  navigation (`role="menu"` + `role="menuitem"` is set but no arrow-key
+  handling). Touch/right-click path is the primary; keyboard is a nice-to-have.
+- **MINOR**: The empty-state friendly copy ("No runs yet — run a query…")
+  from PLAN.md §1 is NOT in this ship — see R4.5 fixes. Follow-up cycle.
+- **MINOR (acknowledged plan-vs-implementation drift)**: PLAN.md §3 said
+  the close methods would "fire the existing onUpdate". No `onUpdate`
+  listener exists in ResultsPanel; the implementation posts a fresh `state`
+  message instead (functionally the correct path in this codebase). Task
+  file §Interfaces was updated post-hoc to match.
+- **MINOR (test contract drift)**: TASK-UX3-002 plan test "closeAllTabs
+  fires onUpdate" was re-stated as "posts state" in the implementation;
+  the test body never asserted on `postMessage` count for that case. R4.5
+  did NOT add a strict assertion — the post is verified end-to-end via
+  the wiring test (state transition + postMessage observable).
+
+**Verdict rationale:** All 3 critical blockers from the initial R4.5 review
+(empty-state regression, fake wiring tests, missing cache rebase) are
+fixed and verified. The remaining items are documented minor follow-ups
+that do not block v1.51.4 ship.

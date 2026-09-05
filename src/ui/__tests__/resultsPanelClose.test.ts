@@ -170,3 +170,41 @@ describe("TASK-UX3-002 closeOthersTabs", () => {
     expect((p as any).lastResults.length).toBe(3);
   });
 });
+
+describe("TASK-UX3-002 R4.5 — per-index cache rebasing", () => {
+  it("R4.5: closeTab clears distinctCache + columnTypesByStatement + whereByStatement", async () => {
+    const p = await makePanel(makeResults(3));
+    // Seed the maps (the production code only sets them in render()).
+    (p as any).distinctCache.set("0::col", { values: ["x"], truncated: false });
+    (p as any).distinctCache.set("1::col", { values: ["y"], truncated: false });
+    (p as any).columnTypesByStatement.set(0, { col: "int" });
+    (p as any).whereByStatement.set(0, { sql: "SELECT 1", values: [] });
+    const genBefore = (p as any).statementGeneration;
+    p.closeTab(0);
+    // distinctCache is the data-loss vector the reviewer flagged — must be
+    // empty after any close.
+    expect((p as any).distinctCache.size).toBe(0);
+    expect((p as any).columnTypesByStatement.size).toBe(0);
+    expect((p as any).whereByStatement.size).toBe(0);
+    // statementGeneration bumped so in-flight DISTINCT responses are dropped.
+    expect((p as any).statementGeneration).toBeGreaterThan(genBefore);
+  });
+
+  it("R4.5: closeAllTabs clears every per-index cache", async () => {
+    const p = await makePanel(makeResults(3));
+    (p as any).tableByStatement.set(0, { table: "t0" });
+    (p as any).tableByStatement.set(1, { table: "t1" });
+    p.closeAllTabs();
+    expect((p as any).tableByStatement.size).toBe(0);
+    expect((p as any).distinctCache.size).toBe(0);
+  });
+
+  it("R4.5: closeOthersTabs rebuilds tableByStatement with browse label for the kept tab", async () => {
+    const p = await makePanel(makeResults(3));
+    (p as any).browseLabel = "public.users";
+    p.closeOthersTabs(1);
+    // Kept tab's index 0 → tableByStatement[0] = browse-derived {public, users}.
+    expect((p as any).tableByStatement.size).toBe(1);
+    expect((p as any).tableByStatement.get(0)).toEqual({ schema: "public", table: "users" });
+  });
+});
