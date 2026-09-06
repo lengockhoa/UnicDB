@@ -271,9 +271,9 @@ describe("ai/commitGenCommand — Test #3 lite model not configured", () => {
 // Test #4 — edge: no changes
 // ============================================================================
 describe("ai/commitGenCommand — Test #4 no changes to summarize", () => {
-  it("shows the empty-diff info toast and never calls the provider or omp", async () => {
+  it("shows the empty-diff error and never calls the provider or omp", async () => {
     const settings = fakeSettings({ modelId: "lite", engine: "omp" });
-    const showInfo = vi.fn();
+    const showError = vi.fn();
     const builtinComplete = vi.fn(async () => ({
       text: "",
       toolCalls: [],
@@ -294,16 +294,17 @@ describe("ai/commitGenCommand — Test #4 no changes to summarize", () => {
       builtinComplete: builtinComplete as never,
       collectDiff: (async () => null) as never,
       setInputBox: vi.fn(),
-      showInfo,
-      showError: vi.fn(),
+      showInfo: vi.fn(),
+      showError,
       showSettingsToast: vi.fn().mockResolvedValue(undefined),
       openSettings: vi.fn(),
     };
 
     await runGenerateCommitMessage(deps);
 
-    expect(showInfo).toHaveBeenCalledTimes(1);
-    expect(showInfo).toHaveBeenCalledWith("UnicDB: no changes to summarize.");
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(showError.mock.calls[0][0]).toContain("nothing to commit");
+    expect(showError.mock.calls[0][0]).toContain("no staged or unstaged changes");
     expect(builtinComplete).not.toHaveBeenCalled();
     expect(buildOmpEngine).not.toHaveBeenCalled();
     expect(deps.setInputBox).not.toHaveBeenCalled();

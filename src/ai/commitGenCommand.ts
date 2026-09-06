@@ -19,7 +19,8 @@ import { buildCommitPrompt, sanitizeCommitMessage } from "./commitMessage";
 export const TOAST_NO_LITE =
   "Configure the Lite Model in UnicDB AI Settings to use Generate Commit Message";
 export const ACTION_OPEN_SETTINGS = "Open Settings";
-export const TOAST_NO_CHANGES = "UnicDB: no changes to summarize.";
+export const TOAST_NO_CHANGES =
+  "UnicDB: nothing to commit — this Git repo has no staged or unstaged changes. Stage or modify at least one file, then click again.";
 export const TOAST_NO_BACKEND_CONFIG =
   "Configure the AI backend (base URL + API key) in UnicDB AI Settings";
 export const ERROR_OMP_UNAVAILABLE_PREFIX = "UnicDB: omp engine unavailable — ";
@@ -106,7 +107,7 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
   // 2. Diff must exist.
   const diff = await deps.collectDiff();
   if (diff === null) {
-    deps.showInfo(TOAST_NO_CHANGES);
+    deps.showError(TOAST_NO_CHANGES);
     return;
   }
 
