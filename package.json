@@ -406,6 +406,12 @@
         "title": "UnicDB: Open Settings",
         "category": "UnicDB",
         "icon": "$(settings-gear)"
+      },
+      {
+        "command": "UnicDB.generateCommitMessage",
+        "title": "Generate Commit Message",
+        "category": "UnicDB",
+        "icon": "$(sparkle)"
       }
     ],
     "keybindings": [
@@ -460,6 +466,13 @@
           "command": "UnicDB.runScript",
           "when": "resourceLangId == shellscript",
           "group": "navigation"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "UnicDB.generateCommitMessage",
+          "group": "navigation",
+          "when": "scmProvider == git && scmProviderHasChanges"
         }
       ],
       "view/item/context": [

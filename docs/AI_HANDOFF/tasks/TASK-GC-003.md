@@ -80,3 +80,40 @@ assign-compatible and the planner-locked shape prevents drift. Cap constants are
 GC-007 tests can reference them without magic numbers.
 
 (no comments yet)
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code (claude-sonnet)
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: |
+  FAIL  src/ai/__tests__/commitMessage.test.ts [ src/ai/__tests__/commitMessage.test.ts ]
+  Error: Failed to load url ../commitMessage (resolved id: ../commitMessage) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-gc-003/src/ai/__tests__/commitMessage.test.ts. Does the file exist?
+   ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+   Test Files  1 failed (1)
+        Tests  no tests
+     Start at  14:03:02
+     Duration  145ms
+Verification Output: |
+  ## npm run typecheck
+  > UnicDB@1.51.7 typecheck
+  > tsc --noEmit
+  (clean — no errors, no output)
+
+  ## npx vitest run src/ai/__tests__/commitMessage.test.ts
+   ✓ src/ai/__tests__/commitMessage.test.ts  (12 tests) 2ms
+
+   Test Files  1 passed (1)
+        Tests  12 passed (12)
+     Duration  163ms
+
+  ## npm test (wave-boundary regression net)
+   Test Files  245 passed | 1 skipped (246)
+        Tests  3631 passed | 2 skipped (3633)
+     Duration  19.19s
+Status: PASS
+Note: 12 green tests (6 spec + 6 supporting edges covering branch-line presence/absence,
+fence-with-language-tag, single-quote strip, and constants). Module is pure — no vscode
+import, no fetch. ChatMessage imported from src/ai/provider as required. Cap constants
+exported so GC-007 tests can reference them. Symlinks to main checkout's node_modules +
+dist created on entry (worktree had neither).

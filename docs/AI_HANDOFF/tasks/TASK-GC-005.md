@@ -75,3 +75,63 @@ do NOT rename or re-case the file (header comment in the test file explains the
 case-sensitive `.vscodeignore` hazard). Extend in place.
 
 (no comments yet)
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: |
+   ❯ src/ui/__tests__/userGuideContent.test.ts:84:21
+       82|   it("GC#2 engine dropdown documented (Engine + builtin + omp)", () =>…
+       83|     expect(content).toContain("Engine");
+       84|     expect(content).toContain("builtin");
+         |                     ^
+       85|     expect(content).toContain("omp");
+       86|   });
+
+  ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯
+
+   FAIL  src/ui/__tests__/userGuideContent.test.ts > TASK-GC-005 — docs/UNICDB_USER_GUIDE.md (Generate Commit + Lite Model + Engine) > GC#4 'Generate Commit Message' command title appears exactly once
+  AssertionError: expected +0 to be 1 // Object.is equality
+
+  - Expected
+  + Received
+
+  - 1
+  + 0
+
+   ❯ src/ui/__tests__/userGuideContent.test.ts:114:25
+      112|     // to "the sparkle button" afterwards (PLANNER-FROZEN assertion).
+      113|     const occurrences = content.split("Generate Commit Message").lengt…
+      114|     expect(occurrences).toBe(1);
+         |                         ^
+      115|   });
+      116| 
+
+  ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯
+
+   Test Files  1 failed (1)
+        Tests  7 failed | 19 passed (26)
+     Start at  14:06:42
+     Duration  150ms (transform 16ms, setup 0ms, collect 12ms, tests 6ms, environment 0ms, prepare 39ms)
+Verification Output: |
+   > UnicDB@1.51.7 typecheck
+   > tsc --noEmit
+   (no errors)
+
+   > vitest run src/ui/__tests__/userGuideContent.test.ts
+   ✓ src/ui/__tests__/userGuideContent.test.ts  (26 tests) 2ms
+   Test Files  1 passed (1)
+        Tests  26 passed (26)
+
+   > npm test (full suite)
+   Test Files  244 passed | 1 skipped (245)
+        Tests  3629 passed | 2 skipped (3631)
+     Duration  18.25s
+Status: PASS
+Note: DOC-ONLY task. Doc sections added under "Settings hub (R8b)" in Vietnamese
+matching existing tone; "Generate Commit Message" appears exactly once as the
+command title (subsequent references use "nút sparkle"). Engine dropdown
+documented with both literals `builtin` + `omp`. Existing keyword scan
+unchanged — added new describe block alongside original. node_modules and
+dist symlinked from main checkout (per worktree instructions).

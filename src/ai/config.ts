@@ -58,6 +58,21 @@ export class AiConfigStore {
       obj.models = modelsObj;
       parsed = obj;
     }
+    // Cycle GC — same idea for the new `lite` role. Pre-GC configs lack it;
+    // inject the default `{ modelId: "", vision: false, engine: "omp" }` so
+    // the validator never sees a missing-key error. Also back-fill the per-
+    // model `engine` if a stored lite has it omitted (legacy / corrupted).
+    if (modelsObj && typeof modelsObj === "object") {
+      const liteObj = modelsObj.lite as Record<string, unknown> | undefined;
+      if (liteObj === undefined) {
+        modelsObj.lite = { modelId: "", vision: false, engine: "omp" };
+      } else if (liteObj && typeof liteObj === "object" && liteObj.engine === undefined) {
+        liteObj.engine = "omp";
+        modelsObj.lite = liteObj;
+      }
+      obj.models = modelsObj;
+      parsed = obj;
+    }
     // Defense-in-depth: re-validate against the schema. Corrupted store ⇒ null.
     try {
       const errors = aiSettingsErrors(parsed as AiSettings);
@@ -117,14 +132,30 @@ export class AiConfigStore {
         work: {
           modelId: settings.models.work.modelId,
           vision: settings.models.work.vision,
+          ...(settings.models.work.engine !== undefined
+            ? { engine: settings.models.work.engine }
+            : {}),
         },
         smart: {
           modelId: settings.models.smart.modelId,
           vision: settings.models.smart.vision,
+          ...(settings.models.smart.engine !== undefined
+            ? { engine: settings.models.smart.engine }
+            : {}),
         },
         autocomplete: {
           modelId: settings.models.autocomplete?.modelId ?? "",
           vision: settings.models.autocomplete?.vision ?? false,
+          ...(settings.models.autocomplete?.engine !== undefined
+            ? { engine: settings.models.autocomplete.engine }
+            : {}),
+        },
+        lite: {
+          modelId: settings.models.lite?.modelId ?? "",
+          vision: settings.models.lite?.vision ?? false,
+          ...(settings.models.lite?.engine !== undefined
+            ? { engine: settings.models.lite.engine }
+            : {}),
         },
       },
       engine: settings.engine,

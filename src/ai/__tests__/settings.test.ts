@@ -8,7 +8,7 @@ import {
   normalizeBaseUrl,
   redactAiConfig,
 } from "../settings";
-import type { AiSettings, AiConfig } from "../settings";
+import type { AiSettings, AiConfig, AiEngine } from "../settings";
 
 describe("ai/settings — defaults + validation + helpers", () => {
   it("Test #1 — defaultAiSettings exact literal (work + smart + autocomplete)", () => {
@@ -21,9 +21,24 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "", vision: true },
         smart: { modelId: "", vision: false },
         autocomplete: { modelId: "", vision: false },
+        lite: { modelId: "", vision: false, engine: "omp" },
       },
       engine: "builtin",
     });
+  });
+
+  it("GC #1 — defaultAiSettings has 4 roles; lite defaults to omp engine; work/smart/autocomplete have NO engine key", () => {
+    const d = defaultAiSettings();
+    expect(Object.keys(d.models).sort()).toEqual(
+      ["autocomplete", "lite", "smart", "work"].sort(),
+    );
+    expect(d.models.lite).toEqual({ modelId: "", vision: false, engine: "omp" });
+    // work/smart/autocomplete must NOT have engine key (per-model engine opt-in).
+    expect("engine" in d.models.work).toBe(false);
+    expect("engine" in d.models.smart).toBe(false);
+    expect("engine" in d.models.autocomplete).toBe(false);
+    // Global engine stays "builtin".
+    expect(d.engine).toBe("builtin");
   });
 
   it("Test #2 — valid (all three roles populated) → no errors", () => {
@@ -33,6 +48,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
         autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
+        lite: { modelId: "", vision: false, engine: "omp" },
       },
     };
     expect(aiSettingsErrors(s)).toEqual([]);
@@ -45,6 +61,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
         autocomplete: { modelId: "", vision: false },
+        lite: { modelId: "", vision: false, engine: "omp" },
       },
     };
     expect(aiSettingsErrors(s)).toEqual([]);
@@ -60,6 +77,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "", vision: true },
         smart: { modelId: "ok", vision: false },
         autocomplete: { modelId: "", vision: false },
+        lite: { modelId: "", vision: false, engine: "omp" },
       },
       engine: "builtin",
     } as AiSettings;
@@ -86,6 +104,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "m", vision: true },
         smart: { modelId: "m", vision: false },
         autocomplete: { modelId: "", vision: false },
+        lite: { modelId: "", vision: false, engine: "omp" },
       },
       engine: "builtin",
     };
@@ -177,5 +196,82 @@ describe("ai/settings — defaults + validation + helpers", () => {
     } as unknown as AiConfig;
     const red = redactAiConfig(cfg);
     expect(red.models.autocomplete).toEqual({ modelId: "", vision: false });
+  });
+
+  // ---- TASK-GC-001: lite role + per-model engine ----------------------
+
+  it("GC #2 — valid 4-role settings (lite populated) → no errors", () => {
+    const s: AiSettings = {
+      ...defaultAiSettings(),
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+        autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
+        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+      },
+    };
+    expect(aiSettingsErrors(s)).toEqual([]);
+  });
+
+  it("GC #3 — empty lite modelId is valid (feature disabled, same precedent as autocomplete)", () => {
+    const s: AiSettings = {
+      ...defaultAiSettings(),
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+        autocomplete: { modelId: "", vision: false },
+        lite: { modelId: "", vision: false, engine: "omp" },
+      },
+    };
+    const errs = aiSettingsErrors(s);
+    expect(errs).not.toContain("Model is required for role: lite");
+    expect(errs).toEqual([]);
+  });
+
+  it("GC #4 — lite engine 'groq' is rejected with exact error message", () => {
+    const s: AiSettings = {
+      ...defaultAiSettings(),
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+        autocomplete: { modelId: "", vision: false },
+        lite: { modelId: "vendor/lite-fast", vision: false, engine: "groq" as AiEngine },
+      },
+    };
+    const errs = aiSettingsErrors(s);
+    expect(errs).toContain("Engine must be builtin or omp");
+  });
+
+  it("GC #5 — global engine 'x' is rejected (still validated)", () => {
+    const s: AiSettings = {
+      ...defaultAiSettings(),
+      engine: "x" as AiEngine,
+    };
+    const errs = aiSettingsErrors(s);
+    expect(errs).toContain("Engine must be builtin or omp");
+  });
+
+  it("GC #8 — redactAiConfig preserves lite.modelId/vision/engine and omits apiKey", () => {
+    const cfg: AiConfig = {
+      ...defaultAiSettings(),
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+        autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
+        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+      },
+      apiKey: "sk-very-secret",
+    };
+    const red = redactAiConfig(cfg);
+    expect((red as unknown as Record<string, unknown>).apiKey).toBeUndefined();
+    expect(red.models.lite).toEqual({
+      modelId: "vendor/lite-fast",
+      vision: false,
+      engine: "omp",
+    });
+    // work/smart/autocomplete must NOT have an engine key (preserving undefined).
+    expect("engine" in red.models.work).toBe(false);
+    expect("engine" in red.models.smart).toBe(false);
+    expect("engine" in red.models.autocomplete).toBe(false);
   });
 });

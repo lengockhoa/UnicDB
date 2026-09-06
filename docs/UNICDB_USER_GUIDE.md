@@ -117,6 +117,51 @@ VS Code Settings filtered to UnicDB. Các setting UnicDB hiện có:
 - `UnicDB.aiChatModel` — model cụ thể
 - (các setting khác xuất hiện khi extension thêm)
 
+## Generate Commit Message
+
+Trên title bar của panel **Source Control** xuất hiện thêm một nút
+sparkle ✨ (icon `$(sparkle)`) — bấm vào đó để UnicDB tự sinh commit
+message theo chuẩn **Conventional Commits** rồi điền thẳng vào ô nhập
+commit của SCM. Bạn chỉ cần review lại rồi bấm Commit.
+
+- Nút chỉ hiện khi repository đang có thay đổi git (file staged hoặc
+  unstaged).
+- Nếu repo sạch, nút được disable và tooltip nhắc lý do.
+- Tin nhắn được sinh bằng **Lite Model** mà bạn đã cấu hình trong AI
+  Settings (mục tiếp theo). Model xử lý diff đã staged (ưu tiên) hoặc
+  unstaged, có giới hạn kích thước — repo cực lớn sẽ được truncate.
+- Nếu chưa cấu hình Lite Model, nút sẽ hiện toast hướng dẫn mở AI
+  Settings (action `Open AI Settings`).
+
+### Lite model
+
+Trong panel **UnicDB AI Settings** có một subsection riêng tên là
+"Lite model" — đây là model thứ tư trong taxonomy
+`work | smart | autocomplete | lite`, dùng riêng cho nút sparkle ở
+Source Control.
+
+- **Model ID** — bắt buộc điền. Bỏ trống = tính năng Generate Commit
+  Message bị disable (nút sparkle sẽ báo toast khi bấm).
+- **Vision** — tick nếu model hỗ trợ ảnh (commit message không dùng đến,
+  nhưng giữ đồng nhất với các role khác).
+- **Engine** — dropdown chọn engine xử lý cho Lite Model:
+  - `omp` (mặc định) — dùng omp chat engine
+  - `builtin` — dùng provider builtin qua OpenAI-compatible API
+  - Khi engine đang chọn là `omp` nhưng omp chưa khả dụng trong máy,
+    lệnh sẽ dừng lại và thông báo thay vì tự động rơi về engine khác.
+
+### Engine dropdown (global)
+
+Trên cùng panel AI Settings có một dropdown **Engine** chung cho cả
+chat:
+
+  - `builtin` (mặc định)
+  - `omp`
+
+Dropdown này quyết định engine dùng cho AI Chat; per-model Engine ở
+subsection "Lite model" sẽ override giá trị này nếu được chỉ định
+(khi để trống thì theo global).
+
 ## User Guide (R2)
 
 Bấm icon 📖 (book) trên title bar của Schema Explorer để mở file

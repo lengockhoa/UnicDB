@@ -89,6 +89,7 @@ function validSettings(): AiSettings {
       work: { modelId: "gpt-4o-mini", vision: true },
       smart: { modelId: "gpt-4o", vision: false },
       autocomplete: { modelId: "", vision: false },
+      lite: { modelId: "", vision: false, engine: "omp" },
     },
   };
 }
@@ -218,6 +219,87 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
     global._setRaw("UnicDB.ai.settings", legacy);
     const loaded = await store.loadSettings();
     expect(loaded).not.toBeNull();
+    expect(loaded!.engine).toBe("builtin");
+  });
+
+  // ---- TASK-GC-001: legacy migration injects `lite` role ------------
+
+  it("GC #6 — legacy 3-role config (pre-GC) loads with lite injected; other roles unchanged", async () => {
+    const { store, global } = makeStore();
+    const legacy = {
+      baseUrl: "https://api.openai.com/v1",
+      method: "chat/completions" as const,
+      timeoutMs: 60000,
+      maxSteps: 12,
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+        autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
+        // lite intentionally absent (legacy shape)
+      },
+      engine: "builtin",
+    };
+    global._setRaw("UnicDB.ai.settings", legacy);
+    const loaded = await store.loadSettings();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.models.lite).toEqual({ modelId: "", vision: false, engine: "omp" });
+    // work/smart/autocomplete unchanged.
+    expect(loaded!.models.work.modelId).toBe("gpt-4o-mini");
+    expect(loaded!.models.smart.modelId).toBe("gpt-4o");
+    expect(loaded!.models.autocomplete.modelId).toBe("vendor/free-fast-sql");
+  });
+
+  it("GC #7 — legacy 2-role config (pre-AIC) still valid; injects autocomplete AND lite", async () => {
+    const { store, global } = makeStore();
+    const legacy = {
+      baseUrl: "https://api.openai.com/v1",
+      method: "chat/completions" as const,
+      timeoutMs: 60000,
+      maxSteps: 12,
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+      },
+      engine: "builtin",
+    };
+    global._setRaw("UnicDB.ai.settings", legacy);
+    const loaded = await store.loadSettings();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.models.autocomplete).toEqual({ modelId: "", vision: false });
+    expect(loaded!.models.lite).toEqual({ modelId: "", vision: false, engine: "omp" });
+    // No field lost.
+    expect(loaded!.baseUrl).toBe("https://api.openai.com/v1");
+    expect(loaded!.engine).toBe("builtin");
+    expect(loaded!.models.work.modelId).toBe("gpt-4o-mini");
+    expect(loaded!.models.smart.modelId).toBe("gpt-4o");
+  });
+
+  it("GC #9 — save persists lite + per-model engine; load round-trip identical", async () => {
+    const { store, global } = makeStore();
+    const s: AiSettings = {
+      ...defaultAiSettings(),
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+        autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
+        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+      },
+    };
+    await store.save(s, "sk-1");
+    const storedRaw = global.get<unknown>("UnicDB.ai.settings");
+    expect(storedRaw).toBeDefined();
+    const stored = storedRaw as Record<string, unknown>;
+    expect(stored.engine).toBe("builtin");
+    const models = stored.models as Record<string, Record<string, unknown>>;
+    expect(models.lite).toEqual({ modelId: "vendor/lite-fast", vision: false, engine: "omp" });
+    // work/smart/autocomplete preserved without engine key.
+    expect("engine" in models.work).toBe(false);
+    expect("engine" in models.smart).toBe(false);
+    expect("engine" in models.autocomplete).toBe(false);
+
+    // Load round-trip.
+    const loaded = await store.loadSettings();
+    expect(loaded!.models.lite).toEqual({ modelId: "vendor/lite-fast", vision: false, engine: "omp" });
     expect(loaded!.engine).toBe("builtin");
   });
 });

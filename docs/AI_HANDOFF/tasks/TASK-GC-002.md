@@ -94,3 +94,58 @@ shell out to the `git` CLI. Untracked-only changes produce an empty `diff()` —
 accepted limitation (PLAN §2); the command surfaces "no changes" for it, which is honest.
 
 (no comments yet)
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT:
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-gc-002
+
+ ❯ src/adapters/__tests__/gitDiff.test.ts  (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/adapters/__tests__/gitDiff.test.ts [ src/adapters/__tests__/gitDiff.test.ts ]
+Error: Failed to load url vscode (resolved id: vscode) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-gc-002/src/adapters/__tests__/gitDiff.test.ts. Does the file exist?
+ ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+ Test Files  1 failed (1)
+      Tests  no tests
+```
+(Suite failed to load because `gitDiff.ts` did not yet exist; after adding
+`vi.mock("vscode", ...)` the suite loaded and tests #1-#5 (which don't depend
+on `vscode`) failed with `Cannot find module '../gitDiff'`. After implementing
+`src/adapters/gitDiff.ts`, all 12 cases pass.)
+
+Verification Output:
+```
+$ npm run typecheck
+> UnicDB@1.51.7 typecheck
+> tsc --noEmit
+(exit 0, no output)
+
+$ npx vitest run src/adapters/__tests__/gitDiff.test.ts
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-gc-002
+ ✓ src/adapters/__tests__/gitDiff.test.ts  (12 tests) 2ms
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
+(exit 0)
+
+$ npm test  (worktree summary; bundle tests require npm run compile — pre-existing)
+ Test Files  8 failed | 209 passed | 29 skipped (246)
+      Tests  20 failed | 3292 passed | 243 skipped (3555)
+(The 8 failing files are bundle/webview tests that read `dist/*.js` artifacts
+which do not exist in this worktree — same failures occur on a fresh worktree
+of `main` before `npm run compile`. None of the failures touch `src/adapters/`
+or the new `gitDiff.ts`; my gitDiff test passes and so does every other
+`src/adapters/__tests__/*.test.ts` suite.)
+```
+Status: PASS
+Note: All 6 required test cases from §Test Cases green (split into 12 vitest
+cases). `getGitApi` is the only function that touches `vscode`; everything else
+in `gitDiff.ts` is pure structural code. The 12 KB truncation reserves room for
+the marker so the final string is always `≤ GIT_DIFF_MAX_BYTES + marker.length`.
+Multi-repo picker is intentionally `repositories[0] ?? null` per PLAN §2.

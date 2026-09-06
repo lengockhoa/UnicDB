@@ -5,11 +5,12 @@
 
 export type AiCompletionMethod = "responses" | "chat/completions";
 /**
- * Cycle AIC — adds a third, free-form OpenAI-compatible model role used only
- * for SQL ghost-text autocomplete. An empty `modelId` means the feature is
- * disabled (NOT invalid); work/smart remain required.
+ * Cycle GC (TASK-GC-001) — adds a fourth model role `"lite"` for the
+ * lightweight hostMcp/OMP-backed tasks (commit-gen, classification, …).
+ * An empty `modelId` means the feature is disabled (NOT invalid) — same
+ * precedent as `autocomplete`. work/smart remain required.
  */
-export type AiModelRole = "work" | "smart" | "autocomplete";
+export type AiModelRole = "work" | "smart" | "autocomplete" | "lite";
 /**
  * Cycle AE TASK-003 §Engine selection — chat engine routing.
  * `"builtin"` runs `runAgent` against `provider.completeStream`. `"omp"`
@@ -21,6 +22,11 @@ export type AiEngine = "builtin" | "omp";
 export interface AiModelConfig {
   modelId: string;
   vision: boolean;
+  /**
+   * Per-model engine override. Optional — `undefined` means "follow the
+   * global `settings.engine`". When set, must be one of `AiEngine`.
+   */
+  engine?: AiEngine;
 }
 
 export interface AiSettings {
@@ -48,6 +54,7 @@ export function defaultAiSettings(): AiSettings {
       work: { modelId: "", vision: true },
       smart: { modelId: "", vision: false },
       autocomplete: { modelId: "", vision: false },
+      lite: { modelId: "", vision: false, engine: "omp" },
     },
     engine: "builtin",
   };
@@ -57,7 +64,9 @@ const TIMEOUT_MIN = 1000;
 const TIMEOUT_MAX = 600000;
 const MAX_STEPS_MIN = 1;
 const MAX_STEPS_MAX = 100;
-const AI_MODEL_ROLES: readonly AiModelRole[] = ["work", "smart", "autocomplete"];
+const AI_MODEL_ROLES: readonly AiModelRole[] = ["work", "smart", "autocomplete", "lite"];
+/** Roles where empty modelId is treated as "feature disabled", not invalid. */
+const ALLOW_EMPTY_MODEL_ID: ReadonlySet<AiModelRole> = new Set(["autocomplete", "lite"]);
 
 
 /**
@@ -96,7 +105,8 @@ export function aiSettingsErrors(s: AiSettings): string[] {
   }
 
   // models — Cycle AIC: autocomplete is allowed to be empty (means feature
-  // disabled). work + smart remain required.
+  // disabled). Cycle GC: lite is also allowed to be empty for the same
+  // reason. work + smart remain required.
   const models = s.models;
   if (!models || typeof models !== "object") {
     errors.push("models must define work, smart, and autocomplete roles");
@@ -110,12 +120,17 @@ export function aiSettingsErrors(s: AiSettings): string[] {
     for (const role of AI_MODEL_ROLES) {
       const m = models[role];
       if (!m || typeof m !== "object" || typeof m.modelId !== "string" || m.modelId.trim() === "") {
-        if (role === "autocomplete") {
-          // Empty autocomplete = feature disabled, not invalid. Skip the
-          // error so legacy two-role valid configs aren't blocked.
+        if (ALLOW_EMPTY_MODEL_ID.has(role)) {
+          // Empty autocomplete / lite = feature disabled, not invalid.
           continue;
         }
         errors.push(`Model is required for role: ${role}`);
+        continue;
+      }
+      // Per-model engine override — undefined means "follow global engine"
+      // (allowed). Any other value must be one of the legal engines.
+      if (m.engine !== undefined && m.engine !== "builtin" && m.engine !== "omp") {
+        errors.push("Engine must be builtin or omp");
       }
     }
   }
@@ -142,19 +157,38 @@ export function normalizeBaseUrl(url: string): string {
 /** Strip apiKey only — return settings-shape. */
 export function redactAiConfig(cfg: AiConfig): AiSettings {
   const engine: AiEngine = cfg.engine === "omp" ? "omp" : "builtin";
+  const redactedModels: Record<AiModelRole, AiModelConfig> = {
+    work: {
+      modelId: cfg.models.work.modelId,
+      vision: cfg.models.work.vision,
+      ...(cfg.models.work.engine !== undefined ? { engine: cfg.models.work.engine } : {}),
+    },
+    smart: {
+      modelId: cfg.models.smart.modelId,
+      vision: cfg.models.smart.vision,
+      ...(cfg.models.smart.engine !== undefined ? { engine: cfg.models.smart.engine } : {}),
+    },
+    autocomplete: {
+      modelId: cfg.models.autocomplete?.modelId ?? "",
+      vision: cfg.models.autocomplete?.vision ?? false,
+      ...(cfg.models.autocomplete?.engine !== undefined
+        ? { engine: cfg.models.autocomplete.engine }
+        : {}),
+    },
+    lite: {
+      modelId: cfg.models.lite?.modelId ?? "",
+      vision: cfg.models.lite?.vision ?? false,
+      ...(cfg.models.lite?.engine !== undefined
+        ? { engine: cfg.models.lite.engine }
+        : {}),
+    },
+  };
   return {
     baseUrl: cfg.baseUrl,
     method: cfg.method,
     timeoutMs: cfg.timeoutMs,
     maxSteps: cfg.maxSteps,
-    models: {
-      work: { modelId: cfg.models.work.modelId, vision: cfg.models.work.vision },
-      smart: { modelId: cfg.models.smart.modelId, vision: cfg.models.smart.vision },
-      autocomplete: {
-        modelId: cfg.models.autocomplete?.modelId ?? "",
-        vision: cfg.models.autocomplete?.vision ?? false,
-      },
-    },
+    models: redactedModels,
     engine,
   };
 }

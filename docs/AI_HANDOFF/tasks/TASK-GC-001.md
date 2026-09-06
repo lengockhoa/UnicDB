@@ -97,3 +97,112 @@ webview mirror (GC-006) and existing tests lock these strings. Do not touch
 `src/ai/engineChoice.ts` or any `src/ai/omp/*` file; commit-gen consumes them as-is in GC-007.
 
 (no comments yet)
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: -
+
+RED_OUTPUT:
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-gc-001
+
+ ❯ src/ai/__tests__/settings.test.ts  (16 tests | 3 failed) 8ms
+   ❯ src/ai/__tests__/settings.test.ts > ai/settings — defaults + validation + helpers > GC #1 — defaultAiSettings has 4 roles; lite defaults to omp engine; work/smart/autocomplete have NO engine key
+     → expected [ 'autocomplete', 'smart', 'work' ] to deeply equal [ 'autocomplete', 'lite', …(2) ]
+   ❯ src/ai/__tests__/settings.test.ts > ai/settings — defaults + validation + helpers > GC #4 — lite engine 'groq' is rejected with exact error message
+     → expected [] to include 'Engine must be builtin or omp'
+   ❯ src/ai/__tests__/settings.test.ts > ai/settings — defaults + validation + helpers > GC #8 — redactAiConfig preserves lite.modelId/vision/engine and omits apiKey
+     → expected undefined to deeply equal { modelId: 'vendor/lite-fast', …(2) }
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ai/__tests__/settings.test.ts > ai/settings — defaults + validation + helpers > GC #1 — defaultAiSettings has 4 roles; lite defaults to omp engine; work/smart/autocomplete have NO engine key
+AssertionError: expected [ 'autocomplete', 'smart', 'work' ] to deeply equal [ 'autocomplete', 'lite', …(2) ]
+
+- Expected
++ Received
+
+  Array [
+    "autocomplete",
+-   "lite",
+    "smart",
+    "work",
+  ]
+
+ ❯ src/ai/__tests__/settings.test.ts:31:42
+     29|   it("GC #1 — defaultAiSettings has 4 roles; lite defaults to omp engi…
+     30|     const d = defaultAiSettings();
+     31|     expect(Object.keys(d.models).sort()).toEqual(
+       |                                          ^
+     32|       ["autocomplete", "lite", "smart", "work"].sort(),
+     33|     );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/ai/__tests__/settings.test.ts > ai/settings — defaults + validation + helpers > GC #4 — lite engine 'groq' is rejected with exact error message
+AssertionError: expected [] to include 'Engine must be builtin or omp'
+ ❯ src/ai/__tests__/settings.test.ts:237:18
+    235|     };
+    236|     const errs = aiSettingsErrors(s);
+    237|     expect(errs).toContain("Engine must be builtin or omp");
+       |                  ^
+    238|   });
+    239| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  src/ai/__tests__/settings.test.ts > ai/settings — defaults + validation + helpers > GC #8 — redactAiConfig preserves lite.modelId/vision/engine and omits apiKey
+AssertionError: expected undefined to deeply equal { modelId: 'vendor/lite-fast', …(2) }
+
+- Expected: 
+Object {
+  "engine": "omp",
+  "modelId": "vendor/lite-fast",
+  "vision": false,
+}
+
++ Received: 
+undefined
+
+ ❯ src/ai/__tests__/settings.test.ts:262:29
+    260|     const red = redactAiConfig(cfg);
+    261|     expect((red as unknown as Record<string, unknown>).apiKey).toBeUnd…
+    262|     expect(red.models.lite).toEqual({
+       |                             ^
+    263|       modelId: "vendor/lite-fast",
+    264|       vision: false,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 13 passed (16)
+```
+
+(GC #2, #3, #5 passed accidentally because the pre-implementation validator
+never iterated over `lite` and never validated per-model `engine` — these
+tests are still green after implementation and assert the spec requirement
+that empty lite stays valid and a bad per-model engine is caught.)
+
+Verification Output:
+```
+# npm run typecheck
+> UnicDB@1.51.7 typecheck
+> tsc --noEmit
+(no output)
+
+# npx vitest run src/ai/__tests__/settings.test.ts src/ai/__tests__/config.test.ts
+ ✓ src/ai/__tests__/settings.test.ts  (16 tests) 3ms
+ ✓ src/ai/__tests__/config.test.ts  (11 tests) 4ms
+
+ Test Files  2 passed (2)
+      Tests  27 passed (27)
+
+# npm test (full suite)
+ Test Files  244 passed | 1 skipped (245)
+      Tests  3628 passed | 2 skipped (3630)
+```
+
+Status: PASS
+Note: 14 fixture test files adapted (added `lite: { modelId: "", vision: false, engine: "omp" }` to every `models: {...}` literal). Worktree's `node_modules` and `dist/` were empty/missing — symlinked from main so the bundle tests run. No production-code changes outside `src/ai/settings.ts` + `src/ai/config.ts` and the 14 fixture files. Validator error string kept exact ("Engine must be builtin or omp").
