@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.52.0] — 2026-09-06
+
+- Summary: Generate Commit Message sparkle in Source Control title bar + Lite Model section in AI Settings (Engine dropdown defaults to omp). Replaces Kilo Code's equivalent feature. Fixes a live "Engine must be builtin or omp" save bug where the global Engine dropdown was in the data model but never rendered.
+- Files: src/ai/{settings,config,commitMessage,commitGenCommand}.ts, src/adapters/gitDiff.ts, src/extension.ts, webview/aiSettingsFormMain.ts, package.json (sparkle command + scm/title menu), docs/UNICDB_USER_GUIDE.md, plus 8 test files; mid-cycle src/ui/schemaTree.ts icon fix
+- Verification: npm run typecheck ✅ · npm test ✅ (249 files / 3689 tests / 0 failed) · UnicDB-1.52.0.vsix packaged
+
+---
+
 ## [1.51.7] — 2026-09-06
 
 - Summary: Move SQL Results to a bottom-panel tab (next to Terminal). Drop the UnicDB.resultsPlacement setting entirely — placement is now forced and not configurable.
