@@ -118,7 +118,7 @@ function tokenCount(v: unknown): number {
  * Only invoked when both the chat/completions and responses parsers miss.
  * Bounded depth + max length to avoid runaway concatenation on huge payloads.
  */
-function extractAnyText(value: unknown, depth = 0, max = 5): string {
+function extractAnyText(value: unknown, depth = 0, max = 6): string {
   if (depth > max) return "";
   if (typeof value === "string") return value.length <= 4000 ? value : "";
   if (Array.isArray(value)) {
@@ -130,10 +130,25 @@ function extractAnyText(value: unknown, depth = 0, max = 5): string {
     return out;
   }
   if (value && typeof value === "object") {
-    // Only descend into objects whose key names suggest text content. Skip
-    // metadata fields like usage / model / id / object / status that are
-    // almost certainly noise.
-    const textKeys = new Set(["text", "content", "delta", "output_text", "message"]);
+    // Containers that wrap the answer (chat-completions uses `choices[]`,
+    // responses-API uses `output[]` / `response: {output[]}`, and SSE events
+    // use `data:`). Add them so the recursive walker reaches the inner
+    // message payload when standard fields are empty.
+    const textKeys = new Set([
+      "text",
+      "content",
+      "delta",
+      "output_text",
+      "message",
+      "choices",
+      "output",
+      "data",
+      "response",
+      "reasoning_content",
+      "reasoning",
+      "answer",
+      "completion",
+    ]);
     let out = "";
     for (const [k, v] of Object.entries(value)) {
       if (textKeys.has(k)) {
@@ -144,6 +159,62 @@ function extractAnyText(value: unknown, depth = 0, max = 5): string {
     return out;
   }
   return "";
+}
+
+// Fields that are clearly metadata, not model output. Used by
+// `pickLongestStringField` to skip noise when scanning an object for the
+// visible answer. Conservative — anything we are unsure about is kept.
+const NOISE_FIELDS = new Set([
+  "id",
+  "object",
+  "created",
+  "model",
+  "usage",
+  "status",
+  "index",
+  "request_id",
+  "finish_reason",
+  "role",
+  "type",
+  "name",
+  "call_id",
+  "arguments",
+  "argumentsJson",
+  "input_tokens",
+  "output_tokens",
+  "prompt_tokens",
+  "completion_tokens",
+  "total_tokens",
+  "cached_tokens",
+  "reasoning_tokens",
+  "incomplete_details",
+  "error",
+  "timestamp",
+  "system_fingerprint",
+  "tool_calls",
+  "tools",
+]);
+
+/**
+ * Reasoning-model fallback. Walk one object's direct string fields, skip the
+ * known-noise fields, and return the longest non-empty string we find. Cheap
+ * Lite Model proxies wrap the visible answer in unusual field names
+ * (`reasoning_content`, `reasoning`, `answer`, `text`, `completion`, …) that
+ * the user cannot pin down because they switch models weekly. This helper is
+ * field-name-agnostic: anything that is a non-empty string AND not in the
+ * noise list is a candidate, and the longest wins.
+ *
+ * Bounded at 4000 chars to stay consistent with `extractAnyText`.
+ */
+function pickLongestStringField(obj: Record<string, unknown>): string {
+  let best = "";
+  for (const [k, v] of Object.entries(obj)) {
+    if (NOISE_FIELDS.has(k)) continue;
+    if (typeof v !== "string") continue;
+    if (v.length === 0 || v.length > 4000) continue;
+    if (v.length > best.length) best = v;
+  }
+  return best;
 }
 
 function buildUrl(baseUrl: string, method: "responses" | "chat/completions"): string {
@@ -250,6 +321,13 @@ export function parseChatCompletionsResponse(json: unknown): ProviderResult {
       }
     }
   }
+  // Lite Model fallback (reasoning models wrap the visible answer in unusual
+  // fields, and the user rotates through cheap models weekly, so we cannot
+  // hardcode a single field name). When content is empty, scan every string
+  // field on the message object and keep the longest non-noise one.
+  if (text.length === 0 && message && typeof message === "object") {
+    text = pickLongestStringField(message as Record<string, unknown>);
+  }
   if (text.length === 0) {
     text = extractAnyText(json);
   }
@@ -350,7 +428,17 @@ export function parseResponsesResponse(json: unknown): ProviderResult {
           }
         }
       }
+      // Reasoning-model fallback (cheap Lite Model proxies wrap the visible
+      // answer in `reasoning_content` or similar inside the output item).
+      if (item && typeof item === "object") {
+        const fallback = pickLongestStringField(item as Record<string, unknown>);
+        if (fallback.length > text.length) text = fallback;
+      }
     }
+  }
+  // Whole-message fallback when output_text / output are both absent or empty.
+  if (text.length === 0 && json && typeof json === "object") {
+    text = pickLongestStringField(json as Record<string, unknown>);
   }
   if (text.length === 0) {
     text = extractAnyText(json);

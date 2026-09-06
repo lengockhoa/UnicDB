@@ -225,7 +225,7 @@
         "command": "UnicDB.openAiSettings",
         "title": "Open AI Settings…",
         "category": "UnicDB",
-        "icon": "$(gear)"
+        "icon": "$(sparkle)"
       },
       {
         "command": "UnicDB.aiChat",
@@ -616,12 +616,12 @@
           "group": "navigation"
         },
         {
-          "command": "UnicDB.filterSchemaTree",
+          "command": "UnicDB.openAiSettings",
           "when": "view == UnicDB.schemaTree",
           "group": "navigation"
         },
         {
-          "command": "UnicDB.openAiSettings",
+          "command": "UnicDB.filterSchemaTree",
           "when": "view == UnicDB.schemaTree",
           "group": "navigation"
         },

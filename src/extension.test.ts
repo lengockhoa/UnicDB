@@ -1313,14 +1313,14 @@ describe("TASK-UX1-007 — UnicDB.openSettings wiring", () => {
   });
 
   // Case 4 — edge C: no icon collision with AI settings entry.
-  it("case 4: UnicDB.openAiSettings keeps $(gear) and UnicDB.openSettings uses $(settings-gear)", () => {
+  it("case 4: UnicDB.openAiSettings uses $(sparkle) and UnicDB.openSettings uses $(settings-gear)", () => {
     interface CmdEntry { command: string; icon?: string }
     const commands = pkgJson.contributes.commands as CmdEntry[];
     const ai = commands.find((c) => c.command === "UnicDB.openAiSettings");
     const hub = commands.find((c) => c.command === "UnicDB.openSettings");
     expect(ai).toBeDefined();
     expect(hub).toBeDefined();
-    expect(ai!.icon).toBe("$(gear)");
+    expect(ai!.icon).toBe("$(sparkle)");
     expect(hub!.icon).toBe("$(settings-gear)");
     expect(ai!.icon).not.toBe(hub!.icon);
   });

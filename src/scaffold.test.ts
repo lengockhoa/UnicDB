@@ -122,19 +122,24 @@ describe("scaffold", () => {
 
     // DataGrip-style: mọi command có icon; view/title chỉ icon (navigation group),
     // refresh đứng trước add để toolbar không đổi chỗ khi connection xuất hiện.
+    // Icon có thể là codicon string ("$(…)") HOẶC object {light,dark} trỏ tới SVG.
     for (const cmd of pkg.contributes.commands) {
-      expect(cmd.icon, `command ${cmd.command} phải có icon`).toMatch(/^\$\(/);
+      const ok =
+        typeof cmd.icon === "string"
+          ? /^\$\(/.test(cmd.icon)
+          : cmd.icon && typeof cmd.icon === "object" && typeof cmd.icon.light === "string";
+      expect(ok, `command ${cmd.command} phải có icon (codicon hoặc {light,dark})`).toBe(true);
     }
     const viewTitle = pkg.contributes.menus["view/title"];
     expect(viewTitle).toBeTruthy();
     expect(viewTitle.every((m: { group?: string }) => m.group === "navigation")).toBe(true);
-    // Toolbar order: refresh, add connection, filter, AI settings (1.6.x),
-    // AI chat (TASK-009), clear-filter (chỉ hiện khi filter active — luôn cuối,
-    // vị trí ổn định khi connection/filter state xuất hiện).
+    // Toolbar order: refresh, add connection, AI settings (sparkle — 1.53.x),
+    // filter, AI chat (TASK-009), clear-filter (chỉ hiện khi filter active —
+    // luôn cuối, vị trí ổn định khi connection/filter state xuất hiện).
     expect(viewTitle[0].command).toBe("UnicDB.refreshSchema");
     expect(viewTitle[1].command).toBe("UnicDB.addConnection");
-    expect(viewTitle[2].command).toBe("UnicDB.filterSchemaTree");
-    expect(viewTitle[3].command).toBe("UnicDB.openAiSettings");
+    expect(viewTitle[2].command).toBe("UnicDB.openAiSettings");
+    expect(viewTitle[3].command).toBe("UnicDB.filterSchemaTree");
     expect(viewTitle[4].command).toBe("UnicDB.aiChat");
     expect(viewTitle[5].command).toBe("UnicDB.clearSchemaTreeFilter");
 

@@ -62,7 +62,7 @@ function gitDiff(ref: string, paths: readonly string[]): string {
 function packageJsonDepsDiff(ref: string): string {
   const raw = gitDiff(ref, ["package.json"]);
   const contributesKeyPattern =
-    /^[+-]\s+"(command|title|category|icon|when|group|order|keybinding|mac|win|linux)":/;
+    /^[+-]\s+"(command|title|category|icon|when|group|order|keybinding|mac|win|linux|light|dark)":/;
   const contributesMenuKeyPattern =
     /^[+-]\s+"(webview\/[a-zA-Z0-9/._-]+|view\/[a-zA-Z0-9/._-]+|editor\/[a-zA-Z0-9/._-]+|scm\/[a-zA-Z0-9/._-]+|file\/[a-zA-Z0-9/._-]+|commandPalette|menus)":\s*[?[{]?\s*$/;
   const onCommandLinePattern = /^[+-]\s+"onCommand:[a-zA-Z0-9.]+",?\s*$/;

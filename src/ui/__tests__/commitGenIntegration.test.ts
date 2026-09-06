@@ -44,9 +44,9 @@ import type { ProviderRequest, ProviderResult } from "../../ai/provider";
 
 // ---- frozen strings (mirror PLAN §1 table) --------------------------------
 const NEW_COMMAND_ID = "UnicDB.generateCommitMessage";
-const NEW_COMMAND_TITLE = "Generate Commit Message";
+const NEW_COMMAND_TITLE = "UnicDB: Generate Commit Message";
 const NEW_COMMAND_CATEGORY = "UnicDB";
-const NEW_COMMAND_ICON = "$(sparkle)";
+const NEW_COMMAND_ICON = { light: "media/commit-spark.svg", dark: "media/commit-spark.svg" };
 const SCM_GROUP = "navigation";
 const SCM_WHEN = "scmProvider == git";
 
@@ -254,9 +254,9 @@ describe("TASK-GC-008 #3 disabled-Lite UX contract", () => {
 // 4. Empty diff cuts the chain — Test #4 (empty edge).
 // =============================================================================
 describe("TASK-GC-008 #4 empty diff cuts the chain", () => {
-  it("shows the empty-diff info toast and never invokes either engine port", async () => {
+  it("shows the empty-diff error toast and never invokes either engine port", async () => {
     const settings = fakeSettings({ modelId: "lite-1", engine: "builtin" });
-    const showInfo = vi.fn();
+    const showError = vi.fn();
     const builtinComplete = vi.fn(async () => providerOk("unused"));
     const buildOmpEngine = vi.fn(async () => fakeOmpOneShot("unused"));
     const setInputBox = vi.fn();
@@ -273,17 +273,18 @@ describe("TASK-GC-008 #4 empty diff cuts the chain", () => {
       builtinComplete: builtinComplete as never,
       collectDiff: (async () => null) as never,
       setInputBox,
-      showInfo,
-      showError: vi.fn(),
+      showInfo: vi.fn(),
+      showError,
       showSettingsToast: vi.fn().mockResolvedValue(undefined),
       openSettings: vi.fn(),
     };
 
     await runGenerateCommitMessage(deps);
 
-    expect(showInfo).toHaveBeenCalledTimes(1);
-    expect(showInfo).toHaveBeenCalledWith(TOAST_NO_CHANGES);
-    expect(TOAST_NO_CHANGES).toBe("UnicDB: no changes to summarize.");
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(showError).toHaveBeenCalledWith(TOAST_NO_CHANGES);
+    expect(TOAST_NO_CHANGES).toContain("nothing to commit");
+    expect(TOAST_NO_CHANGES).toContain("no staged or unstaged changes");
 
     expect(builtinComplete).not.toHaveBeenCalled();
     expect(buildOmpEngine).not.toHaveBeenCalled();

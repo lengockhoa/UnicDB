@@ -871,6 +871,178 @@ describe("usage transport — no response body retained for accounting (#T3.6)",
   });
 });
 
+// ============================================================================
+// Reasoning-model content extraction (cheap Lite Model proxies wrap the
+// visible answer in unusual field names — glm-5-turbo today, a different one
+// tomorrow. We test the field-name-agnostic fallback path.)
+// ============================================================================
+describe("provider — reasoning-model content extraction (cheap Lite Model)", () => {
+  it("chat-completions: extracts from message.reasoning_content when content is empty", () => {
+    const out = parseChatCompletionsResponse({
+      id: "r1",
+      object: "chat.completion",
+      model: "glm-5-turbo",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: "",
+            reasoning_content: "feat(ai): support reasoning_content fallback",
+          },
+        },
+      ],
+      usage: {
+        prompt_tokens: 4200,
+        completion_tokens: 77,
+        completion_tokens_details: { reasoning_tokens: 72 },
+      },
+    });
+    expect(out.text).toBe("feat(ai): support reasoning_content fallback");
+    expect(out.finishReason).toBe("stop");
+    expect(out.usage.outputTokens).toBe(77);
+  });
+
+  it("chat-completions: extracts from message.reasoning when content and reasoning_content are empty", () => {
+    const out = parseChatCompletionsResponse({
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: "",
+            reasoning: "fix(api): reasoning-only field path",
+          },
+        },
+      ],
+    });
+    expect(out.text).toBe("fix(api): reasoning-only field path");
+  });
+
+  it("chat-completions: extracts from message.text when content/reasoning fields are empty", () => {
+    const out = parseChatCompletionsResponse({
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: "",
+            text: "refactor: rename x to y",
+          },
+        },
+      ],
+    });
+    expect(out.text).toBe("refactor: rename x to y");
+  });
+
+  it("chat-completions: prefers non-empty content over reasoning_content (content wins)", () => {
+    const out = parseChatCompletionsResponse({
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: "docs: short subject",
+            reasoning_content: "this long explanation should NOT be returned",
+          },
+        },
+      ],
+    });
+    expect(out.text).toBe("docs: short subject");
+  });
+
+  it("chat-completions: skips noise fields (usage, id, model, finish_reason, role)", () => {
+    const out = parseChatCompletionsResponse({
+      id: "should-skip",
+      model: "should-skip",
+      finish_reason: "stop",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: "",
+            // The visible answer is hidden in a non-noise field.
+            answer: "perf: cache provider response",
+          },
+        },
+      ],
+    });
+    expect(out.text).toBe("perf: cache provider response");
+  });
+
+  it("chat-completions: extractAnyText walks choices[] then message then nested data.text", () => {
+    // Some Lite Model proxies wrap the answer in `data: {text}` instead of
+    // a `content` string. `extractAnyText` must drill through both layers.
+    const out = parseChatCompletionsResponse({
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: "",
+            data: { text: "chore: walked via extractAnyText" },
+          },
+        },
+      ],
+    });
+    expect(out.text).toBe("chore: walked via extractAnyText");
+  });
+
+  it("responses-API: extracts from item.reasoning_content inside output[]", () => {
+    const out = parseResponsesResponse({
+      id: "r2",
+      status: "completed",
+      output: [
+        {
+          type: "message",
+          content: [],
+          reasoning_content: "feat(api): hidden answer in reasoning_content",
+        },
+      ],
+      usage: { input_tokens: 4200, output_tokens: 77 },
+    });
+    expect(out.text).toBe("feat(api): hidden answer in reasoning_content");
+    expect(out.finishReason).toBe("stop");
+  });
+
+  it("responses-API: prefers output_text over reasoning_content when both exist", () => {
+    const out = parseResponsesResponse({
+      status: "completed",
+      output_text: "feat: short subject",
+      output: [
+        {
+          type: "message",
+          content: [{ type: "output_text", text: "" }],
+          reasoning_content: "long reasoning chain we don't want",
+        },
+      ],
+    });
+    expect(out.text).toBe("feat: short subject");
+  });
+
+  it("responses-API: extracts from top-level field when output_text/output are absent", () => {
+    const out = parseResponsesResponse({
+      status: "completed",
+      text: "chore: top-level text field",
+    });
+    expect(out.text).toBe("chore: top-level text field");
+  });
+
+  it("extractAnyText: walks choices[] → message → content array of parts", () => {
+    // Last-resort path: no standard message field matches, but the walker
+    // must drill into choices[] and find the array-of-text-parts.
+    const out = parseChatCompletionsResponse({
+      model: "weird-proxy",
+      choices: [
+        {
+          // No `message` key — proxy flattened everything.
+          content: [{ type: "text", text: "feat: nested in choices without message" }],
+        },
+      ],
+    });
+    expect(out.text).toBe("feat: nested in choices without message");
+  });
+});
+
 describe("provider — streamComplete (caller abort during fetch phase)", () => {
   it("rejects with bare AbortError (name 'AbortError', not ProviderError) when caller signal aborts before response headers arrive", async () => {
     const controller = new AbortController();

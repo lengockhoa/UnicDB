@@ -98,9 +98,9 @@ describe("TASK-GC-004 — package.json manifest guards for the Generate Commit M
     expect(entry).toBeDefined();
     expect(entry).toEqual({
       command: NEW_COMMAND_ID,
-      title: "Generate Commit Message",
+      title: "UnicDB: Generate Commit Message",
       category: "UnicDB",
-      icon: "$(sparkle)",
+      icon: { light: "media/commit-spark.svg", dark: "media/commit-spark.svg" },
     });
   });
 
