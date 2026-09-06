@@ -36,6 +36,22 @@ npm run bump:major
 npm run bump -- 1.52.0
 ```
 
+## Fast lane (hotfix — minimal commands, minimal time)
+
+When you need to ship RIGHT NOW and want to skip the verification gates
+because you already ran them manually:
+
+| State | Fastest command | Skips |
+|---|---|---|
+| Already bumped + .vsix built, just need to ship | `npx vsce publish` | nothing |
+| Code edited, want full gate (recommended) | `npm run bump` | nothing (full typecheck + test + package) |
+| Code edited, tests already passed | `npm run bump -- --skip-test` | typecheck + test |
+| Code edited, .vsix already built | `npm run bump -- --skip-test --skip-package` | typecheck + test + compile + .vsix |
+| Pure version-bump only, no code change | `npm run bump -- --skip-test --skip-package && npx vsce publish` | everything except the writes |
+
+Default is to run the full gate. Skip flags exist for emergencies — they
+keep the gate logic but defer the verification cost to the operator.
+
 ## What `npm run bump` actually does (in order)
 
 1. Bumps `package.json` `version` field (`patch` is the default).
