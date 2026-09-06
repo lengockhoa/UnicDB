@@ -200,6 +200,26 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
       engine,
       modelId: lite.modelId,
       baseUrl: cfg?.baseUrl ?? "",
+      method: cfg?.method ?? "",
+      // The exact request body so the user can compare against Kilo Code's
+      // working call for the same Lite Model — usually the diff is one of:
+      //   (a) stream: false hint ignored → switch to stream:true
+      //   (b) max_output_tokens name / cap mismatch
+      //   (c) extra fields the Lite Model proxy doesn't recognize
+      requestBody: JSON.stringify(
+        cfg
+          ? {
+              model: lite.modelId,
+              input:
+                "<<see prompt from buildCommitPrompt — captured by provider>>",
+              max_output_tokens: 300,
+              temperature: 0.2,
+              stream: false,
+            }
+          : null,
+        null,
+        2,
+      ),
     },
   });
   const fileNote = debugFile ? ` Debug dump: ${debugFile}` : "";
