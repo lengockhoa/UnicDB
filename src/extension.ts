@@ -942,7 +942,7 @@ export async function activate(
             location: vscode.ProgressLocation.SourceControl,
             title: "UnicDB: generating commit message…",
           },
-          async () => runGenerateCommitMessage(buildCommitGenDeps(aiStore)),
+          async () => runGenerateCommitMessage(buildCommitGenDeps(aiStore, context)),
         ),
     ),
   );
@@ -3357,7 +3357,10 @@ async function buildCommitGenOmpOneShot(
   };
 }
 
-function buildCommitGenDeps(aiStore: AiConfigStore): CommitGenDeps {
+function buildCommitGenDeps(
+  aiStore: AiConfigStore,
+  context: vscode.ExtensionContext,
+): CommitGenDeps {
   // Cached repo handle — pick once per command invocation, not per call.
   // `pickRepository()` is multi-repo-out-of-scope (PLAN §2); falls back to
   // the SCM inputBox proxy when the vscode.git API is unavailable so the
@@ -3401,6 +3404,33 @@ function buildCommitGenDeps(aiStore: AiConfigStore): CommitGenDeps {
     },
     openSettings: () => {
       commandOpenAiSettings(aiStore);
+    },
+    writeDebugArtifact: ({ label, body, context: meta }) => {
+      // Persist raw provider payloads to disk so the user can paste them
+      // back for diagnosis without DevTools. Skipped silently if the body
+      // is empty (nothing to debug) or the storage URI is unavailable.
+      if (!body || body.length === 0) return undefined;
+      const folder = context.globalStorageUri;
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const fileName = `unicdb-${label}-${stamp}.txt`;
+      const fileUri = vscode.Uri.joinPath(folder, fileName);
+      const header =
+        `# UnicDB debug artifact\n` +
+        `# label: ${label}\n` +
+        `# timestamp: ${new Date().toISOString()}\n` +
+        (meta ? `# context: ${JSON.stringify(meta, null, 2)}\n` : "") +
+        `# body length: ${body.length}\n` +
+        `# ----- BEGIN BODY -----\n`;
+      const payload = header + body + "\n# ----- END BODY -----\n";
+      try {
+        // Fire-and-forget; we don't want a write failure to mask the real
+        // empty-message error from the notification. The path string is
+        // returned synchronously so the notification can show it.
+        void vscode.workspace.fs.writeFile(fileUri, Buffer.from(payload, "utf8"));
+        return fileUri.fsPath;
+      } catch {
+        return undefined;
+      }
     },
   };
 }

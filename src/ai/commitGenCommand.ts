@@ -72,6 +72,16 @@ export interface CommitGenDeps {
   showSettingsToast(m: string, action: string): Promise<string | undefined>;
   /** Open the AI Settings panel — invoked when the user picks the action. */
   openSettings(): void;
+  /**
+   * Optional debug dump: persist a raw provider payload to disk so the user
+   * can paste it back for diagnosis. Returns the absolute file path, or
+   * undefined if writing was skipped (e.g. body is empty).
+   */
+  writeDebugArtifact?(input: {
+    label: string;
+    body: string;
+    context?: Record<string, unknown>;
+  }): string | undefined;
 }
 
 // ---- main entry -------------------------------------------------------------
@@ -121,6 +131,8 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
   });
 
   let message = "";
+  let rawProviderText = "";
+  let cfg: AiConfig | null = null;
   if (engine === "omp") {
     const detection = await deps.detectOmp();
     const choice = deps.resolveEngine({ detection, config: null });
@@ -132,6 +144,7 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
     try {
       const oneShot = await deps.buildOmpEngine(choice);
       const raw = await oneShot.generate(prompt as unknown as string);
+      rawProviderText = raw;
       message = sanitizeCommitMessage(raw);
     } catch (e) {
       deps.showError(`UnicDB: omp error — ${(e as Error).message ?? String(e)}`);
@@ -139,7 +152,7 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
     }
   } else {
     // "builtin"
-    const cfg = await deps.loadConfig();
+    cfg = await deps.loadConfig();
     if (cfg === null) {
       const action = await deps.showSettingsToast(
         TOAST_NO_BACKEND_CONFIG,
@@ -157,6 +170,7 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
         maxOutputTokens: 300,
         temperature: 0.2,
       });
+      rawProviderText = result.text;
       message = sanitizeCommitMessage(result.text);
     } catch (e) {
       const err = e as Error & { bodySnippet?: string };
@@ -173,8 +187,24 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
   }
   // Provider returned but produced no usable text (sanitize stripped
   // everything, or upstream returned an empty payload). Surface a clear
-  // diagnostic — silently dropping is worse than a noisy error.
+  // diagnostic with the raw text length so the user can tell whether the
+  // model emitted whitespace-only output, an empty SSE stream, or got
+  // stuck mid-generation. Also dump the raw payload to a debug file so
+  // the user can paste it back for diagnosis without DevTools.
+  const rawLen = rawProviderText.length;
+  const rawPreview = rawProviderText.slice(0, 240).replace(/\s+/g, " ");
+  const debugFile = deps.writeDebugArtifact?.({
+    label: "commit-gen-empty",
+    body: rawProviderText,
+    context: {
+      engine,
+      modelId: lite.modelId,
+      baseUrl: cfg?.baseUrl ?? "",
+    },
+  });
+  const fileNote = debugFile ? ` Debug dump: ${debugFile}` : "";
   deps.showError(
-    "UnicDB: provider returned no commit message text. Check Lite Model config (modelId, baseUrl) and provider output format.",
+    `UnicDB: provider returned no commit message text (raw length ${rawLen}). ` +
+      `Preview: "${rawPreview}". Check Lite Model config.${fileNote}`,
   );
 }
