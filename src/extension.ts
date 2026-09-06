@@ -473,6 +473,20 @@ export async function activate(
   };
   const panel = new ResultsPanel({ runner, saveContext });
   panel.setExtensionUri(context.extensionUri);
+  // TASK-RP-001 — register the panel as a `WebviewViewProvider` whose view
+  // lives in the bottom panel container (next to Terminal). The legacy
+  // `createWebviewPanel` shell + `UnicDB.resultsPlacement` setting +
+  // `moveEditorToBelowGroup`/`AboveGroup` placement paths are gone —
+  // `package.json` owns the `UnicDB-results` webview view contribution.
+  // `retainContextWhenHidden` keeps the panel's render state alive when
+  // the user docks it away and back, mirroring the editor-area shell.
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(
+      ResultsPanel.viewId,
+      panel,
+      { webviewOptions: { retainContextWhenHidden: true } },
+    ),
+  );
   context.subscriptions.push(panel);
 
   // TASK-002 — wire `UnicDB.browseTableData` (double-click/Enter on table/view nodes

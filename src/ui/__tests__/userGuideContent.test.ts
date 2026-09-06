@@ -44,8 +44,19 @@ describe("TASK-UX1-004 (R2) — docs/UNICDB_USER_GUIDE.md", () => {
     });
   }
 
-  it("#4 mentions UnicDB.resultsPlacement setting", () => {
-    expect(content).toContain("UnicDB.resultsPlacement");
+  it("#4 does NOT mention the removed UnicDB.resultsPlacement setting", () => {
+    expect(content).not.toContain("UnicDB.resultsPlacement");
+  });
+
+  it("#4b no stale placement option words remain in a settings context", () => {
+    const lower = content.toLowerCase();
+    expect(lower).not.toContain("resultsplacement");
+    expect(content).not.toContain("beside");
+    expect(content).not.toContain("moveEditorToBelowGroup");
+  });
+
+  it("#4c guide documents the fixed bottom-panel placement", () => {
+    expect(/Results[\s\S]{0,400}?Terminal|Terminal[\s\S]{0,400}?Results/i.test(content)).toBe(true);
   });
 
   it("#5 explains how to open the guide (book icon)", () => {

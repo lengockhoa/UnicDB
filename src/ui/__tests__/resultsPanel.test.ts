@@ -1,16 +1,22 @@
 // src/ui/__tests__/resultsPanel.test.ts
 // Unit tests for ResultsPanel — fix round 1 (IMPORTANT #5 BigInt serialization
 // + postMessage rejection surfacing).
+//
+// TASK-RP-001 — the panel is now a `vscode.WebviewViewProvider`. Tests drive
+// `render()` and message handler paths by calling `provider.resolveWebviewView`
+// against a FakeWebviewView. The legacy `createWebviewPanel` mock and the
+// placement settings describe-block are gone — see
+// `resultsPanelViewProvider.test.ts` for the new shell's TDD coverage.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import * as fs from "node:fs";
-import * as path from "node:path";
 
 // ---- vscode mock -----------------------------------------------------------
 
 type MessageHandler = (msg: unknown) => void;
+type DisposeHandler = () => void;
 
 class FakeWebview {
   html = "";
+  options: Record<string, unknown> = {};
   private csp = "vscode-resource:webview";
   postMessage = vi.fn(async (_msg: unknown) => undefined);
   onDidReceiveMessage = (h: MessageHandler) => { this.handler = h; return { dispose: () => undefined }; };
@@ -21,73 +27,118 @@ class FakeWebview {
   private handler: MessageHandler | null = null;
 }
 
-class FakeWebviewPanel {
+class FakeWebviewView {
   webview = new FakeWebview();
   visible = true;
-  /** AI-001 — every reveal() call's argument list (tests assert the
-   *  no-arg "preserve user's group" contract via args.length === 0). */
-  revealArgs: unknown[][] = [];
-  private disposables: { dispose: () => void }[] = [];
-  private didDisposeHandlers: (() => void)[] = [];
-  constructor(public viewType: string, public title: string, public viewColumn: number, public options: unknown) {}
-  reveal(...args: unknown[]) { this.revealArgs.push(args); }
-  onDidReceiveMessage(h: MessageHandler) { return { dispose: () => undefined }; }
-  onDidDispose(h: () => void) {
+  description: string | undefined;
+  title: string | undefined;
+  viewType = "UnicDB.results";
+  /** True after dispose() fires once. The mock uses this to know when
+   *  to re-resolve on the next focus call. */
+  isDisposed = false;
+  private didDisposeHandlers: DisposeHandler[] = [];
+  onDidReceiveMessage(h: MessageHandler) { this.webview.onDidReceiveMessage(h); return { dispose: () => undefined }; }
+  onDidDispose(h: DisposeHandler) {
     this.didDisposeHandlers.push(h);
     return { dispose: () => undefined };
   }
   dispose() {
+    if (this.isDisposed) return;
+    this.isDisposed = true;
     for (const h of this.didDisposeHandlers) h();
+    if (lastView.current === this) lastView.current = null;
   }
 }
 
-const lastPanel: { current: FakeWebviewPanel | null } = { current: null };
+const lastView: { current: FakeWebviewView | null } = { current: null };
 
-const createCalls: Array<{ col: number | undefined }> = [];
+/** Cached `resolveWebviewView` invocations — the mock implements a
+ *  `WebviewViewProvider` whose resolveWebviewView captures the view. Tests
+ *  pull `lastView.current` (set at resolve time) to drive messages. */
+const registeredProviders: Array<{
+  viewId: string;
+  options?: unknown;
+  provider: { resolveWebviewView: (view: FakeWebviewView) => unknown };
+}> = [];
 
-/** AI-001 — mutable placement the mocked getConfiguration returns.
- *  Tests flip it between cases to exercise the resultsPlacement setting. */
-const configState: { resultsPlacement: unknown } = { resultsPlacement: undefined };
-
-/** TASK-AI-001-fix — listeners registered via onDidChangeConfiguration are
- *  collected here so tests can invoke them synchronously with a synthetic
- *  ConfigurationChangeEvent. The real vscode API returns a Disposable;
- *  the mock returns a stub with the same shape. */
-const configListeners: Array<(event: { affectsConfiguration: (k: string) => boolean }) => void> = [];
+/** Drive the most-recently-registered provider to materialize a fresh
+ *  `FakeWebviewView` whenever the live one is missing or has been disposed
+ *  (mirrors VS Code's lazy resolve when the bottom panel reopens). The
+ *  resulting view is recorded in `lastView.current` and receives a
+ *  synchronous `ready` so any buffered `lastResults` flushes immediately. */
+function ensureResolved(): FakeWebviewView {
+  const entry = registeredProviders[registeredProviders.length - 1];
+  if (!entry) {
+    throw new Error("ensureResolved: no provider registered yet");
+  }
+  if (lastView.current && !lastView.current.isDisposed) {
+    return lastView.current;
+  }
+  const v = new FakeWebviewView();
+  entry.provider.resolveWebviewView(v);
+  lastView.current = v;
+  v.webview.dispatch({ type: "ready" });
+  return v;
+}
 
 vi.mock("vscode", () => {
   return {
     Uri: {
       file: (p: string) => ({ fsPath: p, path: p, toString: () => p }),
-      joinPath: (...parts: unknown[]) => ({
-        path: parts.map((p) => p?.fsPath ?? p?.path ?? "").join("/"),
-      }),
+      joinPath: (...parts: unknown[]) => {
+        const out: { fsPath: string; path: string; toString: () => string } = {
+          fsPath: "",
+          path: "",
+          toString: () => "",
+        };
+        const parts2 = parts.map((p: unknown) => {
+          if (typeof p === "string") return p;
+          if (!p) return "";
+          const obj = p as { fsPath?: string; path?: string };
+          return obj.fsPath ?? obj.path ?? "";
+        });
+        const joined = parts2.join("/");
+        out.fsPath = joined;
+        out.path = joined;
+        out.toString = () => joined;
+        return out;
+      },
     },
     ViewColumn: { Beside: 1, Active: 2, One: 3, Two: 4, Three: 5 },
     window: {
-      createWebviewPanel: (vt: string, t: string, col: number, opts: unknown) => {
-        createCalls.push({ col });
-        const p = new FakeWebviewPanel(vt, t, col, opts);
-        lastPanel.current = p;
-        return p;
+      registerWebviewViewProvider: (
+        viewId: string,
+        provider: { resolveWebviewView: (view: FakeWebviewView) => unknown },
+        options?: unknown,
+      ) => {
+        registeredProviders.push({ viewId, options, provider });
+        // NOTE: the mock does NOT auto-resolve at register time — VS Code
+        // resolves the view lazily on first focus, so any `ready` handshake
+        // POSTS the live `lastResults` (not an empty initial state). The
+        // `UnicDB-results.focus` executeCommand path below drives that.
+        return { dispose: () => undefined };
       },
       showErrorMessage: vi.fn(async () => undefined),
     },
     commands: {
-      executeCommand: vi.fn(async () => undefined),
+      executeCommand: vi.fn(async (cmd: string, ..._rest: unknown[]) => {
+        // The real `UnicDB-results.focus` triggers VS Code to resolve the
+        // provider's view if it isn't materialized yet — simulate that.
+        if (cmd === "UnicDB-results.focus") {
+          ensureResolved();
+        }
+        return undefined;
+      }),
     },
     workspace: {
-      getConfiguration: vi.fn(() => ({
-        get: (_key: string) => configState.resultsPlacement,
-      })),
-      onDidChangeConfiguration: vi.fn((cb: (event: { affectsConfiguration: (k: string) => boolean }) => void) => {
-        configListeners.push(cb);
-        return { dispose: vi.fn() };
-      }),
+      getConfiguration: vi.fn(() => ({ get: (_key: string) => undefined })),
+      onDidChangeConfiguration: vi.fn(() => ({ dispose: vi.fn() })),
     },
     env: {
       clipboard: { writeText: vi.fn(async () => undefined) },
     },
+    CancellationToken: class {},
+    EventEmitter: class { event = () => ({ dispose: () => undefined }); },
   };
 });
 import * as vscode from "vscode";
@@ -101,11 +152,50 @@ function makeRunnerStub(): QueryRunner {
   } as unknown as QueryRunner;
 }
 
+/** Construct a panel AND register it as a `WebviewViewProvider` (the step
+ *  `extension.ts` performs at activation). Mirrors the production wiring
+ *  closely enough that subsequent `panel.render()` → focus → resolve
+ *  chains Just Work via the auto-resolve in the mock. */
+function makePanel(opts: { runner: QueryRunner; saveContext?: unknown; title?: string }): ResultsPanel {
+  const panel = new ResultsPanel({
+    runner: opts.runner,
+    saveContext: opts.saveContext as never,
+    title: opts.title,
+  });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
+  // Production step — extension.ts does this; tests inline it.
+  vscode.window.registerWebviewViewProvider(
+    ResultsPanel.viewId,
+    panel as unknown as { resolveWebviewView: (view: FakeWebviewView) => unknown },
+    { webviewOptions: { retainContextWhenHidden: true } },
+  );
+  return panel;
+}
+
+/** Construct a panel, render a result set, and resolve a fresh view — a
+ *  one-liner for tests that need a fully wired panel with a view. */
+function panelWith(
+  runner: QueryRunner,
+  results: StatementResult[],
+  header = "hdr",
+): { panel: ResultsPanel; fake: FakeWebviewView } {
+  const panel = makePanel({ runner });
+  panel.render(results, header);
+  const fake = lastView.current!;
+  return { panel, fake };
+}
+
+/** Resolve a fresh view NOW (re-creates if lastView was disposed). Used by
+ *  session-epoch tests that simulate a dispose + recreate cycle. */
+function resolveView(_panel?: ResultsPanel): FakeWebviewView {
+  // Force a re-resolve by clearing the cached reference.
+  lastView.current = null;
+  return ensureResolved();
+}
+
 beforeEach(() => {
-  lastPanel.current = null;
-  createCalls.length = 0;
-  configState.resultsPlacement = undefined;
-  configListeners.length = 0;
+  lastView.current = null;
+  registeredProviders.length = 0;
   vi.clearAllMocks();
 });
 
@@ -242,6 +332,7 @@ describe("ResultsPanel — postMessage surface (IMPORTANT #5)", () => {
   it("postMessage được gọi với rows đã sanitize (không còn BigInt)", async () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -259,7 +350,7 @@ describe("ResultsPanel — postMessage surface (IMPORTANT #5)", () => {
       ],
       "hdr",
     );
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     const callArg = fake.webview.postMessage.mock.calls[0][0];
     const rowVal = callArg.results[0].result.rows[0][0];
     expect(typeof rowVal).toBe("string");
@@ -269,6 +360,7 @@ describe("ResultsPanel — postMessage surface (IMPORTANT #5)", () => {
   it("postMessage rejection được surface (không void)", async () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -286,7 +378,7 @@ describe("ResultsPanel — postMessage surface (IMPORTANT #5)", () => {
       ],
       "hdr",
     );
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     // Mô phỏng postMessage reject.
     fake.webview.postMessage.mockRejectedValueOnce(new Error("DataCloneError: BigInt"));
     // Re-render để trigger lại postMessage.
@@ -318,6 +410,7 @@ describe("ResultsPanel — postMessage surface (IMPORTANT #5)", () => {
   it("postMessage sync throw cũng được surface", async () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -335,7 +428,7 @@ describe("ResultsPanel — postMessage surface (IMPORTANT #5)", () => {
       ],
       "hdr",
     );
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     fake.webview.postMessage.mockImplementationOnce(() => {
       throw new Error("Boom sync");
     });
@@ -367,6 +460,7 @@ describe("ResultsPanel — handleMessage loadMore (TASK-204)", () => {
   function newPanel() {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -379,7 +473,7 @@ describe("ResultsPanel — handleMessage loadMore (TASK-204)", () => {
       ],
       "hdr",
     );
-    return { panel, runner, fake: lastPanel.current! };
+    return { panel, runner, fake: lastView.current! };
   }
 
   /** Wait until postMessage được gọi với type khớp predicate, hoặc fail. */
@@ -527,6 +621,7 @@ describe("ResultsPanel — append-aware render (TASK-AH-002)", () => {
 
   it("preserves old-tab caches while invalidating only appended indexes", () => {
     const panel = new ResultsPanel({ runner: makeRunnerStub() });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     const internal = panel as unknown as Internals;
     internal.distinctCache.set("0::id", {});
     internal.distinctCache.set("1::id", {});
@@ -556,6 +651,7 @@ describe("ResultsPanel — append-aware render (TASK-AH-002)", () => {
 
   it("appendBase at or beyond the result edge preserves caches and generation", () => {
     const panel = new ResultsPanel({ runner: makeRunnerStub() });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     const internal = panel as unknown as Internals;
     internal.distinctCache.set("0::id", {});
     const generation = internal.statementGeneration;
@@ -585,6 +681,7 @@ describe("ResultsPanel — sanitizeStatementResult batched wire shape (TASK-006 
   it("state post carries boolean batched, never the live cursor handle", () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -598,7 +695,7 @@ describe("ResultsPanel — sanitizeStatementResult batched wire shape (TASK-006 
       ],
       "Run at T — postgres@h/db",
     );
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     const stateMsg = fake.webview.postMessage.mock.calls[0][0] as {
       results: Array<Record<string, unknown>>;
     };
@@ -650,6 +747,7 @@ describe("ResultsPanel — typed state dialect + declared columnTypes (TASK-007 
       runner,
       ...(saveContext ? { saveContext: saveContext as never } : {}),
     });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -662,7 +760,7 @@ describe("ResultsPanel — typed state dialect + declared columnTypes (TASK-007 
       ],
       header,
     );
-    return { panel, runner, fake: lastPanel.current! };
+    return { panel, runner, fake: lastView.current! };
   }
 
   function stateMsgs(fake: FakeWebview) {
@@ -728,6 +826,7 @@ describe("ResultsPanel — typed state dialect + declared columnTypes (TASK-007 
         listColumnTypes: async () => ({ id: "int4", name: "varchar" }),
       } as never,
     });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -745,7 +844,7 @@ describe("ResultsPanel — typed state dialect + declared columnTypes (TASK-007 
       ],
       "hdr",
     );
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     // listColumnTypes is ASYNC and render() is synchronous, so the typed
     // map lands on the panel's own upgrade re-post once metadata resolves.
     // Flush microtasks until it shows up (bounded).
@@ -774,6 +873,7 @@ describe("ResultsPanel — typed state dialect + declared columnTypes (TASK-007 
           listColumnTypes: async () => ({ id: "int4" }),
         } as never,
       });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
       panel.render(
         [
           {
@@ -786,7 +886,7 @@ describe("ResultsPanel — typed state dialect + declared columnTypes (TASK-007 
         ],
         "hdr",
       );
-      const fake = lastPanel.current!;
+      const fake = lastView.current!;
       for (const m of stateMsgs(fake)) {
         expect(m.columnTypes).toBeUndefined();
       }
@@ -819,6 +919,7 @@ describe("ResultsPanel — header (A14)", () => {
   it('render(results, "Browse x at T") → the render post AND every later post (e.g. "ready") carry that header, not blank', async () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -831,7 +932,7 @@ describe("ResultsPanel — header (A14)", () => {
       ],
       "Browse x at T",
     );
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     const firstState = fake.webview.postMessage.mock.calls
       .map((c) => c[0] as { type?: string; header?: string })
       .find((m) => m.type === "state");
@@ -861,7 +962,7 @@ describe("ResultsPanel — header (A14)", () => {
 describe("ResultsPanel — TASK-RLX02-003 cancel path", () => {
   /** Local bounded wait (same shape as the loadMore helper above). */
   async function waitForBusyPost(
-    fake: FakeWebviewPanel,
+    fake: FakeWebviewView,
     busy: boolean,
   ): Promise<void> {
     for (let i = 0; i < 200; i++) {
@@ -879,10 +980,11 @@ describe("ResultsPanel — TASK-RLX02-003 cancel path", () => {
   function busyPanel(): {
     panel: ResultsPanel;
     runner: QueryRunner;
-    fake: FakeWebviewPanel;
+    fake: FakeWebviewView;
   } {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -898,7 +1000,7 @@ describe("ResultsPanel — TASK-RLX02-003 cancel path", () => {
     // Simulate the host marking the panel busy before the cancel arrives —
     // mirrors runStatements()'s panel.setBusy(true) call.
     panel.setBusy(true);
-    return { panel, runner, fake: lastPanel.current! };
+    return { panel, runner, fake: lastView.current! };
   }
 
   it("Test #4 — deferred webview cancel keeps busy:true until runner.cancel() settles", async () => {
@@ -934,6 +1036,7 @@ describe("ResultsPanel — TASK-RLX02-003 cancel path", () => {
   it("Test #2 — post-settlement cancel preserves done state and never toasts a cancellation error", async () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     // Render a settled 'done' result with no in-flight work.
     panel.render(
       [
@@ -947,7 +1050,7 @@ describe("ResultsPanel — TASK-RLX02-003 cancel path", () => {
       ],
       "hdr",
     );
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     const showErr = vscode.window.showErrorMessage as unknown as {
       mockClear: () => void;
       mock: { calls: unknown[][] };
@@ -969,435 +1072,6 @@ describe("ResultsPanel — TASK-RLX02-003 cancel path", () => {
   });
 });
 
-
-// ---- AI-001 — resultsPlacement (below default, beside opt-out) -------------
-
-/** Minimal StatementResult fixture for tests that only exercise placement. */
-function makePlacementRunner(): QueryRunner {
-  return {
-    loadMore: vi.fn(async () => []),
-    cancel: vi.fn(async () => {}),
-  } as unknown as QueryRunner;
-}
-
-describe("ResultsPanel — resultsPlacement (AI-001)", () => {
-  it("T1. default creation (no options) opens below: moveEditorToBelowGroup fired exactly once", () => {
-    const panel = new ResultsPanel({ runner: makePlacementRunner() });
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 1",
-          status: "done",
-          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    const mock = vi.mocked(vscode.commands.executeCommand);
-    expect(mock).toHaveBeenCalledTimes(1);
-    expect(mock).toHaveBeenCalledWith("workbench.action.moveEditorToBelowGroup");
-  });
-
-  it("T2. explicit viewColumn: Beside honored at creation — no move-below command", () => {
-    configState.resultsPlacement = "beside";
-    const panel = new ResultsPanel({
-      runner: makePlacementRunner(),
-      viewColumn: vscode.ViewColumn.Beside,
-    });
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 1",
-          status: "done",
-          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    expect(lastPanel.current!.viewColumn).toBe(vscode.ViewColumn.Beside);
-    expect(vi.mocked(vscode.commands.executeCommand)).not.toHaveBeenCalled();
-  });
-
-  it("T3. placement 'beside' (via config) → plain creation, no move-below command", () => {
-    configState.resultsPlacement = "beside";
-    const panel = new ResultsPanel({ runner: makePlacementRunner() });
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 1",
-          status: "done",
-          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    expect(vi.mocked(vscode.commands.executeCommand)).not.toHaveBeenCalled();
-  });
-
-  it("T3a. package.json manifest declares UnicDB.resultsPlacement (enum below|beside, default below)", () => {
-    const raw = fs.readFileSync(
-      path.join(__dirname, "..", "..", "..", "package.json"),
-      "utf-8",
-    );
-    const manifest = JSON.parse(raw) as {
-      contributes?: {
-        configuration?: {
-          properties?: Record<
-            string,
-            { enum?: string[]; default?: string; description?: string }
-          >;
-        };
-      };
-    };
-    const prop = manifest.contributes?.configuration?.properties?.[
-      "UnicDB.resultsPlacement"
-    ];
-    expect(prop).toBeDefined();
-    // TASK-UX1-006 (R8a) — enum now includes the `top` opt-in. `below` and
-    // `beside` stay in their original positions; `top` is appended.
-    expect(prop!.enum).toEqual(["below", "beside", "top"]);
-    expect(prop!.default).toBe("below");
-    expect(typeof prop!.description).toBe("string");
-    expect(prop!.description!.length).toBeGreaterThan(0);
-  });
-
-  it("T-UX1-006 #1 — placement 'top' (via config) → moveEditorToAboveGroup fired at CREATE", () => {
-    configState.resultsPlacement = "top";
-    const panel = new ResultsPanel({ runner: makePlacementRunner() });
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 1",
-          status: "done",
-          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    const mock = vi.mocked(vscode.commands.executeCommand);
-    expect(mock).toHaveBeenCalledTimes(1);
-    expect(mock).toHaveBeenCalledWith("workbench.action.moveEditorToAboveGroup");
-  });
-
-  it("T-UX1-006 #2 — default config (no resultsPlacement) → 'below' + moveEditorToBelowGroup", () => {
-    configState.resultsPlacement = undefined;
-    const panel = new ResultsPanel({ runner: makePlacementRunner() });
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 1",
-          status: "done",
-          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    const mock = vi.mocked(vscode.commands.executeCommand);
-    expect(mock).toHaveBeenCalledTimes(1);
-    expect(mock).toHaveBeenCalledWith("workbench.action.moveEditorToBelowGroup");
-  });
-
-  it("T-UX1-006 #3 — unavailable move-above command (canExecuteCommands false) → silent beside, no throw, panel still works", () => {
-    configState.resultsPlacement = "top";
-    // Sabotage canExecuteCommands by stripping executeCommand from the
-    // commands shape after the module has captured the reference. The
-    // show() path probes `vscode.commands.executeCommand` per-call, so
-    // we override the mock to return undefined (the function check
-    // `typeof === "function"` will fail and the placement becomes a
-    // silent beside no-op).
-    const originalExec = vscode.commands.executeCommand;
-    (vscode.commands as unknown as { executeCommand: unknown }).executeCommand = undefined as unknown as typeof originalExec;
-    try {
-      const panel = new ResultsPanel({ runner: makePlacementRunner() });
-      panel.render(
-        [
-          {
-            index: 0,
-            sql: "SELECT 1",
-            status: "done",
-            result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
-            durationMs: 0,
-          },
-        ],
-        "Statement 1",
-      );
-      // No executeCommand was callable; placement degrades to beside silently.
-      // Panel still created and visible.
-      expect(lastPanel.current).not.toBeNull();
-      expect(lastPanel.current!.visible).toBe(true);
-    } finally {
-      (vscode.commands as unknown as { executeCommand: typeof originalExec }).executeCommand = originalExec;
-    }
-  });
-
-  it("T-UX1-006 #4 — unknown/legacy value 'nonsense' → maps to 'below'", () => {
-    configState.resultsPlacement = "nonsense";
-    const panel = new ResultsPanel({ runner: makePlacementRunner() });
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 1",
-          status: "done",
-          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    const mock = vi.mocked(vscode.commands.executeCommand);
-    expect(mock).toHaveBeenCalledTimes(1);
-    expect(mock).toHaveBeenCalledWith("workbench.action.moveEditorToBelowGroup");
-  });
-
-  it("T-UX1-006 #5 — placement 'beside' → zero placement executeCommand calls", () => {
-    configState.resultsPlacement = "beside";
-    const panel = new ResultsPanel({ runner: makePlacementRunner() });
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 1",
-          status: "done",
-          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    expect(vi.mocked(vscode.commands.executeCommand)).not.toHaveBeenCalled();
-  });
-
-  it("T-UX1-006 #6 — config change auto-disposes live panel; next render uses the new placement", () => {
-    // TASK-AI-001-fix — the constructor's onDidChangeConfiguration listener
-    // disposes the live panel when UnicDB.resultsPlacement changes, so the
-    // next render creates a fresh panel under the new placement. Previously
-    // (before AI-001-fix) the live panel was preserved (reveal-only) and the
-    // user had to close it manually before changing the setting — easy to
-    // miss and read as "the setting doesn't work". This test pins the new
-    // contract: the panel is disposed on config change, the next render
-    // fires the new placement's move command.
-    configState.resultsPlacement = "below";
-    const panel = new ResultsPanel({ runner: makePlacementRunner() });
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 1",
-          status: "done",
-          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenLastCalledWith(
-      "workbench.action.moveEditorToBelowGroup",
-    );
-
-    // User changes config to 'top'. The listener registered in the
-    // constructor fires and disposes the live panel.
-    configState.resultsPlacement = "top";
-    expect(configListeners).toHaveLength(1);
-    vi.mocked(vscode.commands.executeCommand).mockClear();
-    configListeners[0]({ affectsConfiguration: (k: string) => k === "UnicDB.resultsPlacement" });
-
-    // Next render: show() recreates the panel under the new placement,
-    // firing moveEditorToAboveGroup. Two createCalls total — one for the
-    // original "below" panel, one for the recreated "top" panel.
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 2",
-          status: "done",
-          result: { columns: ["x"], rows: [[2]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    expect(createCalls).toHaveLength(2);
-    expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenLastCalledWith(
-      "workbench.action.moveEditorToAboveGroup",
-    );
-  });
-
-  it("T4. existing panel: second render reuses panel and calls reveal() with NO column arg", () => {
-    const panel = new ResultsPanel({ runner: makePlacementRunner() });
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 1",
-          status: "done",
-          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    const fake = lastPanel.current!;
-    expect(createCalls).toHaveLength(1);
-    vi.mocked(vscode.commands.executeCommand).mockClear();
-
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 2",
-          status: "done",
-          result: { columns: ["x"], rows: [[2]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    expect(lastPanel.current).toBe(fake);
-    expect(createCalls).toHaveLength(1);
-    expect(fake.revealArgs).toHaveLength(1);
-    expect(fake.revealArgs[0]).toHaveLength(0);
-    expect(vi.mocked(vscode.commands.executeCommand)).not.toHaveBeenCalled();
-  });
-
-  it("T5. config-change disposes the live panel; next render applies the new placement", () => {
-    // TASK-AI-001-fix — the constructor's onDidChangeConfiguration listener
-    // disposes the live panel when UnicDB.resultsPlacement changes. This
-    // test pins: (a) live reveal() never fires a move command when the user
-    // simply re-renders WITHOUT a config change, and (b) when the user
-    // DOES change the config, the listener disposes the live panel and the
-    // next render uses the new placement.
-    configState.resultsPlacement = "below";
-    const panel = new ResultsPanel({ runner: makePlacementRunner() });
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 1",
-          status: "done",
-          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    const fake = lastPanel.current!;
-
-    // No config change — pure re-render. Live panel is reused via reveal()
-    // with no column; no move command is fired.
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 2",
-          status: "done",
-          result: { columns: ["x"], rows: [[2]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    expect(lastPanel.current).toBe(fake);
-    expect(fake.revealArgs[0]).toHaveLength(0);
-    expect(createCalls).toHaveLength(1);
-
-    // User changes config to 'beside' — listener fires, live panel is
-    // disposed synchronously, next render recreates under the new
-    // placement.
-    configState.resultsPlacement = "beside";
-    expect(configListeners).toHaveLength(1);
-    configListeners[0]({ affectsConfiguration: (k: string) => k === "UnicDB.resultsPlacement" });
-    configState.resultsPlacement = "beside";
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 3",
-          status: "done",
-          result: { columns: ["x"], rows: [[3]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    expect(lastPanel.current).not.toBe(fake);
-    expect(createCalls).toHaveLength(2);
-    // Exactly ONE move-below total: creation #1 (placement "below"). The
-    // live-panel re-render (step 2) and the "beside" recreate (step 3)
-    // must never fire the move command.
-    expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenCalledTimes(1);
-  });
-
-  it("T-AI-001-fix #1 — listener is a no-op when an unrelated config key changes", () => {
-    // TASK-AI-001-fix — only `UnicDB.resultsPlacement` triggers the live-
-    // panel dispose path. Other config keys (theme, fontSize, etc.) flow
-    // through the same onDidChangeConfiguration event bus and must be
-    // ignored, otherwise changing any setting would churn the panel.
-    configState.resultsPlacement = "below";
-    const panel = new ResultsPanel({ runner: makePlacementRunner() });
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 1",
-          status: "done",
-          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    const fake = lastPanel.current!;
-    expect(configListeners).toHaveLength(1);
-
-    // Fire with a NON-matching key — listener must short-circuit.
-    configListeners[0]({ affectsConfiguration: () => false });
-    expect(lastPanel.current).toBe(fake);
-    expect(createCalls).toHaveLength(1);
-  });
-
-  it("T-AI-001-fix #2 — listener is safe when the panel is already closed", () => {
-    // TASK-AI-001-fix — if the user closes the panel manually and THEN
-    // changes the setting, the listener (which was disposed by the
-    // onDidDispose handler) is already gone. This test simulates the
-    // scenario where a fresh listener fires after the panel has been
-    // disposed via panel.dispose() — must be a no-op, no throw.
-    configState.resultsPlacement = "below";
-    const panel = new ResultsPanel({ runner: makePlacementRunner() });
-    panel.render(
-      [
-        {
-          index: 0,
-          sql: "SELECT 1",
-          status: "done",
-          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
-          durationMs: 0,
-        },
-      ],
-      "Statement 1",
-    );
-    panel.dispose();
-    expect(() =>
-      configListeners[0]({
-        affectsConfiguration: (k: string) => k === "UnicDB.resultsPlacement",
-      }),
-    ).not.toThrow();
-    // No new create — listener saw this.panel === null.
-    expect(createCalls).toHaveLength(1);
-  });
-});
 
 
 // =============================================================================
@@ -1437,15 +1111,6 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
     };
   }
 
-  function panelWith(
-    runner: QueryRunner,
-    results: StatementResult[],
-  ): { panel: ResultsPanel; fake: FakeWebviewPanel } {
-    const panel = new ResultsPanel({ runner });
-    panel.render(results, "hdr");
-    return { panel, fake: lastPanel.current! };
-  }
-
   const showErrMock = () =>
     vscode.window.showErrorMessage as unknown as {
       mockClear: () => void;
@@ -1464,10 +1129,16 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
 
     expect(fake.webview.postMessage).not.toHaveBeenCalled();
     expect(showErrMock().mock.calls).toHaveLength(0);
-    // Panel is torn down; a later render() recreates a working panel.
-    expect(lastPanel.current).toBe(fake);
+    // Panel is torn down. A subsequent render triggers focus + buffered
+    // state, but no webview-side message reaches the disposed view until
+    // VS Code re-resolves it — and then the new view gets the new render.
     panel.render([oldSqlResult("SELECT 2")], "hdr");
-    expect(createCalls).toHaveLength(2);
+    const recreated = resolveView(panel);
+    const recreatedStates = recreated.webview.postMessage.mock.calls
+      .map((c) => c[0] as { type?: string; results?: Array<{ sql?: string }> })
+      .filter((m) => m.type === "state")
+      .filter((m) => (m.results ?? []).some((r) => r.sql === "SELECT 2"));
+    expect(recreatedStates.length).toBeGreaterThan(0);
   });
 
   // ---- Case 2 — edge: dispose-during-run, deferred loadMore, recreate panel.
@@ -1485,11 +1156,9 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
 
     // Dispose during the deferred run, then recreate the panel session.
     panel.dispose();
-    const newFake = lastPanel.current; // still the OLD fake — render() recreates.
     panel.render([oldSqlResult("SELECT new_sql FROM new_table")], "hdr");
-    const recreated = lastPanel.current!;
+    const recreated = resolveView(panel);
     expect(recreated).not.toBe(fake);
-    expect(newFake).toBe(fake);
     recreated.webview.postMessage.mockClear();
     showErrMock().mockClear();
 
@@ -1523,15 +1192,16 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
       runner,
       saveContext: { getDriver: () => null, listPkColumns: async () => [] } as never,
     });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(results, "hdr");
-    const fake = lastPanel.current!;
+    const fake = resolveView(panel);
 
     fake.webview.dispatch({ type: "requery", index: 0, where: "", orderBy: "" });
     for (let i = 0; i < 5; i++) await Promise.resolve();
 
     panel.dispose();
     panel.render([oldSqlResult("SELECT * FROM users_after")], "hdr");
-    const recreated = lastPanel.current!;
+    const recreated = resolveView(panel);
     recreated.webview.postMessage.mockClear();
     showErrMock().mockClear();
 
@@ -1566,7 +1236,7 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
     const { panel, fake } = panelWith(runner, [oldSqlResult("SELECT 1")]);
     (panel as unknown as { transaction: unknown }).transaction = fakeTx;
 
-    // dispose() #1 → panel.dispose() → FakeWebviewPanel.dispose() fires
+    // dispose() #1 → panel.dispose() → FakeWebviewView.dispose() fires
     // onDidDispose handlers → panel=null. dispose() #2 is a no-op teardown.
     panel.dispose();
     panel.dispose();
@@ -1593,7 +1263,7 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
 
     panel.dispose();
     panel.render([oldSqlResult("SELECT 1")], "hdr");
-    const recreated = lastPanel.current!;
+    const recreated = lastView.current!;
     recreated.webview.postMessage.mockClear();
 
     // The NEW session starts a run and marks itself busy.
@@ -1629,7 +1299,7 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
 
     // render() after dispose recreates a working panel.
     panel.render([oldSqlResult("SELECT 2")], "hdr");
-    const recreated = lastPanel.current!;
+    const recreated = lastView.current!;
     expect(recreated).not.toBe(fake);
     const stateMsg = recreated.webview.postMessage.mock.calls
       .map((c) => c[0] as { type?: string })
@@ -1656,8 +1326,9 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
       listPkColumns: () => listPk.promise,
     } as never;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render([oldSqlResult("SELECT * FROM app.users")], "hdr");
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     fake.webview.dispatch({
       type: "saveEdits",
       index: 0,
@@ -1671,7 +1342,7 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
     // Dispose mid-save, then recreate the panel session.
     panel.dispose();
     panel.render([oldSqlResult("SELECT * FROM app.orders")], "hdr");
-    const recreated = lastPanel.current!;
+    const recreated = lastView.current!;
     expect(recreated).not.toBe(fake);
     recreated.webview.postMessage.mockClear();
     showErrMock().mockClear();
@@ -1712,6 +1383,7 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
       listPkColumns: async () => ["id"],
     } as never;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1729,7 +1401,7 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
       ],
       "hdr",
     );
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     fake.webview.dispatch({
       type: "saveEdits",
       index: 0,
@@ -1763,7 +1435,7 @@ describe("ResultsPanel — TASK-ARP02-002 session epoch (panel-close race)", () 
       ],
       "hdr",
     );
-    const recreated = lastPanel.current!;
+    const recreated = lastView.current!;
     expect(recreated).not.toBe(fake);
     recreated.webview.postMessage.mockClear();
     showErrMock().mockClear();
@@ -1848,9 +1520,10 @@ describe("ResultsPanel — TASK-ARP03-003 limited statements (wire + silent load
   it("ARP03-003 #1 — limited statement rides every state post (resultLimited survives sanitize), no render-time error", async () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     showErrMock().mockClear();
     panel.render([limitedStatement()], "hdr");
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
 
     // The render post carries the marker.
     let states = stateMsgsOf(fake);
@@ -1878,9 +1551,10 @@ describe("ResultsPanel — TASK-ARP03-003 limited statements (wire + silent load
   it("ARP03-003 #2 (DEFENSIVE/UNIT-LEVEL) — loadMore rejection on a limited statement is silent at the panel boundary, stale state reposted", async () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     // Pre-populate lastResults with a LIMITED statement via an initial render.
     panel.render([limitedStatement()], "hdr");
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     fake.webview.postMessage.mockClear();
     showErrMock().mockClear();
 
@@ -1918,9 +1592,10 @@ describe("ResultsPanel — TASK-ARP03-003 limited statements (wire + silent load
   it("ARP03-003 #3 (regression pin) — genuine loadMore error on a NON-limited statement still toasts exactly once", async () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     // NO resultLimited on this statement.
     panel.render([limitedStatement({ resultLimited: undefined })], "hdr");
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     fake.webview.postMessage.mockClear();
     showErrMock().mockClear();
 
@@ -1967,6 +1642,7 @@ describe("ResultsPanel — TASK-ARP03-003 limited statements (wire + silent load
       listPkColumns: async () => ["id"],
     } as never;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     // Limited statement: BOTH markers set (002 sets them together), plus a
     // (closed) cursor handle so closeStatementCursor has something to close.
     panel.render(
@@ -1983,7 +1659,7 @@ describe("ResultsPanel — TASK-ARP03-003 limited statements (wire + silent load
       ],
       "hdr",
     );
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     fake.webview.postMessage.mockClear();
     showErrMock().mockClear();
 
@@ -2087,6 +1763,7 @@ describe("ResultsPanel — BQ-03.4 BigQuery states", () => {
   it("#1 — pending(running) and done ride the wire as distinct state posts; the pending field flows through sanitize", async () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     // The runner flow calls setBusy(true) before posting the pending snapshot.
     panel.setBusy(true);
     const pendingStmt = {
@@ -2098,7 +1775,7 @@ describe("ResultsPanel — BQ-03.4 BigQuery states", () => {
       durationMs: 0,
     };
     panel.render([pendingStmt as unknown as StatementResult], "bq-hdr");
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     fake.webview.postMessage.mockClear();
 
     // The render post for the pending snapshot: busy:true, status:'running',
@@ -2149,6 +1826,7 @@ describe("ResultsPanel — BQ-03.4 BigQuery states", () => {
   it("#2 — cancelled, error, and done ride the wire as three distinct statuses with the error text preserved", () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     const results: StatementResult[] = [
       // cancelled statement: no result, no error, no batched
       {
@@ -2175,7 +1853,7 @@ describe("ResultsPanel — BQ-03.4 BigQuery states", () => {
       },
     ];
     panel.render(results, "hdr");
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     const states = stateMsgs(fake);
     expect(states.length).toBeGreaterThan(0);
     const posted = (states[0].results as Array<Record<string, unknown>>);
@@ -2192,6 +1870,7 @@ describe("ResultsPanel — BQ-03.4 BigQuery states", () => {
   it("#3 — resultLimited + cursorClosed statement: loadMore is a silent panel-level no-op (no runner call, no busy flip, no toast)", async () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     const limitedStmt: StatementResult = {
       index: 0,
       sql: "SELECT * FROM bigquery.public.x",
@@ -2202,7 +1881,7 @@ describe("ResultsPanel — BQ-03.4 BigQuery states", () => {
       durationMs: 0,
     };
     panel.render([limitedStmt], "bq-hdr");
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
 
     // The render post carries the limited + closed markers (sanitize preserves
     // them via the `...r` spread).
@@ -2250,6 +1929,7 @@ describe("ResultsPanel — BQ-03.4 BigQuery states", () => {
   it("#4 — token-less statement (batched: false): loadMore is a silent panel-level no-op; no runner call, no busy state, state re-posted unchanged", async () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     const tokenlessStmt: StatementResult = {
       index: 0,
       sql: "SELECT * FROM bigquery.public.x",
@@ -2260,7 +1940,7 @@ describe("ResultsPanel — BQ-03.4 BigQuery states", () => {
       durationMs: 0,
     };
     panel.render([tokenlessStmt], "bq-hdr");
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     fake.webview.postMessage.mockClear();
     showErrMock().mockClear();
 
@@ -2304,15 +1984,16 @@ describe("ResultsPanel — BQ-03.4 BigQuery states", () => {
       durationMs: 0,
     };
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render([oldStmt], "bq-hdr");
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     fake.webview.dispatch({ type: "loadMore", index: 0 });
     for (let i = 0; i < 5; i++) await Promise.resolve();
 
     // Dispose then recreate with a NEW statement set.
     panel.dispose();
     panel.render([{ ...oldStmt, sql: "SELECT new FROM bigquery.public.x" }], "bq-hdr");
-    const recreated = lastPanel.current!;
+    const recreated = lastView.current!;
     expect(recreated).not.toBe(fake);
     recreated.webview.postMessage.mockClear();
     showErrMock().mockClear();
@@ -2354,8 +2035,9 @@ describe("ResultsPanel — BQ-03.4 BigQuery states", () => {
       durationMs: 0,
     };
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render([original], "bq-hdr");
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     fake.webview.dispatch({ type: "loadMore", index: 0 });
     for (let i = 0; i < 5; i++) await Promise.resolve();
 
@@ -2394,6 +2076,7 @@ describe("ResultsPanel — BQ-03.4 BigQuery states", () => {
   it("#7 — postgres header string flows through to every state post unchanged (regression pin)", () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     const header = "Run at 2026-09-03T00:00:00.000Z — postgres@localhost/db";
     panel.render(
       [
@@ -2407,7 +2090,7 @@ describe("ResultsPanel — BQ-03.4 BigQuery states", () => {
       ],
       header,
     );
-    const fake = lastPanel.current!;
+    const fake = lastView.current!;
     const states = stateMsgs(fake);
     expect(states.length).toBeGreaterThan(0);
     for (const m of states) {

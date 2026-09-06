@@ -105,39 +105,32 @@ export interface SaveContext {
 export interface ResultsPanelOptions {
   /** QueryRunner instance (để loadMore / cancel). */
   runner: QueryRunner;
-  /** View column hint used at CREATE time when `resultsPlacement` is
-   *  "beside" (mặc định Beside). Ignored on later show() calls — an existing
-   *  panel is revealed without a column so the user's dragged group wins. */
-  viewColumn?: vscode.ViewColumn;
-  /** AI-001 — "below" (default): newly created panels open in a vertical
-   *  split under the active editor; "beside": classic side-by-side; "top"
-   *  (R8a, opt-in): vertical split above the active editor. Read fresh
-   *  at every panel creation, so dispose+recreate picks up the current
-   *  setting (a live panel is never moved). */
-  resultsPlacement?: "below" | "beside" | "top";
   /** Title cho panel. */
   title?: string;
   /** Save flow dependencies — must be supplied when SaveEdits is wired in. */
   saveContext?: SaveContext;
 }
 
-export class ResultsPanel {
+/** TASK-RP-001 — ResultsPanel is a `WebviewViewProvider` whose view lives
+ *  in the bottom panel container (next to Terminal). The extension registers
+ *  it via `vscode.window.registerWebviewViewProvider(ResultsPanel.viewId,
+ *  panel, ...)`; show() simply asks VS Code to focus that view via the
+ *  built-in `<viewId>.focus` command. The view may resolve later than the
+ *  first `render()` — the existing `ready` handshake solves the buffering:
+ *  no postMessage happens until `this.view !== null`, and the webview's
+ *  `ready` message triggers the full-state post. */
+export class ResultsPanel implements vscode.WebviewViewProvider {
+  /** Stable view id — matches the webview view contribution in package.json.
+   *  Kept as the legacy viewType string so the `webview/UnicDB.results/context`
+   *  Help-Grid menu wiring is preserved. */
+  public static readonly viewId = "UnicDB.results";
   private readonly runner: QueryRunner;
   private readonly saveContext: SaveContext | null;
-  private readonly viewColumn: vscode.ViewColumn;
   private readonly title: string;
-  /** AI-001 — effective placement applied at panel CREATION: "below" opens
-   *  a vertical split under the active editor, "beside" is classic
-   *  side-by-side, "top" opens a vertical split above the active editor
-   *  (R8a opt-in). Null until the next show() CREATE resolves it from the
-   *  explicit option or the UnicDB.resultsPlacement setting (whitelisted;
-   *  unknown → "below") — resolved fresh per creation, never cached. A
-   *  config-change listener in the constructor auto-disposes the live
-   *  panel so the next render recreates it under the new placement
-   *  (users no longer have to close the panel manually before changing
-   *  the setting). */
-  private resultsPlacement: "below" | "beside" | "top" | null;
-  private panel: vscode.WebviewPanel | null = null;
+  /** TASK-RP-001 — the live webview view, null until VS Code resolves it
+   *  via `resolveWebviewView`. Replaces the old `this.panel` (WebviewPanel)
+   *  from the editor-area shell. */
+  private view: vscode.WebviewView | null = null;
   private disposables: vscode.Disposable[] = [];
   private header: string = "";
   /** TASK-007 — table identity extracted from a browse header
@@ -174,12 +167,13 @@ export class ResultsPanel {
    *  continuation captures the epoch before its first await and re-checks
    *  after EVERY await, before any postMessage / setBusy / toast, returning
    *  silently when stale. Without this, a deferred completion that settles
-   *  after dispose()+render() posts the OLD results into the RE-CREATED
-   *  panel (this.panel is non-null again) and clears the new session's busy
-   *  state — postMessage's `if (!this.panel) return` guard does not cover
-   *  the re-created panel. Distinct from requerySeq (per-requery ordering)
-   *  and statementGeneration (per-statement-set identity): the epoch is
-   *  per-PANEL-LIFETIME and checked ADDITIONALLY to both. */
+   *  after dispose()+resolveWebviewView() would post the OLD results into
+   *  the RE-CREATED view (this.view is non-null again) and clear the new
+   *  session's busy state — postMessage's `if (!this.view) return` guard
+   *  does not cover the re-created view. Distinct from requerySeq
+   *  (per-requery ordering) and statementGeneration (per-statement-set
+   *  identity): the epoch is per-PANEL-LIFETIME and checked ADDITIONALLY
+   *  to both. */
   private sessionEpoch = 0;
   /** Host-derived (schema?, table) per statement index, populated by
    *  render() so handleSaveEdits can derive metadata without trusting the
@@ -220,159 +214,59 @@ export class ResultsPanel {
   constructor(options: ResultsPanelOptions) {
     this.runner = options.runner;
     this.saveContext = options.saveContext ?? null;
-    this.viewColumn = options.viewColumn ?? vscode.ViewColumn.Beside;
     this.title = options.title ?? "UnicDB Results";
-    this.resultsPlacement = options.resultsPlacement ?? null;
-
-    // TASK-AI-001-fix — Auto-recreate the panel when the placement setting
-    // changes so the user's setting takes effect on the next render. Without
-    // this, a panel that's already open stays where it was created (the
-    // previous behaviour) and the user has to manually close it before
-    // changing the setting — easy to miss and reads as "doesn't work".
-    // We only fire the disposal; the next show()/render() call picks up the
-    // new placement via readPlacementSetting() at CREATE time, so the
-    // listener is intentionally single-shot per active session.
-    this.disposables.push(
-      vscode.workspace.onDidChangeConfiguration((event) => {
-        if (!event.affectsConfiguration("UnicDB.resultsPlacement")) return;
-        if (this.panel) {
-          // The onDidDispose handler nullifies this.panel synchronously and
-          // disposes every entry in this.disposables (including this
-          // listener) — see show(). Re-registering the listener on the next
-          // construction is intentional; until then the absence of a panel
-          // means there's nothing to recreate, and a fresh render reads
-          // readPlacementSetting() directly anyway.
-          this.panel.dispose();
-        }
-      }),
-    );
   }
 
   /**
-   * AI-001 — đọc setting `UnicDB.resultsPlacement` ("below" | "beside" | "top")
-   * lúc CREATE panel. Whitelist: giá trị lạ → "below", không bao giờ
-   * throw (partial vscode mock / host lạ cũng an toàn). Không cache —
-   * constructor đăng ký `onDidChangeConfiguration` tự dispose panel đang mở
-   * khi setting thay đổi, nên setting mới nhất luôn áp dụng ở lần render
-   * tiếp theo mà không cần user đóng panel thủ công.
+   * TASK-RP-001 — focus the bottom-panel webview view via VS Code's
+   * `<viewId>.focus` command. The view itself may resolve later than the
+   * first call (lazy resolution is the whole point of the bottom-panel
+   * container); the `ready` handshake in `handleMessage` flushes any
+   * buffered `lastResults` into the webview as soon as it comes up.
    *
-   * TASK-UX1-006 (R8a) — `top` is the new opt-in value. The default-config
-   * first-open still lands at `below` (R8a's P2.5 YAGNI guard) — only an
-   * explicit `UnicDB.resultsPlacement: "top"` flips the panel up.
-   */
-  private static readPlacementSetting(): "below" | "beside" | "top" {
-    try {
-      const workspace = vscode.workspace as unknown;
-      if (
-        !workspace ||
-        typeof workspace !== "object" ||
-        !("getConfiguration" in workspace) ||
-        typeof workspace.getConfiguration !== "function"
-      ) {
-        return "below";
-      }
-      const cfg = workspace.getConfiguration("UnicDB");
-      if (!cfg || typeof cfg !== "object" || !("get" in cfg)) {
-        return "below";
-      }
-      const raw: unknown = cfg.get("resultsPlacement", "below");
-      if (raw === "beside") return "beside";
-      if (raw === "top") return "top";
-      return "below";
-    } catch {
-      return "below";
-    }
-  }
-
-  /** AI-001 — partial vscode mock / host lạ có thể không export `commands`;
-   *  move-below là enhancement placement, không bao giờ được phép crash
-   *  việc mở panel. */
-  private static canExecuteCommands(): boolean {
-    try {
-      const commands = vscode.commands as unknown;
-      return (
-        !!commands &&
-        typeof commands === "object" &&
-        "executeCommand" in commands &&
-        typeof commands.executeCommand === "function"
-      );
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Hiện (hoặc tạo) panel. TÁI SỬ DỤNG panel cũ nếu còn mở.
-   *
-   * NOTE (TASK-AI-001-fix): if the user just changed the
-   * `UnicDB.resultsPlacement` setting, the constructor's
-   * `onDidChangeConfiguration` listener will already have disposed the
-   * old panel — so by the time we reach this `show()`, `this.panel` is
-   * null and we create a fresh one in the new placement. Reveal-only
-   * reuse is reserved for live panels that the user has dragged to a
-   * custom group.
+   * NEVER calls `vscode.window.createWebviewPanel` — the legacy
+   * editor-area shell is gone (TASK-AI-001 / TASK-UX1-006 placement
+   * code paths, plus their `moveEditorToBelowGroup`/`AboveGroup`
+   * commands, were deleted alongside).
    */
   show(): void {
-    if (this.panel) {
-      // AI-001 — reveal() KHÔNG kèm column: giữ nguyên group người dùng đã
-      // kéo panel tới, không bao giờ ép panel về column cấu hình.
-      this.panel.reveal();
-      return;
-    }
-    this.panel = vscode.window.createWebviewPanel(
-      "UnicDB.results",
-      this.title,
-      this.viewColumn,
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [vscode.Uri.joinPath(this.extensionUri(), "dist")],
-      },
-    );
-    const placement =
-      this.resultsPlacement ?? ResultsPanel.readPlacementSetting();
-    if (placement !== "beside" && ResultsPanel.canExecuteCommands()) {
-      // AI-001 — ViewColumn không có "Below"/"Above" trong VS Code API, nên
-      // vị trí "dưới/trên editor" (vertical split) được đặt bằng lệnh
-      // built-in: panel vừa tạo đang active → moveEditorToBelowGroup /
-      // moveEditorToAboveGroup chuyển nó vào group NGAY DƯỚI / TRÊN editor.
-      // Chỉ chạy lúc CREATE — panel sống lại (reveal) không bị di chuyển
-      // (giữ nguyên group người dùng đã kéo). Panel "beside" không bao
-      // giờ bị di chuyển.
-      //
-      // TASK-UX1-006 (R8a) — `top` was added in this cycle. The
-      // moveEditorToAboveGroup command is NOT guaranteed across VS Code
-      // versions (similar to its `Below` sibling, which we also guard via
-      // canExecuteCommands). On the rare hosts that lack it the placement
-      // degrades silently: no executeCommand call is made, the panel
-      // stays where `createWebviewPanel` put it (Beside), and the user is
-      // not interrupted.
-      //
-      // NOTE (TASK-AI-001-fix): changing the `UnicDB.resultsPlacement`
-      // setting disposes the live panel so this CREATE branch fires again
-      // with the new placement — see the constructor's
-      // `onDidChangeConfiguration` listener.
-      const cmd =
-        placement === "top"
-          ? "workbench.action.moveEditorToAboveGroup"
-          : "workbench.action.moveEditorToBelowGroup";
-      void vscode.commands.executeCommand(cmd);
-    }
-    this.panel.webview.html = this.buildHtml(this.panel.webview);
+    void vscode.commands.executeCommand("UnicDB-results.focus");
+  }
+
+  /**
+   * TASK-RP-001 — VS Code calls this to materialize the webview view into
+   * a `WebviewView`. Wire options + html, hook the message + onDidDispose
+   * listeners, and stash the view so subsequent `postMessage` calls find
+   * it. The host's `ready` handshake (handled in `handleMessage`) is what
+   * triggers the initial state post — we do NOT eagerly post here, so a
+   * `render()` that ran BEFORE resolve is delivered correctly the moment
+   * the webview JS reports `ready`.
+   */
+  resolveWebviewView(
+    view: vscode.WebviewView,
+    _context: vscode.WebviewViewResolveContext,
+    _token: vscode.CancellationToken,
+  ): void {
+    this.view = view;
+    view.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.extensionUri(), "dist")],
+    };
+    view.webview.html = this.buildHtml(view.webview);
 
     // Listen messages từ webview.
     this.disposables.push(
-      this.panel.webview.onDidReceiveMessage((msg) => this.handleMessage(msg)),
+      view.webview.onDidReceiveMessage((msg) => this.handleMessage(msg)),
     );
     this.disposables.push(
-      this.panel.onDidDispose(() => {
+      view.onDidDispose(() => {
         // TASK-ARP02-002 — the webview session ended: in-flight deferred
-        // continuations must never write to a LATER panel session.
+        // continuations must never write to a LATER view session.
         this.sessionEpoch += 1;
         // Closing the webview is a connection lifecycle boundary for its
         // manual transaction. Do not leave an open transaction behind.
         void this.rollbackOpenTransaction();
-        this.panel = null;
+        this.view = null;
         for (const d of this.disposables) d.dispose();
         this.disposables = [];
       }),
@@ -469,7 +363,7 @@ export class ResultsPanel {
       : results;
     void this.refreshColumnTypes(metadataResults);
     this.show();
-    if (this.panel) {
+    if (this.view) {
       this.postMessage({
         type: "state",
         header,
@@ -484,7 +378,7 @@ export class ResultsPanel {
    */
   setBusy(busy: boolean): void {
     this.busy = busy;
-    if (this.panel) {
+    if (this.view) {
       this.postMessage({ type: "busy", busy });
     }
   }
@@ -501,10 +395,13 @@ export class ResultsPanel {
     // Fire-and-forget because VS Code's Disposable contract is synchronous;
     // the adapter call is still attempted before connection teardown.
     void this.rollbackOpenTransaction();
-    if (this.panel) {
-      this.panel.dispose();
-      this.panel = null;
-    }
+    // In production, WebviewView itself has no `dispose()` method — VS Code
+    // tears the view down via the bottom-panel container and `onDidDispose`
+    // fires. In tests, a fake view may expose `dispose()` as a hook so the
+    // recreate-after-dispose flow can simulate the host-side teardown.
+    const v = this.view as { dispose?: () => void } | null;
+    this.view = null;
+    if (v && typeof v.dispose === "function") v.dispose();
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
   }
@@ -513,7 +410,7 @@ export class ResultsPanel {
    * Visible? (cho testing).
    */
   isVisible(): boolean {
-    return this.panel !== null && this.panel.visible;
+    return this.view !== null && this.view.visible;
   }
 
   // ---- Private -------------------------------------------------------------
@@ -541,7 +438,7 @@ export class ResultsPanel {
   }
 
   private postMessage(msg: HostMessage): void {
-    if (!this.panel) return;
+    if (!this.view) return;
     // IMPORTANT #5 (fix round 1): sanitize rows trước khi postMessage.
     // webview.postMessage dùng structured clone — THROWs trên BigInt.
     let payload: HostMessage = msg;
@@ -560,7 +457,7 @@ export class ResultsPanel {
     }
     // Catch rejection (BigInt slip-through, internal errors) — surface to user.
     try {
-      const p = this.panel.webview.postMessage(payload) as unknown;
+      const p = this.view.webview.postMessage(payload) as unknown;
       if (p && typeof (p as { then?: unknown }).then === "function") {
         (p as Thenable<unknown>).then(
           undefined,
@@ -676,7 +573,7 @@ export class ResultsPanel {
       gen === this.statementGeneration &&
       !this.isStaleSession(epoch) &&
       this.columnTypesByStatement.size > 0 &&
-      this.panel
+      this.view
     ) {
       // Fresh declared types arrived — re-post so the live grid upgrades.
       this.postMessage({

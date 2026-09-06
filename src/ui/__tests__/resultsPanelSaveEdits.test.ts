@@ -19,6 +19,7 @@
 //
 // Tests are RED until handleSaveEdits is rewritten.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import * as vscode from "vscode";
 
 type MessageHandler = (msg: unknown) => void;
 
@@ -40,6 +41,22 @@ class FakeWebview {
   private handler: MessageHandler | null = null;
 }
 
+class FakeWebviewView {
+  webview = new FakeWebview();
+  description: string | undefined;
+  title: string | undefined;
+  viewType = "UnicDB.results";
+  visible = true;
+  private didDisposeHandlers: Array<() => void> = [];
+  onDidDispose(h: () => void) {
+    this.didDisposeHandlers.push(h);
+    return { dispose: () => undefined };
+  }
+  fireDidDispose() {
+    for (const h of this.didDisposeHandlers) h();
+  }
+  dispose() {}
+}
 class FakeWebviewPanel {
   webview = new FakeWebview();
   visible = true;
@@ -63,6 +80,11 @@ class FakeWebviewPanel {
   }
 }
 
+const providerStore: Array<{
+  viewId: string;
+  provider: { resolveWebviewView: (view: unknown) => unknown };
+}> = [];
+const lastView: { current: FakeWebviewView | null } = { current: null };
 const lastPanel: { current: FakeWebviewPanel | null } = { current: null };
 
 vi.mock("vscode", () => {
@@ -75,13 +97,35 @@ vi.mock("vscode", () => {
     },
     ViewColumn: { Beside: 1, Active: 2, One: 3, Two: 4, Three: 5 },
     window: {
-      createWebviewPanel: (vt: string, t: string, col: number, opts: unknown) => {
-        const p = new FakeWebviewPanel(vt, t, col, opts);
-        lastPanel.current = p;
-        return p;
+      registerWebviewViewProvider: (
+        viewId: string,
+        provider: { resolveWebviewView: (view: unknown) => unknown },
+        _options?: unknown,
+      ) => {
+        providerStore.push({ viewId, provider });
+        lastView.current = null;
+        lastPanel.current = null;
+        return { dispose: () => undefined };
       },
       showErrorMessage: vi.fn(async () => undefined),
     },
+
+    commands: {
+      executeCommand: vi.fn(async (cmd: string, ..._rest: unknown[]) => {
+        if (cmd === "UnicDB-results.focus" && providerStore.length > 0) {
+          if (lastView.current && !(lastView.current as unknown as { isDisposed?: boolean }).isDisposed) {
+            return undefined;
+          }
+          const provider = providerStore[providerStore.length - 1]!.provider;
+          const v = new FakeWebviewView();
+          (provider as { resolveWebviewView: (v: unknown) => unknown }).resolveWebviewView(v);
+          lastView.current = v;
+          lastPanel.current = v as unknown as FakeWebviewPanel;
+        }
+        return undefined;
+      }),
+    },
+
     workspace: { onDidChangeConfiguration: () => ({ dispose: () => undefined }) },
     env: {
       clipboard: { writeText: vi.fn(async () => undefined) },
@@ -194,6 +238,7 @@ function newPanelWithState(
 ) {
   const { runner, recorded } = makeRecordingRunner();
   const panel = new ResultsPanel({ runner, saveContext: saveContext ?? undefined });
+  vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
   panel.render(
     [
       {
@@ -240,6 +285,8 @@ function stateMessages(fake: FakeWebviewPanel) {
 }
 
 beforeEach(() => {
+  lastView.current = null;
+  providerStore.length = 0;
   lastPanel.current = null;
   vi.clearAllMocks();
 });
@@ -526,6 +573,7 @@ describe("ResultsPanel — fetchPostgresCtids correctness (important #1)", () =>
     void patchedRunner;
     // Re-render to bind new runner.
     const panel = new ResultsPanel({ runner: patchedRunner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -593,6 +641,7 @@ describe("ResultsPanel — fetchPostgresCtids correctness (important #1)", () =>
       runSql: fakeRunQuery,
     } as unknown as QueryRunner;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -691,6 +740,7 @@ describe("ResultsPanel — partial failure / atomic batch (A15)", () => {
       runSql: fakeRunQuery,
     } as unknown as QueryRunner;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -786,6 +836,7 @@ describe("ResultsPanel — no-PK lazy ctid resolver (TASK-002 case 1)", () => {
       runSql: fakeRunQuery,
     } as unknown as QueryRunner;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -894,6 +945,7 @@ describe("ResultsPanel — no-PK DELETE marker goes through resolver (TASK-002 c
       runSql: fakeRunQuery,
     } as unknown as QueryRunner;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -962,6 +1014,7 @@ describe("ResultsPanel — insert-only PG no-PK skips resolver (TASK-002 case 3)
       runSql: fakeRunQuery,
     } as unknown as QueryRunner;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1054,6 +1107,7 @@ describe("ResultsPanel — user column named `ctid` is NOT trusted (TASK-002 cas
       runSql: fakeRunQuery,
     } as unknown as QueryRunner;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1127,6 +1181,7 @@ describe("ResultsPanel — PK table does NOT use ctid (TASK-006 #6)", () => {
       runSql: fakeRunQuery,
     } as unknown as QueryRunner;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1251,6 +1306,7 @@ describe("ResultsPanel — ctid resolve via CORRECTED batched fake (Happy + R-A3
       },
     );
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1323,6 +1379,7 @@ describe("ResultsPanel — resource cleanup, 3 dirty rows (Edge — resource)", 
       return { rows: serverRows, columns };
     });
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1392,6 +1449,7 @@ describe("ResultsPanel — atomic batch happy path (Happy — atomic batch)", ()
       runSql: fakeRunQuery,
     } as unknown as QueryRunner;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1461,6 +1519,7 @@ describe("ResultsPanel — A12 remap via serverIndexByRowId (Edge — remap)", (
       return { rows: serverRows, columns };
     });
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1524,6 +1583,7 @@ describe("ResultsPanel — no serverIndexByRowId field (Edge — absent field, b
       runSql: fakeRunQuery,
     } as unknown as QueryRunner;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1581,6 +1641,7 @@ describe("ResultsPanel — skippedRows → rowErrors (Edge partial success / R A
       runSql: fakeRunQuery,
     } as unknown as QueryRunner;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1645,6 +1706,7 @@ describe("ResultsPanel — full success has no phantom rowErrors (Edge — nothi
       runSql: fakeRunQuery,
     } as unknown as QueryRunner;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1694,6 +1756,7 @@ describe("ResultsPanel — post-save refresh on a batched driver (R-A4)", () => 
       return { rows: [[1, "alice-2"]], columns: ["id", "name"] };
     });
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1749,6 +1812,7 @@ describe("ResultsPanel — Add Row on no-PK postgres never triggers a ctid looku
       runSql: fakeRunQuery,
     } as unknown as QueryRunner;
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1831,6 +1895,7 @@ describe("ResultsPanel — saveResult acks BEFORE the post-commit refresh state 
       listPkColumns: async () => ["id"],
     };
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1910,6 +1975,7 @@ describe("ResultsPanel — save closes the browse cursor before aux/refresh quer
       },
     };
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -1971,6 +2037,7 @@ describe("ResultsPanel — save closes the browse cursor before aux/refresh quer
       },
     };
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -2032,6 +2099,7 @@ describe("ResultsPanel — one throwing ctid probe does not poison the rest of t
       return { rows: serverRows, columns };
     });
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {
@@ -2097,6 +2165,7 @@ describe("ResultsPanel — committed save acknowledges a refresh failure (TASK-0
       listPkColumns: async () => ["id"],
     };
     const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
     panel.render(
       [
         {

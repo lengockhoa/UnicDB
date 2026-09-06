@@ -77,10 +77,7 @@ execute).
 
 ## Results
 
-Kết quả trả về hiển thị trong grid. Tùy chỉnh placement:
-
-- `UnicDB.resultsPlacement` — `below` (mặc định) / `beside` / `top`
-- Đổi bằng cách mở Settings (Ctrl+,) → search "UnicDB.resultsPlacement"
+Kết quả SQL luôn mở ở panel dưới màn hình (cạnh tab Terminal) — không thể đổi vị trí.
 
 ### DDL/DML status card (R12)
 
@@ -116,7 +113,6 @@ tùy chỉnh). Tính năng:
 Bấm icon ⚙️ (settings gear) trên title bar của Schema Explorer để mở
 VS Code Settings filtered to UnicDB. Các setting UnicDB hiện có:
 
-- `UnicDB.resultsPlacement` — `below` / `beside` / `top`
 - `UnicDB.aiChatEngine` — chọn engine
 - `UnicDB.aiChatModel` — model cụ thể
 - (các setting khác xuất hiện khi extension thêm)

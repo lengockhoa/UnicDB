@@ -12,6 +12,7 @@
 //   H2. edits whose rowId is NOT in rowIds are dropped (defensive re-filter)
 //   H3. empty rowIds + empty edits → silent no-op (no BEGIN, no ack)
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import * as vscode from "vscode";
 
 type MessageHandler = (msg: unknown) => void;
 
@@ -33,6 +34,22 @@ class FakeWebview {
   private handler: MessageHandler | null = null;
 }
 
+class FakeWebviewView {
+  webview = new FakeWebview();
+  description: string | undefined;
+  title: string | undefined;
+  viewType = "UnicDB.results";
+  visible = true;
+  private didDisposeHandlers: Array<() => void> = [];
+  onDidDispose(h: () => void) {
+    this.didDisposeHandlers.push(h);
+    return { dispose: () => undefined };
+  }
+  fireDidDispose() {
+    for (const h of this.didDisposeHandlers) h();
+  }
+  dispose() {}
+}
 class FakeWebviewPanel {
   webview = new FakeWebview();
   visible = true;
@@ -56,6 +73,11 @@ class FakeWebviewPanel {
   }
 }
 
+const providerStore: Array<{
+  viewId: string;
+  provider: { resolveWebviewView: (view: unknown) => unknown };
+}> = [];
+const lastView: { current: FakeWebviewView | null } = { current: null };
 const lastPanel: { current: FakeWebviewPanel | null } = { current: null };
 
 vi.mock("vscode", () => {
@@ -68,13 +90,35 @@ vi.mock("vscode", () => {
     },
     ViewColumn: { Beside: 1, Active: 2, One: 3, Two: 4, Three: 5 },
     window: {
-      createWebviewPanel: (vt: string, t: string, col: number, opts: unknown) => {
-        const p = new FakeWebviewPanel(vt, t, col, opts);
-        lastPanel.current = p;
-        return p;
+      registerWebviewViewProvider: (
+        viewId: string,
+        provider: { resolveWebviewView: (view: unknown) => unknown },
+        _options?: unknown,
+      ) => {
+        providerStore.push({ viewId, provider });
+        lastView.current = null;
+        lastPanel.current = null;
+        return { dispose: () => undefined };
       },
       showErrorMessage: vi.fn(async () => undefined),
     },
+
+    commands: {
+      executeCommand: vi.fn(async (cmd: string, ..._rest: unknown[]) => {
+        if (cmd === "UnicDB-results.focus" && providerStore.length > 0) {
+          if (lastView.current && !(lastView.current as unknown as { isDisposed?: boolean }).isDisposed) {
+            return undefined;
+          }
+          const provider = providerStore[providerStore.length - 1]!.provider;
+          const v = new FakeWebviewView();
+          (provider as { resolveWebviewView: (v: unknown) => unknown }).resolveWebviewView(v);
+          lastView.current = v;
+          lastPanel.current = v as unknown as FakeWebviewPanel;
+        }
+        return undefined;
+      }),
+    },
+
     workspace: { onDidChangeConfiguration: () => ({ dispose: () => undefined }) },
     env: {
       clipboard: { writeText: vi.fn(async () => undefined) },
@@ -134,6 +178,7 @@ function makeHostPanel(
     runSql: fakeRunQuery,
   } as unknown as QueryRunner;
   const panel = new ResultsPanel({ runner, saveContext: saveCtx });
+  vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
   panel.render(
     [
       {
@@ -150,6 +195,8 @@ function makeHostPanel(
 }
 
 beforeEach(() => {
+  lastView.current = null;
+  providerStore.length = 0;
   lastPanel.current = null;
   vi.clearAllMocks();
 });

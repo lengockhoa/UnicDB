@@ -10,6 +10,7 @@
 //
 // @vitest-environment node
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import * as vscode from "vscode";
 
 vi.mock("vscode", () => {
   const fakeUri = (p: string) => ({ fsPath: p, scheme: "file", path: p, toString: () => p });
@@ -29,6 +30,16 @@ vi.mock("vscode", () => {
         reveal: () => undefined,
         dispose: () => undefined,
       }),
+      registerWebviewViewProvider: (
+        viewId: string,
+        provider: { resolveWebviewView: (view: unknown) => unknown },
+        _options?: unknown,
+      ) => {
+        providerStore.push({ viewId, provider });
+        lastView.current = null;
+        lastPanel.current = null;
+        return { dispose: () => undefined };
+      },
       showErrorMessage: () => undefined,
       showInformationMessage: () => undefined,
     },
@@ -38,6 +49,23 @@ vi.mock("vscode", () => {
       joinPath: (...parts: Array<string | { fsPath: string }>) =>
         fakeUri(parts.map((p) => (typeof p === "string" ? p : p.fsPath)).join("/")),
     },
+
+    commands: {
+      executeCommand: vi.fn(async (cmd: string, ..._rest: unknown[]) => {
+        if (cmd === "UnicDB-results.focus" && providerStore.length > 0) {
+          if (lastView.current && !(lastView.current as unknown as { isDisposed?: boolean }).isDisposed) {
+            return undefined;
+          }
+          const provider = providerStore[providerStore.length - 1]!.provider;
+          const v = new FakeWebviewView();
+          (provider as { resolveWebviewView: (v: unknown) => unknown }).resolveWebviewView(v);
+          lastView.current = v;
+          lastPanel.current = v;
+        }
+        return undefined;
+      }),
+    },
+
     workspace: { getConfiguration: () => ({ get: () => undefined, update: () => Promise.resolve() }), onDidChangeConfiguration: () => ({ dispose: () => undefined }) },
     ConfigurationTarget: { Global: 1, Workspace: 2 },
     EventEmitter: class { event = () => ({ dispose: () => undefined }); fire = () => undefined; dispose = () => undefined; },
@@ -57,6 +85,35 @@ vi.mock("vscode", () => {
 import { ResultsPanel } from "../resultsPanel";
 import type { StatementResult } from "../../core/types";
 
+class FakeWebviewView {
+  webview = {
+    postMessage: vi.fn().mockResolvedValue(undefined),
+    onDidReceiveMessage: () => ({ dispose: () => undefined }),
+    asWebviewUri: (u: { fsPath: string }) => ({ fsPath: u.fsPath, scheme: "file", path: u.fsPath, toString: () => u.fsPath }),
+    html: "",
+    options: {},
+    cspSource: "",
+  };
+  visible = true;
+  description: string | undefined;
+  title: string | undefined;
+  viewType = "UnicDB.results";
+  private didDisposeHandlers: Array<() => void> = [];
+  onDidDispose(h: () => void) {
+    this.didDisposeHandlers.push(h);
+    return { dispose: () => undefined };
+  }
+  fireDidDispose() { for (const h of this.didDisposeHandlers) h(); }
+  dispose() {}
+}
+
+const providerStore: Array<{
+  viewId: string;
+  provider: { resolveWebviewView: (view: unknown) => unknown };
+}> = [];
+const lastView: { current: FakeWebviewView | null } = { current: null };
+const lastPanel: { current: FakeWebviewView | null } = { current: null };
+
 function makeResults(n: number): StatementResult[] {
   return Array.from({ length: n }, (_, i) => ({
     index: i,
@@ -69,6 +126,7 @@ function makeResults(n: number): StatementResult[] {
 
 async function makePanel(initial: StatementResult[]): Promise<ResultsPanel> {
   const panel = new ResultsPanel({} as any, "below");
+  vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } });
   const postSpy = vi.spyOn(panel as any, "postMessage").mockImplementation(() => undefined);
   panel.render(initial, "test");
   postSpy.mockClear();

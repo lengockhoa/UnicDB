@@ -47,6 +47,22 @@ class FakeWebview {
   private csp = "vscode-resource:webview";
 }
 
+class FakeWebviewView {
+  webview = new FakeWebview();
+  description: string | undefined;
+  title: string | undefined;
+  viewType = "UnicDB.results";
+  visible = true;
+  private didDisposeHandlers: Array<() => void> = [];
+  onDidDispose(h: () => void) {
+    this.didDisposeHandlers.push(h);
+    return { dispose: () => undefined };
+  }
+  fireDidDispose() {
+    for (const h of this.didDisposeHandlers) h();
+  }
+  dispose() {}
+}
 class FakeWebviewPanel {
   webview = new FakeWebview();
   visible = true;
@@ -70,6 +86,11 @@ class FakeWebviewPanel {
   }
 }
 
+const providerStore: Array<{
+  viewId: string;
+  provider: { resolveWebviewView: (view: unknown) => unknown };
+}> = [];
+const lastView: { current: FakeWebviewView | null } = { current: null };
 const lastPanel: { current: FakeWebviewPanel | null } = { current: null };
 
 vi.mock("vscode", () => {
@@ -82,15 +103,37 @@ vi.mock("vscode", () => {
     },
     ViewColumn: { Beside: 1, Active: 2, One: 3, Two: 4, Three: 5 },
     window: {
-      createWebviewPanel: (vt: string, t: string, col: number, opts: unknown) => {
-        const p = new FakeWebviewPanel(vt, t, col, opts);
-        lastPanel.current = p;
-        return p;
+      registerWebviewViewProvider: (
+        viewId: string,
+        provider: { resolveWebviewView: (view: unknown) => unknown },
+        _options?: unknown,
+      ) => {
+        providerStore.push({ viewId, provider });
+        lastView.current = null;
+        lastPanel.current = null;
+        return { dispose: () => undefined };
       },
       showErrorMessage: vi.fn(async () => undefined),
       showWarningMessage: vi.fn(async () => undefined),
       showInformationMessage: vi.fn(async () => undefined),
     },
+
+    commands: {
+      executeCommand: vi.fn(async (cmd: string, ..._rest: unknown[]) => {
+        if (cmd === "UnicDB-results.focus" && providerStore.length > 0) {
+          if (lastView.current && !(lastView.current as unknown as { isDisposed?: boolean }).isDisposed) {
+            return undefined;
+          }
+          const provider = providerStore[providerStore.length - 1]!.provider;
+          const v = new FakeWebviewView();
+          (provider as { resolveWebviewView: (v: unknown) => unknown }).resolveWebviewView(v);
+          lastView.current = v;
+          lastPanel.current = v as unknown as FakeWebviewPanel;
+        }
+        return undefined;
+      }),
+    },
+
     workspace: {
       // confirmDangerousStatements reads two getConfiguration keys:
       //   UnicDB.confirmDestructive  (default true)
@@ -100,9 +143,10 @@ vi.mock("vscode", () => {
       getConfiguration: vi.fn(() => ({
         get: (_key: string, def?: unknown) => def,
       })),
-      // TASK-AI-001-fix — ResultsPanel now subscribes to this to auto-recreate
-      // when UnicDB.resultsPlacement changes. The mock returns a Disposable
-      // stub; tests don't need to fire the listener for this file.
+      // TASK-RP-001 — UnicDB.resultsPlacement was removed in this wave; the
+      // old auto-recreate config listener no longer exists. The mock keeps
+      // onDidChangeConfiguration around so unrelated tests that incidentally
+      // touch it don't crash.
       onDidChangeConfiguration: () => ({ dispose: () => undefined }),
     },
     env: {
@@ -216,6 +260,8 @@ function makePanel(runner: QueryRunner): ResultsPanel {
 }
 
 beforeEach(() => {
+  lastView.current = null;
+  providerStore.length = 0;
   lastPanel.current = null;
   vi.clearAllMocks();
 });

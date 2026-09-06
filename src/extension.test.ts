@@ -57,6 +57,14 @@ const state = {
     selection: { isEmpty: boolean; active: unknown; start: unknown; end: unknown };
     insertSnippet: (s: unknown) => Promise<void>;
   },
+  // TASK-RP-001 — registered WebviewViewProviders (ResultsPanel etc.).
+  // The console panel stays on createWebviewPanel; only the bottom-panel
+  // results view went through the WebviewViewProvider route.
+  registeredWebviewViewProviders: [] as Array<{
+    viewId: string;
+    options?: unknown;
+    provider: { resolveWebviewView: (view: unknown) => unknown };
+  }>,
   // Terminal stubs (cho TASK-505 runScript tests).
   createdTerminals: [] as Array<{
     name: string;
@@ -123,6 +131,19 @@ vi.mock("vscode", () => {
         state.createdWebviewPanels.push(panel);
         return panel;
       }),
+      // TASK-RP-001 — capture the registered ResultsPanel provider so tests
+      // can drive `resolveWebviewView(new WebviewView())` to simulate the
+      // bottom panel resolving a view.
+      registerWebviewViewProvider: vi.fn(
+        (
+          viewId: string,
+          provider: { resolveWebviewView: (view: unknown) => unknown },
+          options?: unknown,
+        ) => {
+          state.registeredWebviewViewProviders.push({ viewId, options, provider });
+          return { dispose: vi.fn() };
+        },
+      ),
       createTerminal: vi.fn((options: { name?: string } = {}) => {
         // Terminal mới sinh ra còn sống (exitStatus = undefined), đúng contract VS Code API.
         // Test muốn simulate "đã chết" thì set `term.exitStatus = { code: 0 }` sau khi tạo.

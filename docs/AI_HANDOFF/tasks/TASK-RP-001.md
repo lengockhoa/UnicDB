@@ -93,3 +93,101 @@ npm run compile
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+
+SUMMARY: Converted ResultsPanel from `vscode.window.createWebviewPanel` to a
+`vscode.WebviewViewProvider` registered via `vscode.window.registerWebviewViewProvider`
+under viewId `UnicDB.results`. Deleted all placement-related code paths
+(`resultsPlacement`, `viewColumn`, `readPlacementSetting`, `canExecuteCommands`,
+`moveEditorToBelowGroup`, `moveEditorToAboveGroup`, onDidChangeConfiguration
+auto-dispose listener, the entire `placement` describe block including the
+T3a manifest test). Registered the provider in `extension.ts`. Adapted the
+mock harness across all 9 sibling `resultsPanel*.test.ts` suites to use the
+new `FakeWebviewView` flow (mock `registerWebviewViewProvider` captures
+providers; `executeCommand("UnicDB-results.focus")` resolves the latest
+provider with a fresh `FakeWebviewView` and sets `lastPanel.current` /
+`lastView.current`).
+
+TEST_PLAN_FOLLOWED: task §4 (cases 1-6) and the TDD RED→GREEN contract
+captured below.
+
+### RED_OUTPUT (verbatim from initial test run before implementation)
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-rp-001
+
+ ❯ src/ui/__tests__/resultsPanelViewProvider.test.ts > ResultsPanel — WebviewViewProvider shell (TASK-RP-001) > case 1: resolveWebviewView wires html, options and message handler; ready handshake posts state
+   → Error: Test "..." should have been aborted but completed successfully. Instead received signal: aborted.
+
+ ❯ src/ui/__tests__/resultsPanelViewProvider.test.ts > ResultsPanel — WebviewViewProvider shell (TASK-RP-001) > case 4: show() never creates an editor-area WebviewPanel; reveals via UnicDB-results.focus
+   → FAIL  expected 'vi.fn(...)' to not have been called, but it was called with arguments: ['UnicDB.results', 'UnicDB — Results', 2, {...}]
+
+ ❯ src/ui/__tests__/resultsPanelViewProvider.test.ts > ResultsPanel — WebviewViewProvider shell (TASK-RP-001) > case 5: dispose() disposes the live view and rolls back an open transaction
+   → FAIL  expected "spy" to be called at least once
+
+ ❯ src/ui/__tests__/resultsPanelViewProvider.test.ts > ResultsPanel — WebviewViewProvider shell (TASK-RP-001) > case 6: constructor no longer accepts resultsPlacement/viewColumn and no config listener is registered
+   → FAIL  expected "mock" to not have been called, but it was called 1 times
+```
+
+### Verification Output
+
+Command: `npx vitest run src/ui/__tests__/resultsPanelViewProvider.test.ts src/ui/__tests__/resultsPanel.test.ts src/ui/__tests__/resultsPanelClose.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/resultsPanelSaveEdits.test.ts src/ui/__tests__/resultsPanelDistinctValues.test.ts src/ui/__tests__/resultsPanelRetry.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts src/ui/__tests__/resultsPanelServerFilter.test.ts src/ui/__tests__/resultsPanelErrorIntegration.test.ts src/ui/__tests__/resultsPanelCloseWiring.test.ts src/extension.test.ts`
+
+Result: 320 / 320 passed (12 test files)
+
+Excerpt:
+```
+ ✓ src/ui/__tests__/resultsPanelViewProvider.test.ts  (6 tests) 106ms
+ ✓ src/ui/__tests__/resultsPanel.test.ts              (46 tests) 480ms
+ ✓ src/ui/__tests__/resultsPanelClose.test.ts         (11 tests)
+ ✓ src/ui/__tests__/resultsPanelRequery.test.ts       (15 tests)
+ ✓ src/ui/__tests__/resultsPanelSaveEdits.test.ts     (28 tests)
+ ✓ src/ui/__tests__/resultsPanelDistinctValues.test.ts (18 tests)
+ ✓ src/ui/__tests__/resultsPanelRetry.test.ts         (3 tests)
+ ✓ src/ui/__tests__/resultsPanelOrderBy.test.ts       (16 tests)
+ ✓ src/ui/__tests__/resultsPanelServerFilter.test.ts  (16 tests)
+ ✓ src/ui/__tests__/resultsPanelErrorIntegration.test.ts (4 tests)
+ ✓ src/ui/__tests__/resultsPanelCloseWiring.test.ts   (4 tests)
+ ✓ src/extension.test.ts                              (153 tests)
+ Test Files  12 passed (12)
+      Tests  320 passed (320)
+```
+
+Command: `npm run typecheck` — `tsc --noEmit` → exit 0 (no errors)
+Command: `npm run compile` — `esbuild` build complete, exit 0
+
+### Files Changed
+
+- src/ui/resultsPanel.ts: refactored to implement vscode.WebviewViewProvider; added public static readonly viewId = "UnicDB.results"; replaced `panel: vscode.WebviewPanel | null` with `view: vscode.WebviewView | null`; rewrote `show()` to execute `UnicDB-results.focus`; added `resolveWebviewView`; deleted `readPlacementSetting`, `canExecuteCommands`, `resultsPlacement`, `viewColumn` options; removed onDidChangeConfiguration listener; updated dispose to use optional `view.dispose()` (test-only hook) then null out the view.
+- src/extension.ts: registers `vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, { webviewOptions: { retainContextWhenHidden: true } })` and pushes the Disposable into `context.subscriptions`.
+- src/ui/__tests__/resultsPanelViewProvider.test.ts (NEW, 472 lines): all 6 TDD cases per task §4.
+- src/ui/__tests__/resultsPanel.test.ts: bulk-replaced `new FakeWebviewPanel` with `new FakeWebviewView`, swapped `lastPanel.current` for `lastView.current`, added `ensureResolved()`/`resolveView()` helpers, injected `registerWebviewViewProvider` call after every `new ResultsPanel(...)`, deleted the entire `placement` describe block (which contained the T3a manifest test at the original line 1043), adapted session-epoch and BQ tests to drive the registered provider's `resolveWebviewView`.
+- src/extension.test.ts: added `window.registerWebviewViewProvider: vi.fn()` to the vscode mock; recorded registered providers in `state.registeredWebviewViewProviders`. The console panel (`UnicDB.console`) tests stay untouched — console remains an editor panel.
+- src/ui/__tests__/resultsPanelClose.test.ts: adapted mock harness (registerWebviewViewProvider + commands.executeCommand auto-resolve on UnicDB-results.focus); added `vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, ...)` injection; added FakeWebviewView/providerStore/lastView declarations.
+- src/ui/__tests__/resultsPanelRequery.test.ts: same adaptation as above.
+- src/ui/__tests__/resultsPanelSaveEdits.test.ts: same adaptation.
+- src/ui/__tests__/resultsPanelDistinctValues.test.ts: same adaptation.
+- src/ui/__tests__/resultsPanelRetry.test.ts: same adaptation.
+- src/ui/__tests__/resultsPanelOrderBy.test.ts: same adaptation.
+- src/ui/__tests__/resultsPanelServerFilter.test.ts: same adaptation.
+- src/ui/__tests__/resultsPanelCloseWiring.test.ts: same adaptation (manual edit because file uses a different vi.mock structure).
+- src/ui/__tests__/resultsPanelErrorIntegration.test.ts: comment touch-up on line ~104 — the old TASK-AI-001-fix comment referenced the removed UnicDB.resultsPlacement auto-recreate listener; updated to note that the setting was removed in this wave.
+
+### TESTS_ADDED
+
+- src/ui/__tests__/resultsPanelViewProvider.test.ts: 6 tests (case 1 happy resolveWebviewView wiring; case 2 buffered render ordering; case 3 dispose mid-requery suppression; case 4 regression — show() never creates WebviewPanel; case 5 dispose rolls back open transaction; case 6 unit — no resultsPlacement/viewColumn, no config listener).
+
+### ISSUES
+
+- The 9 sibling resultsPanel test files relied on the original `createWebviewPanel` mock setting `lastPanel.current`. With `show()` now executing `UnicDB-results.focus` instead, each sibling test needed: (a) `commands.executeCommand` mock that auto-resolves the latest registered provider with a fresh FakeWebviewView, (b) `registerWebviewViewProvider` capture, (c) explicit `vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, ...)` injection after every `new ResultsPanel(...)`. Implemented via 4 deterministic transformation scripts applied to each file plus manual edits for the closeWiring and close files whose vi.mock structure differed slightly.
+- `WebviewView` in production has no `.dispose()` method (VS Code tears the view down via the bottom-panel container and `onDidDispose` fires). Implemented `panel.dispose()` defensively with `(view as { dispose?: () => void } | null)` optional-call so production code never calls it but test fakes can intercept via their own `dispose()` to simulate the host-side teardown.
+
+HANDOFF_TO_REVIEWER: yes — STATUS DONE, all 320 tests pass, typecheck + compile clean.
+
+NEXT: ready for review (TASK-RP-002 already PASS; this is wave-1's last blocker before wave boundary commit + wave-2 TASK-RP-003).
