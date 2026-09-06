@@ -330,6 +330,10 @@ function render(): void {
       </div>
     </div>
     <div class="UnicDB-row">
+      <div class="UnicDB-field grow">
+        <label for="apiKey">API key</label>
+        <input id="apiKey" type="password" autocomplete="off" />
+      </div>
       <div class="UnicDB-field">
         <label for="timeoutMs">Timeout (ms) <span class="req">*</span></label>
         <input id="timeoutMs" type="number" min="1000" max="600000" step="1000" value="60000" />
@@ -337,16 +341,6 @@ function render(): void {
       <div class="UnicDB-field">
         <label for="maxSteps">Max steps <span class="req">*</span></label>
         <input id="maxSteps" type="number" min="1" max="100" step="1" value="12" />
-      </div>
-    </div>
-  </div>
-
-  <div class="UnicDB-form-section">
-    <h3>API key</h3>
-    <div class="UnicDB-row">
-      <div class="UnicDB-field grow">
-        <label for="apiKey">API key</label>
-        <input id="apiKey" type="password" autocomplete="off" />
       </div>
     </div>
   </div>
