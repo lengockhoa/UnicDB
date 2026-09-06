@@ -597,6 +597,16 @@ export function createProviderClient(opts: ProviderOptions): {
             bodySnippet: snippet,
           });
         }
+        if (aggregated.text.length === 0) {
+          // Events parsed fine but no text was extracted — most likely the
+          // event format is one we don't recognize (different proxy, or the
+          // endpoint only emits status events with no text payload).
+          // Surface a clear error so the user can paste the snippet back.
+          throw new ProviderError(
+            "SSE parsed but produced no text — unrecognized event format",
+            { timeout: false, endpoint: url, bodySnippet: snippet },
+          );
+        }
         return { ...aggregated, toolCalls: [] };
       }
 

@@ -421,7 +421,7 @@
       },
       {
         "command": "UnicDB.generateCommitMessage",
-        "title": "Generate Commit Message",
+        "title": "UnicDB: Generate Commit Message",
         "category": "UnicDB",
         "icon": {
           "light": "media/commit-spark.svg",

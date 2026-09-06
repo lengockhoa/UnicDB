@@ -168,5 +168,12 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
   // 4. Inject only on success.
   if (message.length > 0) {
     deps.setInputBox(message);
+    return;
   }
+  // Provider returned but produced no usable text (sanitize stripped
+  // everything, or upstream returned an empty payload). Surface a clear
+  // diagnostic — silently dropping is worse than a noisy error.
+  deps.showError(
+    "UnicDB: provider returned no commit message text. Check Lite Model config (modelId, baseUrl) and provider output format.",
+  );
 }
