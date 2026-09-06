@@ -52,6 +52,30 @@ because you already ran them manually:
 Default is to run the full gate. Skip flags exist for emergencies — they
 keep the gate logic but defer the verification cost to the operator.
 
+## Install locally without waiting for Marketplace
+
+Marketplace propagation can take minutes (sometimes longer). To test the
+just-built version RIGHT NOW on the same machine, install the local `.vsix`
+directly — VS Code replaces the installed extension immediately:
+
+```bash
+# From the repo root, after `npm run bump` produced UnicDB-<version>.vsix:
+code --install-extension UnicDB-<version>.vsix
+# Or with the full path if you're not in the repo root:
+code --install-extension /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/UnicDB-<version>.vsix
+```
+
+Or via the VS Code UI:
+1. Extensions panel (`Cmd+Shift+X`)
+2. Click the `⋯` menu at the top of the panel
+3. **Install from VSIX...** → pick `UnicDB-<version>.vsix`
+4. **Reload** when prompted
+
+This works even if you already ran `vsce publish` — the local install
+shadows the Marketplace version until you uninstall it. To switch back to
+the Marketplace-tracked version, uninstall first, then reinstall from
+Extensions panel.
+
 ## What `npm run bump` actually does (in order)
 
 1. Bumps `package.json` `version` field (`patch` is the default).
