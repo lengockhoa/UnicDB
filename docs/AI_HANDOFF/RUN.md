@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Surface connection + SQL errors in the Results panel + fix broken `Run N · Stmt M` tab labels
-Base: main
-Phase: done
-Cursor: UX2 cycle complete. v1.51.3 released to GitHub. 4/4 tasks done; 25 new tests; 3555|2 total; typecheck + compile clean. Release URL: https://github.com/lengockhoa/UnicDB/releases/tag/v1.51.3
-Next: (cycle closed)
+Goal: Move SQL Results to a tab in VS Code's bottom panel (next to Terminal); remove UnicDB.resultsPlacement setting.
+Base: main @ 650b264
+Phase: P3
+Cursor: P2.5 Approved (round 1 fix verified by round 2 reviewer). Committing plan now.
+Next: spawn lite agent to git commit docs/AI_HANDOFF/, then start Phase 3 (implement TASK-RP-001 + TASK-RP-002 in parallel, wave 1)
