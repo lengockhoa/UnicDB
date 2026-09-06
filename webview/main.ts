@@ -664,8 +664,11 @@ function render(): void {
   renderActivePanel();
 }
 // TASK-603 — icon-button helper. Each toolbar/requery button is a 26px-tall
-// square with an inline 16×16 SVG (stroke="currentColor") and a
-// title+aria-label for screen readers. No visible text, no icon font.
+// square with an inline 16×16 SVG (stroke="currentColor"), a title for
+// native browser tooltips / screen readers, an aria-label, and a
+// `data-tooltip` attribute that the CSS pseudo-element tooltip reads to
+// render INSTANTLY on hover (~1-3s delay on the native tooltip inside
+// VS Code webviews is too slow for an icon-only toolbar).
 function makeIconButton(
   className: string,
   title: string,
@@ -676,6 +679,7 @@ function makeIconButton(
   const btn = document.createElement("button");
   btn.className = `UnicDB-btn ${className}`.trim();
   btn.title = title;
+  btn.setAttribute("data-tooltip", title);
   btn.setAttribute("aria-label", title);
   btn.innerHTML =
     `<svg viewBox="0 0 16 16" width="16" height="16" ` +
@@ -1209,6 +1213,13 @@ function rebuildTabs(tabsEl: HTMLDivElement): void {
     if (r.status === "error") tab.classList.add("UnicDB-tab-error");
     if (r.status === "cancelled") tab.classList.add("UnicDB-tab-cancelled");
     tab.textContent = `${tabTitle(r, i)} ${tabBadge(r)}`;
+    // Tooltip — native title + CSS instant tooltip. Describes the result
+    // so the user can tell at a glance what each tab holds.
+    const tabTip = `${tabTitle(r, i)} — ${r.status}` +
+      (r.rowCount !== undefined ? ` (${r.rowCount} rows)` : "");
+    tab.title = tabTip;
+    tab.setAttribute("data-tooltip", tabTip);
+    tab.setAttribute("aria-label", tabTip);
     tab.addEventListener("click", () => {
       if (activeTab === i) return;
       activeTab = i;
@@ -1222,6 +1233,8 @@ function rebuildTabs(tabsEl: HTMLDivElement): void {
     const closeBtn = document.createElement("button");
     closeBtn.type = "button";
     closeBtn.className = "UnicDB-tab-close";
+    closeBtn.title = "Close tab";
+    closeBtn.setAttribute("data-tooltip", "Close tab");
     closeBtn.setAttribute("aria-label", "Close tab");
     closeBtn.textContent = "×";
     closeBtn.addEventListener("click", (ev) => {
@@ -1241,6 +1254,14 @@ function rebuildTabs(tabsEl: HTMLDivElement): void {
   msgTab.className = "UnicDB-tab" + (results.length === activeTab ? " UnicDB-tab-active" : "");
   const hasErrors = results.some((r) => r.status === "error");
   msgTab.textContent = `Messages${hasErrors ? " ⚠" : ""}`;
+  // Native tooltip + CSS instant tooltip (mirrors the toolbar button
+  // pattern). Hover text explains the purpose even when no errors.
+  const msgTabTip = hasErrors
+    ? "Messages — open the messages panel (errors / warnings from the most recent queries)"
+    : "Messages — open the messages panel";
+  msgTab.title = msgTabTip;
+  msgTab.setAttribute("data-tooltip", msgTabTip);
+  msgTab.setAttribute("aria-label", msgTabTip);
   msgTab.addEventListener("click", () => {
     if (activeTab === results.length) return;
     activeTab = results.length;
