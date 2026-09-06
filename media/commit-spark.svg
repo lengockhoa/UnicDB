@@ -1,19 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <title>UnicDB Generate Commit — sparkle with letter U</title>
+  <title>UnicDB Generate Commit — bold blue U on sparkle frame</title>
   <!--
-    Distinct from generic $(sparkle): four-point sparkle frame around a bold "U"
-    monogram in UnicDB brand color. Renders clearly at 16x16 toolbar size.
-    Single fill (currentColor) so VS Code can theme it for light/dark.
+    Distinct from generic $(sparkle): four-point sparkle frame + bold blue
+    "U" monogram. The U is intentionally large (≈75% of the frame) so it is
+    legible at 16x16 toolbar size. Frame uses currentColor so VS Code can
+    theme it for light/dark; the U stays UnicDB brand blue in both themes
+    so the brand mark is consistent.
   -->
   <!-- Sparkle frame (4-point star) -->
   <path
-    d="M12 1.6 L13.6 9 L20.4 10.4 L13.6 12 L12 19.6 L10.4 12 L3.6 10.4 L10.4 9 Z"
+    d="M12 1.4 L13.6 8.8 L20.4 10.4 L13.6 12 L12 19.6 L10.4 12 L3.6 10.4 L10.4 8.8 Z"
     fill="currentColor"
   />
-  <!-- Letter U cutout (white over sparkle) — using vector path for crisp rendering at all sizes -->
+  <!-- Bold U monogram, white over sparkle — scaled to fill more of the frame -->
   <path
-    d="M9.4 7.6 L9.4 12.8 C9.4 13.6 9.9 14.05 10.7 14.05 L13.3 14.05 C14.1 14.05 14.6 13.6 14.6 12.8 L14.6 7.6 L13.1 7.6 L13.1 12.6 C13.1 12.85 13 13 12.75 13 L11.25 13 C11 13 10.9 12.85 10.9 12.6 L10.9 7.6 Z"
-    fill="white"
+    d="M7.6 5.2 L7.6 14.4 C7.6 16.95 9.55 18.7 12.4 18.7 C15.25 18.7 17.2 16.95 17.2 14.4 L17.2 5.2 L14.65 5.2 L14.65 14.25 C14.65 15.55 13.8 16.4 12.4 16.4 C11 16.4 10.15 15.55 10.15 14.25 L10.15 5.2 Z"
+    fill="#1E88E5"
   />
 </svg>

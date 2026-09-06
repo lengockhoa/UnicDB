@@ -162,9 +162,12 @@ function mapChatMessageForBody(m: ChatMessage): Record<string, unknown> {
 }
 
 export function buildChatCompletionsBody(req: ProviderRequest): Record<string, unknown> {
+  // `stream: false` is a best-effort hint; if the endpoint ignores it and still
+  // streams, `complete()` falls back to the SSE parser.
   const body: Record<string, unknown> = {
     model: req.modelId,
     messages: req.messages.map(mapChatMessageForBody),
+    stream: false,
   };
   if (req.tools !== undefined) {
     body.tools = req.tools.map((t) => ({
@@ -256,7 +259,10 @@ export function buildResponsesBody(req: ProviderRequest): Record<string, unknown
     .join("\n");
   const input = req.messages.filter((m) => m.role !== "system").map(mapResponsesInputItem);
 
-  const body: Record<string, unknown> = { model: req.modelId, input };
+  // Ask the endpoint to return a single JSON object rather than an SSE stream.
+  // Endpoints that ignore this and still stream fall back to the SSE parser in
+  // `complete()`, so this is a best-effort hint, not a hard contract.
+  const body: Record<string, unknown> = { model: req.modelId, input, stream: false };
   if (instructions.length > 0) body.instructions = instructions;
   if (req.tools !== undefined) {
     body.tools = req.tools.map((t) => ({
@@ -332,6 +338,180 @@ export function parseResponsesResponse(json: unknown): ProviderResult {
   return { text, toolCalls, finishReason, usage };
 }
 
+// ---- SSE aggregator (used when `complete()` receives an SSE stream) -------
+export interface SseEvent {
+  event: string;
+  data: string;
+}
+
+/**
+ * Split a full SSE response body into discrete events. Tolerant of both
+ * `\n\n` and `\r\n\r\n` delimiters and of mixed line endings (some proxies
+ * re-encode). Lines beginning with `data:` carry the JSON payload; the
+ * optional `event:` line names the event type (Responses API uses it).
+ */
+export function parseSseEvents(raw: string): SseEvent[] {
+  // Normalize all CRLF to LF first so we only need to split on \n\n.
+  const text = raw.replace(/\r\n/g, "\n");
+  const events: SseEvent[] = [];
+  const blocks = text.split(/\n\n+/);
+  for (const block of blocks) {
+    if (block.trim().length === 0) continue;
+    let eventName = "";
+    const dataLines: string[] = [];
+    for (const ln of block.split("\n")) {
+      if (ln.startsWith(":")) continue; // SSE comment, ignore.
+      if (ln.startsWith("event:")) {
+        eventName = ln.slice(6).replace(/^ /, "");
+      } else if (ln.startsWith("data:")) {
+        dataLines.push(ln.slice(5).replace(/^ /, ""));
+      }
+    }
+    if (dataLines.length === 0) continue;
+    events.push({ event: eventName, data: dataLines.join("\n") });
+  }
+  return events;
+}
+
+interface SseAggregated {
+  text: string;
+  finishReason: "stop" | "tool_calls" | "length" | "other";
+  usage: { inputTokens: number; outputTokens: number };
+}
+
+/**
+ * Reduce a list of SSE events into the same shape `parseChatCompletionsResponse`
+ * / `parseResponsesResponse` return. Handles both API formats:
+ *
+ *  - chat/completions: `data: {"choices":[{"delta":{"content":"..."}}]}` and
+ *    a terminal `data: [DONE]`.
+ *  - responses: `event: response.output_text.delta` with `data: {"delta":"..."}`
+ *    and a terminal `event: response.completed` with the full response object.
+ *
+ * Returns null if no usable events were found (caller turns that into a clear
+ * `ProviderError` with the body snippet so the user can diagnose).
+ */
+export function aggregateSseToResult(
+  events: SseEvent[],
+  method: "responses" | "chat/completions",
+): SseAggregated | null {
+  let text = "";
+  let finishReason: "stop" | "tool_calls" | "length" | "other" = "other";
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let sawAnyEvent = false;
+
+  if (method === "chat/completions") {
+    for (const ev of events) {
+      const payload = ev.data;
+      if (payload === "[DONE]") continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        continue;
+      }
+      sawAnyEvent = true;
+      const j = parsed as {
+        choices?: Array<{
+          finish_reason?: unknown;
+          delta?: { content?: unknown };
+        }>;
+        usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
+      };
+      if (Array.isArray(j.choices)) {
+        for (const choice of j.choices) {
+          const content = choice.delta?.content;
+          if (typeof content === "string" && content.length > 0) {
+            text += content;
+          }
+          if (typeof choice.finish_reason === "string") {
+            finishReason = mapFinishReason(choice.finish_reason);
+          }
+        }
+      }
+      if (j.usage) {
+        inputTokens = tokenCount(j.usage.prompt_tokens) || inputTokens;
+        outputTokens = tokenCount(j.usage.completion_tokens) || outputTokens;
+      }
+    }
+  } else {
+    // responses: stream of typed events. Most useful are:
+    //   response.output_text.delta  → {delta: "text"}
+    //   response.output_item.done   → {item: {type:"message", content:[{text:"..."}]}}
+    //   response.completed          → {response: {output:[...], status, usage}}
+    for (const ev of events) {
+      const name = ev.event;
+      const payload = ev.data;
+      if (payload === "[DONE]") continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(payload);
+      } catch {
+        continue;
+      }
+      sawAnyEvent = true;
+      const j = parsed as {
+        type?: unknown;
+        delta?: unknown;
+        item?: { type?: unknown; content?: Array<{ text?: unknown }> };
+        response?: {
+          status?: unknown;
+          incomplete_details?: { reason?: unknown };
+          output?: Array<{
+            type?: unknown;
+            content?: Array<{ text?: unknown }>;
+          }>;
+          usage?: { input_tokens?: unknown; output_tokens?: unknown };
+        };
+      };
+      // Incremental text delta.
+      if (typeof j.delta === "string" && j.delta.length > 0) {
+        text += j.delta;
+      }
+      // Per-item completion carries the full text payload (useful when no
+      // deltas were emitted, e.g. reasoning-only models).
+      const itemText = j.item?.content?.map((c) => (typeof c.text === "string" ? c.text : "")).join("");
+      if (itemText && itemText.length > 0 && !text.includes(itemText)) {
+        text += itemText;
+      }
+      // Final response snapshot — definitive source of text + usage + status.
+      if (j.response) {
+        const out = j.response.output;
+        if (Array.isArray(out)) {
+          for (const o of out) {
+            if (Array.isArray(o.content)) {
+              for (const c of o.content) {
+                if (typeof c.text === "string" && c.text.length > 0 && !text.includes(c.text)) {
+                  text += c.text;
+                }
+              }
+            }
+          }
+        }
+        if (j.response.usage) {
+          inputTokens = tokenCount(j.response.usage.input_tokens) || inputTokens;
+          outputTokens = tokenCount(j.response.usage.output_tokens) || outputTokens;
+        }
+        if (typeof j.response.status === "string") {
+          if (j.response.status === "completed") {
+            finishReason = "stop";
+          } else if (j.response.status === "incomplete") {
+            const reason = j.response.incomplete_details?.reason;
+            finishReason = reason === "max_output_tokens" ? "length" : "other";
+          }
+        }
+      }
+      // Suppress unused-name warning — `name` is read for parity/debugging.
+      void name;
+    }
+  }
+
+  if (!sawAnyEvent) return null;
+  if (finishReason === "other" && text.length > 0) finishReason = "stop";
+  return { text, finishReason, usage: { inputTokens, outputTokens } };
+}
+
 // ---- factory --------------------------------------------------------------
 export function createProviderClient(opts: ProviderOptions): {
   complete(req: ProviderRequest): Promise<ProviderResult>;
@@ -400,10 +580,49 @@ export function createProviderClient(opts: ProviderOptions): {
 
       const raw = await resp.text();
       const snippet = scrubApiKey(raw, apiKey);
+      const ctype = (resp.headers.get("content-type") ?? "").toLowerCase();
+      const looksLikeSse =
+        ctype.includes("text/event-stream") ||
+        (/^event: /m.test(raw) && /^data: /m.test(raw));
+
+      // Some endpoints ignore `stream: false` and still return SSE — accept it
+      // and aggregate the deltas into a single result.
+      if (looksLikeSse) {
+        const events = parseSseEvents(raw);
+        const aggregated = aggregateSseToResult(events, method);
+        if (aggregated === null) {
+          throw new ProviderError("invalid SSE/stream shape: no usable events", {
+            timeout: false,
+            endpoint: url,
+            bodySnippet: snippet,
+          });
+        }
+        return { ...aggregated, toolCalls: [] };
+      }
+
       let parsed: unknown;
       try {
         parsed = JSON.parse(raw);
       } catch {
+        // Plain-text fallback — some Lite Model proxies just echo the answer.
+        // Only treat the body as plain text when it has NO JSON markers (`{`/`[`)
+        // anywhere — otherwise we are looking at malformed JSON or an HTML/XML
+        // error page, which should be surfaced (not silently swallowed) so the
+        // user can diagnose the endpoint.
+        const trimmed = raw.trim();
+        if (
+          trimmed.length > 0 &&
+          !trimmed.includes("{") &&
+          !trimmed.includes("[") &&
+          !trimmed.startsWith("<")
+        ) {
+          return {
+            text: trimmed,
+            toolCalls: [],
+            finishReason: "stop",
+            usage: { inputTokens: 0, outputTokens: 0 },
+          };
+        }
         throw new ProviderError("invalid JSON in response", {
           timeout: false,
           endpoint: url,
