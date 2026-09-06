@@ -36,16 +36,22 @@
   No user-visible code change lands unversioned. After the verification gate (`npm run
   typecheck` + `npm test`) passes, the next required step is the atomic bump recipe:
   ```bash
-  npm run bump              # default patch (X.Y.Z → X.Y.Z+1)
-  # edit the 3 placeholder lines in the prepended CHANGELOG entry
-  git add -A && git commit -m "release: <version>"
-  npx vsce publish          # PAT is in macOS Keychain from first `vsce login lengockhoa`
+  npm run bump -- --changelog-summary "what this ships" --changelog-files "file1, file2"
+  # ONE command does it all: bump → lock-sync → CHANGELOG → test → compile → .vsix
+  #   → commit → tag → push → GitHub release (+.vsix) → VS Code Marketplace publish
   ```
   Default level is **patch**. Use `npm run bump:minor` for new features, `npm run bump:major`
   for breaking changes — never silently. Trivial internal-only edits (typo, comment) skip
-  the bump unless the day also tags/releases. Full recipe + edge cases: `docs/RELEASE.md`.
-  Atomic script: `scripts/bump-version.mjs` (refuses to run only if `package.json`,
-  `package-lock.json`, or `CHANGELOG.md` are already dirty — would clobber).
+  the bump unless the day also tags/releases. Full recipe + flags: `docs/RELEASE.md`.
+  Atomic script: `scripts/bump-version.mjs`. Refuses to publish if the CHANGELOG Summary
+  placeholder is still unfilled (must pass `--changelog-summary` or edit the file first).
+  Refuses to bump only if `package.json` / `package-lock.json` / `CHANGELOG.md` are
+  already dirty (would clobber). Skip flags for emergencies: `--skip-test`,
+  `--skip-package`, `--skip-publish`. PAT for `vsce publish` is in macOS Keychain from
+  the first `vsce login lengockhoa`; `gh release create` requires `gh` CLI auth.
+  **GitHub Releases and VS Code Marketplace are kept in lockstep by this script** — every
+  bump ships to both channels at the same version, no manual `git tag` / `gh release
+  create` / `vsce publish` separated run.
 
 ## Known Bugs & Root Causes
 

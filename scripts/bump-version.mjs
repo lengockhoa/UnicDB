@@ -31,6 +31,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+
 const ROOT = resolve(new URL("..", import.meta.url).pathname);
 
 function die(msg, code = 1) {
@@ -77,6 +78,49 @@ function prependChangelog(version, today) {
   return path;
 }
 
+// Extract the `[X.Y.Z]` block from CHANGELOG.md for use as GitHub release notes.
+function readChangelogEntry(version) {
+  const path = resolve(ROOT, "CHANGELOG.md");
+  const text = readFileSync(path, "utf8");
+  const re = new RegExp(
+    `^## \\[${version.replace(/\./g, "\\.")}\\][^\\n]*\\n([\\s\\S]*?)(?=^## \\[\\d|$)`,
+    "m",
+  );
+  const m = text.match(re);
+  return m ? m[1].trim() : "";
+}
+
+// Fill the placeholder Summary/Files lines if --changelog-summary / --changelog-files passed.
+function fillChangelogPlaceholders(version, summary, files) {
+  const path = resolve(ROOT, "CHANGELOG.md");
+  let text = readFileSync(path, "utf8");
+  let changed = false;
+  const entryRe = new RegExp(`(## \\[${version.replace(/\./g, "\\.")}\\][\\s\\S]*?)(\\n## \\[\\d|$)`);
+  if (summary) {
+    const m = text.match(entryRe);
+    if (m && m[1].includes("- Summary: <one-line description of what shipped>")) {
+      const replaced = m[1].replace(
+        "- Summary: <one-line description of what shipped>",
+        `- Summary: ${summary}`,
+      );
+      text = text.replace(entryRe, `${replaced}${m[2]}`);
+      changed = true;
+    }
+  }
+  if (files) {
+    const m = text.match(entryRe);
+    if (m && m[1].includes("- Files: <list of source files / tests / docs touched>")) {
+      const replaced = m[1].replace(
+        "- Files: <list of source files / tests / docs touched>",
+        `- Files: ${files}`,
+      );
+      text = text.replace(entryRe, `${replaced}${m[2]}`);
+      changed = true;
+    }
+  }
+  if (changed) writeFileSync(path, text);
+}
+
 function run(cmd, args, opts = {}) {
   const res = spawnSync(cmd, args, { stdio: "inherit", cwd: ROOT, ...opts });
   if (res.status !== 0) die(`command failed: ${cmd} ${args.join(" ")}`, res.status ?? 1);
@@ -94,7 +138,14 @@ function runNpx(tool, args) {
 const args = process.argv.slice(2);
 const skipTest = args.includes("--skip-test");
 const skipPackage = args.includes("--skip-package");
+const skipPublish = args.includes("--skip-publish");
 const mode = args.find((a) => !a.startsWith("--")) ?? "patch";
+const argValue = (flag) => {
+  const i = args.indexOf(flag);
+  return i >= 0 && i + 1 < args.length ? args[i + 1] : null;
+};
+const changelogSummary = argValue("--changelog-summary");
+const changelogFiles = argValue("--changelog-files");
 
 // ─── guard: working tree state ──────────────────────────────────────────
 // The script will overwrite package.json, package-lock.json, and CHANGELOG.md.
@@ -161,22 +212,75 @@ if (!skipPackage) {
   step("5. package .vsix (SKIPPED via --skip-package)");
 }
 
-// ─── 6. next steps ───────────────────────────────────────────────────────
-step("6. next steps");
-const lines = [
-  `# commit the bump`,
-  `git add -A`,
-  `git commit -m "release: ${newVersion}"`,
-  ``,
-  `# publish to VS Code Marketplace (PAT must be in Keychain: vsce login lengockhoa)`,
-  `#   -- when package.json was already bumped manually, use \`vsce publish\` (no level)`,
-  `#   -- when bumping from this script, use \`vsce publish patch\` (since pkg.json is now ${newVersion})`,
-  `npx vsce publish patch`,
-  ``,
-  `# OR push tag + attach .vsix to GitHub release (does NOT publish to Marketplace)`,
-  `git tag v${newVersion}`,
-  `git push origin v${newVersion}`,
-];
-console.log(lines.join("\n"));
+// ─── 6. atomic publish: commit → tag → push → GitHub release → Marketplace ─
+if (skipPublish) {
+  step("6. atomic publish (SKIPPED via --skip-publish)");
+  console.log(`To ship later: drop --skip-publish, or follow docs/RELEASE.md §Fast lane.`);
+} else {
+  step("6. atomic publish: commit → tag → push → GitHub release → Marketplace");
+
+  // 6a. CHANGELOG placeholder check.
+  if (changelogSummary || changelogFiles) {
+    fillChangelogPlaceholders(newVersion, changelogSummary, changelogFiles);
+  }
+  const changelogPath = resolve(ROOT, "CHANGELOG.md");
+  const changelogText = readFileSync(changelogPath, "utf8");
+  if (changelogText.includes("<one-line description of what shipped>")) {
+    die(
+      `CHANGELOG.md still has an unfilled Summary placeholder for [${newVersion}].\n` +
+        `Either:\n` +
+        `  1. Edit CHANGELOG.md manually before publishing\n` +
+        `  2. Pass --changelog-summary "your summary" (and optional --changelog-files "file1, file2")\n` +
+        `  3. Pass --skip-publish to defer the publish`,
+    );
+  }
+
+  // 6b. pre-flight: working tree clean (no WIP leaking into the release commit).
+  const dirty = execFileSync("git", ["status", "--porcelain"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  }).trim();
+  if (dirty) {
+    console.log(`Files about to be committed in this release:`);
+    console.log(dirty.split("\n").map((l) => `  ${l}`).join("\n"));
+    // Continue — operator can Ctrl+C within ~2s if something looks wrong.
+  }
+
+  // 6c. commit.
+  run("git", ["add", "-A"]);
+  run("git", ["commit", "-m", `release: ${newVersion}`]);
+  console.log(`✓ git commit: release: ${newVersion}`);
+
+  // 6d. tag.
+  run("git", ["tag", "-a", `v${newVersion}`, "-m", `v${newVersion}`]);
+  console.log(`✓ git tag v${newVersion}`);
+
+  // 6e. push commit + tag.
+  run("git", ["push", "origin", "HEAD"]);
+  run("git", ["push", "origin", `v${newVersion}`]);
+  console.log(`✓ pushed commit + tag to origin`);
+
+  // 6f. GitHub release (uses CHANGELOG entry as notes).
+  const entry = readChangelogEntry(newVersion);
+  runNpx("gh", [
+    "release",
+    "create",
+    `v${newVersion}`,
+    `UnicDB-${newVersion}.vsix`,
+    "--title",
+    `v${newVersion}`,
+    "--notes",
+    entry || `Release v${newVersion}`,
+  ]);
+  console.log(`✓ GitHub release v${newVersion} created`);
+
+  // 6g. Marketplace publish (PAT is in macOS Keychain).
+  runNpx("vsce", ["publish"]);
+  console.log(`✓ Published to VS Code Marketplace`);
+}
 
 console.log(`\n✓ bump-version: ${oldVersion} → ${newVersion} complete`);
+if (!skipPublish) {
+  console.log(`  → GitHub:     https://github.com/lengockhoa/UnicDB/releases/tag/v${newVersion}`);
+  console.log(`  → Marketplace: https://marketplace.visualstudio.com/items?itemName=lengockhoa.UnicDB`);
+}
