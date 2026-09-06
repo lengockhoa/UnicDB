@@ -112,6 +112,40 @@ function tokenCount(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0;
 }
 
+/**
+ * Walk a parsed JSON value and concatenate any string we find. Last-resort
+ * fallback for Lite Model proxies that return text in non-standard fields.
+ * Only invoked when both the chat/completions and responses parsers miss.
+ * Bounded depth + max length to avoid runaway concatenation on huge payloads.
+ */
+function extractAnyText(value: unknown, depth = 0, max = 5): string {
+  if (depth > max) return "";
+  if (typeof value === "string") return value.length <= 4000 ? value : "";
+  if (Array.isArray(value)) {
+    let out = "";
+    for (const v of value) {
+      out += extractAnyText(v, depth + 1, max);
+      if (out.length >= 4000) break;
+    }
+    return out;
+  }
+  if (value && typeof value === "object") {
+    // Only descend into objects whose key names suggest text content. Skip
+    // metadata fields like usage / model / id / object / status that are
+    // almost certainly noise.
+    const textKeys = new Set(["text", "content", "delta", "output_text", "message"]);
+    let out = "";
+    for (const [k, v] of Object.entries(value)) {
+      if (textKeys.has(k)) {
+        out += extractAnyText(v, depth + 1, max);
+      }
+      if (out.length >= 4000) break;
+    }
+    return out;
+  }
+  return "";
+}
+
 function buildUrl(baseUrl: string, method: "responses" | "chat/completions"): string {
   const trimmed = baseUrl.replace(/\/+$/, "");
   const path = method === "responses" ? "responses" : "chat/completions";
@@ -202,12 +236,23 @@ export function parseChatCompletionsResponse(json: unknown): ProviderResult {
   };
   const choice = j.choices?.[0];
   const message = choice?.message;
-  const text =
-    typeof message?.content === "string"
-      ? message.content
-      : message?.content == null
-        ? ""
-        : "";
+  // `content` can be a plain string (legacy / most Lite Model proxies) OR an
+  // array of typed parts (newer OpenAI-compatible shape, e.g.
+  // `[{type:"text", text:"…"}]`). Fall back to a recursive search for any
+  // obvious text field if both standard shapes miss.
+  let text = "";
+  if (typeof message?.content === "string") {
+    text = message.content;
+  } else if (Array.isArray(message?.content)) {
+    for (const part of message.content) {
+      if (part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string") {
+        text += (part as { text: string }).text;
+      }
+    }
+  }
+  if (text.length === 0) {
+    text = extractAnyText(json);
+  }
   const toolCalls: ToolCall[] = Array.isArray(message?.tool_calls)
     ? (message!.tool_calls!.map((tc) => ({
         id: typeof tc.id === "string" ? tc.id : "",
@@ -306,6 +351,9 @@ export function parseResponsesResponse(json: unknown): ProviderResult {
         }
       }
     }
+  }
+  if (text.length === 0) {
+    text = extractAnyText(json);
   }
 
   const toolCalls: ToolCall[] = [];
@@ -512,6 +560,27 @@ export function aggregateSseToResult(
   return { text, finishReason, usage: { inputTokens, outputTokens } };
 }
 
+/**
+ * Apply `extractAnyText` to each SSE event payload as a final fallback.
+ * Catches Lite Model proxies that emit the response in a non-standard
+ * JSON shape (e.g. text nested under an unusual key).
+ */
+export function fallbackTextFromSseEvents(events: SseEvent[]): string {
+  let out = "";
+  for (const ev of events) {
+    if (ev.data === "[DONE]") continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(ev.data);
+    } catch {
+      continue;
+    }
+    out += extractAnyText(parsed);
+    if (out.length >= 4000) break;
+  }
+  return out;
+}
+
 // ---- factory --------------------------------------------------------------
 export function createProviderClient(opts: ProviderOptions): {
   complete(req: ProviderRequest): Promise<ProviderResult>;
@@ -598,10 +667,20 @@ export function createProviderClient(opts: ProviderOptions): {
           });
         }
         if (aggregated.text.length === 0) {
-          // Events parsed fine but no text was extracted — most likely the
-          // event format is one we don't recognize (different proxy, or the
-          // endpoint only emits status events with no text payload).
-          // Surface a clear error so the user can paste the snippet back.
+          // Events parsed fine but no text was extracted — try one more
+          // recursive fallback that walks every parsed event payload and
+          // concatenates any string in text-shaped keys. Covers non-standard
+          // proxies (e.g. ZhipuAI glm-5-turbo through certain Lite Model
+          // gateways that wrap the answer in unusual JSON shapes).
+          const fallback = fallbackTextFromSseEvents(events);
+          if (fallback.length > 0) {
+            return {
+              text: fallback,
+              toolCalls: [],
+              finishReason: "stop",
+              usage: { inputTokens: 0, outputTokens: 0 },
+            };
+          }
           throw new ProviderError(
             "SSE parsed but produced no text — unrecognized event format",
             { timeout: false, endpoint: url, bodySnippet: snippet },
