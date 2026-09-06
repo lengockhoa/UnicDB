@@ -13,6 +13,7 @@ import {
   qualifiedName,
   registerSchemaTreeProvider,
 } from "./ui/schemaTree";
+import { SchemaFilterStore } from "./core/schemaFilterStore";
 import { AdminTreeProvider } from "./ui/adminTree";
 import {
   AdminSessionsPanel,
@@ -312,6 +313,24 @@ async function readWorkspaceFile(p: string): Promise<string> {
   return new TextDecoder().decode(bytes);
 }
 /**
+ * TASK-SCHEMA-FILTER — extract a ConnectionConfig from a tree-view argument.
+ * Right-click commands receive the raw UnicDBNode (`{ meta: { connection } }`).
+ * Palette invocation falls back to undefined, which callers handle by
+ * defaulting to `mgr.getActive()`.
+ */
+function readConnectionFromNodeArg(
+  arg: unknown,
+): import("./config/types").ConnectionConfig | null {
+  if (!arg || typeof arg !== "object") return null;
+  const meta = (arg as { meta?: { connection?: unknown } }).meta;
+  if (!meta || typeof meta !== "object") return null;
+  const conn = meta.connection;
+  if (!conn || typeof conn !== "object") return null;
+  // ConnectionConfig.id is a string — confirm shape enough to trust the cast.
+  if (typeof (conn as { id?: unknown }).id !== "string") return null;
+  return conn as import("./config/types").ConnectionConfig;
+}
+/**
  * AIX-02 — atomic write: write to a temp sibling, then rename over the
  * target. vscode.workspace.fs.rename never leaves a half-written target —
  * the original stays intact when anything throws before the rename.
@@ -397,6 +416,12 @@ export async function activate(
     treeDataProvider: tree,
   });
   disposables.push(treeView);
+  // TASK-SCHEMA-FILTER — per-connection schema allow-list store, backed by
+  // workspaceState so each VS Code workspace keeps its own filter set per
+  // connection (no cross-workspace leakage).
+  const schemaFilterStore = new SchemaFilterStore(context.workspaceState);
+  tree.setSchemaFilterStore(schemaFilterStore);
+  disposables.push(schemaFilterStore);
   // TASK-005 — 6 table-utility commands (New/Modify/Copy DDL/Sample Data/Analyze/Vacuum).
   // TASK-CL-002 — thread the existing `invalidateAfterSchemaDdl` closure into
   // the form-view DDL seam. The thunk reads the module-private binding at
@@ -761,6 +786,89 @@ export async function activate(
         false,
       );
     }),
+  );
+  // TASK-SCHEMA-FILTER — UnicDB.selectSchemas (multi-select QuickPick) +
+  // UnicDB.resetSchemaFilter (show all). Both are right-click menu items on
+  // connection nodes in the Schema Explorer.
+  disposables.push(
+    vscode.commands.registerCommand(
+      "UnicDB.selectSchemas",
+      async (arg?: unknown) => {
+        // Right-click on a connection node hands us the raw UnicDBNode
+        // (with `meta.connection`). Fall back to the active connection
+        // when invoked from the palette.
+        const conn = readConnectionFromNodeArg(arg) ?? mgr.getActive();
+        if (!conn) {
+          void vscode.window.showInformationMessage(
+            "UnicDB: select a connection first.",
+          );
+          return;
+        }
+        let adapter: import("./adapters/types").DbAdapter;
+        try {
+          adapter = await mgr.getAdapterFor(conn);
+        } catch (err) {
+          void vscode.window.showErrorMessage(
+            `UnicDB: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return;
+        }
+        let schemas: Array<{ name: string }>;
+        try {
+          schemas = await adapter.listSchemas(true);
+        } catch (err) {
+          void vscode.window.showErrorMessage(
+            `UnicDB: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return;
+        }
+        if (schemas.length === 0) {
+          void vscode.window.showInformationMessage(
+            "UnicDB: this connection has no schemas to filter.",
+          );
+          return;
+        }
+        const current = schemaFilterStore.get(conn.id); // null = show all
+        const initial = current ? new Set(current) : new Set(schemas.map((s) => s.name));
+        const picks = await vscode.window.showQuickPick<vscode.QuickPickItem>(
+          schemas.map(
+            (s): vscode.QuickPickItem => ({
+              label: s.name,
+              picked: initial.has(s.name),
+            }),
+          ),
+          {
+            canPickMany: true,
+            placeHolder:
+              "Pick schemas to keep visible (uncheck to hide). The schema list updates immediately.",
+            title: `UnicDB: Schemas — ${conn.name}`,
+          },
+        );
+        // User cancelled the picker → no change.
+        if (picks === undefined) return;
+        const pickedSet = new Set(picks.map((p) => p.label));
+        // If the picked set equals the original "show all" set, treat as a
+        // reset so the persisted state stays clean.
+        if (
+          current === null &&
+          pickedSet.size === schemas.length &&
+          schemas.every((s) => pickedSet.has(s.name))
+        ) {
+          return;
+        }
+        schemaFilterStore.set(conn.id, pickedSet);
+      },
+    ),
+  );
+  disposables.push(
+    vscode.commands.registerCommand(
+      "UnicDB.resetSchemaFilter",
+      async (arg?: unknown) => {
+        const conn = readConnectionFromNodeArg(arg) ?? mgr.getActive();
+        if (!conn) return;
+        schemaFilterStore.clear(conn.id);
+      },
+    ),
   );
   // 13. UnicDB.selectConnectionFromTree — click connection node → set active.
   // (Không thuộc 12 command khai báo trong package.json; command này được trigger

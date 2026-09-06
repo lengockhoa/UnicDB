@@ -156,6 +156,18 @@
         "icon": "$(close)"
       },
       {
+        "command": "UnicDB.selectSchemas",
+        "title": "UnicDB: Select Schemas…",
+        "category": "UnicDB",
+        "icon": "$(list-filter)"
+      },
+      {
+        "command": "UnicDB.resetSchemaFilter",
+        "title": "UnicDB: Show All Schemas",
+        "category": "UnicDB",
+        "icon": "$(clear-all)"
+      },
+      {
         "command": "UnicDB.runScript",
         "title": "UnicDB: Run Script",
         "category": "UnicDB",
@@ -503,6 +515,16 @@
         },
         {
           "command": "UnicDB.deleteConnection",
+          "when": "view == UnicDB.schemaTree && viewItem == connection",
+          "group": "UnicDB"
+        },
+        {
+          "command": "UnicDB.selectSchemas",
+          "when": "view == UnicDB.schemaTree && viewItem == connection",
+          "group": "UnicDB"
+        },
+        {
+          "command": "UnicDB.resetSchemaFilter",
           "when": "view == UnicDB.schemaTree && viewItem == connection",
           "group": "UnicDB"
         },

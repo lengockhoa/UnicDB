@@ -18,6 +18,7 @@ import * as vscode from "vscode";
 import type { ConnectionConfig } from "../config/types";
 import type { ConnectionManager } from "../core/connectionManager";
 import { assignColor, groupConnections } from "../core/connectionGroups";
+import { SchemaFilterStore } from "../core/schemaFilterStore";
 import type { DbAdapter } from "../adapters/types";
 import { hasAdapterCapability } from "../adapters/types";
 
@@ -124,6 +125,14 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<UnicDBNode> {
   /** Track active-change subscription so we can dispose it. */
   private activeSub: { dispose(): void } | null = null;
 
+  /**
+   * TASK-SCHEMA-FILTER — per-connection schema allow-list. `null` means
+   * "no store attached" — behaves exactly like the pre-filter feature
+   * (every schema the adapter returns is shown).
+   */
+  private schemaFilterStore: SchemaFilterStore | null = null;
+  private schemaFilterSub: { dispose(): void } | null = null;
+
   constructor(mgr: ConnectionManager) {
     this.mgr = mgr;
     // Re-render khi active đổi (chấm xanh, status text).
@@ -140,6 +149,10 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<UnicDBNode> {
     if (this.activeSub) {
       this.activeSub.dispose();
       this.activeSub = null;
+    }
+    if (this.schemaFilterSub) {
+      this.schemaFilterSub.dispose();
+      this.schemaFilterSub = null;
     }
     this._onDidChangeTreeData.dispose();
   }
@@ -175,6 +188,36 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<UnicDBNode> {
   /** Filter text hiện tại ('' = không filter). */
   getFilter(): string {
     return this.filterText;
+  }
+
+  // ---- Per-connection schema filter (TASK-SCHEMA-FILTER) -------------------
+
+  /**
+   * Attach the per-connection schema filter store. The tree subscribes to its
+   * change events and re-renders. Calling with `null` detaches the previous
+   * store (the tree falls back to "show every schema"). No immediate refresh
+   * — initial state (no filter yet) renders all schemas on next expand, and
+   * subsequent edits flow through the change subscription.
+   */
+  setSchemaFilterStore(store: SchemaFilterStore | null): void {
+    if (this.schemaFilterSub) {
+      this.schemaFilterSub.dispose();
+      this.schemaFilterSub = null;
+    }
+    this.schemaFilterStore = store;
+    if (store) {
+      this.schemaFilterSub = store.onDidChange(() => this.refresh());
+    }
+  }
+
+  /**
+   * Current per-connection schema allow-list for a connection:
+   *   null  — no filter (caller should show all schemas).
+   *   Set   — caller should show only schemas whose name is in the set.
+   *           An empty Set means "show none".
+   */
+  getSchemaFilter(connectionId: string): ReadonlySet<string> | null {
+    return this.schemaFilterStore?.get(connectionId) ?? null;
   }
 
   /** Case-insensitive substring match. */
@@ -333,14 +376,15 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<UnicDBNode> {
       // Cached nodes were built Collapsed. When a filter is active the spec
       // requires ancestors of matches to be Expanded — remap on the way out
       // (cache keeps the canonical Collapsed copy; filter state is transient).
-      if (this.filterText) {
-        return cached.data.map((n) =>
-          n.collapsible === vscode.TreeItemCollapsibleState.Collapsed
-            ? { ...n, collapsible: vscode.TreeItemCollapsibleState.Expanded }
-            : n,
-        );
-      }
-      return cached.data;
+      const base =
+        this.filterText !== ""
+          ? cached.data.map((n) =>
+              n.collapsible === vscode.TreeItemCollapsibleState.Collapsed
+                ? { ...n, collapsible: vscode.TreeItemCollapsibleState.Expanded }
+                : n,
+            )
+          : cached.data;
+      return this.applyPerConnectionSchemaFilter(base, conn.id);
     }
 
     let adapter: DbAdapter;
@@ -406,11 +450,48 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<UnicDBNode> {
       ];
     }
 
+    // Cache the unfiltered list (mirror the existing text-filter contract at
+    // line ~480 — filter state is transient, the cache is the source of truth).
     this.cache.set(key, {
       data: children,
       expiresAt: Date.now() + CACHE_TTL_MS,
     });
-    return children;
+    return this.applyPerConnectionSchemaFilter(children, conn.id);
+  }
+
+  /**
+   * TASK-SCHEMA-FILTER — mask the unfiltered schema list against the
+   * per-connection allow-list held by `schemaFilterStore`.
+   *   - filter === null  → return `base` unchanged.
+   *   - filter is a Set  → keep only nodes whose `meta.schema` is in the set.
+   *                        Empty Set → return a single "No schemas match filter"
+   *                        empty node so the connection is visibly filtered
+   *                        rather than vanishing.
+   *   - non-schema nodes (errors / "No schemas") pass through untouched so
+   *     the user still sees connect failures even when a filter is active.
+   */
+  private applyPerConnectionSchemaFilter(
+    base: UnicDBNode[],
+    connectionId: string,
+  ): UnicDBNode[] {
+    const filter = this.schemaFilterStore?.get(connectionId);
+    if (filter === null || filter === undefined) return base;
+    // Pass through non-schema nodes (error / empty) — they aren't names
+    // the user is filtering on, and suppressing them would hide real failures.
+    const realSchemas = base.filter((n) => n.contextValue === "schema");
+    if (realSchemas.length === 0) return base;
+    const kept = realSchemas.filter((n) =>
+      filter.has(n.meta?.schema ?? ""),
+    );
+    if (kept.length > 0) return kept;
+    // Filter active but no schema passes — return the explicit empty node.
+    return [
+      {
+        label: "No schemas match filter",
+        contextValue: "empty-filtered",
+        collapsible: vscode.TreeItemCollapsibleState.None,
+      },
+    ];
   }
 
   private async getCategoriesForSchema(node: UnicDBNode): Promise<UnicDBNode[]> {

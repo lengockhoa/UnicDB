@@ -96,6 +96,7 @@ import {
   registerSchemaTreeProvider,
 } from "../schemaTree";
 import { ConnectionManager } from "../../core/connectionManager";
+import { SchemaFilterStore } from "../../core/schemaFilterStore";
 
 // ---- Fake helpers -----------------------------------------------------------
 
@@ -2062,5 +2063,159 @@ describe("SchemaTreeProvider — TASK-BQ02-003 bigquery wiring", () => {
     expect(arg?.meta?.connection?.id).toBe("bq-view");
     expect(arg?.meta?.schema).toBe("ds1");
     expect(arg?.meta?.objectName).toBe("v_active");
+  });
+});
+
+// TASK-SCHEMA-FILTER — Per-connection schema allow-list (DataGrip-like).
+describe("SchemaTreeProvider — per-connection schema filter", () => {
+  // Local Memento with `keys()` — the file-level FakeMemento above omits it,
+  // but SchemaFilterStore hydrates from existing keys via `memento.keys()`.
+  class FilterMemento {
+    private data = new Map<string, unknown>();
+    get<T>(key: string): T | undefined {
+      return this.data.get(key) as T | undefined;
+    }
+    update(key: string, value: unknown): Promise<void> {
+      if (value === undefined) this.data.delete(key);
+      else this.data.set(key, value);
+      return Promise.resolve();
+    }
+    keys(): readonly string[] {
+      return Array.from(this.data.keys());
+    }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.emitters = [];
+    state.treeItemCalls = [];
+  });
+
+  it("without a store attached: every schema the adapter returns is shown (regression)", async () => {
+    const { mgr } = setupTree({
+      schemas: [
+        { name: "public" },
+        { name: "app" },
+        { name: "billing" },
+        { name: "audit" },
+        { name: "tmp" },
+      ],
+    });
+    await mgr.addConnection(makeCfg({ id: "c1", name: "Local" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+    // No setSchemaFilterStore call → filter is null → all schemas visible.
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    expect(schemas.map((s) => s.label)).toEqual([
+      "public",
+      "app",
+      "billing",
+      "audit",
+      "tmp",
+    ]);
+    expect(schemas.every((s) => s.contextValue === "schema")).toBe(true);
+  });
+
+  it("filter {public, app} hides the other three schemas", async () => {
+    const { mgr } = setupTree({
+      schemas: [
+        { name: "public" },
+        { name: "app" },
+        { name: "billing" },
+        { name: "audit" },
+        { name: "tmp" },
+      ],
+    });
+    await mgr.addConnection(makeCfg({ id: "c1", name: "Local" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+    const store = new SchemaFilterStore(new FilterMemento() as never);
+    store.set("c1", ["public", "app"]);
+    provider.setSchemaFilterStore(store);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    expect(schemas.map((s) => s.label).sort()).toEqual(["app", "public"]);
+    expect(schemas.every((s) => s.contextValue === "schema")).toBe(true);
+  });
+
+  it("empty filter set (size 0) shows the 'No schemas match filter' empty node", async () => {
+    const { mgr } = setupTree({
+      schemas: [
+        { name: "public" },
+        { name: "app" },
+        { name: "billing" },
+      ],
+    });
+    await mgr.addConnection(makeCfg({ id: "c1", name: "Local" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+    const store = new SchemaFilterStore(new FilterMemento() as never);
+    store.set("c1", []); // explicit "hide everything"
+    provider.setSchemaFilterStore(store);
+
+    const root = await provider.getChildren(undefined);
+    const schemas = await provider.getChildren(root[0]);
+    expect(schemas).toHaveLength(1);
+    expect(schemas[0].contextValue).toBe("empty-filtered");
+    expect(schemas[0].label).toBe("No schemas match filter");
+  });
+
+  it("getSchemaFilter exposes the store state to callers (mirrors getFilter)", async () => {
+    const { mgr } = setupTree({ schemas: [{ name: "public" }] });
+    await mgr.addConnection(makeCfg({ id: "c1", name: "Local" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+    // No store → null.
+    expect(provider.getSchemaFilter("c1")).toBeNull();
+    const store = new SchemaFilterStore(new FilterMemento() as never);
+    store.set("c1", ["public", "app"]);
+    provider.setSchemaFilterStore(store);
+    const filter = provider.getSchemaFilter("c1");
+    expect(filter).not.toBeNull();
+    expect(filter!.size).toBe(2);
+    expect(filter!.has("public")).toBe(true);
+    expect(filter!.has("app")).toBe(true);
+  });
+
+  it("filter is per-connection: filter on conn A does not affect conn B", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "public" }, { name: "app" }, { name: "billing" }],
+    });
+    await mgr.addConnection(makeCfg({ id: "c1", name: "DB1" }), "p");
+    await mgr.addConnection(makeCfg({ id: "c2", name: "DB2" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+    const store = new SchemaFilterStore(new FilterMemento() as never);
+    store.set("c1", ["public", "app"]); // c1 filtered
+    // c2 has no filter
+    provider.setSchemaFilterStore(store);
+
+    const root = await provider.getChildren(undefined);
+    const c1Node = root.find((n) => n.meta?.connection?.id === "c1")!;
+    const c2Node = root.find((n) => n.meta?.connection?.id === "c2")!;
+    const c1Schemas = await provider.getChildren(c1Node);
+    const c2Schemas = await provider.getChildren(c2Node);
+    expect(c1Schemas.map((s) => s.label).sort()).toEqual(["app", "public"]);
+    expect(c2Schemas.map((s) => s.label)).toEqual([
+      "public",
+      "app",
+      "billing",
+    ]);
+  });
+
+  it("store change event re-renders the connection children automatically", async () => {
+    const { mgr } = setupTree({
+      schemas: [{ name: "public" }, { name: "app" }, { name: "billing" }],
+    });
+    await mgr.addConnection(makeCfg({ id: "c1", name: "Local" }), "p");
+    const provider = new SchemaTreeProvider(mgr);
+    const store = new SchemaFilterStore(new FilterMemento() as never);
+    provider.setSchemaFilterStore(store);
+    const root = await provider.getChildren(undefined);
+    const before = await provider.getChildren(root[0]);
+    expect(before).toHaveLength(3);
+
+    // Mutate the store — the subscription wired by setSchemaFilterStore
+    // must trigger refresh, so the next getChildren reflects the new filter.
+    store.set("c1", ["public"]);
+    const after = await provider.getChildren(root[0]);
+    expect(after.map((s) => s.label)).toEqual(["public"]);
   });
 });
