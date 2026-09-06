@@ -115,9 +115,7 @@ describe("TASK-GC-004 — package.json manifest guards for the Generate Commit M
     );
     expect(entry).toBeDefined();
     expect(entry!.group).toBe("navigation");
-    expect(entry!.when).toBe(
-      "scmProvider == git && scmProviderHasChanges",
-    );
+    expect(entry!.when).toBe("scmProvider == git");
   });
 
   // ---- Case 4 — edge (malformed / superset) ------------------------------

@@ -48,7 +48,7 @@ const NEW_COMMAND_TITLE = "Generate Commit Message";
 const NEW_COMMAND_CATEGORY = "UnicDB";
 const NEW_COMMAND_ICON = "$(sparkle)";
 const SCM_GROUP = "navigation";
-const SCM_WHEN = "scmProvider == git && scmProviderHasChanges";
+const SCM_WHEN = "scmProvider == git";
 
 // ---- helpers ---------------------------------------------------------------
 

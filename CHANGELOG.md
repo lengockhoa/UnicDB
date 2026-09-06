@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.1] — 2026-09-06
+
+- Summary: Fix — remove non-existent `scmProviderHasChanges` from the Generate Commit Message menu `when` clause so the sparkle button actually renders in the Source Control title bar (regression introduced in 1.52.0).
+- Files: package.json (when clause), src/ui/__tests__/commitGenManifest.test.ts (frozen assertion), src/ui/__tests__/commitGenIntegration.test.ts (frozen constant)
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.1.vsix packaged
+
+---
+
 ## [1.53.0] — 2026-09-06
 
 - Summary: Per-connection schema filter (DataGrip-like) — right-click a connection in Schema Explorer → "Select Schemas…" opens a multi-select QuickPick with all schemas pre-checked; uncheck to hide, persists per workspace (workspaceState) per connection. "Show All Schemas" menu item resets the filter for that connection only.

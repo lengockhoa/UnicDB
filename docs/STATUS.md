@@ -47,3 +47,10 @@
 - Used `npx vsce publish` (no level) so it shipped at the exact version already in `package.json` (1.51.6), no further bump
 - Marketplace may take a few minutes to propagate — users may need to refresh VS Code's Extensions panel or run "Extensions: Check for Updates"
 - Next user task: install on test machine (`code --install-extension UnicDB-1.51.6.vsix`) or pull update from Marketplace directly
+
+## Update 2026-09-06 — release 1.53.0 (Per-connection schema filter)
+- New: `SchemaFilterStore` (`src/core/schemaFilterStore.ts`, 11 unit tests).
+- Right-click on a Schema Explorer connection → "Select Schemas…" (multi-select QuickPick) + "Show All Schemas". Persists per workspace (workspaceState) per connection.
+- `SchemaTreeProvider.setSchemaFilterStore/getSchemaFilter`; filter applied as output mask on cached unfiltered list (no behavior change for users who never open the menu).
+- 2 commits (3be6bd2 + 2b5ce28) pushed; tag v1.53.0; GitHub release live; Marketplace `lengockhoa.UnicDB@1.53.0` published.
+- Verification: typecheck ✅ · 250 files / 3706 tests / 0 failed · UnicDB-1.53.0.vsix (2.03 MB).
