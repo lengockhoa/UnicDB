@@ -47,6 +47,12 @@ import { truncateAtBoundary } from "./core/text";
 import { AiConfigStore } from "./ai/config";
 import { AiSettingsForm } from "./ui/aiSettingsForm";
 import { createProviderClient } from "./ai/provider";
+import {
+  runGenerateCommitMessage,
+  type CommitGenDeps,
+  type OmpOneShot,
+} from "./ai/commitGenCommand";
+import { collectCommitDiff, pickRepository, getGitApi } from "./adapters/gitDiff";
 import type { AdapterFactory } from "./ai/tools/types";
 import type { AgentDeps } from "./ai/agent";
 import { AiChatPanel, type AcpPanelDeps } from "./ui/aiChatPanel";
@@ -812,6 +818,24 @@ export async function activate(
   disposables.push(
     vscode.commands.registerCommand("UnicDB.openAiSettings", () =>
       commandOpenAiSettings(aiStore),
+    ),
+  );
+  // TASK-GC-007 — SCM sparkle "Generate Commit Message". Pure orchestration
+  // lives in src/ai/commitGenCommand.ts; this host wiring binds the real
+  // vscode/git/AI seams (GC-001 settings, GC-002 diff, GC-003 prompt +
+  // sanitize) plus the omp one-shot adapter. Input box is written ONLY on
+  // success; every failure path returns before injection.
+  disposables.push(
+    vscode.commands.registerCommand(
+      "UnicDB.generateCommitMessage",
+      () =>
+        vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.SourceControl,
+            title: "UnicDB: generating commit message…",
+          },
+          async () => runGenerateCommitMessage(buildCommitGenDeps(aiStore)),
+        ),
     ),
   );
   // 16. UnicDB.aiChat — TASK-004: AI chat panel with real deps.
@@ -3118,4 +3142,157 @@ async function commandRefreshDbContext(
       5000,
     );
   }
+}
+
+// ============================================================================
+// TASK-GC-007 — vscode-bound deps factory for the Generate Commit Message
+// command. Mirrors `buildOmpChatEngine` (above) but with:
+//   - no DB tools (commit-gen does not need them)
+//   - `mcpServers: []` (zero tools advertised, no HostMcp tool routing)
+//   - no-op HostMcp stub (engine contract requires a non-null `hostMcp`;
+//     with `mcpServers: []` the engine never calls `hostMcp.call`)
+// The collected omp one-shot adapter wraps `engine.send(text, events)` by
+// buffering `onDelta` events into a string and resolving on `onDone` (or
+// rejecting on `onError`). Multi-repo is out of scope (PLAN §2) —
+// `pickRepository()` returns `repositories[0]`.
+// ============================================================================
+
+interface CommitGenOmpHostMcp {
+  port: number;
+  url: string;
+  sessionId: string;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  respond: (requestId: string, optionId: string | undefined) => boolean;
+  handle(
+    req: { method: string; params?: unknown; id?: unknown },
+  ): Promise<{ result?: unknown; error?: { code: number; message: string } }>;
+  call(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<{ result: string; isError: boolean }>;
+}
+
+/** No-op HostMcp stub — required by the engine's `hostMcp` slot but never
+ * reached at runtime when `mcpServers: []` is threaded through. */
+function buildCommitGenNoopHostMcp(): CommitGenOmpHostMcp {
+  return {
+    port: 0,
+    url: "http://127.0.0.1:0",
+    sessionId: "commit-gen",
+    async start() {
+      /* no-op */
+    },
+    async stop() {
+      /* no-op */
+    },
+    respond: () => false,
+    handle: async () => ({}),
+    call: async () => ({ result: "", isError: true }),
+  };
+}
+
+/** One-shot omp adapter: spawns a fresh AcpProcess, drives
+ * `createOmpChatEngine(...).send(...)`, buffers `onDelta` events, returns
+ * the joined text on `onDone`. Throws on `onError`. */
+async function buildCommitGenOmpOneShot(
+  ompPath: string,
+): Promise<OmpOneShot> {
+  const cwd =
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+  // Fresh AcpProcess per invocation; the engine owns its own lifecycle.
+  const acpProcess = buildAcpDepsCreate(ompPath, cwd, []);
+  let handlePromise: Promise<AcpProcessHandle> | null = null;
+  const ensureHandle = (): Promise<AcpProcessHandle> => {
+    if (handlePromise === null) handlePromise = acpProcess.start();
+    return handlePromise;
+  };
+  const acp = adaptProcessToSession(acpProcess, ensureHandle);
+  const noopHostMcp = buildCommitGenNoopHostMcp();
+  const engine = createOmpChatEngine({
+    acp,
+    hostMcp: noopHostMcp,
+    cwd,
+    mcpServers: [],
+  });
+  return {
+    async generate(prompt: string): Promise<string> {
+      let buffer = "";
+      let settled = false;
+      return await new Promise<string>((resolve, reject) => {
+        engine
+          .send(prompt, {
+            onDelta: (delta: string) => {
+              buffer += delta;
+            },
+            onDone: () => {
+              if (settled) return;
+              settled = true;
+              void engine.shutdown();
+              resolve(buffer);
+            },
+            onError: (msg: string) => {
+              if (settled) return;
+              settled = true;
+              void engine.shutdown();
+              reject(new Error(msg));
+            },
+          })
+          .catch((e: unknown) => {
+            if (settled) return;
+            settled = true;
+            void engine.shutdown();
+            reject(e);
+          });
+      });
+    },
+  };
+}
+
+function buildCommitGenDeps(aiStore: AiConfigStore): CommitGenDeps {
+  // Cached repo handle — pick once per command invocation, not per call.
+  // `pickRepository()` is multi-repo-out-of-scope (PLAN §2); falls back to
+  // the SCM inputBox proxy when the vscode.git API is unavailable so the
+  // toast still surfaces cleanly.
+  const selectedRepo = (() => {
+    const api = getGitApi();
+    return pickRepository(api);
+  })();
+
+  return {
+    loadSettings: () => aiStore.loadSettings(),
+    loadConfig: () => aiStore.loadConfig(),
+    detectOmp: () => detectOmp(),
+    resolveEngine,
+    buildOmpEngine: async (choice) => buildCommitGenOmpOneShot(choice.path ?? "omp"),
+    builtinComplete: (cfg, req) =>
+      createProviderClient({
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        method: cfg.method,
+        timeoutMs: cfg.timeoutMs,
+      }).complete(req),
+    collectDiff: async () => {
+      if (!selectedRepo) return null;
+      return await collectCommitDiff(selectedRepo);
+    },
+    setInputBox: (message: string) => {
+      if (selectedRepo) {
+        selectedRepo.inputBox.value = message;
+      }
+    },
+    showInfo: (m: string) => {
+      void vscode.window.showInformationMessage(m);
+    },
+    showError: (m: string) => {
+      void vscode.window.showErrorMessage(m);
+    },
+    showSettingsToast: async (m: string, action: string) => {
+      const picked = await vscode.window.showInformationMessage(m, action);
+      return picked ?? undefined;
+    },
+    openSettings: () => {
+      commandOpenAiSettings(aiStore);
+    },
+  };
 }

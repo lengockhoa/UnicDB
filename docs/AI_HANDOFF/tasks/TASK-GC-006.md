@@ -99,3 +99,77 @@ host file `src/ui/aiSettingsForm.ts` must NOT change (it already round-trips wha
 `AiSettings` carries); if you find it needs a change, stop and note it in this thread.
 
 (no comments yet)
+
+---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+
+### RED_OUTPUT (before implementation, 6 new tests failed as expected):
+
+```
+ FAIL  src/ui/__tests__/aiSettingsFormBundle.test.ts > webview/aiSettingsFormMain.ts bundle — TASK-GC-006 (engine + lite) > #1 Engine select renders from init
+TypeError: Cannot read properties of null (reading 'value')
+ ❯ src/ui/__tests__/aiSettingsFormBundle.test.ts:340:29
+   340|     expect(selectEl("engine").value).toBe("builtin");
+
+ FAIL  src/ui/__tests__/aiSettingsFormBundle.test.ts > ... > #2 save posts engine + lite
+AssertionError: expected undefined to be 'omp' // Object.is equality
+ ❯ .../aiSettingsFormBundle.test.ts:368:37
+   368|     expect(payload.settings.engine).toBe("omp");
+
+ FAIL  src/ui/__tests__/aiSettingsFormBundle.test.ts > ... > #3 regression: engine round-trip makes save host-valid
+AssertionError: expected undefined not to be undefined
+ ❯ .../aiSettingsFormBundle.test.ts:391:37
+   391|     expect(payload.settings.engine).toBeDefined();
+
+ FAIL  src/ui/__tests__/aiSettingsFormBundle.test.ts > ... > #4 empty Lite modelId passes gate
+TypeError: Cannot read properties of undefined (reading 'modelId')
+ ❯ .../aiSettingsFormBundle.test.ts:417:41
+   417|     expect(payload.settings.models.lite.modelId).toBe("");
+
+ FAIL  src/ui/__tests__/aiSettingsFormBundle.test.ts > ... > #5 lite engine select defaults omp with legacy init
+TypeError: Cannot read properties of null (reading 'value')
+ ❯ .../aiSettingsFormBundle.test.ts:440:33
+   440|     expect(selectEl("engineLite").value).toBe("omp");
+
+ FAIL  src/ui/__tests__/aiSettingsFormBundle.test.ts > ... > #6 invalid engine blocks OK
+TypeError: Cannot read properties of null (reading 'options')
+ ❯ .../aiSettingsFormBundle.test.ts:457:25
+   457|     while (engineSelect.options.length > 0) {
+
+ Test Files  1 failed (1)
+      Tests  6 failed | 5 passed (11)
+```
+
+### Verification Output (after implementation):
+
+```
+$ npm run compile
+esbuild: build complete
+
+$ npm run typecheck
+> UnicDB@1.51.7 typecheck
+> tsc --noEmit
+(exit 0, clean)
+
+$ npx vitest run src/ui/__tests__/aiSettingsFormBundle.test.ts
+ ✓ src/ui/__tests__/aiSettingsFormBundle.test.ts  (11 tests) 56ms
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+
+$ npm test
+ Test Files  247 passed | 1 skipped (248)
+      Tests  3672 passed | 2 skipped (3674)
+   Duration  17.95s
+```
+
+### Summary
+
+`webview/aiSettingsFormMain.ts` now (a) renders the global `<select id="engine">` and round-trips `settings.engine` through `readSettings()` (fixing the "Engine must be builtin or omp" save rejection), and (b) renders a fourth Lite section with `modelLite` text input, `visionLite` checkbox, and `<select id="engineLite">` defaulting to `omp`. Validator mirror updated to lockstep with host `aiSettingsErrors`; `applyInit` reads `models.lite?.{modelId, vision, engine}` with sensible defaults. Host files (`src/ui/aiSettingsForm.ts`, `src/ui/aiSettingsFormMessages.ts`) untouched per the planner note — they already round-trip whatever `AiSettings` carries.
+
+Status: PASS
+Note: dist symlinked from main repo for build (rebuilds the main repo's `dist/aiSettingsForm.js`, which is in `.gitignore`). No commit/push done per spec.

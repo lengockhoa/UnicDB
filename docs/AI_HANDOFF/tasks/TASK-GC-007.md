@@ -126,3 +126,43 @@ typecheck is the lint-equivalent gate.)
 trivial `activeScm` improvement while wiring, note it here instead of expanding scope.
 
 (no comments yet)
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: |
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-gc-007
+  ❯ src/ai/__tests__/commitGenCommand.test.ts  (0 test)
+  ⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+  FAIL  src/ai/__tests__/commitGenCommand.test.ts [ src/ai/__tests__/commitGenCommand.test.ts ]
+  Error: Failed to load url ../commitGenCommand (resolved id: ../commitGenCommand) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-gc-007/src/ai/__tests__/commitGenCommand.test.ts. Does the file exist?
+  Test Files  1 failed (1)
+       Tests  no tests
+Verification Output: |
+  typecheck:
+    > tsc --noEmit
+    (clean)
+
+  Verification suite (vitest):
+    ✓ src/ai/__tests__/commitMessage.test.ts  (12 tests)
+    ✓ src/ai/__tests__/commitGenCommand.test.ts  (8 tests)
+    ✓ src/adapters/__tests__/gitDiff.test.ts  (12 tests)
+    Test Files  3 passed (3)
+         Tests  32 passed (32)
+
+  Extension smoke (vitest):
+    ✓ src/extension.test.ts  (155 tests)
+    Test Files  1 passed (1)
+         Tests  155 passed (155)
+
+  Full suite (npm test):
+    Test Files  248 passed | 1 skipped (249)
+         Tests  3676 passed | 2 skipped (3678)
+Status: PASS
+Note: All 7+1 mandated test cases green; module is pure (no vscode import) and the
+production wiring reuses `buildAcpDepsCreate` + `adaptProcessToSession` from the chat
+panel's `buildOmpChatEngine`, threading `mcpServers: []` and a no-op HostMcp stub so
+commit-gen pays the same AcpProcess handshake cost but advertises zero tools. The omp
+one-shot adapter buffers `onDelta` events into a string and resolves on `onDone`.

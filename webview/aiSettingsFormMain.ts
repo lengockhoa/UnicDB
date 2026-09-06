@@ -17,7 +17,14 @@ const vscodeApi =
   typeof acquireVsCodeApi === "function" ? acquireVsCodeApi() : null;
 
 type Method = "responses" | "chat/completions";
-type Role = "work" | "smart" | "autocomplete";
+type Role = "work" | "smart" | "autocomplete" | "lite";
+type Engine = "builtin" | "omp";
+
+interface ModelConfig {
+  modelId: string;
+  vision: boolean;
+  engine?: Engine;
+}
 
 interface InitMsg {
   type: "init";
@@ -26,7 +33,8 @@ interface InitMsg {
     method: Method;
     timeoutMs: number;
     maxSteps: number;
-    models: Record<Role, { modelId: string; vision: boolean }>;
+    models: Record<Role, ModelConfig>;
+    engine: Engine;
   };
   hasApiKey: boolean;
 }
@@ -58,7 +66,8 @@ interface State {
     method: Method;
     timeoutMs: number;
     maxSteps: number;
-    models: Record<Role, { modelId: string; vision: boolean }>;
+    models: Record<Role, ModelConfig>;
+    engine: Engine;
   };
   hasApiKey: boolean;
   testing: boolean;
@@ -75,7 +84,9 @@ const state: State = {
       work: { modelId: "", vision: true },
       smart: { modelId: "", vision: false },
       autocomplete: { modelId: "", vision: false },
+      lite: { modelId: "", vision: false, engine: "omp" },
     },
+    engine: "builtin",
   },
   hasApiKey: false,
   testing: false,
@@ -98,13 +109,15 @@ function readSettings(): {
   method: Method;
   timeoutMs: number;
   maxSteps: number;
-  models: Record<Role, { modelId: string; vision: boolean }>;
+  models: Record<Role, ModelConfig>;
+  engine: Engine;
 } {
   return {
     baseUrl: input("baseUrl").value.trim(),
     method: select("method").value as Method,
     timeoutMs: Number(input("timeoutMs").value),
     maxSteps: Number(input("maxSteps").value),
+    engine: select("engine").value as Engine,
     models: {
       work: {
         modelId: input("modelWork").value.trim(),
@@ -117,6 +130,11 @@ function readSettings(): {
       autocomplete: {
         modelId: input("modelAutocomplete").value.trim(),
         vision: false,
+      },
+      lite: {
+        modelId: input("modelLite").value.trim(),
+        vision: input("visionLite").checked,
+        engine: select("engineLite").value as Engine,
       },
     },
   };
@@ -155,6 +173,18 @@ function validateSettings(s: State["settings"]): string[] {
       }
     }
     // Cycle AIC: empty autocomplete is allowed (feature disabled), not invalid.
+    // Cycle GC: empty lite is also allowed (feature disabled), not invalid.
+    // Per-model engine override (cycle AE) — when present must be one of the
+    // legal values; undefined means "follow global engine".
+    if (s.models.lite && s.models.lite.engine !== undefined && s.models.lite.engine !== "builtin" && s.models.lite.engine !== "omp") {
+      errors.push("Engine must be builtin or omp");
+    }
+  }
+  // engine (cycle AE) — undefined / anything other than the two legal
+  // values is rejected so a mis-saved config can't silently degrade to
+  // the wrong engine. Mirrors src/ai/settings.ts `aiSettingsErrors`.
+  if (s.engine !== "builtin" && s.engine !== "omp") {
+    errors.push("Engine must be builtin or omp");
   }
   return errors;
 }
@@ -243,6 +273,36 @@ function modelBlock(role: Role, label: string, defaultVision: boolean, opts: { p
     </div>`;
 }
 
+/**
+ * Lite model block — fourth role (TASK-GC-006). Carries its own per-model
+ * `engine` override (defaults to "omp") and a vision toggle. Empty modelId
+ * is valid (= feature disabled), matching the `autocomplete` precedent.
+ */
+function liteBlock(): string {
+  return `
+    <div class="UnicDB-form-section">
+      <h3>Lite model</h3>
+      <div class="UnicDB-row">
+        <div class="UnicDB-field grow">
+          <label for="modelLite">Model ID</label>
+          <input id="modelLite" type="text" placeholder="lite-model" />
+        </div>
+        <div class="UnicDB-field">
+          <label class="UnicDB-form-check">
+            <input id="visionLite" type="checkbox" /> Vision-capable
+          </label>
+        </div>
+        <div class="UnicDB-field">
+          <label for="engineLite">Engine</label>
+          <select id="engineLite">
+            <option value="builtin">builtin</option>
+            <option value="omp" selected>omp</option>
+          </select>
+        </div>
+      </div>
+    </div>`;
+}
+
 function render(): void {
   root.innerHTML = `
   <h2>AI Settings</h2>
@@ -261,6 +321,13 @@ function render(): void {
           <option value="chat/completions">chat/completions</option>
         </select>
       </div>
+      <div class="UnicDB-field">
+        <label for="engine">Engine</label>
+        <select id="engine">
+          <option value="builtin" selected>builtin</option>
+          <option value="omp">omp</option>
+        </select>
+      </div>
     </div>
     <div class="UnicDB-row">
       <div class="UnicDB-field">
@@ -277,6 +344,7 @@ function render(): void {
   ${modelBlock("work", "Work", true)}
   ${modelBlock("smart", "Smart", false)}
   ${modelBlock("autocomplete", "Autocomplete (SQL ghost text)", false, { placeholder: "vendor/free-fast-sql", showVision: false })}
+  ${liteBlock()}
 
 
 
@@ -299,16 +367,16 @@ function render(): void {
   </div>`;
 
   // Wire change handlers — live-validate on every edit.
-  for (const id of ["baseUrl", "timeoutMs", "maxSteps", "modelWork", "modelSmart", "modelAutocomplete", "apiKey"]) {
+  for (const id of ["baseUrl", "timeoutMs", "maxSteps", "modelWork", "modelSmart", "modelAutocomplete", "modelLite", "apiKey"]) {
     const el = document.getElementById(id) as HTMLInputElement | null;
     el?.addEventListener("input", () => refreshOkButton(validateSettings(readSettings())));
     el?.addEventListener("change", () => refreshOkButton(validateSettings(readSettings())));
   }
-  for (const id of ["method"]) {
+  for (const id of ["method", "engine", "engineLite"]) {
     const el = document.getElementById(id) as HTMLSelectElement | null;
     el?.addEventListener("change", () => refreshOkButton(validateSettings(readSettings())));
   }
-  for (const id of ["visionWork", "visionSmart"]) {
+  for (const id of ["visionWork", "visionSmart", "visionLite"]) {
     const el = document.getElementById(id) as HTMLInputElement | null;
     el?.addEventListener("change", () => refreshOkButton(validateSettings(readSettings())));
   }
@@ -340,14 +408,19 @@ function applyInit(msg: InitMsg): void {
   state.lastStatus = null;
   input("baseUrl").value = msg.settings.baseUrl;
   select("method").value = msg.settings.method;
+  select("engine").value = msg.settings.engine ?? "builtin";
   input("timeoutMs").value = String(msg.settings.timeoutMs);
   input("modelWork").value = msg.settings.models.work.modelId;
   input("modelSmart").value = msg.settings.models.smart.modelId;
   input("modelAutocomplete").value = msg.settings.models.autocomplete?.modelId ?? "";
+  input("modelLite").value = msg.settings.models.lite?.modelId ?? "";
   (input("visionWork") as HTMLInputElement).checked =
     msg.settings.models.work.vision;
   (input("visionSmart") as HTMLInputElement).checked =
     msg.settings.models.smart.vision;
+  (input("visionLite") as HTMLInputElement).checked =
+    msg.settings.models.lite?.vision ?? false;
+  select("engineLite").value = msg.settings.models.lite?.engine ?? "omp";
   // Placeholder tells the user the key is stored; empty submit ⇒ keep.
   input("apiKey").placeholder = msg.hasApiKey ? "•••• stored" : "";
   input("apiKey").value = "";

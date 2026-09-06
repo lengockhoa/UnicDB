@@ -1189,6 +1189,29 @@ describe("TASK-005 — extension wiring smoke", () => {
 });
 
 // =============================================================================
+// TASK-GC-007 — UnicDB.generateCommitMessage SCM sparkle registration
+// =============================================================================
+describe("TASK-GC-007 — UnicDB.generateCommitMessage wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+  });
+
+  it("registers UnicDB.generateCommitMessage handler on activate", () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    expect(state.registeredCommands.has("UnicDB.generateCommitMessage")).toBe(true);
+  });
+
+  it("the registered handler is a function (not undefined)", () => {
+    const ctx = makeCtx();
+    activate(ctx as never);
+    const fn = state.registeredCommands.get("UnicDB.generateCommitMessage");
+    expect(typeof fn).toBe("function");
+  });
+});
+
+// =============================================================================
 // TASK-004 — UnicDB.openAiSettings command + activationEvent + contributes
 // =============================================================================
 describe("TASK-004 — UnicDB.openAiSettings wiring", () => {

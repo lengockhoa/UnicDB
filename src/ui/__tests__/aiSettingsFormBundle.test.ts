@@ -296,3 +296,170 @@ describeIfBundle("webview/aiSettingsFormMain.ts bundle (TASK-004)", () => {
     },
   );
 });
+
+// ============================================================================
+// TASK-GC-006 — global Engine dropdown (bug fix) + Lite model section.
+//
+// Round-1 review fix: every NEW describe below starts with a HARD precondition
+// that fails (not skips) when the bundle is missing. The old describes
+// (TASK-004) still skip when missing, which is intentional — the legacy
+// harness was written before the dist-missing policy was tightened.
+// ============================================================================
+
+describe("webview/aiSettingsFormMain.ts bundle — TASK-GC-006 (engine + lite)", () => {
+  // Hard precondition: bundle must exist. If `npm run compile` was skipped
+  // we want a FAIL with a clear message, not a silent SKIP that masks a
+  // stale dist (this is exactly the round-1 review regression).
+  const gc006BundlePath = resolve(process.cwd(), "dist", "aiSettingsForm.js");
+  expect(
+    existsSync(gc006BundlePath),
+    "aiSettingsForm.js must be built before this test runs — run: npm run compile",
+  ).toBe(true);
+
+  const baseSettings = {
+    baseUrl: "https://api.openai.com/v1",
+    method: "chat/completions" as const,
+    timeoutMs: 60000,
+    maxSteps: 12,
+    models: {
+      work: { modelId: "gpt-4o-mini", vision: true },
+      smart: { modelId: "gpt-4o", vision: false },
+      autocomplete: { modelId: "", vision: false },
+      lite: { modelId: "", vision: false, engine: "omp" as const },
+    },
+    engine: "builtin" as const,
+  };
+
+  it("#1 Engine select renders from init", () => {
+    loadBundle();
+    dispatch({
+      type: "init",
+      settings: { ...baseSettings, engine: "builtin" },
+      hasApiKey: false,
+    });
+    expect(selectEl("engine").value).toBe("builtin");
+    dispatch({
+      type: "init",
+      settings: { ...baseSettings, engine: "omp" },
+      hasApiKey: false,
+    });
+    expect(selectEl("engine").value).toBe("omp");
+  });
+
+  it("#2 save posts engine + lite", () => {
+    const { received } = loadBundle();
+    dispatch({
+      type: "init",
+      settings: {
+        ...baseSettings,
+        engine: "omp",
+        models: {
+          ...baseSettings.models,
+          lite: { modelId: "x", vision: false, engine: "omp" },
+        },
+      },
+      hasApiKey: false,
+    });
+    fillValid();
+    btn("saveBtn").click();
+    const saveMsgs = received.filter((m) => m.type === "save");
+    expect(saveMsgs.length).toBe(1);
+    const payload = saveMsgs[0] as { settings: Record<string, unknown> };
+    expect(payload.settings.engine).toBe("omp");
+    const models = payload.settings.models as Record<
+      string,
+      { modelId: string; vision: boolean; engine?: string }
+    >;
+    expect(models.lite).toEqual({ modelId: "x", vision: false, engine: "omp" });
+  });
+
+  it("#3 regression: engine round-trip makes save host-valid", () => {
+    const { received } = loadBundle();
+    dispatch({
+      type: "init",
+      settings: baseSettings,
+      hasApiKey: false,
+    });
+    fillValid();
+    btn("saveBtn").click();
+    const saveMsgs = received.filter((m) => m.type === "save");
+    expect(saveMsgs.length).toBe(1);
+    const payload = saveMsgs[0] as { settings: Record<string, unknown> };
+    // Pre-GC code: payload.settings.engine was undefined → host validator
+    // rejected with "Engine must be builtin or omp". This test fails on
+    // pre-GC code and passes after the global Engine dropdown is wired.
+    expect(payload.settings.engine).toBeDefined();
+    expect(payload.settings.engine).toBe("builtin");
+  });
+
+  it("#4 empty Lite modelId passes gate", () => {
+    const { received } = loadBundle();
+    dispatch({
+      type: "init",
+      settings: {
+        ...baseSettings,
+        models: {
+          ...baseSettings.models,
+          lite: { modelId: "", vision: false, engine: "omp" },
+        },
+      },
+      hasApiKey: false,
+    });
+    fillValid();
+    // OK must remain enabled — empty lite = feature disabled (autocomplete precedent).
+    expect(btn("saveBtn").disabled).toBe(false);
+    btn("saveBtn").click();
+    const saveMsgs = received.filter((m) => m.type === "save");
+    expect(saveMsgs.length).toBe(1);
+    const payload = saveMsgs[0] as {
+      settings: { models: { lite: { modelId: string } } };
+    };
+    expect(payload.settings.models.lite.modelId).toBe("");
+  });
+
+  it("#5 lite engine select defaults omp with legacy init (no models.lite)", () => {
+    loadBundle();
+    // Legacy 3-role init fixture: no `models.lite`.
+    const legacySettings = {
+      baseUrl: "https://api.openai.com/v1",
+      method: "chat/completions" as const,
+      timeoutMs: 60000,
+      maxSteps: 12,
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+      },
+      engine: "builtin" as const,
+    };
+    dispatch({
+      type: "init",
+      settings: legacySettings as unknown as typeof baseSettings,
+      hasApiKey: false,
+    });
+    // Defaults for the new fields.
+    expect(selectEl("engineLite").value).toBe("omp");
+    expect(inputEl("modelLite").value).toBe("");
+    // Gate should still pass with the lite empty + default engine.
+    fillValid();
+    expect(btn("saveBtn").disabled).toBe(false);
+  });
+
+  it("#6 invalid engine blocks OK with 'Engine must be builtin or omp' error", () => {
+    loadBundle();
+    dispatch({
+      type: "init",
+      settings: baseSettings,
+      hasApiKey: false,
+    });
+    fillValid();
+    // Remove all options so the select has no legal value (value becomes "").
+    const engineSelect = selectEl("engine");
+    while (engineSelect.options.length > 0) {
+      engineSelect.remove(0);
+    }
+    engineSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(btn("saveBtn").disabled).toBe(true);
+    const errors = document.getElementById("errors") as HTMLElement;
+    expect(errors.textContent ?? "").toMatch(/Engine must be builtin or omp/);
+  });
+});
