@@ -39,3 +39,11 @@
 - CHANGELOG-insertion regex bug fixed: now matches `^## \[N.N.N\]` heading, not the link-reference footer `[N.N.N]:`
 - Future bumps: just run `npm run bump` (or `npm run bump:minor` etc.), then commit + publish
 - **Current state**: 19 dirty files, all expected (TASK-AI-001-fix source/test/doc changes + bump script + RELEASE.md + 1.51.6 bump). `npm run typecheck` ✅ silent, `npm test` ✅ 3615 passed / 2 skipped, `UnicDB-1.51.6.vsix` ✅ packaged. Ready to commit + publish to Marketplace.
+
+## Update 2026-09-06 10:14 (Marketplace publish DONE)
+- ✅ **`lengockhoa.UnicDB v1.51.6` PUBLISHED** to VS Code Marketplace
+- URL: https://marketplace.visualstudio.com/items?itemName=lengockhoa.UnicDB
+- Hub: https://marketplace.visualstudio.com/manage/publishers/lengockhoa/extensions/UnicDB/hub
+- Used `npx vsce publish` (no level) so it shipped at the exact version already in `package.json` (1.51.6), no further bump
+- Marketplace may take a few minutes to propagate — users may need to refresh VS Code's Extensions panel or run "Extensions: Check for Updates"
+- Next user task: install on test machine (`code --install-extension UnicDB-1.51.6.vsix`) or pull update from Marketplace directly
