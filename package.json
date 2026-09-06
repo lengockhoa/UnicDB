@@ -484,7 +484,7 @@
         {
           "command": "UnicDB.generateCommitMessage",
           "group": "navigation",
-          "when": "scmProvider == git && scmProviderHasChanges"
+          "when": "scmProvider == git"
         }
       ],
       "view/item/context": [
