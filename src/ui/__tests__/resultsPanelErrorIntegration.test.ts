@@ -100,6 +100,10 @@ vi.mock("vscode", () => {
       getConfiguration: vi.fn(() => ({
         get: (_key: string, def?: unknown) => def,
       })),
+      // TASK-AI-001-fix — ResultsPanel now subscribes to this to auto-recreate
+      // when UnicDB.resultsPlacement changes. The mock returns a Disposable
+      // stub; tests don't need to fire the listener for this file.
+      onDidChangeConfiguration: () => ({ dispose: () => undefined }),
     },
     env: {
       clipboard: { writeText: vi.fn(async () => undefined) },

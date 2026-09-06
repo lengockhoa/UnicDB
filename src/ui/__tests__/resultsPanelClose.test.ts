@@ -42,7 +42,7 @@ vi.mock("vscode", () => {
       joinPath: (...parts: Array<string | { fsPath: string }>) =>
         fakeUri(parts.map((p) => (typeof p === "string" ? p : p.fsPath)).join("/")),
     },
-    workspace: { getConfiguration: () => ({ get: () => undefined, update: () => Promise.resolve() }) },
+    workspace: { getConfiguration: () => ({ get: () => undefined, update: () => Promise.resolve() }), onDidChangeConfiguration: () => ({ dispose: () => undefined }) },
     ConfigurationTarget: { Global: 1, Workspace: 2 },
     EventEmitter: class { event = () => ({ dispose: () => undefined }); fire = () => undefined; dispose = () => undefined; },
     Disposable: class { static from = () => ({ dispose: () => undefined }); },

@@ -83,6 +83,7 @@ vi.mock("vscode", () => {
       },
       showErrorMessage,
     },
+    workspace: { onDidChangeConfiguration: () => ({ dispose: () => undefined }) },
     env: {
       clipboard: { writeText: vi.fn(async () => undefined) },
     },

@@ -1,187 +1,106 @@
-# Release procedure — UnicDB
+# RELEASE — UnicDB version-bump + publish recipe
 
-This document is the canonical release runbook. Follow it verbatim from a
-clean working tree on the release commit. The release is a local artifact
-build only; **publishing to the VS Code Marketplace is out of scope** and
-must be done in a separate step (see "Publishing" below).
+Single source of truth for cutting a release. The full pipeline is encoded in
+`scripts/bump-version.mjs` so the human operator only has to remember **one
+command**. Future function edits that ship user-visible behavior should follow
+the same recipe.
 
-## Pre-flight
+## TL;DR
 
-1. Working tree clean, on the release commit. Confirm with:
-   ```bash
-   git status --porcelain   # expect empty
-   git log -1 --oneline     # expect the release commit
+```bash
+npm run bump          # auto-bump patch + sync lock + CHANGELOG entry + test + package .vsix
+git add -A && git commit -m "release: <new version>"
+npx vsce publish patch
+```
+
+To target a specific version:
+
+```bash
+npm run bump:minor
+npm run bump:major
+npm run bump -- 1.52.0
+```
+
+## What `npm run bump` actually does (in order)
+
+1. Bumps `package.json` `version` field (`patch` is the default).
+2. Runs `npm install --package-lock-only` so `package-lock.json` stays in sync.
+   *Why it matters:* `src/__tests__/releaseHygiene.test.ts` asserts that the
+   lock file root version equals the manifest version. Skipping step 2 fails
+   the test gate.
+3. Prepends a `[<version>] — <YYYY-MM-DD>` block to `CHANGELOG.md` with three
+   placeholder lines (Summary / Files / Verification) that you fill in before
+   committing.
+4. Runs `npm run typecheck` and `npm test`. Both must pass.
+5. Runs `npm run compile` then `npx vsce package` to produce
+   `UnicDB-<version>.vsix` at the repo root.
+
+Pass `--skip-test` or `--skip-package` for fast iteration when you already
+ran those stages.
+
+## Publish to VS Code Marketplace
+
+The Personal Access Token is stored in the macOS Keychain the first time you
+run `npx vsce login lengockhoa`. Future `npx vsce publish …` invocations
+re-use it; you do **not** re-enter the PAT.
+
+```bash
+# after `npm run bump` finishes:
+git add -A
+git commit -m "release: <new version>"
+npx vsce publish patch    # bumps to <next> when package.json already at <new>
+```
+
+If the publish complains "Git working directory not clean", the commit above
+is what fixes it. If you see `ENOTFOUND marketplace.visualstudio.com`,
+check your network / VPN.
+
+## Push to GitHub Releases (does NOT publish to Marketplace)
+
+```bash
+git tag v<version>
+git push origin v<version>
+# then attach UnicDB-<version>.vsix via the GitHub web UI
+```
+
+GitHub releases and the VS Code Marketplace are **separate channels**. A
+GitHub release only distributes the `.vsix` as a downloadable artifact; it
+does not appear in VS Code's Extensions panel.
+
+## Edit-flow for function changes (same recipe, with a twist)
+
+When you change source code that is *not* a version bump — say you fix a bug,
+add a feature, refactor a function — do all of these before merging:
+
+1. **Read the source first.** No anchor-only edits on stale context.
+2. **Edit** with a unique surrounding-anchor `old_string` (not a line number).
+3. **Update tests if mocks need new APIs.** When the source adds a new
+   `vscode.workspace.*` / `vscode.window.*` call, every `vi.mock("vscode")`
+   block in the touched test file must expose that export. Pattern:
+   ```ts
+   workspace: { onDidChangeConfiguration: () => ({ dispose: () => undefined }) },
    ```
-2. Node.js and `npm` available. `vsce` is a project devDependency; it
-   resolves from `node_modules/.bin/vsce` via `npm run package`.
+4. **Run `npm run verify:fast`** (typecheck + compile). Cheap to re-run on
+   every iteration.
+5. **Run `npm test`** for the affected files: `npx vitest run path/to/file`.
+6. **Run `npm run verify:release`** once before commit (full typecheck + test
+   + compile).
+7. **Add a CHANGELOG entry** under an `[Unreleased]` section so the next
+   `npm run bump` picks it up cleanly.
+8. **Update `docs/STATUS.md`** with a one-line change note if it's user-facing.
 
-## Build, test, package
+## Why this script exists
 
-Run the four commands below in order. Stop on the first failure and
-investigate before continuing.
+Before the script, every release required:
 
-```bash
-# 1. Static type-check — must exit 0.
-npm run typecheck
+- `Edit` on `package.json` to bump version
+- `npm install --package-lock-only` (easy to forget; releaseHygiene then fails)
+- `Edit` on `CHANGELOG.md` (easy to skip; loses release notes)
+- `npm run typecheck && npm test && npm run compile` (each could fail
+  silently if a developer skips one)
+- `npx vsce package` (different command than `vsce package` if `vsce` isn't
+  installed globally)
 
-# 2. Unit tests — must exit 0 (vitest run).
-npm test
-
-# 3. Compile — produces dist/extension.js + webview bundles. The
-#    `vscode:prepublish` hook in package.json invokes this step
-#    automatically before `vsce package`, so it is listed for clarity.
-npm run compile
-
-# 4. Package — produces the marketplace-ready .vsix in `dist/` via the
-#    build script (npm ci → typecheck → full test → compile → package).
-bash scripts/build.sh
-```
-
-The package name follows the pattern `dist/UnicDB-<version>.vsix` (e.g.
-`dist/UnicDB-1.6.8.vsix`).
-
-## Artifact assertions
-
-Inspect the produced artifact. Every line below must hold.
-
-```bash
-# List contents.
-unzip -l dist/UnicDB-<version>.vsix
-
-# Expected included paths (observed for v1.6.8; do not pin exact byte counts):
-#   extension/dist/extension.js
-#   extension/dist/webview.js
-#   extension/dist/webview.css
-#   extension/dist/aiChatPanel.js
-#   extension/dist/connectionForm.js
-#   extension/dist/schemaForm.js
-#   extension/dist/newTableForm.js
-#   extension/dist/aiSettingsForm.js
-#   extension/media/UnicDB.svg
-#   extension/media/icon.png
-#   extension/readme.md
-#   extension/LICENSE.txt
-#   extension/changelog.md
-#   extension/package.json
-#   extension/syntaxes/UnicDB-sql-injection.tmLanguage.json
-#   extension.vsixmanifest
-
-# Forbidden patterns (must produce NO matches):
-unzip -l dist/UnicDB-<version>.vsix | grep -E '(^|/)src/'        # source
-unzip -l dist/UnicDB-<version>.vsix | grep -E '(^|/)node_modules/' # deps
-unzip -l dist/UnicDB-<version>.vsix | grep -E '(^|/)tests/'       # tests
-unzip -l dist/UnicDB-<version>.vsix | grep -E '(^|/)docs/'        # docs
-unzip -l dist/UnicDB-<version>.vsix | grep -E '(^|/)webview/'     # raw TS
-unzip -l dist/UnicDB-<version>.vsix | grep -E '\.map$'            # source maps
-
-# Verify embedded package.json metadata.
-unzip -p dist/UnicDB-<version>.vsix extension/package.json | grep -E '"version"|"license"|"repository"'
-```
-
-If any forbidden path matches, add the missing rule to `.vscodeignore`,
-delete the artifact (`rm dist/UnicDB-<version>.vsix`), and re-run
-`bash scripts/build.sh`.
-
-## Local install (smoke)
-
-Use the repo's installer in `--dry-run` mode to validate the file without
-actually loading VS Code:
-
-```bash
-bash scripts/install-UnicDB.sh --local dist/UnicDB-<version>.vsix --dry-run
-```
-
-For a real install, drop `--dry-run` — the script will hand the file to
-
-## Shipping to users (GitHub Release) — REQUIRED for user-visible changes
-
-Users install ONLY via the one-liner on non-dev machines (no repo, no Node):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/lengockhoa/UnicDB/main/scripts/install-UnicDB.sh | bash
-```
-
-It downloads the `.vsix` from the **latest GitHub Release**. So the runbook above is not
-enough: a merged fix reaches no user until a release exists. Every cycle that changes
-user-visible behavior must finish with:
-
-```bash
-# 1. Bump package.json version + CHANGELOG.md entry, then sync the lockfile
-#    (releaseHygiene.test.ts FAILS the build if root version drifts):
-npm install --package-lock-only
-
-# 2. Full pipeline: npm ci → typecheck → tests → compile → package dist/UnicDB-<ver>.vsix
-bash scripts/build.sh
-
-# 3. Sanity-check the artifact before publishing (must print 0):
-unzip -p dist/UnicDB-<version>.vsix extension/dist/extension.js | grep -c "<regression-marker>"
-
-# 4. Commit, tag, push, publish with the vsix attached:
-git add package.json package-lock.json CHANGELOG.md
-git commit -m "release: v<version>"
-git tag v<version> && git push origin main v<version>
-gh release create v<version> dist/UnicDB-<version>.vsix --title "v<version>" --notes "<summary>"
-```
-
-Then tell the user to re-run the one-liner and reload the VS Code window
-(`Cmd/Ctrl+Shift+P → Developer: Reload Window`). Merged-to-main without a release =
-not shipped.
-
-## Publishing — to VS Code Marketplace
-
-There are two paths. Pick one per release.
-
-### Path 1 (recommended) — push the tag, CI does the rest
-
-`.github/workflows/publish.yml` is triggered by `push` of any `v*` tag.
-The workflow runs `npm run verify:release` (same gate as `scripts/build.sh`)
-and then `npx vsce publish` using the `VSCE_PAT` secret.
-
-**One-time setup** (in the GitHub repo UI):
-
-1. Create a Personal Access Token at https://dev.azure.com/[your-org]/_usersSettings/tokens
-   with scope **Marketplace → Manage**.
-2. Go to repo → **Settings → Secrets and variables → Actions → New repository secret**.
-3. Name: `VSCE_PAT`, value: the token from step 1.
-
-**Per-release** (after the GitHub Release is created in step 6 above):
-
-```bash
-git tag v<version>             # tag already pushed alongside main above
-git push origin v<version>     # triggers .github/workflows/publish.yml
-```
-
-The Marketplace listing (`lengockhoa.UnicDB`) updates within ~5–10 minutes.
-Use **Actions → Publish to VS Code Marketplace → Run workflow** to retry a
-failed run without re-pushing the tag.
-
-### Path 2 — manual publish from a dev machine
-
-Use this when CI is unavailable or you want to publish without tagging.
-
-```bash
-export VSCE_PAT="<marketplace-pat>"
-npm run publish:patch          # or :minor / :major
-```
-
-`publish:patch|minor|major` are thin wrappers around `vsce publish <bump>`
-defined in `package.json`. They bump `package.json` + `package-lock.json`
-automatically — re-run `npm install --package-lock-only` if the lockfile
-needs resyncing, then commit before pushing the tag.
-
-This document does not commit the Marketplace PAT to the repository — the
-PAT lives in `VSCE_PAT` (env var on a dev machine) or as a GitHub Actions
-secret (Path 1).
-
-## Versioning policy
-
-- **patch** (1.5.x → 1.5.y): bugfixes, hardening, no new user-visible
-  surface.
-- **minor** (1.x.0 → 1.y.0): user-visible feature work (new UI, new
-  permission/stream behavior, new engine mode). Cycles M–P are a minor
-  bump.
-- **major** (x.0.0 → y.0.0): breaking changes to public APIs or wire
-  formats.
-
-`vsce` warns when `CHANGELOG.md` is missing. Keep the `[Unreleased]`
-section trimmed as releases are cut and add a dated entry per release.
+The 1.51.5 → 1.51.6 cycle (TASK-AI-001-fix) hit every one of those traps at
+least once. `scripts/bump-version.mjs` makes the sequence atomic and
+idempotent.

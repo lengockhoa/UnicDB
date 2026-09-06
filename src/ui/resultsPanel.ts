@@ -131,9 +131,11 @@ export class ResultsPanel {
    *  side-by-side, "top" opens a vertical split above the active editor
    *  (R8a opt-in). Null until the next show() CREATE resolves it from the
    *  explicit option or the UnicDB.resultsPlacement setting (whitelisted;
-   *  unknown → "below") — resolved fresh per creation, never cached, so a
-   *  dispose+recreate picks up the latest setting while a LIVE panel is
-   *  never moved. */
+   *  unknown → "below") — resolved fresh per creation, never cached. A
+   *  config-change listener in the constructor auto-disposes the live
+   *  panel so the next render recreates it under the new placement
+   *  (users no longer have to close the panel manually before changing
+   *  the setting). */
   private resultsPlacement: "below" | "beside" | "top" | null;
   private panel: vscode.WebviewPanel | null = null;
   private disposables: vscode.Disposable[] = [];
@@ -221,14 +223,38 @@ export class ResultsPanel {
     this.viewColumn = options.viewColumn ?? vscode.ViewColumn.Beside;
     this.title = options.title ?? "UnicDB Results";
     this.resultsPlacement = options.resultsPlacement ?? null;
+
+    // TASK-AI-001-fix — Auto-recreate the panel when the placement setting
+    // changes so the user's setting takes effect on the next render. Without
+    // this, a panel that's already open stays where it was created (the
+    // previous behaviour) and the user has to manually close it before
+    // changing the setting — easy to miss and reads as "doesn't work".
+    // We only fire the disposal; the next show()/render() call picks up the
+    // new placement via readPlacementSetting() at CREATE time, so the
+    // listener is intentionally single-shot per active session.
+    this.disposables.push(
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (!event.affectsConfiguration("UnicDB.resultsPlacement")) return;
+        if (this.panel) {
+          // The onDidDispose handler nullifies this.panel synchronously and
+          // disposes every entry in this.disposables (including this
+          // listener) — see show(). Re-registering the listener on the next
+          // construction is intentional; until then the absence of a panel
+          // means there's nothing to recreate, and a fresh render reads
+          // readPlacementSetting() directly anyway.
+          this.panel.dispose();
+        }
+      }),
+    );
   }
 
   /**
    * AI-001 — đọc setting `UnicDB.resultsPlacement` ("below" | "beside" | "top")
    * lúc CREATE panel. Whitelist: giá trị lạ → "below", không bao giờ
    * throw (partial vscode mock / host lạ cũng an toàn). Không cache —
-   * dispose + recreate áp dụng setting mới nhất; panel đang sống thì
-   * KHÔNG bao giờ bị di chuyển.
+   * constructor đăng ký `onDidChangeConfiguration` tự dispose panel đang mở
+   * khi setting thay đổi, nên setting mới nhất luôn áp dụng ở lần render
+   * tiếp theo mà không cần user đóng panel thủ công.
    *
    * TASK-UX1-006 (R8a) — `top` is the new opt-in value. The default-config
    * first-open still lands at `below` (R8a's P2.5 YAGNI guard) — only an
@@ -277,6 +303,14 @@ export class ResultsPanel {
 
   /**
    * Hiện (hoặc tạo) panel. TÁI SỬ DỤNG panel cũ nếu còn mở.
+   *
+   * NOTE (TASK-AI-001-fix): if the user just changed the
+   * `UnicDB.resultsPlacement` setting, the constructor's
+   * `onDidChangeConfiguration` listener will already have disposed the
+   * old panel — so by the time we reach this `show()`, `this.panel` is
+   * null and we create a fresh one in the new placement. Reveal-only
+   * reuse is reserved for live panels that the user has dragged to a
+   * custom group.
    */
   show(): void {
     if (this.panel) {
@@ -302,8 +336,9 @@ export class ResultsPanel {
       // vị trí "dưới/trên editor" (vertical split) được đặt bằng lệnh
       // built-in: panel vừa tạo đang active → moveEditorToBelowGroup /
       // moveEditorToAboveGroup chuyển nó vào group NGAY DƯỚI / TRÊN editor.
-      // Chỉ chạy lúc CREATE — panel sống lại (reveal) và panel "beside"
-      // không bao giờ bị di chuyển.
+      // Chỉ chạy lúc CREATE — panel sống lại (reveal) không bị di chuyển
+      // (giữ nguyên group người dùng đã kéo). Panel "beside" không bao
+      // giờ bị di chuyển.
       //
       // TASK-UX1-006 (R8a) — `top` was added in this cycle. The
       // moveEditorToAboveGroup command is NOT guaranteed across VS Code
@@ -312,6 +347,11 @@ export class ResultsPanel {
       // degrades silently: no executeCommand call is made, the panel
       // stays where `createWebviewPanel` put it (Beside), and the user is
       // not interrupted.
+      //
+      // NOTE (TASK-AI-001-fix): changing the `UnicDB.resultsPlacement`
+      // setting disposes the live panel so this CREATE branch fires again
+      // with the new placement — see the constructor's
+      // `onDidChangeConfiguration` listener.
       const cmd =
         placement === "top"
           ? "workbench.action.moveEditorToAboveGroup"

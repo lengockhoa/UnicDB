@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.51.6] — 2026-09-06
+
+TASK-AI-001-fix — hot-apply for `UnicDB.resultsPlacement`. Previously the placement setting (`beside` / `active` / `left`) was read at `ResultsPanel.create()` only, so changing the setting while the panel was already open had no visible effect — the user had to close and re-trigger the run. This cycle wires `vscode.workspace.onDidChangeConfiguration("UnicDB.resultsPlacement")` so the live panel is auto-disposed on change and the next render picks up the new column. Plus: durable version-bump recipe (`scripts/bump-version.mjs` + `docs/RELEASE.md`) so future releases run the same lock-sync / CHANGELOG / typecheck / test / `.vsix` sequence atomically.
+
+### Added
+- **Auto-recreate on `UnicDB.resultsPlacement` change** (`src/ui/resultsPanel.ts:36-46`): `ResultsPanel` constructor now subscribes to `vscode.workspace.onDidChangeConfiguration`; when the event reports `affectsConfiguration("UnicDB.resultsPlacement")` and `this.panel` is alive, it disposes the panel. The next `render()` recreates with the new `viewColumn`. Subscription lives on `this.disposables` so it tears down with the panel. Setting description in `package.json` was rewritten to clarify that all 3 values open in the editor area (VS Code's `WebviewPanel` API has no bottom-panel placement — true bottom placement would require migrating to `WebviewView` + `viewsContainers.panel`, deferred to a future cycle).
+
+- **`scripts/bump-version.mjs` atomic version-bump** (`scripts/bump-version.mjs`, `package.json` scripts `bump`/`bump:patch`/`bump:minor`/`bump:major`, `docs/RELEASE.md`): one command runs the full release prep — bump `package.json` + sync `package-lock.json` via `npm install --package-lock-only` (the lock sync step is what the `releaseHygiene.test.ts` guard pins) + prepend a `CHANGELOG.md` entry + `npm run typecheck` + `npm test` + `npm run compile` + `npx vsce package` → prints exact `git commit` + `vsce publish patch` commands. Dirty-tree guard refuses to run only if `package.json` / `package-lock.json` / `CHANGELOG.md` are already dirty (would be overwritten); other dirty files are independent and pass through. Documented end-to-end in `docs/RELEASE.md` including the GitHub-release vs Marketplace distinction (separate channels — pushing a tag does NOT publish to Marketplace).
+
+### Changed
+- **Test mocks for `vscode.workspace.onDidChangeConfiguration`** (12 files): every `vi.mock("vscode")` block that exercises `ResultsPanel` now exposes `workspace: { onDidChangeConfiguration: () => ({ dispose: () => undefined }) }`. Touched: `src/ui/__tests__/resultsPanel.test.ts`, `resultsPanelClose.test.ts`, `resultsPanelCloseWiring.test.ts`, `resultsPanelRequery.test.ts`, `resultsPanelRetry.test.ts`, `resultsPanelDistinctValues.test.ts`, `resultsPanelOrderBy.test.ts`, `resultsPanelSaveEdits.test.ts`, `resultsPanelServerFilter.test.ts`, `resultsPanelErrorIntegration.test.ts`, `manualCommit.test.ts`, plus `src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts` (description carve-out). +2 tests over v1.51.5: `T-AI-001-fix #1` (non-matching config key is no-op) and `T-AI-001-fix #2` (panel-already-closed safe). `T-UX1-006 #6` now asserts the second panel create after config change.
+
+- **`bqFollowupSurfaceGuard` description-line carve-out** (`src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts`): added `contributesDescriptionPattern = /^[+-]\s+"description":\s+".*",?\s*$/;` so the existing manifest-drift guard does not flag free-form user-facing `description:` string changes as surface drift. Dependency-manifest and command-surface invariants still pinned.
+
+### Verification
+- `npm run typecheck` ✅ silent
+- `npm test` ✅ **3615 passed / 2 skipped** (+2 vs v1.51.5's 3613; floor preserved at 2 skipped)
+- `releaseHygiene.test.ts` ✅ (lock-version sync)
+- `UnicDB-1.51.6.vsix` ✅ packaged at repo root
+
+---
+
 ## [1.51.5] — 2026-09-05
 
 Cycle BQ-FOLLOWUP: 3 small BigQuery backlog items shipped together — pageSize plumbing, useLegacySql UI toggle, and locale-aware temporal formatting. The cycle is purely additive on top of the v1.51.4 (UX3) base: the healthy-SELECT grid path, the MVP SQL gate behavior (default GoogleSQL), and the sanitized `BigQueryJobError` envelope are byte-identical. The new `BigQuerySchemaFieldLike` local alias in `src/adapters/bigqueryPages.ts` is structurally compatible with the frozen `BigQuerySchemaField` (every key is optional), so callers using the frozen type keep working without changes. The frozen `bigqueryTypes.ts` + `bigqueryAdc.ts` files are byte-identical vs the v1.51.4 base; the new `bqFollowupSurfaceGuard.test.ts` (base `8f7e8b4`) pins this invariant for future BQ cycles. The cycle ships **+32 tests** over v1.51.4 (suite 3579 → 3611, floor preserved at 2 skipped).

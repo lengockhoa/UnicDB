@@ -69,6 +69,14 @@ function packageJsonDepsDiff(ref: string): string {
   const bareBlockDelimiter = /^[+-]\s*[{}]\s*,?\s*$/;
   const bareListDelimiter = /^[+-]\s*\[\s*,?\s*$/;
   const bareListClose = /^[+-]\s*\]\s*,?\s*$/;
+  // TASK-AI-001-fix — `description` lines inside configuration properties
+  // are free-form user-facing prose. The frozen-surface guard's purpose is
+  // to catch structural manifest changes (new keys, new commands, new menu
+  // entries, dependency churn); tightening or rewording a description does
+  // not change the extension's command surface, so we filter it out. Without
+  // this carve-out the guard would block every docs-only description update.
+  const contributesDescriptionPattern =
+    /^[+-]\s+"description":\s+".*",?\s*$/;
 
   const out: string[] = [];
   const lines = raw.split("\n");
@@ -87,7 +95,8 @@ function packageJsonDepsDiff(ref: string): string {
       onCommandLinePattern.test(line) ||
       bareBlockDelimiter.test(line) ||
       bareListDelimiter.test(line) ||
-      bareListClose.test(line)
+      bareListClose.test(line) ||
+      contributesDescriptionPattern.test(line)
     ) {
       continue;
     }

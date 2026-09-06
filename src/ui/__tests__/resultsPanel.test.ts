@@ -49,6 +49,12 @@ const createCalls: Array<{ col: number | undefined }> = [];
  *  Tests flip it between cases to exercise the resultsPlacement setting. */
 const configState: { resultsPlacement: unknown } = { resultsPlacement: undefined };
 
+/** TASK-AI-001-fix — listeners registered via onDidChangeConfiguration are
+ *  collected here so tests can invoke them synchronously with a synthetic
+ *  ConfigurationChangeEvent. The real vscode API returns a Disposable;
+ *  the mock returns a stub with the same shape. */
+const configListeners: Array<(event: { affectsConfiguration: (k: string) => boolean }) => void> = [];
+
 vi.mock("vscode", () => {
   return {
     Uri: {
@@ -74,6 +80,10 @@ vi.mock("vscode", () => {
       getConfiguration: vi.fn(() => ({
         get: (_key: string) => configState.resultsPlacement,
       })),
+      onDidChangeConfiguration: vi.fn((cb: (event: { affectsConfiguration: (k: string) => boolean }) => void) => {
+        configListeners.push(cb);
+        return { dispose: vi.fn() };
+      }),
     },
     env: {
       clipboard: { writeText: vi.fn(async () => undefined) },
@@ -95,6 +105,7 @@ beforeEach(() => {
   lastPanel.current = null;
   createCalls.length = 0;
   configState.resultsPlacement = undefined;
+  configListeners.length = 0;
   vi.clearAllMocks();
 });
 
@@ -1167,7 +1178,15 @@ describe("ResultsPanel — resultsPlacement (AI-001)", () => {
     expect(vi.mocked(vscode.commands.executeCommand)).not.toHaveBeenCalled();
   });
 
-  it("T-UX1-006 #6 — placement is read at CREATE only; live panel never moved on config change", () => {
+  it("T-UX1-006 #6 — config change auto-disposes live panel; next render uses the new placement", () => {
+    // TASK-AI-001-fix — the constructor's onDidChangeConfiguration listener
+    // disposes the live panel when UnicDB.resultsPlacement changes, so the
+    // next render creates a fresh panel under the new placement. Previously
+    // (before AI-001-fix) the live panel was preserved (reveal-only) and the
+    // user had to close it manually before changing the setting — easy to
+    // miss and read as "the setting doesn't work". This test pins the new
+    // contract: the panel is disposed on config change, the next render
+    // fires the new placement's move command.
     configState.resultsPlacement = "below";
     const panel = new ResultsPanel({ runner: makePlacementRunner() });
     panel.render(
@@ -1182,15 +1201,21 @@ describe("ResultsPanel — resultsPlacement (AI-001)", () => {
       ],
       "Statement 1",
     );
-    const fake = lastPanel.current!;
     expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenLastCalledWith(
       "workbench.action.moveEditorToBelowGroup",
     );
 
-    // User changes config to 'top' — but the live panel MUST NOT be moved.
+    // User changes config to 'top'. The listener registered in the
+    // constructor fires and disposes the live panel.
     configState.resultsPlacement = "top";
+    expect(configListeners).toHaveLength(1);
     vi.mocked(vscode.commands.executeCommand).mockClear();
+    configListeners[0]({ affectsConfiguration: (k: string) => k === "UnicDB.resultsPlacement" });
+
+    // Next render: show() recreates the panel under the new placement,
+    // firing moveEditorToAboveGroup. Two createCalls total — one for the
+    // original "below" panel, one for the recreated "top" panel.
     panel.render(
       [
         {
@@ -1203,9 +1228,11 @@ describe("ResultsPanel — resultsPlacement (AI-001)", () => {
       ],
       "Statement 1",
     );
-    expect(lastPanel.current).toBe(fake);
-    // Live panel reveal: no move command fired.
-    expect(vi.mocked(vscode.commands.executeCommand)).not.toHaveBeenCalled();
+    expect(createCalls).toHaveLength(2);
+    expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenLastCalledWith(
+      "workbench.action.moveEditorToAboveGroup",
+    );
   });
 
   it("T4. existing panel: second render reuses panel and calls reveal() with NO column arg", () => {
@@ -1245,7 +1272,13 @@ describe("ResultsPanel — resultsPlacement (AI-001)", () => {
     expect(vi.mocked(vscode.commands.executeCommand)).not.toHaveBeenCalled();
   });
 
-  it("T5. changing placement never moves a live panel; only dispose+recreate applies it", () => {
+  it("T5. config-change disposes the live panel; next render applies the new placement", () => {
+    // TASK-AI-001-fix — the constructor's onDidChangeConfiguration listener
+    // disposes the live panel when UnicDB.resultsPlacement changes. This
+    // test pins: (a) live reveal() never fires a move command when the user
+    // simply re-renders WITHOUT a config change, and (b) when the user
+    // DOES change the config, the listener disposes the live panel and the
+    // next render uses the new placement.
     configState.resultsPlacement = "below";
     const panel = new ResultsPanel({ runner: makePlacementRunner() });
     panel.render(
@@ -1262,7 +1295,8 @@ describe("ResultsPanel — resultsPlacement (AI-001)", () => {
     );
     const fake = lastPanel.current!;
 
-    configState.resultsPlacement = "beside";
+    // No config change — pure re-render. Live panel is reused via reveal()
+    // with no column; no move command is fired.
     panel.render(
       [
         {
@@ -1279,9 +1313,12 @@ describe("ResultsPanel — resultsPlacement (AI-001)", () => {
     expect(fake.revealArgs[0]).toHaveLength(0);
     expect(createCalls).toHaveLength(1);
 
-    // Dispose → onDidDispose fires → panel=null → next render recreates,
-    // and the CURRENT setting applies to the new panel.
-    panel.dispose();
+    // User changes config to 'beside' — listener fires, live panel is
+    // disposed synchronously, next render recreates under the new
+    // placement.
+    configState.resultsPlacement = "beside";
+    expect(configListeners).toHaveLength(1);
+    configListeners[0]({ affectsConfiguration: (k: string) => k === "UnicDB.resultsPlacement" });
     configState.resultsPlacement = "beside";
     panel.render(
       [
@@ -1297,10 +1334,68 @@ describe("ResultsPanel — resultsPlacement (AI-001)", () => {
     );
     expect(lastPanel.current).not.toBe(fake);
     expect(createCalls).toHaveLength(2);
-    // Exactly ONE move-below total: creation #1 (placement "below").
-    // The live-panel re-render (step 2) and the "beside" recreate
-    // (step 3) must never fire the command.
+    // Exactly ONE move-below total: creation #1 (placement "below"). The
+    // live-panel re-render (step 2) and the "beside" recreate (step 3)
+    // must never fire the move command.
     expect(vi.mocked(vscode.commands.executeCommand)).toHaveBeenCalledTimes(1);
+  });
+
+  it("T-AI-001-fix #1 — listener is a no-op when an unrelated config key changes", () => {
+    // TASK-AI-001-fix — only `UnicDB.resultsPlacement` triggers the live-
+    // panel dispose path. Other config keys (theme, fontSize, etc.) flow
+    // through the same onDidChangeConfiguration event bus and must be
+    // ignored, otherwise changing any setting would churn the panel.
+    configState.resultsPlacement = "below";
+    const panel = new ResultsPanel({ runner: makePlacementRunner() });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    const fake = lastPanel.current!;
+    expect(configListeners).toHaveLength(1);
+
+    // Fire with a NON-matching key — listener must short-circuit.
+    configListeners[0]({ affectsConfiguration: () => false });
+    expect(lastPanel.current).toBe(fake);
+    expect(createCalls).toHaveLength(1);
+  });
+
+  it("T-AI-001-fix #2 — listener is safe when the panel is already closed", () => {
+    // TASK-AI-001-fix — if the user closes the panel manually and THEN
+    // changes the setting, the listener (which was disposed by the
+    // onDidDispose handler) is already gone. This test simulates the
+    // scenario where a fresh listener fires after the panel has been
+    // disposed via panel.dispose() — must be a no-op, no throw.
+    configState.resultsPlacement = "below";
+    const panel = new ResultsPanel({ runner: makePlacementRunner() });
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT 1",
+          status: "done",
+          result: { columns: ["x"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "Statement 1",
+    );
+    panel.dispose();
+    expect(() =>
+      configListeners[0]({
+        affectsConfiguration: (k: string) => k === "UnicDB.resultsPlacement",
+      }),
+    ).not.toThrow();
+    // No new create — listener saw this.panel === null.
+    expect(createCalls).toHaveLength(1);
   });
 });
 
