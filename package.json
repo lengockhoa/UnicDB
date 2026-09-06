@@ -423,7 +423,10 @@
         "command": "UnicDB.generateCommitMessage",
         "title": "Generate Commit Message",
         "category": "UnicDB",
-        "icon": "$(sparkle)"
+        "icon": {
+          "light": "media/commit-spark.svg",
+          "dark": "media/commit-spark.svg"
+        }
       }
     ],
     "keybindings": [

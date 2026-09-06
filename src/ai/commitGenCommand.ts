@@ -158,7 +158,9 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
       });
       message = sanitizeCommitMessage(result.text);
     } catch (e) {
-      deps.showError(`UnicDB: provider error — ${(e as Error).message ?? String(e)}`);
+      const err = e as Error & { bodySnippet?: string };
+      const detail = err.bodySnippet ? `: ${err.bodySnippet}` : "";
+      deps.showError(`UnicDB: provider error — ${err.message ?? String(e)}${detail}`);
       return;
     }
   }
