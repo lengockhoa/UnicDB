@@ -82,4 +82,15 @@ RULES.md. No lint script exists — typecheck is the lint-equivalent gate.)
 `npm test` printed in your report. If a sibling suite fails here, file it in this thread
 against the owning TASK id instead of fixing outside your Target Files.
 
-(no comments yet)
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: not-confirmed — the integration test is a pure regression net over already-shipped GC-001/002/003/004/007 behaviour (no new wiring to introduce, nothing to RED against). Per the TDD contract for a bottom-of-stack net, all 7 tests went GREEN on the first `npx vitest run` invocation. This is the expected shape for a wave-boundary lock — the test itself is the regression guard that keeps future refactors honest.
+Verification Output:
+  npm run typecheck   → clean (no errors)
+  npx vitest run src/ui/__tests__/commitGenIntegration.test.ts → 1 file passed, 7 tests passed
+  npm test            → 249 files passed | 1 skipped (250), 3689 tests passed | 2 skipped (3691) — full suite green
+Status: PASS
+Note: tests were GREEN on first run (no RED phase) because the upstream tasks GC-001/002/003/004/007 already wired all behaviour under test — that is exactly what a wave-3 regression net is meant to lock. Imports use only public exports of GC modules (runGenerateCommitMessage / sanitizeCommitMessage / COMMIT_SUBJECT_MAX_CHARS / TOAST_* / ACTION_OPEN_SETTINGS) — no private-symbol pokes.
