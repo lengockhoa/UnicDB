@@ -76,6 +76,56 @@ shadows the Marketplace version until you uninstall it. To switch back to
 the Marketplace-tracked version, uninstall first, then reinstall from
 Extensions panel.
 
+## Test on ANOTHER machine (no shared volume)
+
+`code --install-extension /Volumes/...` only works on the machine that
+owns the path. To ship to a different machine:
+
+### Option A — push a GitHub Release + use the one-liner installer
+
+This is the canonical user-facing path documented in `docs/MEMORY.md`
+(Ship Constraint).
+
+```bash
+# On the build machine, after `npm run bump` produced UnicDB-<version>.vsix:
+git tag v<version>
+git push origin v<version>
+
+# Then on github.com/lengockhoa/UnicDB/releases → edit the new tag →
+# attach UnicDB-<version>.vsix as a release asset → Publish.
+
+# On the OTHER machine (Mac/Linux, no dev tools needed):
+curl -fsSL https://raw.githubusercontent.com/lengockhoa/UnicDB/main/scripts/install-UnicDB.sh | bash
+```
+
+### Option B — copy the `.vsix` ad-hoc (scp, AirDrop, USB, cloud drive)
+
+```bash
+# From the build machine, to a machine you can SSH into:
+scp UnicDB-<version>.vsix user@other-machine:~/Downloads/
+
+# On the OTHER machine:
+code --install-extension ~/Downloads/UnicDB-<version>.vsix
+```
+
+macOS AirDrop works too — send the `.vsix` file, then on the other Mac:
+
+```bash
+code --install-extension ~/Downloads/UnicDB-<version>.vsix
+```
+
+### Option C — host the `.vsix` and install by URL
+
+Newer VS Code accepts an HTTPS URL directly:
+
+```bash
+code --install-extension https://example.com/path/to/UnicDB-<version>.vsix
+```
+
+Useful when neither SSH nor a shared filesystem is available — host the
+file on any static server (GitHub release asset, S3, GCS bucket,
+`python -m http.server` on the build machine, etc.).
+
 ## What `npm run bump` actually does (in order)
 
 1. Bumps `package.json` `version` field (`patch` is the default).
