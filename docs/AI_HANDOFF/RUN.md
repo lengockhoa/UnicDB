@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Move SQL Results to a tab in VS Code's bottom panel (next to Terminal); remove UnicDB.resultsPlacement setting.
-Base: main @ 2184708 (fix-round commit, full suite green)
-Phase: R2
-Cursor: Phase 3 done — 5 task files (RP-001..RP-005) all PASS, 244/3619 tests green, 0 failed. Entering Phase 4 review.
-Next: spawn code-reviewer (unic-smart) with full diff for R2/R3/R4.
+Base: main @ a6bcb3b (fix-round-2 commit; full suite green 244/3619)
+Phase: R4.5-fix-round-2
+Cursor: Fix round 2 done — TASK-RP-006 PASS, 19 files (1 src + 14 tests + 4 doc) at a6bcb3b; full suite green 244/3619, 0 failed.
+Next: spawn code-reviewer (unic-smart) for R2 review on RP-001 + RP-004 + RP-006 (must differ from executor unic-code).
