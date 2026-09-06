@@ -191,3 +191,16 @@ Command: `npm run compile` — `esbuild` build complete, exit 0
 HANDOFF_TO_REVIEWER: yes — STATUS DONE, all 320 tests pass, typecheck + compile clean.
 
 NEXT: ready for review (TASK-RP-002 already PASS; this is wave-1's last blocker before wave boundary commit + wave-2 TASK-RP-003).
+
+## Reviewer Verdict
+
+VERDICT: CRITICAL
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS (npm run typecheck clean; npm run compile clean; npm test 3619 passed / 0 failed / 2 skipped, exit 0)
+FINDINGS:
+  critical: src/ui/resultsPanel.ts:233 — show() executes "UnicDB-results.focus" (the viewsContainers.panel CONTAINER id), but VS Code auto-registers focus commands per VIEW (`${viewId}.focus` = "UnicDB.results.focus") and per extension container (`workbench.view.extension.<containerId>`); verified against the installed workbench bundle (`super({id:e.focusCommand?e.focusCommand.id:`${e.id}.focus`,...})`, keybinding `workbench.panel.repl.view.focus`, container pattern `workbench.view.extension.${r.id}`). In production the executed command does not exist: executeCommand rejects, the rejection is swallowed by `void`, and the bottom-panel view is NEVER revealed when a query runs — first-use results stay buffered until the user manually opens the "UnicDB Results" tab. The whole suite is blind to this because all mocks assert the literal wrong string.
+  important: fix shape — execute `${ResultsPanel.viewId}.focus` (i.e. "UnicDB.results.focus") and rename the string in the 14 test files that pin it (resultsPanelViewProvider.test.ts case 4; resultsPanelBottomPanelIntegration.test.ts:248 source-scan assertion AND case 4; manualCommit.test.ts mock handler; the adapted sibling suites). The source-scan at resultsPanelBottomPanelIntegration.test.ts:248 currently enforces the BROKEN string, so it must change in the same commit or CI will defend the defect.
+  minor: none
+NEXT_STATUS_FOR_INDEX: critical_block
+NOTES: Test-plan discipline and the provider migration itself are sound; the defect is a wrong command id inherited from the plan text (task §Test Cases case 4 prescribed the container id). One-line source fix + mechanical test-string rename unblocks the cycle.

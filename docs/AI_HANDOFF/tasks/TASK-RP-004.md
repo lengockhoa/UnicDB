@@ -85,3 +85,17 @@ The final `npm test` (full suite) is the cycle gate — it must be green.
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: (not self-reported — no Executor Report exists on this file)
+VERIFICATION_RERUN: PASS (work product verified fresh: resultsPanelBottomPanelIntegration.test.ts 6/6 in isolation and within full npm test 3619 passed / 0 failed, exit 0; typecheck + compile clean)
+FINDINGS:
+  critical: none (the committed test work itself is real and passing — 33 expect() calls, disk-level source/manifest scans, deep-equal row assertions)
+  important: docs/AI_HANDOFF/tasks/TASK-RP-004.md — incomplete handoff package: this file is byte-identical to plan commit b988971; no `## Executor Report` was ever appended (no STATUS, no EXECUTOR_MODEL/EXECUTOR_TOOL self-report, no RED_OUTPUT evidence), violating the v1.5.5+ review contract. The work was committed in 405af76 but never reported. Executor must append the report before this task can close.
+  important: src/ui/__tests__/resultsPanelBottomPanelIntegration.test.ts:248 and :352-372 — case 4 and the source-scan assertion pin the WRONG focus command id ("UnicDB-results.focus", container id). VS Code registers focus per VIEW (`UnicDB.results.focus`), not per container (see TASK-RP-001 verdict evidence). Update both assertions in lockstep with the TASK-RP-001 fix, otherwise CI enforces the broken production string.
+  minor: none
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Blocker is paperwork + the pinned focus string, not the test design — cases 1-6 are the strongest guards in the cycle. Append the Executor Report and re-point case 4 / line 248 to "UnicDB.results.focus" alongside the RP-001 fix; no other changes needed.
