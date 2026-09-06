@@ -115,16 +115,16 @@ vi.mock("vscode", () => {
         // NOTE: the mock does NOT auto-resolve at register time — VS Code
         // resolves the view lazily on first focus, so any `ready` handshake
         // POSTS the live `lastResults` (not an empty initial state). The
-        // `UnicDB-results.focus` executeCommand path below drives that.
+        // `UnicDB.results.focus` executeCommand path below drives that.
         return { dispose: () => undefined };
       },
       showErrorMessage: vi.fn(async () => undefined),
     },
     commands: {
       executeCommand: vi.fn(async (cmd: string, ..._rest: unknown[]) => {
-        // The real `UnicDB-results.focus` triggers VS Code to resolve the
+        // The real `UnicDB.results.focus` triggers VS Code to resolve the
         // provider's view if it isn't materialized yet — simulate that.
-        if (cmd === "UnicDB-results.focus") {
+        if (cmd === "UnicDB.results.focus") {
           ensureResolved();
         }
         return undefined;

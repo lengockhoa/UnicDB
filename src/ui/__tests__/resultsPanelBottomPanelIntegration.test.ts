@@ -244,8 +244,8 @@ describe("TASK-RP-004 — Bottom-panel regression net", () => {
 
     // Sanity: the legacy `show()` no longer takes a `placement` arg and
     // does not call `vscode.window.createWebviewPanel`. The actual code
-    // path is a one-liner `executeCommand("UnicDB-results.focus")`.
-    expect(code).toContain('executeCommand("UnicDB-results.focus")');
+    // path is a one-liner `executeCommand("UnicDB.results.focus")`.
+    expect(code).toContain('executeCommand("UnicDB.results.focus")');
   });
 
   // ---- Case 2 — regression (manifest scan) -----------------------------
@@ -369,12 +369,12 @@ describe("TASK-RP-004 — Bottom-panel regression net", () => {
     // container's built-in focus command.
     expect(execMock).toHaveBeenCalledTimes(2);
     const focusCalls = execMock.mock.calls.filter(
-      (c) => c[0] === "UnicDB-results.focus",
+      (c) => c[0] === "UnicDB.results.focus",
     );
     expect(focusCalls).toHaveLength(2);
 
     // 4c — the focus command string is derived from the manifest's
-    // panel container id, so the code and the on-disk manifest stay in sync.
+    // panel view id, so the code and the on-disk manifest stay in sync.
     const { json } = loadManifest();
     const panelContainerList = json.contributes.viewsContainers?.panel as
       | Array<Record<string, unknown>>
@@ -383,8 +383,12 @@ describe("TASK-RP-004 — Bottom-panel regression net", () => {
       (c) => c.id === "UnicDB-results",
     );
     expect(container).toBeDefined();
-    const derivedCommand = `${container!.id}.focus`;
-    expect(derivedCommand).toBe("UnicDB-results.focus");
+    const views = json.contributes.views?.["UnicDB-results"] as
+      | Array<Record<string, unknown>>
+      | undefined;
+    expect(Array.isArray(views)).toBe(true);
+    const derivedCommand = `${views![0]!.id}.focus`;
+    expect(derivedCommand).toBe("UnicDB.results.focus");
     // The executed command matches the derived command for every call.
     for (const call of focusCalls) {
       expect(call[0]).toBe(derivedCommand);
@@ -414,15 +418,9 @@ describe("TASK-RP-004 — Bottom-panel regression net", () => {
     expect(Array.isArray(manifestViews)).toBe(true);
     expect(manifestViews![0]!.id).toBe(viewId);
 
-    // Container focus command also matches.
-    const panelContainerList = json.contributes.viewsContainers?.panel as
-      | Array<Record<string, unknown>>
-      | undefined;
-    const container = panelContainerList?.find(
-      (c) => c.id === "UnicDB-results",
-    );
-    expect(container).toBeDefined();
-    expect(`${container!.id}.focus`).toBe("UnicDB-results.focus");
+    // View focus command (`<viewId>.focus`) is what `show()` executes —
+    // VS Code registers focus commands per view, not per container.
+    expect(`${manifestViews![0]!.id}.focus`).toBe("UnicDB.results.focus");
   });
 
   // ---- Case 6 — regression (stale buffer overwrite) ---------------------

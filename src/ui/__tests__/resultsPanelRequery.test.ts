@@ -137,7 +137,7 @@ vi.mock("vscode", () => {
 
     commands: {
       executeCommand: vi.fn(async (cmd: string, ..._rest: unknown[]) => {
-        if (cmd === "UnicDB-results.focus" && providerStore.length > 0) {
+        if (cmd === "UnicDB.results.focus" && providerStore.length > 0) {
           if (lastView.current && !(lastView.current as unknown as { isDisposed?: boolean }).isDisposed) {
             return undefined;
           }

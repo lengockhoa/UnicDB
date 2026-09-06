@@ -54,7 +54,7 @@ const lastPanel: { current: FakeWebviewPanel | null } = { current: null };
 // TASK-RP-001 — the new ResultsPanel.show() resolves its webview view via
 // `registerWebviewViewProvider`, not `createWebviewPanel`. Tests must call
 // `__test_setPanel(panel)` after `new ResultsPanel(...)` so the mock's
-// `executeCommand("UnicDB-results.focus")` handler can invoke
+// `executeCommand("UnicDB.results.focus")` handler can invoke
 // `panel.resolveWebviewView(view, …)` with the FakeWebviewPanel, mirroring
 // what VS Code does when the bottom-panel container resolves the view.
 const lastPanelProvider: {
@@ -81,7 +81,7 @@ vi.mock("vscode", () => ({
   env: { clipboard: { writeText: vi.fn(async () => undefined) } },
   commands: {
     executeCommand: vi.fn(async (cmd: string) => {
-      if (cmd === "UnicDB-results.focus") {
+      if (cmd === "UnicDB.results.focus") {
         const panel = new FakeWebviewPanel();
         lastPanel.current = panel;
         if (lastPanelProvider.current) {

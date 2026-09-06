@@ -312,7 +312,7 @@ describe("ResultsPanel — WebviewViewProvider shell (TASK-RP-001)", () => {
   });
 
   // ---- Case 4 — regression: show() focuses the bottom panel, not editor --
-  it("case 4: show() never creates an editor-area WebviewPanel; reveals via UnicDB-results.focus", () => {
+  it("case 4: show() never creates an editor-area WebviewPanel; reveals via UnicDB.results.focus", () => {
     const runner = makeRunnerStub();
     const panel = new ResultsPanel({ runner });
 
@@ -326,7 +326,7 @@ describe("ResultsPanel — WebviewViewProvider shell (TASK-RP-001)", () => {
 
     expect(cwvpMock).not.toHaveBeenCalled();
     const focusCalls = execMock.mock.calls.filter(
-      (c) => c[0] === "UnicDB-results.focus",
+      (c) => c[0] === "UnicDB.results.focus",
     );
     expect(focusCalls).toHaveLength(2);
   });

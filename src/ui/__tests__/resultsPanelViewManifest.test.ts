@@ -9,7 +9,7 @@
 //   - existing `contributes.views.UnicDB` (schemaTree, adminTree) is intact
 //   - the help-grid menu key `webview/UnicDB.results/context` is intact
 //   - the view id matches `ResultsPanel.viewId === "UnicDB.results"`
-//   - and that the panel container id + ".focus" === "UnicDB-results.focus".
+//   - and that the panel view id + ".focus" === "UnicDB.results.focus".
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -178,12 +178,7 @@ describe("TASK-RP-003 — package.json manifest guards for Results panel home", 
     expect(panelViews).toBeDefined();
     expect(panelViews[0]!.id).toBe(viewIdFromCode);
 
-    // The container id + ".focus" is what `show()` executes to reveal the view.
-    const containers = json.contributes.viewsContainers ?? {};
-    const panelContainer = (containers.panel as Array<Record<string, unknown>>).find(
-      (c) => c.id === "UnicDB-results",
-    );
-    expect(panelContainer).toBeDefined();
-    expect(`${panelContainer!.id}.focus`).toBe("UnicDB-results.focus");
+    // The view id + ".focus" is what `show()` executes to reveal the view.
+    expect(`${panelViews[0]!.id}.focus`).toBe("UnicDB.results.focus");
   });
 });

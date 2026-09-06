@@ -150,3 +150,25 @@ npm test
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: (none — no source-level RED exists; tests previously asserted the broken literal in lockstep with the broken source so the suite was green but functionally wrong. The functional bug is "show() reveals nothing"; coverage gap fixed in place by the find-and-replace. New source-scan gate: `grep -rn "UnicDB-results.focus" src/` returns nothing — verified empty)
+Verification Output:
+- `grep -rn "UnicDB-results.focus" src/` → 0 matches (PASS)
+- `npm test src/ui/__tests__/resultsPanelViewProvider.test.ts` → 1 file / 6 tests passed
+- `npm test src/ui/__tests__/resultsPanelViewManifest.test.ts` → 1 file / 4 tests passed
+- `npm test src/ui/__tests__/resultsPanelBottomPanelIntegration.test.ts` → 1 file / 6 tests passed
+- `npm test src/ui/__tests__/manualCommit.test.ts` → 1 file / 12 tests passed
+- `npm test src/ui/__tests__/resultsPanel.test.ts` → 1 file / 46 tests passed
+- `npm test` on the 9 mock-handler suites → 9 files / 115 tests passed
+- `npm run typecheck` → PASS (no errors)
+- `npm run compile` → PASS (esbuild build complete, no errors)
+- `npm test` (full suite) → 239 passed / 5 pre-existing failures (all 5 are `aiChatPanel*Webview*.test.ts` files failing on `spawnSync node_modules/.bin/esbuild ENOENT` — worktree environment issue, identical to the RP-004 wave-1+2 breakage pre-fixed in TASK-RP-005; 3541 tests passed / 0 failed from RP-006's scope)
+Status: PASS — own scope (1 source + 14 test files + 3 doc files); full-suite gate blocked on the same pre-existing `aiChatPanel*` ENOENT that RP-005 resolved in main checkout
+Note: Two collaboration fallouts caught mid-run and fixed in this pass:
+1. `resultsPanelViewManifest.test.ts` case 4 — my initial replacement created duplicate `const views` / `const panelViews` declarations over the existing pre-fix block; collapsed to the single original declarations + appended focus derivation using `panelViews[0]!.id`.
+2. `resultsPanelBottomPanelIntegration.test.ts` case 5 (line 429) — the pre-existing `expect(`${container!.id}.focus`).toBe("UnicDB.results.focus")` assertion is structurally wrong (container id ≠ view id and never was); rewrote to derive the executed command from the view id (`manifestViews[0]!.id`) which is what VS Code actually registers. Both fixes are minimal-correct, no scope creep.
+`docs/AI_HANDOFF/tasks/TASK-RP-004.md` now ends with the `## Executor Report` block declaring `EXECUTOR_MODEL: unic-code` and `EXECUTOR_SUBAGENT: feature-implementer (aaad3089594a7ad8d)`, inserted between the existing separator and the prior Reviewer Verdict. The 19 target files are all in place; no commits pushed.

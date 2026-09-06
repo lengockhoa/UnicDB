@@ -230,7 +230,7 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
    * commands, were deleted alongside).
    */
   show(): void {
-    void vscode.commands.executeCommand("UnicDB-results.focus");
+    void vscode.commands.executeCommand("UnicDB.results.focus");
   }
 
   /**

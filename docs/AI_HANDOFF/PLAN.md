@@ -76,7 +76,7 @@ panel is:
 - `contributes.views["UnicDB-results"]` → `{ "type": "webview", "id": "UnicDB.results",
   "name": "Results" }`.
 - `vscode.window.registerWebviewViewProvider("UnicDB.results", provider)` in `extension.ts`.
-- Reveal via `vscode.commands.executeCommand("UnicDB-results.focus")` — opens the panel
+- Reveal via `vscode.commands.executeCommand("UnicDB.results.focus")` — opens the panel
   container and focuses the Results tab, i.e. literally "next to Terminal".
 
 The view id deliberately stays `UnicDB.results` (the old `createWebviewPanel` viewType). The
@@ -95,7 +95,7 @@ The conversion only swaps the *shell*:
   localResourceRoots: [<extUri>/dist] }`, assign `view.webview.html = this.buildHtml(view.webview)`
   (same HTML/CSP/template as today), subscribe `webview.onDidReceiveMessage` and
   `view.onDidDispose` (same epoch-bump + rollback + null-out as today's `panel.onDidDispose`).
-- `show()`: no creation at all — always `executeCommand("UnicDB-results.focus")`. The view
+- `show()`: no creation at all — always `executeCommand("UnicDB.results.focus")`. The view
   resolves lazily; the **existing `ready` handshake** (webview JS posts `ready` → host replies
   with full `lastResults` state, `resultsPanel.ts:1109`) already covers the
   "render() happened before the view existed" case: `postMessage` no-ops while `this.view` is
@@ -168,7 +168,7 @@ width win.
 | happy | run query flow (extension.test results path) → results appear via the registered view, not an editor tab | `registerWebviewViewProvider` called once with `"UnicDB.results"`; `createWebviewPanel` NOT called for `UnicDB.results` |
 | edge (lifecycle ordering) | `render()` called before the view is ever resolved | no throw, no postMessage; after `resolveWebviewView` + `ready`, the buffered `lastResults` state posts exactly once |
 | edge (concurrency) | `onDidDispose` fires mid-requery, then a new view resolves and `render()` runs | old continuation suppressed by `sessionEpoch`: no postMessage/toast/busy write into the new view |
-| regression (bug fix) | `show()` placement | `vscode.window.createWebviewPanel` is never called (spy asserts 0 calls); `executeCommand("UnicDB-results.focus")` IS called |
+| regression (bug fix) | `show()` placement | `vscode.window.createWebviewPanel` is never called (spy asserts 0 calls); `executeCommand("UnicDB.results.focus")` IS called |
 | regression (bug fix) | source/manifest scan (RP-004) | `src/ui/resultsPanel.ts` contains none of `createWebviewPanel` / `moveEditorToBelowGroup` / `moveEditorToAboveGroup` / `resultsPlacement`; RED on current HEAD |
 | edge (manifest negative) | setting removal | `contributes.configuration.properties` has NO `UnicDB.resultsPlacement` key; the old T3a test that asserted the key EXISTS (`resultsPanel.test.ts:1043`) is deleted in wave 1 by TASK-RP-001 — no test anywhere asserts the setting's presence after RP-001 lands |
 | edge (manifest consistency) | id agreement | `views["UnicDB-results"][0].id === "UnicDB.results"` === `ResultsPanel.viewId`; `viewsContainers.panel[0].id + ".focus"` is the command `show()` executes; `activationEvents` contains `onView:UnicDB.results` |
@@ -203,7 +203,7 @@ npm test
       *(TASK-RP-003.)*
 - [ ] **AC3** — `ResultsPanel` implements `vscode.WebviewViewProvider`; `extension.ts` registers
       it with `webviewOptions: { retainContextWhenHidden: true }`; `show()` reveals via
-      `UnicDB-results.focus` only. *(TASK-RP-001.)*
+      `UnicDB.results.focus` only. *(TASK-RP-001.)*
 - [ ] **AC4** — All existing results behaviors preserved; the suites listed in §4
       "regression (behavior preserved)" pass. *(TASK-RP-001; full-suite proof in TASK-RP-004.)*
 - [ ] **AC5** — Regression net exists and is RED against pre-fix code (source-scan +
@@ -218,7 +218,7 @@ npm test
 - Engine floor `vscode: ^1.75.0` — panel-area webview views are fully supported; do not raise
   the floor.
 - View id MUST remain exactly `UnicDB.results`; container id MUST be `UnicDB-results` (focus
-  command `UnicDB-results.focus`); keep the `webview/UnicDB.results/context` menu untouched.
+  command `UnicDB.results.focus`); keep the `webview/UnicDB.results/context` menu untouched.
 - No new npm dependencies. No `engines`/`main`/publisher changes.
 - Results grid behavior must stay byte-compatible: no changes to message protocol types in
   `src/ui/messages.ts`, no changes to sanitization, CSP, or the `ready` handshake contract.
