@@ -3,7 +3,7 @@
 //
 // Node types:
 //   - "connection"          : mỗi connection trong ConnectionManager (root expand sẵn, icon theo driver, active tint xanh).
-//   - "schema"              : schema trong connection (icon symbol-namespace).
+//   - "schema"              : schema trong connection (icon database, same as connection row).
 //   - "category"            : "Tables" / "Views" / "Routines" (folder trong 1 schema)
 //   - "table" / "view"      : tên table/view với schema + qualifiedName
 //   - "routine"             : function/procedure
@@ -382,7 +382,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<UnicDBNode> {
         const isBigQuery = conn.driver === "bigquery";
         children = schemas.map((s) => ({
           label: s.name,
-          icon: "symbol-namespace",
+          icon: "database",
           tooltip: isBigQuery
             ? `${conn.name} / dataset ${s.name}`
             : `${conn.name} / ${s.name}`,
@@ -1214,7 +1214,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<UnicDBNode> {
     if (!hit) return null;
     return {
       label: hit.name,
-      icon: "symbol-namespace",
+      icon: "database",
       tooltip: `${conn.name} / ${hit.name}`,
       contextValue: "schema",
       collapsible: vscode.TreeItemCollapsibleState.Collapsed,
@@ -1282,7 +1282,7 @@ export class SchemaTreeProvider implements vscode.TreeDataProvider<UnicDBNode> {
       if (!conn || !schema) return null;
       return {
         label: schema,
-        icon: "symbol-namespace",
+        icon: "database",
         tooltip: `${conn.name} / ${schema}`,
         contextValue: "schema",
         collapsible: vscode.TreeItemCollapsibleState.Collapsed,
