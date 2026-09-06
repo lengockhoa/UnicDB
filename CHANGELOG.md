@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.0] — 2026-09-06
+
+- Summary: Per-connection schema filter (DataGrip-like) — right-click a connection in Schema Explorer → "Select Schemas…" opens a multi-select QuickPick with all schemas pre-checked; uncheck to hide, persists per workspace (workspaceState) per connection. "Show All Schemas" menu item resets the filter for that connection only.
+- Files: src/core/schemaFilterStore.ts (new), src/core/__tests__/schemaFilterStore.test.ts (new, 11 tests), src/ui/schemaTree.ts (filter pipeline + change subscription), src/extension.ts (selectSchemas/resetSchemaFilter commands + store wiring), package.json (2 commands + 2 menu entries on viewItem == connection), src/ui/__tests__/schemaTree.test.ts (+6 tests)
+- Verification: npm run typecheck ✅ · npm test ✅ (250 files / 3706 tests / 0 failed) · UnicDB-1.53.0.vsix packaged
+
+---
+
 ## [1.52.0] — 2026-09-06
 
 - Summary: Generate Commit Message sparkle in Source Control title bar + Lite Model section in AI Settings (Engine dropdown defaults to omp). Replaces Kilo Code's equivalent feature. Fixes a live "Engine must be builtin or omp" save bug where the global Engine dropdown was in the data model but never rendered.
