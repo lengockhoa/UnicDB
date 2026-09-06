@@ -37,7 +37,7 @@ const REPO_ROOT = resolve(__dirname, "..", "..", "..");
 // additive opts to `DbAdapter.runQuery` (TASK-BQF-001 / TASK-BQF-002)
 // and is tracked by the new `bqFollowupSurfaceGuard.test.ts` guard at
 // base `6f3fcc0`.
-const BASE_REF = "6f3fcc0";
+const BASE_REF = "1ca64fa";
 
 function gitDiff(ref: string, paths: readonly string[]): string {
   // `git -C <repoRoot>` makes the call independent of the harness cwd.
@@ -537,7 +537,7 @@ describe("TASK-UX1-006 — packageJsonDepsDiff filter extension (R8a)", () => {
 // actually differ.
 describe("sanity check (proves the assertion is not tautological)", () => {
   it("execSync returns NON-empty for a ref range that actually differs", () => {
-    const quoted = `"CHANGELOG.md"`;
+    const quoted = `"package.json"`;
     const out = execSync(
       `git -C "${REPO_ROOT}" diff ${BASE_REF}~1..${BASE_REF} -- ${quoted}`,
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
@@ -546,7 +546,7 @@ describe("sanity check (proves the assertion is not tautological)", () => {
     // Log for the Executor Report / reviewer.
     // eslint-disable-next-line no-console
     console.info(
-      `[bq04-guard] sanity diff vs ${BASE_REF}~1..${BASE_REF} on CHANGELOG.md: ${out.trim().split("\n").length} non-empty lines (proves execSync is live)`
+      `[bq04-guard] sanity diff vs ${BASE_REF}~1..${BASE_REF} on package.json: ${out.trim().split("\n").length} non-empty lines (proves execSync is live)`
     );
   });
 });

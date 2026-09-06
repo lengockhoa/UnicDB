@@ -37,6 +37,7 @@ class FakeWebview {
 
 class FakeWebviewPanel {
   webview = new FakeWebview();
+  options: { enableScripts?: boolean; localResourceRoots?: unknown[] } = {};
   visible = true;
   private disposeHandlers: Array<() => void> = [];
   reveal(_column?: unknown): void {}
@@ -50,6 +51,15 @@ class FakeWebviewPanel {
 }
 
 const lastPanel: { current: FakeWebviewPanel | null } = { current: null };
+// TASK-RP-001 — the new ResultsPanel.show() resolves its webview view via
+// `registerWebviewViewProvider`, not `createWebviewPanel`. Tests must call
+// `__test_setPanel(panel)` after `new ResultsPanel(...)` so the mock's
+// `executeCommand("UnicDB-results.focus")` handler can invoke
+// `panel.resolveWebviewView(view, …)` with the FakeWebviewPanel, mirroring
+// what VS Code does when the bottom-panel container resolves the view.
+const lastPanelProvider: {
+  current: { resolveWebviewView(view: unknown, ctx: unknown, token: unknown): unknown } | null;
+} = { current: null };
 
 vi.mock("vscode", () => ({
   Uri: {
@@ -69,6 +79,20 @@ vi.mock("vscode", () => ({
   },
   workspace: { onDidChangeConfiguration: () => ({ dispose: () => undefined }) },
   env: { clipboard: { writeText: vi.fn(async () => undefined) } },
+  commands: {
+    executeCommand: vi.fn(async (cmd: string) => {
+      if (cmd === "UnicDB-results.focus") {
+        const panel = new FakeWebviewPanel();
+        lastPanel.current = panel;
+        if (lastPanelProvider.current) {
+          lastPanelProvider.current.resolveWebviewView(panel, {}, {});
+        }
+      }
+    }),
+  },
+  __test_setPanel: (provider: unknown) => {
+    lastPanelProvider.current = provider as typeof lastPanelProvider.current;
+  },
 }));
 
 import { ResultsPanel, type SaveContext } from "../resultsPanel";
@@ -125,6 +149,7 @@ function makePanel(options: { manualCommit: boolean; failSave?: boolean }) {
     listPkColumns: async () => ["id"],
   };
   const panel = new ResultsPanel({ runner, saveContext });
+  lastPanelProvider.current = panel;
   panel.render([{
     index: 0,
     sql: "SELECT id, name FROM people",
@@ -275,6 +300,7 @@ describe("ResultsPanel manual-commit button refresh (TASK-006 P1-4)", () => {
       listPkColumns: async () => ["id"],
     };
     const panel = new ResultsPanel({ runner, saveContext });
+    lastPanelProvider.current = panel;
     panel.render(
       [
         {

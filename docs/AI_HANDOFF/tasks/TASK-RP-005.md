@@ -80,3 +80,101 @@ npm test
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+
+STATUS: PARTIAL
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Applied the three prescribed edits exactly as specified. Each edit removed its original failure but exposed a second-layer failure that the prescribed fix does not address — net change in suite-wide failures = 0 (still 14 failed). typecheck and compile pass cleanly. Full `npm test` confirms 14 failed | 3527 passed | 2 skipped. The orchestrator's hypothesis about what each edit would fix was correct for the symptom listed in §Goal but incomplete: the underlying test logic depends on additional infrastructure (panel creation in mock; sanity check CHANGELOG diff in BASE_REF~1..BASE_REF) that the prescribed one-line edits do not provide.
+TEST_PLAN_FOLLOWED: task §Test Cases (inline — followed exactly as specified by orchestrator)
+FILES_CHANGED:
+  - src/ui/__tests__/manualCommit.test.ts: added `commands: { executeCommand: vi.fn() }` to the vi.mock("vscode", …) block (one line, line ~72 area)
+  - src/adapters/__tests__/bq04SurfaceGuard.test.ts: BASE_REF changed `6f3fcc0` → `1ca64fa` (line 40)
+  - src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts: BASE_REF changed `6f3fcc0` → `1ca64fa` (line 39)
+TESTS_ADDED: none
+VERIFICATION:
+  command: npm test src/ui/__tests__/manualCommit.test.ts
+  result: 12 failed (12) — original "No commands export" error gone; replaced by TypeError: Cannot read properties of null (reading 'webview') from makeRefreshPanel at line 291 (lastPanel.current is null because the new production code path calls executeCommand("UnicDB-results.focus") instead of createWebviewPanel, and the mocked executeCommand is a plain vi.fn() that never instantiates a panel)
+  output_excerpt: |
+    TypeError: Cannot read properties of null (reading 'webview')
+     ❯ makeRefreshPanel src/ui/__tests__/manualCommit.test.ts:291:90
+        291|     return { panel, transaction, runSql, runSqlCalls, adopt, webview: …
+           |                                                                                          ^
+     ❯ src/ui/__tests__/manualCommit.test.ts:363:58
+     Test Files  1 failed (1)
+          Tests  12 failed (12)
+  command: npm test src/adapters/__tests__/bq04SurfaceGuard.test.ts
+  result: 1 failed | 7 passed (8) — original `package.json dependency manifest unchanged` test PASSES (the BASE_REF advance did fix it); NEW failure is the sanity-check at line 545 expecting non-empty diff in `BASE_REF~1..BASE_REF -- CHANGELOG.md`, but `1ed33ae..1ca64fa` (BASE_REF=1ca64fa) contains NO CHANGELOG.md edits — only RUN.md + TASK-RP-003.md + package.json + the new manifest test file
+  output_excerpt: |
+    AssertionError: expected 0 to be greater than 0
+     ❯ src/adapters/__tests__/bq04SurfaceGuard.test.ts:545:31
+     Test Files  1 failed (1)
+          Tests  1 failed | 7 passed (8)
+  command: npm test src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts
+  result: 1 failed | 4 passed (5) — same shape as bq04: dependency-manifest test PASSES, sanity-check FAILS at line 174. The test's own comment says "BQ-FOLLOWUP wave 1 (5119ebd) touched CHANGELOG.md — guaranteed non-empty" but with BASE_REF=1ca64fa the range 1ed33ae..1ca64fa has no CHANGELOG.md edits. The comment is now stale.
+  output_excerpt: |
+    AssertionError: expected 0 to be greater than 0
+     ❯ src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts:174:31
+     Test Files  1 failed (1)
+          Tests  1 failed | 4 passed (5)
+  command: npm run typecheck
+  result: PASS (tsc --noEmit, exit 0, no output)
+  command: npm run compile
+  result: PASS (esbuild build complete: dist/extension.js + dist/webview.js)
+  command: npm test
+  result: 8 test files failed | 236 passed | 1 skipped (245) ; 14 tests failed | 3527 passed | 2 skipped (3543) — same 14 failures as the pre-edit baseline; the 3 prescribed edits shift failure modes but do not reduce the count
+ISSUES:
+  - The prescribed manualCommit fix (add commands: { executeCommand: vi.fn() }) is necessary but insufficient. After RP-001, ResultsPanel.show() calls `vscode.commands.executeCommand("UnicDB-results.focus")` and never calls `vscode.window.createWebviewPanel`. The mock must instantiate the FakeWebviewPanel and assign `lastPanel.current = panel` inside the executeCommand handler when called with `"UnicDB-results.focus"`. Minimal extension: change the mock to `commands: { executeCommand: vi.fn(async (cmd: string) => { if (cmd === "UnicDB-results.focus") { const p = new FakeWebviewPanel(); lastPanel.current = p; } }) }`. Orchestrator instruction said "Three narrow edits only" + "DO NOT touch any file other than the three listed" so I did NOT apply this extension.
+  - The prescribed BASE_REF=1ca64fa is incompatible with the existing sanity-check at the bottom of each guard. The sanity check asserts `git diff ${BASE_REF}~1..${BASE_REF} -- CHANGELOG.md` is non-empty. 1ca64fa's parent (1ed33ae = wave 1) modified no CHANGELOG.md content. The original BASE_REF `6f3fcc0` worked because that commit IS the R5 release commit (release(PUBLISH-02): rename extension vsdb → UnicDB) and its parent commit legitimately bumped CHANGELOG. There is NO commit between 1ed33ae and HEAD (2f865b1) that bumps CHANGELOG.md: 1ed33ae (TASK-RP-001/002 guide), 1ca64fa (TASK-RP-003 manifest), 405af76 (TASK-RP-004 test file), 2f865b1 (TASK-RP-005 plan file). Wave-1+2+3+fix-round produced no R5 commit. The only ways to make the sanity check pass with the current wave state are (a) change the sanity check's diff path to something that has been modified (e.g. `package.json`), or (b) revert the BASE_REF advance and accept that the dependency-manifest test re-fails. Neither is within the prescribed 3 narrow edits.
+  - bqFollowup's sanity-check comment ("BQ-FOLLOWUP wave 1 (5119ebd) touched CHANGELOG.md — guaranteed non-empty") was already stale before this task landed — 5119ebd is not in the linear history at all (it must be from an earlier BQ-FOLLOWUP cycle that was rebased away). With BASE_REF=1ca64fa the comment is doubly misleading.
+HANDOFF_TO_REVIEWER: no — status is PARTIAL not DONE; per Handoff rules reviewer only triggers on DONE. The orchestrator should inspect this report and either (a) widen the scope of TASK-RP-005 to include the minimal mock extension + sanity-check path fix, or (b) author a follow-up task that performs those two additional edits. Both options are small and live entirely within the three already-listed target files.
+NEXT: orchestrator should widen the scope of this task (or open a follow-up fix-round) to apply: (1) executeCommand mock instantiation in src/ui/__tests__/manualCommit.test.ts (~3 lines around line 72), (2) sanity-check path change in src/adapters/__tests__/bq04SurfaceGuard.test.ts (line ~540 — change CHANGELOG.md to package.json, or similar path with confirmed edits in 1ed33ae..1ca64fa), (3) same path change in src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts (line ~169) + comment update. All three changes are within the same three target files.
+
+## Executor Report (widened fix)
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: -
+SUMMARY: Applied all 6 edits — the 3 original edits plus the 3 follow-on edits specified by the orchestrator. Original 14 regressions are gone; full `npm test` is green (3541 passed, 2 skipped, 0 failed). The 5 "test file failed" entries in the vitest summary are pre-existing worktree-infrastructure errors (missing `node_modules/.bin/esbuild` symlink — `errno: -2 ENOENT`); they are NOT test failures and match the orchestrator's prior §Discussion note about RP-004 worktree run. They do not appear on the main worktree.
+TEST_PLAN_FOLLOWED: task §Test Cases (cases 1–3 verified directly; case 4 via full `npm test`)
+FILES_CHANGED:
+  - src/ui/__tests__/manualCommit.test.ts: (a) added `options: { ... } = {}` to FakeWebviewPanel (so resolveWebviewView's `view.webview.options = { enableScripts, localResourceRoots }` assignment type-checks), (b) added `lastPanelProvider` module-scoped tracking + `__test_setPanel` helper exported via the vi.mock surface, (c) changed `commands.executeCommand` mock to instantiate FakeWebviewPanel AND invoke `lastPanelProvider.current.resolveWebviewView(view, {}, {})` when called with `"UnicDB-results.focus"`, (d) added `lastPanelProvider.current = panel` calls inside `makePanel` and `makeRefreshPanel` so the mock can find the panel after construction.
+  - src/adapters/__tests__/bq04SurfaceGuard.test.ts: (e) sanity-check diff path changed `"CHANGELOG.md"` → `"package.json"`; assertion message + log label updated accordingly. (BASE_REF=1ca64fa edit retained from round 1.)
+  - src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts: (f) sanity-check diff path changed `"CHANGELOG.md"` → `"package.json"`; stale comment about "BQ-FOLLOWUP wave 1 (5119ebd)" replaced with a true statement ("Wave-2 (TASK-RP-003) modified package.json — guaranteed non-empty"); log label updated. (BASE_REF=1ca64fa edit retained from round 1.)
+TESTS_ADDED: none
+VERIFICATION:
+  command: npm test src/ui/__tests__/manualCommit.test.ts
+  result: 12 passed (12)
+  output_excerpt: |
+    ✓ src/ui/__tests__/manualCommit.test.ts  (12 tests) 7ms
+    Test Files  1 passed (1)
+         Tests  12 passed (12)
+  command: npm test src/adapters/__tests__/bq04SurfaceGuard.test.ts
+  result: 8 passed (8)
+  output_excerpt: |
+    ✓ src/adapters/__tests__/bq04SurfaceGuard.test.ts  (8 tests) 50ms
+    [bq04-guard] sanity diff vs 1ca64fa~1..1ca64fa on package.json: 59 non-empty lines (proves execSync is live)
+    Test Files  1 passed (1)
+         Tests  8 passed (8)
+  command: npm test src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts
+  result: 5 passed (5)
+  output_excerpt: |
+    ✓ src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts  (5 tests) 49ms
+    [bqf-guard] sanity diff vs 1ca64fa~1..1ca64fa on package.json: 59 non-empty lines
+    Test Files  1 passed (1)
+         Tests  5 passed (5)
+  command: npm run typecheck
+  result: PASS (tsc --noEmit, exit 0, no output)
+  command: npm run compile
+  result: PASS (esbuild build complete: dist/extension.js + dist/webview.js)
+  command: npm test
+  result: 5 test files failed | 239 passed | 1 skipped (245) ; 3541 tests passed | 2 skipped (3543) — 0 failed tests. The 5 "failed files" all share the same root cause: `spawnSync .../node_modules/.bin/esbuild ENOENT` (worktree-infrastructure issue: missing esbuild symlink). They throw at module-load time so vitest counts the whole file as failed, but no individual test within them runs/fails. This matches the orchestrator's prior §Discussion note: "The 5 aiChat*Webview failures observed during RP-004's worktree run were worktree-specific (missing `node_modules/.bin/esbuild` symlink); they do NOT appear in the main worktree. No action needed."
+ISSUES:
+  - The orchestrator's round-2 edit for manualCommit (instantiate FakeWebviewPanel inside the executeCommand mock) was necessary but not sufficient. After panel instantiation, the test still needs `panel.resolveWebviewView(view, …)` to fire so `ResultsPanel.view` is non-null (otherwise `render()`'s `if (this.view) postMessage(…)` skips and every `flush()` times out). I extended the mock with a `lastPanelProvider` tracking variable + `__test_setPanel` helper, and added `lastPanelProvider.current = panel` inside `makePanel` and `makeRefreshPanel`. This is still strictly within `src/ui/__tests__/manualCommit.test.ts` and respects the orchestrator's "do not touch other files" constraint.
+  - `FakeWebviewPanel` did not have an `options` property; `resolveWebviewView` assigns `view.webview.options = { enableScripts, localResourceRoots }`, which would have failed at runtime against the bare FakeWebview. Added `options: { enableScripts?: boolean; localResourceRoots?: unknown[] } = {}` to the class. Minimal, type-safe, doesn't break any existing assertion.
+  - The 5 module-load-time failures in `npm test` are worktree-only (missing esbuild symlink in `.worktrees/task-rp-005/node_modules/.bin/`). They do not appear in the main worktree. The orchestrator flagged this exact issue in §Discussion and confirmed "No action needed."
+HANDOFF_TO_REVIEWER: yes — full cycle gate is now green; task is ready for Phase 4 review.
+NEXT: ready for review.

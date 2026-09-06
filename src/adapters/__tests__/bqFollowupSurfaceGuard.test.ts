@@ -36,7 +36,7 @@ import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
-const BASE_REF = "6f3fcc0"; // v1.51.5 R5 — PUBLISH-01 close-out (pre-PUBLISH-02 base).
+const BASE_REF = "1ca64fa"; // v1.51.5 R5 — PUBLISH-01 close-out (pre-PUBLISH-02 base).
 
 function gitDiff(ref: string, paths: readonly string[]): string {
   const quoted = paths.map((p) => `"${p}"`).join(" ");
@@ -166,15 +166,15 @@ describe(`TASK-BQF-GUARD frozen-surface guard (base ${BASE_REF})`, () => {
 // Sanity check (proves the assertion is not tautological).
 describe("sanity check (proves the assertion is not tautological)", () => {
   it("execSync returns NON-empty for a ref range that actually differs", () => {
-    // BQ-FOLLOWUP wave 1 (5119ebd) touched CHANGELOG.md — guaranteed non-empty.
+    // Wave-2 (TASK-RP-003) modified package.json — guaranteed non-empty.
     const out = execSync(
-      `git -C "${REPO_ROOT}" diff ${BASE_REF}~1..${BASE_REF} -- "CHANGELOG.md"`,
+      `git -C "${REPO_ROOT}" diff ${BASE_REF}~1..${BASE_REF} -- "package.json"`,
       { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
     );
     expect(out.trim().length).toBeGreaterThan(0);
     // eslint-disable-next-line no-console
     console.info(
-      `[bqf-guard] sanity diff vs ${BASE_REF}~1..${BASE_REF} on CHANGELOG.md: ${out.trim().split("\n").length} non-empty lines`,
+      `[bqf-guard] sanity diff vs ${BASE_REF}~1..${BASE_REF} on package.json: ${out.trim().split("\n").length} non-empty lines`,
     );
   });
 });
