@@ -4,7 +4,8 @@ Cycle RP — SQL Results in bottom panel (prior cycle BQ-FOLLOWUP archived in HI
 
 | Task | Title | Status | Owner | Files |
 |------|-------|--------|-------|-------|
-| TASK-RP-001 | Convert ResultsPanel to bottom-panel WebviewViewProvider (+ extension registration) | ready | - | src/ui/resultsPanel.ts, src/extension.ts, src/ui/__tests__/resultsPanel.test.ts, src/extension.test.ts, src/ui/__tests__/resultsPanelViewProvider.test.ts (new) |
-| TASK-RP-002 | User guide: remove resultsPlacement docs, document forced bottom-panel placement | ready | - | docs/UNICDB_USER_GUIDE.md, src/ui/__tests__/userGuideContent.test.ts |
-| TASK-RP-003 | Manifest: viewsContainers.panel + webview view + activation; DELETE resultsPlacement property | ready | - | package.json, src/ui/__tests__/resultsPanelViewManifest.test.ts (new) |
-| TASK-RP-004 | Bottom-panel regression net (integration + source/manifest scan) | ready | - | src/ui/__tests__/resultsPanelBottomPanelIntegration.test.ts (new) |
+| TASK-RP-001 | Convert ResultsPanel to bottom-panel WebviewViewProvider (+ extension registration) | pending_review | shipped wave 1 @ 1ed33ae (unic-code) | src/ui/resultsPanel.ts, src/extension.ts, src/ui/__tests__/resultsPanel.test.ts, src/extension.test.ts, src/ui/__tests__/resultsPanelViewProvider.test.ts (new), 9 sibling resultsPanel* test files (auto-adapted) |
+| TASK-RP-002 | User guide: remove resultsPlacement docs, document forced bottom-panel placement | pending_review | shipped wave 1 @ 1ed33ae (unic-code) | docs/UNICDB_USER_GUIDE.md, src/ui/__tests__/userGuideContent.test.ts |
+| TASK-RP-003 | Manifest: viewsContainers.panel + webview view + activation; DELETE resultsPlacement property | pending_review | shipped wave 2 @ 1ca64fa (unic-code) | package.json, src/ui/__tests__/resultsPanelViewManifest.test.ts (new) |
+| TASK-RP-004 | Bottom-panel regression net (integration + source/manifest scan) | pending_review | shipped wave 3 partial @ 405af76 (unic-code, 6/6 cases pass; full-suite gate blocked on 14 regressions) | src/ui/__tests__/resultsPanelBottomPanelIntegration.test.ts (new) |
+| TASK-RP-005 | Fix wave 1+2 regressions blocking the cycle gate | ready | fix round | src/ui/__tests__/manualCommit.test.ts, src/adapters/__tests__/bq04SurfaceGuard.test.ts, src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts |
