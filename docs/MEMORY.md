@@ -32,6 +32,21 @@
   exists (version bump + tag + `UnicDB-<version>.vsix` asset). "Merged to main" ≠ shipped.
   After installing, the user must reload the VS Code window.
 
+- **Versioning policy — every code change ships as a new version** (2026-09-06):
+  No user-visible code change lands unversioned. After the verification gate (`npm run
+  typecheck` + `npm test`) passes, the next required step is the atomic bump recipe:
+  ```bash
+  npm run bump              # default patch (X.Y.Z → X.Y.Z+1)
+  # edit the 3 placeholder lines in the prepended CHANGELOG entry
+  git add -A && git commit -m "release: <version>"
+  npx vsce publish          # PAT is in macOS Keychain from first `vsce login lengockhoa`
+  ```
+  Default level is **patch**. Use `npm run bump:minor` for new features, `npm run bump:major`
+  for breaking changes — never silently. Trivial internal-only edits (typo, comment) skip
+  the bump unless the day also tags/releases. Full recipe + edge cases: `docs/RELEASE.md`.
+  Atomic script: `scripts/bump-version.mjs` (refuses to run only if `package.json`,
+  `package-lock.json`, or `CHANGELOG.md` are already dirty — would clobber).
+
 ## Known Bugs & Root Causes
 
 - [2026-08-25] Bug: user still saw `Error: column "ctid" does not exist` after cycle S was

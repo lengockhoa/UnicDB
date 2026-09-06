@@ -5,6 +5,21 @@ Single source of truth for cutting a release. The full pipeline is encoded in
 command**. Future function edits that ship user-visible behavior should follow
 the same recipe.
 
+## Policy — every code change ships as a version bump
+
+Every user-visible code change (feature, fix, refactor with user impact, AI
+cycle close-out) lands as a new version. After the verification gate passes,
+the next required step is the `npm run bump` recipe below — never push a raw
+unversioned commit to a release branch. This policy is also pinned in
+`CLAUDE.md` §"Versioning Policy" so future sessions follow it by default.
+
+| Change type | Action |
+|---|---|
+| User-visible feature / fix / refactor | `npm run bump` → CHANGELOG → commit → `npx vsce publish` |
+| Internal-only edit (typo, comment, docs) | Optional bump; bump if the day also tags/releases |
+| Big new feature area | `npm run bump:minor` |
+| Breaking change to existing extension API | `npm run bump:major` |
+
 ## TL;DR
 
 ```bash
