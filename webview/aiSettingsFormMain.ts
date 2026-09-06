@@ -341,13 +341,6 @@ function render(): void {
     </div>
   </div>
 
-  ${modelBlock("work", "Work", true)}
-  ${modelBlock("smart", "Smart", false)}
-  ${modelBlock("autocomplete", "Autocomplete (SQL ghost text)", false, { placeholder: "vendor/free-fast-sql", showVision: false })}
-  ${liteBlock()}
-
-
-
   <div class="UnicDB-form-section">
     <h3>API key</h3>
     <div class="UnicDB-row">
@@ -357,6 +350,13 @@ function render(): void {
       </div>
     </div>
   </div>
+
+  ${liteBlock()}
+  ${modelBlock("work", "Work", true)}
+  ${modelBlock("smart", "Smart", false)}
+  ${modelBlock("autocomplete", "Autocomplete (SQL ghost text)", false, { placeholder: "vendor/free-fast-sql", showVision: false })}
+
+
 
   <ul id="errors" class="UnicDB-form-errors"></ul>
   <div id="status" class="UnicDB-form-status"></div>

@@ -133,12 +133,12 @@ describe("scaffold", () => {
     const viewTitle = pkg.contributes.menus["view/title"];
     expect(viewTitle).toBeTruthy();
     expect(viewTitle.every((m: { group?: string }) => m.group === "navigation")).toBe(true);
-    // Toolbar order: refresh, add connection, AI settings (sparkle — 1.53.x),
-    // filter, AI chat (TASK-009), clear-filter (chỉ hiện khi filter active —
-    // luôn cuối, vị trí ổn định khi connection/filter state xuất hiện).
+    // Toolbar order: refresh, AI settings (sparkle — 1.53.x), add connection
+    // (plus), filter, AI chat (TASK-009), clear-filter (chỉ hiện khi filter
+    // active — luôn cuối, vị trí ổn định khi connection/filter state xuất hiện).
     expect(viewTitle[0].command).toBe("UnicDB.refreshSchema");
-    expect(viewTitle[1].command).toBe("UnicDB.addConnection");
-    expect(viewTitle[2].command).toBe("UnicDB.openAiSettings");
+    expect(viewTitle[1].command).toBe("UnicDB.openAiSettings");
+    expect(viewTitle[2].command).toBe("UnicDB.addConnection");
     expect(viewTitle[3].command).toBe("UnicDB.filterSchemaTree");
     expect(viewTitle[4].command).toBe("UnicDB.aiChat");
     expect(viewTitle[5].command).toBe("UnicDB.clearSchemaTreeFilter");
