@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.51.7] — 2026-09-06
+
+- Summary: Move SQL Results to a bottom-panel tab (next to Terminal). Drop the UnicDB.resultsPlacement setting entirely — placement is now forced and not configurable.
+- Files: src/ui/resultsPanel.ts,package.json,docs/UNICDB_USER_GUIDE.md
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.51.7.vsix packaged
+
+---
+
 ## [1.51.6] — 2026-09-06
 
 TASK-AI-001-fix — hot-apply for `UnicDB.resultsPlacement`. Previously the placement setting (`beside` / `active` / `left`) was read at `ResultsPanel.create()` only, so changing the setting while the panel was already open had no visible effect — the user had to close and re-trigger the run. This cycle wires `vscode.workspace.onDidChangeConfiguration("UnicDB.resultsPlacement")` so the live panel is auto-disposed on change and the next render picks up the new column. Plus: durable version-bump recipe (`scripts/bump-version.mjs` + `docs/RELEASE.md`) so future releases run the same lock-sync / CHANGELOG / typecheck / test / `.vsix` sequence atomically.

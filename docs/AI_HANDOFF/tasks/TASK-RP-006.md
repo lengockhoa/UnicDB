@@ -172,3 +172,16 @@ Note: Two collaboration fallouts caught mid-run and fixed in this pass:
 1. `resultsPanelViewManifest.test.ts` case 4 — my initial replacement created duplicate `const views` / `const panelViews` declarations over the existing pre-fix block; collapsed to the single original declarations + appended focus derivation using `panelViews[0]!.id`.
 2. `resultsPanelBottomPanelIntegration.test.ts` case 5 (line 429) — the pre-existing `expect(`${container!.id}.focus`).toBe("UnicDB.results.focus")` assertion is structurally wrong (container id ≠ view id and never was); rewrote to derive the executed command from the view id (`manifestViews[0]!.id`) which is what VS Code actually registers. Both fixes are minimal-correct, no scope creep.
 `docs/AI_HANDOFF/tasks/TASK-RP-004.md` now ends with the `## Executor Report` block declaring `EXECUTOR_MODEL: unic-code` and `EXECUTOR_SUBAGENT: feature-implementer (aaad3089594a7ad8d)`, inserted between the existing separator and the prior Reviewer Verdict. The 19 target files are all in place; no commits pushed.
+
+## Reviewer Verdict (round 2)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS (npm test = 244 files / 3619 tests passed / 0 failed / 2 skipped; npm run typecheck exit 0; npm run compile exit 0 — re-run fresh at 72f180f)
+FINDINGS:
+  critical: none
+  important: none
+  minor: (1) PLAN.md §4 "edge (manifest consistency)" row still says viewsContainers.panel[0].id + ".focus" is the command show() executes — the same structural error this task fixed in tests; the sweep updated 5 PLAN.md lines but missed this row (contains no literal hyphen string, so the grep gate passes); (2) docs/AI_HANDOFF/tasks/TASK-RP-003.md:73 (§Interfaces) still says "UnicDB-results.focus is what show() executes" while line 34 was fixed — internal inconsistency in the same doc; (3) hyphen-string residue remains in TASK-RP-001.md:33,78 and TASK-RP-004.md:26 (historical verdict/quote mentions are fine to keep).
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Test integrity verified against ground truth, not mere self-consistency: source (resultsPanel.ts:233), both manifest tests, and the integration suite now derive the focus command from the manifest VIEW id — matching VS Code's actual per-view registration. The executor also caught and fixed the pre-existing structurally-wrong case 5 derivation (container id to view id) without scope creep: all 19 changed files are in this task's target list. RED_OUTPUT "none" is justified — the defect was lockstep-green (tests pinned the broken literal), and the corrected assertions + grep gate are the real regression guard.

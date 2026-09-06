@@ -204,3 +204,16 @@ FINDINGS:
   minor: none
 NEXT_STATUS_FOR_INDEX: critical_block
 NOTES: Test-plan discipline and the provider migration itself are sound; the defect is a wrong command id inherited from the plan text (task §Test Cases case 4 prescribed the container id). One-line source fix + mechanical test-string rename unblocks the cycle.
+
+## Reviewer Verdict (round 2)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN: PASS (npm test = 244 files / 3619 tests passed / 0 failed / 2 skipped; npm run typecheck exit 0; npm run compile exit 0 — re-run fresh at 72f180f)
+FINDINGS:
+  critical: none — round-1 CRITICAL resolved in a6bcb3b: src/ui/resultsPanel.ts:233 now executes "UnicDB.results.focus" (VIEW id, dot), matching VS Code's per-view focus-command registration; grep "UnicDB-results.focus" over src/ returns 0 matches; all 14 test files pin the dot form.
+  important: none
+  minor: (1) this task file's own spec text still prescribes the broken string (line 33 §Test Cases row 4, line 78 §Interfaces "UnicDB-results.focus") — superseded by the round-1 verdict but stale on disk; (2) AC2 says resultsPanel.ts contains "no occurrences" of createWebviewPanel/moveEditorTo*, yet the show() doc comment (resultsPanel.ts:227-229) mentions them; the RP-004 gate strips comments before scanning (correct enforcement) so AC wording is stricter than the gate.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Strongest part of the migration: behavior preservation was proven with real buffered-delivery evidence (integration cases 3+6: deep-equal rows, single state post, buffer-overwrite). Round-1 critical is fixed and re-verified fresh; remaining items are doc residue only.
