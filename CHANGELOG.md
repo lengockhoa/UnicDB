@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.3] — 2026-09-06
+
+- Summary: Fix — Generate Commit Message sparkle regression: remove non-existent `scmProviderHasChanges` when-clause introduced in 1.52.0 so the sparkle button actually renders in the Source Control title bar.
+- Files: package.json (when clause), src/ui/__tests__/commitGenManifest.test.ts (frozen assertion), src/ui/__tests__/commitGenIntegration.test.ts (frozen constant)
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.3.vsix packaged
+
+---
+
 ## [1.53.2] — 2026-09-06
 
 - Summary: Fix — Generate Commit Message sparkle regression: remove non-existent `scmProviderHasChanges` when-clause introduced in 1.52.0 so the sparkle button actually renders in the Source Control title bar.
