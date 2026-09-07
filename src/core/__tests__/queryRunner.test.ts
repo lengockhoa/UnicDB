@@ -2200,3 +2200,99 @@ describe("QueryRunner — runFailed (TASK-UX2-003)", () => {
     expect(runner.getResults()).toHaveLength(1);
   });
 });
+
+// =============================================================================
+// TASK-TABCLEAR-001 — QueryRunner.clear(): reset `this.results` so the next
+// `run()` starts with appendBase=0. Used by the editor Run path so each new
+// Run starts with an empty tab strip (no leftover tabs from previous Runs).
+// =============================================================================
+describe("QueryRunner — clear() (TASK-TABCLEAR-001)", () => {
+  function makeRunner(): { runner: QueryRunner; adapter: DbAdapter } {
+    const adapter = makeAdapter(async (sql) => okResult(["value"], [[sql]]));
+    return { runner: new QueryRunner(async () => adapter), adapter };
+  }
+
+  it("clears accumulated results so getResults() returns []", async () => {
+    const { runner } = makeRunner();
+    await runner.run(
+      [stmt("SELECT 1", 0, 8), stmt("SELECT 2", 0, 8)],
+      () => {},
+    );
+    expect(runner.getResults()).toHaveLength(2);
+
+    runner.clear();
+
+    expect(runner.getResults()).toEqual([]);
+  });
+
+  it("after clear(), next run() starts fresh — appendBase=0, no leftover rows", async () => {
+    const { runner } = makeRunner();
+    // First run: 2 statements.
+    await runner.run(
+      [stmt("SELECT 1", 0, 8), stmt("SELECT 2", 0, 8)],
+      () => {},
+    );
+    expect(runner.getResults()).toHaveLength(2);
+
+    // Auto-clear (Run path).
+    runner.clear();
+
+    // Second run: 1 statement. Must NOT append to the cleared array —
+    // the new run owns a single slot.
+    const result = await runner.run([stmt("SELECT fresh", 0, 12)], () => {});
+    expect(result).toHaveLength(1);
+    expect(result[0].sql).toBe("SELECT fresh");
+    expect(runner.getResults()).toHaveLength(1);
+    expect(runner.getResults()[0].sql).toBe("SELECT fresh");
+  });
+
+  it("after clear(), append runs accumulate normally again", async () => {
+    const { runner } = makeRunner();
+    await runner.run([stmt("SELECT a", 0, 8)], () => {});
+    runner.clear();
+
+    // First append after clear: 1 entry.
+    await runner.run([stmt("SELECT b", 0, 8)], () => {}, { append: true });
+    expect(runner.getResults()).toHaveLength(1);
+
+    // Second append: 2 entries total.
+    await runner.run([stmt("SELECT c", 0, 8)], () => {}, { append: true });
+    expect(runner.getResults()).toHaveLength(2);
+  });
+
+  it("clear() is a no-op when results are already empty", () => {
+    const { runner } = makeRunner();
+    expect(runner.getResults()).toEqual([]);
+    expect(() => runner.clear()).not.toThrow();
+    expect(runner.getResults()).toEqual([]);
+  });
+
+  it("clear() while a run is in flight throws — guards against race", async () => {
+    let resolveRun: ((v: RunResult) => void) | null = null;
+    const adapter = makeAdapter(
+      () => new Promise<RunResult>((resolve) => { resolveRun = resolve; }),
+    );
+    const runner = new QueryRunner(async () => adapter);
+
+    const runPromise = runner.run([stmt("SELECT pg_sleep(10)", 0, 18)], () => {});
+    // Wait for run to be in flight.
+    await new Promise((r) => setTimeout(r, 5));
+    expect(runner.isRunning()).toBe(true);
+
+    expect(() => runner.clear()).toThrow(
+      /refused.*run is in-flight/,
+    );
+    try {
+      runner.clear();
+      throw new Error("expected throw");
+    } catch (e) {
+      expect((e as { constructor?: { name?: string } }).constructor?.name).toBe("Error");
+    }
+
+    // Let the in-flight run finish so the test cleans up.
+    if (resolveRun) {
+      resolveRun({ results: [{ columns: ["x"], rows: [], rowCount: 0, durationMs: 0 }] });
+    }
+    await runPromise;
+  });
+});

@@ -1125,7 +1125,7 @@ describe("TASK-606 — destructive confirm guard", () => {
     expect(runSpy).toHaveBeenCalledWith(
       expect.any(Array),
       expect.any(Function),
-      { append: true },
+      { append: true, clearOnStart: true },
     );
     expect(renderSpy).toHaveBeenCalledWith(
       expect.any(Array),
@@ -2509,6 +2509,182 @@ describe("TASK-004 — UnicDB.exportAllStructures wiring", () => {
     expect(entry!.when).toMatch(/viewItem == schema/);
   });
 });
+
+// =============================================================================
+// TASK-TABCLEAR-001 — editor Run path auto-clears previous result tabs before
+// running. Each new Run from `UnicDB.runQuery` starts with an empty tab strip
+// (no leftover from previous Runs). User feedback: "Cần thì chạy lại query để
+// có lại result" — explicit OK to lose old results. Console / CodeLens paths
+// keep default behavior (no clearOnStart).
+// =============================================================================
+describe("TASK-TABCLEAR-001 — runQuery auto-clears previous result tabs", () => {
+  let clearSpy: ReturnType<typeof vi.fn>;
+  let closeAllTabsSpy: ReturnType<typeof vi.fn>;
+  let runSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
+    state.confirmDestructive = undefined;
+    vi.resetModules();
+  });
+
+  async function seed(): Promise<void> {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "UnicDB.connections") {
+        return [
+          {
+            id: "c1",
+            name: "c",
+            driver: "postgres",
+            host: "h",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "UnicDB.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+
+    const connectionMgrMod = await import("./core/connectionManager");
+    const adapter: Partial<DbAdapter> = {
+      listTables: vi.fn().mockResolvedValue([]),
+      testConnection: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getAdapter",
+    ).mockResolvedValue(adapter as DbAdapter);
+
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue([]);
+    clearSpy = vi.spyOn(runnerMod.QueryRunner.prototype, "clear");
+
+    const panelMod = await import("./ui/resultsPanel");
+    // closeAllTabs is a public method — spy without replacing semantics.
+    closeAllTabsSpy = vi.spyOn(panelMod.ResultsPanel.prototype, "closeAllTabs");
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+  }
+
+  it("happy path: UnicDB.runQuery → runner.clear() AND panel.closeAllTabs() called before run", async () => {
+    await seed();
+    state.activeEditor = makeEditorHelper("SELECT 1;\nSELECT 2;") as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    // Both clear hooks fired exactly once for one run.
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+    expect(closeAllTabsSpy).toHaveBeenCalledTimes(1);
+    // Order: clear runs BEFORE runner.run (so streaming render sees appendBase=0).
+    const clearOrder = clearSpy.mock.invocationCallOrder[0]!;
+    const runOrder = runSpy.mock.invocationCallOrder[0]!;
+    expect(clearOrder).toBeLessThan(runOrder);
+  });
+
+  it("closeAllTabs is NOT called when the editor has no statements to run (no SQL)", async () => {
+    await seed();
+    state.activeEditor = makeEditorHelper("") as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    expect(clearSpy).not.toHaveBeenCalled();
+    expect(closeAllTabsSpy).not.toHaveBeenCalled();
+    expect(runSpy).not.toHaveBeenCalled();
+  });
+
+  it("regression: clearOnStart is passed via opts so the runner's accumulated results drop before streaming render", async () => {
+    await seed();
+    state.activeEditor = makeEditorHelper("SELECT 1;") as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    expect(runSpy).toHaveBeenCalledTimes(1);
+    const opts = runSpy.mock.calls[0]?.[2] as { append?: boolean; clearOnStart?: boolean } | undefined;
+    // The 3rd arg to QueryRunner.run is the opts object — clearOnStart=true
+    // threads through runStatements → runner.run so the runner itself can
+    // refuse any concurrent in-flight clear (defensive guard).
+    expect(opts?.clearOnStart).toBe(true);
+  });
+});
+
+/**
+ * Helper: build a fake editor for `state.activeEditor`. Lifted from
+ * TASK-MSEL describe block so the auto-clear describe block stays readable.
+ */
+function makeEditorHelper(
+  sql: string,
+  selections: Array<{
+    startLine: number;
+    startChar: number;
+    endLine: number;
+    endChar: number;
+  }> = [],
+): { document: unknown; selection: unknown; selections: unknown[]; insertSnippet: unknown } {
+  const lines = sql.split("\n");
+  function offsetAt(line: number, character: number): number {
+    let off = 0;
+    for (let i = 0; i < line; i++) off += lines[i]!.length + 1;
+    return off + character;
+  }
+  if (selections.length === 0) {
+    selections = [
+      { startLine: 0, startChar: 0, endLine: lines.length - 1, endChar: lines[lines.length - 1]!.length },
+    ];
+  }
+  const selObjs = selections.map((s) => {
+    const startOffset = offsetAt(s.startLine, s.startChar);
+    const endOffset = offsetAt(s.endLine, s.endChar);
+    const isEmpty = startOffset === endOffset;
+    return {
+      isEmpty,
+      active: { line: s.endLine, character: s.endChar },
+      start: { line: s.startLine, character: s.startChar },
+      end: { line: s.endLine, character: s.endChar },
+    };
+  });
+  return {
+    document: {
+      languageId: "sql",
+      getText: () => sql,
+      offsetAt: (p: { line: number; character: number }) => offsetAt(p.line, p.character),
+      positionAt: (offset: number) => {
+        let remaining = offset;
+        for (let i = 0; i < lines.length; i++) {
+          const lineLen = lines[i]!.length;
+          if (remaining <= lineLen) {
+            return { line: i, character: remaining };
+          }
+          remaining -= lineLen + 1;
+        }
+        return { line: lines.length - 1, character: lines[lines.length - 1]!.length };
+      },
+    },
+    selection: selObjs[0],
+    selections: selObjs,
+    insertSnippet: vi.fn().mockResolvedValue(undefined),
+  };
+}
 
 // =============================================================================
 // TASK-003 (cycle Z) — UnicDB.openConsole: command registration, package.json

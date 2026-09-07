@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.53.23] — 2026-09-07
+
+- Summary: Feature — auto-clear result-tab strip on each new Run (image #31). Pressing the editor Run button now wipes the accumulated Run tabs (Messages + each per-statement Run tab) so the result panel always starts empty — the new run's tabs build up fresh. Console panel and CodeLens runs keep the old "accumulate across runs" behavior because users explicitly asked that those historical contexts persist. Added `QueryRunner.clear()` (defensive throw if a run is in flight, so streaming append is never reset mid-flight), a `clearOnStart?: boolean` opt threaded from `runStatements` → `runner.run`, and an explicit `ResultsPanel.closeAllTabs()` call right before each editor Run. Per the user's note "Cần thì chạy lại query để có lại result" — close-to-clear is intentional; rerunning reproduces the prior results.
+- Files: src/core/queryRunner.ts (`clear()` method + `clearOnStart` opt honored in `run`), src/extension.ts (`runStatements` accepts `clearOnStart`, Run-path call site sets `true`, Console/CodeLens paths default `false`), src/ui/resultsPanel.ts (existing `closeAllTabs()` reused), src/core/__tests__/queryRunner.test.ts (+5 unit tests for `clear()`), src/extension.test.ts (+3 integration tests for TASK-TABCLEAR-001, TASK-606 assertion updated to include `clearOnStart: true`)
+- Verification: npm run typecheck ✅ · npm test ✅ (3787 passed / 2 skipped, 0 regressions) · UnicDB-1.53.23.vsix packaged
+
 ## [1.53.22] — 2026-09-07
 
 - Summary: Fix — lineBoundaries split CREATE ... AS <body> DDL: when running a multi-line CREATE OR REPLACE VIEW / CREATE TABLE AS / CREATE MATERIALIZED VIEW whose body starts with SELECT/WITH/VALUES on a new line (no terminator between AS and the body), the splitter was flushing the statement at the newline after AS — sending 'CREATE OR REPLACE VIEW v AS' (no body) to Postgres and producing 'syntax error at end of input' (image #30). Added an AS_BODY construct-stack frame, pushed only when CREATE ... AS <select-starter> is detected, that suppresses lineBoundaries inside the body while letting the terminating ; still pop and end the statement normally. CREATE FUNCTION ... AS $ ... $ and CREATE TYPE ... AS ENUM are unaffected (AS followed by $ / ENUM is not a select-starter, so no AS_BODY frame is pushed).

@@ -2748,7 +2748,15 @@ async function runQueryFromEditor(
     void vscode.window.showInformationMessage("UnicDB: không có statement để chạy.");
     return;
   }
-  await runStatements(mgr, runner, panel, statusBar, statements);
+  // TASK-TABCLEAR-001 — auto-clear: each new Run from the editor starts with
+  // an empty tab strip. The 10-tab cap from v1.53.17 bound the strip, but
+  // stale tabs from previous Runs still crowded the visible area until the
+  // user manually closed them. User feedback: "Cần thì chạy lại query để
+  // có lại result" — explicit OK to lose old results. CodeLens / Console
+  // paths don't pass the flag, so they keep history.
+  await runStatements(mgr, runner, panel, statusBar, statements, {
+    clearOnStart: true,
+  });
 }
 
 /** Run a specific statement (from CodeLens click). */
@@ -2922,9 +2930,21 @@ export async function runStatements(
   statements: ParsedStatement[],
   // TASK-BQF-001 / TASK-BQF-002 — optional opts threaded into QueryRunner.run
   // → adapter.runQuery. BQ honors them; other drivers ignore them.
-  opts: { useLegacySql?: boolean; pageSize?: number } = {},
+  // `clearOnStart` (TASK-TABCLEAR-001): true → reset runner's accumulated
+  // results + close every panel tab before running. Each Run starts fresh —
+  // no leftover tabs from previous Runs. Console / CodeLens callers leave it
+  // false to preserve history.
+  opts: { useLegacySql?: boolean; pageSize?: number; clearOnStart?: boolean } = {},
 ): Promise<void> {
   const active = mgr.getActive();
+  // TASK-TABCLEAR-001 — auto-clear at the start of the run (BEFORE confirm, so
+  // a cancelled dangerous-Statement also drops stale tabs). Refuses silently
+  // if a previous run is still in-flight (QueryRunner would throw below too);
+  // we just skip the clear in that case.
+  if (opts.clearOnStart === true && !runner.isRunning()) {
+    runner.clear();
+    panel.closeAllTabs();
+  }
   // TASK-606 — Confirm guard TRƯỚC mọi side-effect (kể cả busy state): cancel
   // huỷ toàn bộ lô, không statement nào được submit.
   // (review fix round C, Finding #3/#5) — pass the active dialect through so

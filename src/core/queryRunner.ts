@@ -262,6 +262,29 @@ export class QueryRunner {
   }
 
   /**
+   * Reset `this.results` thành rỗng — dùng khi caller muốn lô Run tiếp theo bắt
+   * đầu "sạch" (không thừa kế tabs/results từ lô trước). KHÔNG chạm vào run
+   * state (running flag, cancel, runGeneration, lastOnUpdate, results[i].status)
+   * — `run()` quản lý những thứ đó từ đầu nên reset ngoài luồng sẽ phá vỡ
+   * invariant "running" của nó. Đặc biệt: KHÔNG gọi khi đang có run in-flight
+   * (sẽ vô hiệu hóa các state index mà run loop đang thao tác).
+   *
+   * Dùng từ extension.ts Run path: clear() → panel.closeAllTabs() → runStatements
+   * để mỗi Run mới bắt đầu với tab strip rỗng.
+   */
+  clear(): void {
+    if (this.running) {
+      // Defensive — không nên xảy ra trong luồng bình thường (Run path check
+      // `runner.isRunning()` qua `ownsRun` trong runStatements), nhưng nếu có
+      // thì KHÔNG được phá vỡ trạng thái in-flight của run loop.
+      throw new Error(
+        "QueryRunner.clear() refused: a run is in-flight; cancel/wait first",
+      );
+    }
+    this.results = [];
+  }
+
+  /**
    * Chạy tuần tự statements. onUpdate được gọi SAU mỗi state change.
    * Trả về mảng StatementResult cuối cùng (cùng reference với getResults()).
    */
