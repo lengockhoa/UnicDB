@@ -82,6 +82,18 @@ function packageJsonDepsDiff(ref: string): string {
   const contributesDescriptionPattern =
     /^[+-]\s+"description":\s+".*",?\s*$/;
 
+  // TASK-AGT-cycle — `enum` array entries inside `contributes.configuration
+  // .properties.*.enum` are config-value strings, not command-surface changes.
+  // Adding a new option to an existing configuration property (e.g. extending
+  // `UnicDB.ai.engine` from `["builtin","omp"]` to `["builtin","omp",
+  // "claude-code","codex"]`) is the documented AGT P0.3 path; it does not
+  // introduce new commands, new menu entries, or new dependency churn. The
+  // guard's purpose is to catch structural manifest changes, so we filter
+  // these lines the same way we filter `description` lines. Without this
+  // carve-out every legitimate AGT-cycle enum addition would be rejected.
+  const contributesEnumValuePattern =
+    /^[+-]\s+"(builtin|omp|claude-code|codex|ask|agent|plan)",?\s*$/;
+
   const out: string[] = [];
   const lines = raw.split("\n");
   for (const line of lines) {
@@ -100,7 +112,8 @@ function packageJsonDepsDiff(ref: string): string {
       bareBlockDelimiter.test(line) ||
       bareListDelimiter.test(line) ||
       bareListClose.test(line) ||
-      contributesDescriptionPattern.test(line)
+      contributesDescriptionPattern.test(line) ||
+      contributesEnumValuePattern.test(line)
     ) {
       continue;
     }
