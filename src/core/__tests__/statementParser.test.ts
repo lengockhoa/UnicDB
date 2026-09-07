@@ -897,3 +897,80 @@ describe("statementParser — extractIdentifierReferences", () => {
     expect(orders).toBeDefined();
   });
 });
+
+// =============================================================================
+// splitStatements lineBoundaries — newline-as-boundary mode for the editor
+// Cmd+Enter path. Without `;`, queries on separate lines should still split
+// when the next line starts with a statement-starter keyword. Default mode
+// (no flag) is byte-identical to the prior behavior — these tests pin both.
+// =============================================================================
+describe("splitStatements — lineBoundaries option", () => {
+  it("default mode (no flag): 3 SELECT trên 3 dòng KHÔNG có `;` → 1 statement (legacy behavior)", () => {
+    // Regression pin: callers that don't opt in keep the old behavior, so
+    // QueryRunner / CodeLens / completion paths see no change.
+    const sql = "SELECT 1\nSELECT 2\nSELECT 3";
+    expect(splitStatements(sql)).toHaveLength(1);
+  });
+
+  it("lineBoundaries:true: 3 SELECT trên 3 dòng không `;` → split thành 3 statement", () => {
+    const sql = "SELECT 1\nSELECT 2\nSELECT 3";
+    const out = splitStatements(sql, undefined, { lineBoundaries: true });
+    expect(out).toHaveLength(3);
+    expect(out.map((s) => s.text.trim())).toEqual([
+      "SELECT 1",
+      "SELECT 2",
+      "SELECT 3",
+    ]);
+  });
+
+  it("lineBoundaries:true: mixed DDL + DML trên các dòng → split khi gặp keyword mới", () => {
+    const sql = "CREATE TABLE t (id INT)\nSELECT * FROM t";
+    const out = splitStatements(sql, undefined, { lineBoundaries: true });
+    expect(out).toHaveLength(2);
+    expect(out.map((s) => s.text.trim())).toEqual([
+      "CREATE TABLE t (id INT)",
+      "SELECT * FROM t",
+    ]);
+  });
+
+  it("lineBoundaries:true: BEGIN...END block KHÔNG bị split dù các SELECT bên trong có newline", () => {
+    // BEGIN opens a block — blockDepth > 0, so line-boundary flush must be
+    // suppressed inside the block.
+    const sql = "BEGIN\n SELECT 1;\n SELECT 2;\nEND";
+    const out = splitStatements(sql, undefined, { lineBoundaries: true });
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe(sql);
+  });
+
+  it("lineBoundaries:true: `;` vẫn là boundary ưu tiên — `;\\n` không tạo statement rỗng", () => {
+    // After `;`, stmtStart === -1 so the line-aware check is a no-op for
+    // the trailing `\n`. We must not emit a zero-length statement.
+    const sql = "SELECT 1;\nSELECT 2;\n";
+    const out = splitStatements(sql, undefined, { lineBoundaries: true });
+    expect(out).toHaveLength(2);
+    expect(out.map((s) => s.text.trim())).toEqual(["SELECT 1", "SELECT 2"]);
+  });
+
+  it("lineBoundaries:true: dòng tiếp theo KHÔNG phải keyword (vd identifier) → không split", () => {
+    // Negative case: nếu dòng sau chỉ là một identifier bình thường (không phải
+    // statement-starter keyword), ta KHÔNG được split — đây là trường hợp
+    // UNION/INTERSECT sẽ rơi vào (UNION không thuộc start-keyword set).
+    // Lưu ý: nếu user có "SELECT 1\nUNION\nSELECT 2" thì split vẫn xảy ra
+    // ở newline TRƯỚC SELECT thứ 2 (xem test "CREATE+SELECT" ở trên). Test
+    // này pin rằng không có keyword start → giữ nguyên 1 statement.
+    const sql = "SELECT 1\nUNION\nFOO";
+    const out = splitStatements(sql, undefined, { lineBoundaries: true });
+    expect(out).toHaveLength(1);
+  });
+
+  it("lineBoundaries:true: comment line giữa 2 SELECT vẫn split (newline trước SELECT-2 là boundary)", () => {
+    // -- comment giữa newline → dòng sau vẫn bắt đầu bằng SELECT → vẫn split.
+    // Statement đầu giữ nguyên text bao gồm comment (đúng behavior của parser
+    // khi gặp `;` hoặc newline-boundary).
+    const sql = "SELECT 1\n-- a comment\nSELECT 2";
+    const out = splitStatements(sql, undefined, { lineBoundaries: true });
+    expect(out).toHaveLength(2);
+    expect(out[0].text.trim()).toBe("SELECT 1\n-- a comment");
+    expect(out[1].text.trim()).toBe("SELECT 2");
+  });
+});

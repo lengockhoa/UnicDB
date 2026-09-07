@@ -2200,6 +2200,273 @@ describe("TASK-005 — runQueryFromEditor cursor mode", () => {
 });
 
 // =============================================================================
+// TASK-MSEL — `UnicDB.runQuery` with multi-selection. Cmd+Enter phải chạy TẤT CẢ
+// các query được bôi đen (multi-cursor / disjoint selections), không chỉ
+// selection đầu tiên. Trước fix này, code chỉ đọc `editor.selection` (primary)
+// nên 3 vùng selection rời rạc chỉ chạy được 1.
+// =============================================================================
+describe("TASK-MSEL — runQueryFromEditor multi-selection", () => {
+  let runSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
+    state.confirmDestructive = undefined;
+    vi.resetModules();
+  });
+
+  /** Seed an active Postgres connection so runQuery skips the QuickPick. */
+  async function seedConnectionAndRunner(): Promise<void> {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "UnicDB.connections") {
+        return [
+          {
+            id: "c1",
+            name: "c",
+            driver: "postgres",
+            host: "h",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "UnicDB.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+
+    const connectionMgrMod = await import("./core/connectionManager");
+    const adapter: Partial<DbAdapter> = {
+      listTables: vi.fn().mockResolvedValue([]),
+      testConnection: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getAdapter",
+    ).mockResolvedValue(adapter as DbAdapter);
+
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue([]);
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+  }
+
+  /**
+   * Build a fake editor whose `selection` (singular) is the primary selection,
+   * and `selections` (plural) is the full array — multi-cursor aware.
+   *
+   * `offsetAt` mirrors VS Code's behavior: each position is {line, character}
+   * and we compute the offset by summing prior line lengths plus the column.
+   */
+  function makeEditor(
+    sql: string,
+    selections: Array<{
+      startLine: number;
+      startChar: number;
+      endLine: number;
+      endChar: number;
+    }>,
+  ): { document: unknown; selection: unknown; selections: unknown[]; insertSnippet: unknown } {
+    const lines = sql.split("\n");
+    function offsetAt(line: number, character: number): number {
+      let off = 0;
+      for (let i = 0; i < line; i++) off += lines[i]!.length + 1;
+      return off + character;
+    }
+    const selObjs = selections.map((s) => {
+      const startOffset = offsetAt(s.startLine, s.startChar);
+      const endOffset = offsetAt(s.endLine, s.endChar);
+      const isEmpty = startOffset === endOffset;
+      return {
+        isEmpty,
+        active: { line: s.endLine, character: s.endChar },
+        start: { line: s.startLine, character: s.startChar },
+        end: { line: s.endLine, character: s.endChar },
+      };
+    });
+    return {
+      document: {
+        languageId: "sql",
+        getText: () => sql,
+        offsetAt: (p: { line: number; character: number }) =>
+          offsetAt(p.line, p.character),
+        positionAt: (offset: number) => {
+          let remaining = offset;
+          for (let i = 0; i < lines.length; i++) {
+            const lineLen = lines[i]!.length;
+            if (remaining <= lineLen) {
+              return { line: i, character: remaining };
+            }
+            remaining -= lineLen + 1;
+          }
+          return { line: lines.length - 1, character: lines[lines.length - 1]!.length };
+        },
+      },
+      selection: selObjs[0],
+      selections: selObjs,
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  it("#1 happy path: 3 disjoint selections (mỗi cái 1 statement) → chạy cả 3", async () => {
+    await seedConnectionAndRunner();
+    const sql = "SELECT 1;\nSELECT 2;\nSELECT 3;";
+    // offsets: SELECT 1; = 0..9, SELECT 2; = 10..19, SELECT 3; = 20..29
+    state.activeEditor = makeEditor(sql, [
+      { startLine: 0, startChar: 0, endLine: 0, endChar: 9 },
+      { startLine: 1, startChar: 0, endLine: 1, endChar: 9 },
+      { startLine: 2, startChar: 0, endLine: 2, endChar: 9 },
+    ]) as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    expect(runSpy).toHaveBeenCalled();
+    const passed = runSpy.mock.calls[0]?.[0] as ParsedStatement[];
+    expect(passed.length).toBe(3);
+    expect(passed.map((p) => p.text.trim())).toEqual([
+      "SELECT 1",
+      "SELECT 2",
+      "SELECT 3",
+    ]);
+  });
+
+  it("#2 mixed: 1 selection range (2 statements) + 1 cursor (statement thứ 3) → chạy cả 3", async () => {
+    await seedConnectionAndRunner();
+    const sql = "SELECT 1;\nSELECT 2;\nSELECT 3;";
+    state.activeEditor = makeEditor(sql, [
+      // Range covering SELECT 1; + SELECT 2; (multi-statement block).
+      { startLine: 0, startChar: 0, endLine: 1, endChar: 9 },
+      // Cursor on SELECT 3 (empty selection).
+      { startLine: 2, startChar: 3, endLine: 2, endChar: 3 },
+    ]) as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    expect(runSpy).toHaveBeenCalled();
+    const passed = runSpy.mock.calls[0]?.[0] as ParsedStatement[];
+    expect(passed.length).toBe(3);
+    expect(passed.map((p) => p.text.trim())).toEqual([
+      "SELECT 1",
+      "SELECT 2",
+      "SELECT 3",
+    ]);
+  });
+
+  it("#3 multi-cursor only (no text selected, 3 cursors trên 3 statements khác nhau) → mỗi cursor chạy statement của nó", async () => {
+    await seedConnectionAndRunner();
+    const sql = "SELECT 1;\nSELECT 2;\nSELECT 3;";
+    // offsets: cursor thứ nhất ở 'S' (offset 0), thứ hai ở 'S' của line 2 (offset 10), thứ ba ở 'S' của line 3 (offset 20).
+    state.activeEditor = makeEditor(sql, [
+      { startLine: 0, startChar: 0, endLine: 0, endChar: 0 },
+      { startLine: 1, startChar: 0, endLine: 1, endChar: 0 },
+      { startLine: 2, startChar: 0, endLine: 2, endChar: 0 },
+    ]) as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    expect(runSpy).toHaveBeenCalled();
+    const passed = runSpy.mock.calls[0]?.[0] as ParsedStatement[];
+    expect(passed.length).toBe(3);
+    expect(passed.map((p) => p.text.trim())).toEqual([
+      "SELECT 1",
+      "SELECT 2",
+      "SELECT 3",
+    ]);
+  });
+
+  it("#4 edge: tất cả selections trỏ vào whitespace/comment → không có statement để chạy, không gọi runner", async () => {
+    await seedConnectionAndRunner();
+    const sql = "-- just a comment\n\n  \n";
+    state.activeEditor = makeEditor(sql, [
+      { startLine: 1, startChar: 0, endLine: 1, endChar: 0 },
+      { startLine: 2, startChar: 0, endLine: 2, endChar: 0 },
+    ]) as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    expect(runSpy).not.toHaveBeenCalled();
+  });
+
+  it("#5 regression: single non-empty selection covering 2 statements → vẫn chạy cả 2 (không phá behavior cũ)", async () => {
+    await seedConnectionAndRunner();
+    const sql = "SELECT 1;\nSELECT 2;";
+    // Drag-select both statements as one continuous range.
+    state.activeEditor = makeEditor(sql, [
+      { startLine: 0, startChar: 0, endLine: 1, endChar: 9 },
+    ]) as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    expect(runSpy).toHaveBeenCalled();
+    const passed = runSpy.mock.calls[0]?.[0] as ParsedStatement[];
+    expect(passed.length).toBe(2);
+    expect(passed.map((p) => p.text.trim())).toEqual(["SELECT 1", "SELECT 2"]);
+  });
+
+  it("#6 user-reported scenario: 3 newline-separated SELECT queries KHÔNG có dấu `;` → chạy cả 3 (từng là bug chính)", async () => {
+    await seedConnectionAndRunner();
+    // Đây chính là kịch bản user báo: 3 query nằm trên 3 dòng liên tiếp, không có `;` ở cuối.
+    // Trước fix, splitStatements coi cả khối là 1 statement → executeAll chạy 1 (broken SQL) rồi huỷ phần còn lại.
+    const sql = "SELECT 1\nSELECT 2\nSELECT 3";
+    // Block selection: kéo từ line 0 col 0 đến line 2 col 8 (hết "SELECT 3").
+    state.activeEditor = makeEditor(sql, [
+      { startLine: 0, startChar: 0, endLine: 2, endChar: 8 },
+    ]) as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    expect(runSpy).toHaveBeenCalled();
+    const passed = runSpy.mock.calls[0]?.[0] as ParsedStatement[];
+    expect(passed.length).toBe(3);
+    expect(passed.map((p) => p.text.trim())).toEqual([
+      "SELECT 1",
+      "SELECT 2",
+      "SELECT 3",
+    ]);
+  });
+
+  it("#7 mixed DML/DDL on separate lines (CREATE + SELECT) → chạy cả 2 dù không có `;`", async () => {
+    await seedConnectionAndRunner();
+    const sql = "CREATE TABLE t (id INT)\nSELECT * FROM t";
+    state.activeEditor = makeEditor(sql, [
+      { startLine: 0, startChar: 0, endLine: 1, endChar: 16 },
+    ]) as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    expect(runSpy).toHaveBeenCalled();
+    const passed = runSpy.mock.calls[0]?.[0] as ParsedStatement[];
+    expect(passed.length).toBe(2);
+    expect(passed.map((p) => p.text.trim())).toEqual([
+      "CREATE TABLE t (id INT)",
+      "SELECT * FROM t",
+    ]);
+  });
+});
+
+// =============================================================================
 // TASK-004 — UnicDB.exportAllStructures wiring smoke: command id registered by
 // activate(), package.json contributes.commands declares it, activationEvents
 // has the onCommand entry, contributes.menus["view/item/context"] has an

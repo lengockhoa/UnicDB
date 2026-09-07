@@ -437,8 +437,9 @@ interface SplitResult {
 export function splitStatements(
   sql: string,
   dialect?: SqlDialect,
+  opts?: { lineBoundaries?: boolean },
 ): ParsedStatement[] {
-  return splitStatementsInternal(sql, dialect).statements;
+  return splitStatementsInternal(sql, dialect, opts).statements;
 }
 
 /**
@@ -457,9 +458,19 @@ export function debugFinalConstructStackSizeForTest(
 function splitStatementsInternal(
   sql: string,
   dialect?: SqlDialect,
+  opts?: { lineBoundaries?: boolean },
 ): SplitResult {
   const useBackslashEscape = dialect === "mysql";
   const goEnabled = dialect === "mssql";
+  const lineBoundaries = opts?.lineBoundaries === true;
+  // Line-aware mode: at top-level (no open BEGIN/IF/CASE/...), a newline
+  // followed by one of these keywords on the next line is treated as a
+  // statement boundary — same role as `;`, but for newline-separated
+  // queries that the user forgot to terminate. Conservative set: only
+  // statement-STARTER keywords. Operators like `UNION` / `INTERSECT` /
+  // `JOIN` are deliberately absent — those continue the current SELECT,
+  // they don't start a new one.
+  const lineStartKeywords = LINE_START_STATEMENT_KEYWORDS;
 
   const out: ParsedStatement[] = [];
   const n = sql.length;
@@ -585,6 +596,41 @@ function splitStatementsInternal(
       }
       // Reset cho statement tiếp theo — bắt đầu SAU `;`.
       stmtStart = -1;
+    } else if (
+      // Line-aware mode: at top-level, a newline followed by a
+      // statement-starter keyword (SELECT/INSERT/...) on the next line is
+      // a soft boundary for newline-separated queries the user forgot to
+      // terminate with `;`. Only fires when there IS a current statement
+      // (stmtStart !== -1) — empty trailing lines must not produce a
+      // zero-length statement.
+      lineBoundaries &&
+      state.kind === TokenKind.Code &&
+      blockDepth === 0 &&
+      stmtStart !== -1 &&
+      sql[i] === "\n"
+    ) {
+      // Look at the next non-whitespace token on the next line.
+      let j = i + 1;
+      while (j < n && isWhitespace(sql[j])) j++;
+      let kwEnd = j;
+      while (kwEnd < n && isIdentChar(sql[kwEnd])) kwEnd++;
+      const head = sql.substring(j, kwEnd).toUpperCase();
+      if (lineStartKeywords.has(head)) {
+        const candidateStart = stmtStart;
+        const candidateEnd = i; // exclusive — boundary is BEFORE the newline
+        if (
+          candidateStart !== -1 &&
+          candidateEnd > candidateStart &&
+          sql.substring(candidateStart, candidateEnd).trim().length > 0
+        ) {
+          out.push({
+            text: sql.substring(candidateStart, candidateEnd),
+            start: candidateStart,
+            end: candidateEnd,
+          });
+        }
+        stmtStart = -1;
+      }
     } else if (
       state.kind === TokenKind.Code &&
       blockDepth === 0 &&
@@ -795,6 +841,49 @@ export function statementAtCursor(
 function isWhitespace(ch: string): boolean {
   return ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
 }
+
+/** Ident char set — matches what the rest of the parser accepts in identifiers. */
+function isIdentChar(ch: string): boolean {
+  return (
+    (ch >= "a" && ch <= "z") ||
+    (ch >= "A" && ch <= "Z") ||
+    (ch >= "0" && ch <= "9") ||
+    ch === "_"
+  );
+}
+
+/**
+ * Statement-starter keywords for line-aware mode (see `splitStatements`).
+ * A newline followed by one of these at top-level (no open BEGIN/IF/CASE/
+ * ...) marks a soft statement boundary — same role as `;` for users who
+ * forgot to terminate. Conservative set: only keywords that *start* a
+ * statement. `WITH` is intentionally absent — it usually begins a CTE
+ * (sub-clause of the next SELECT/INSERT/...), not a fresh statement.
+ */
+const LINE_START_STATEMENT_KEYWORDS: ReadonlySet<string> = new Set([
+  "SELECT",
+  "INSERT",
+  "UPDATE",
+  "DELETE",
+  "MERGE",
+  "CREATE",
+  "DROP",
+  "ALTER",
+  "TRUNCATE",
+  "BEGIN",
+  "COMMIT",
+  "ROLLBACK",
+  "SAVEPOINT",
+  "EXPLAIN",
+  "ANALYZE",
+  "VACUUM",
+  "GRANT",
+  "REVOKE",
+  "COPY",
+  "LOCK",
+  "CALL",
+  "VALUES",
+]);
 
 // ---- sqlToRun ----------------------------------------------------------------
 

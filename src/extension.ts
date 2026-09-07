@@ -34,7 +34,12 @@ import { registerDdlView } from "./ui/ddlView";
 import { UnicDBCodeLensProvider } from "./ui/codeLensProvider";
 import { registerTableCommands } from "./ui/tableCommands";
 import { ConnectionForm } from "./ui/connectionForm";
-import { sqlToRun, type SqlDialect } from "./core/statementParser";
+import {
+  splitStatements,
+  sqlToRun,
+  statementAtCursor,
+  type SqlDialect,
+} from "./core/statementParser";
 import { stampBqDialect } from "./core/bqDialect";
 import { stampStatementKind } from "./core/queryRunner";
 import {
@@ -2509,19 +2514,65 @@ async function runQueryFromEditor(
   }
 
   const sql = editor.document.getText();
-  const selection = editor.selection;
-  const cursor = selection.active;
-  const cursorOffset = editor.document.offsetAt(cursor);
-  const sel = !selection.isEmpty
-    ? {
-        start: editor.document.offsetAt(selection.start),
-        end: editor.document.offsetAt(selection.end),
+  const dialect = toSqlDialect(mgr.getActive()?.driver);
+
+  // Multi-selection: collect SQL from EVERY active selection range so Cmd+Enter
+  // runs every highlighted query in one batch. Previously this function only
+  // looked at `editor.selection` (the primary one), so 3 disjoint highlighted
+  // queries collapsed to the first and the other 2 silently dropped.
+  //   - Non-empty selection → take the SQL in that range verbatim.
+  //   - Empty selection (cursor only, multi-cursor on a different line) →
+  //     take the statement at that cursor.
+  // Single-selection (the common case) matches the prior behavior: a range
+  // becomes selection-mode, a cursor becomes statement-at-cursor.
+  // `editor.selections` is the real VS Code API; the test mock uses
+  // `selection` only, so fall back to `[editor.selection]` for compat.
+  const allSelections =
+    editor.selections && editor.selections.length > 0
+      ? editor.selections
+      : [editor.selection];
+  const pieces: string[] = [];
+  for (const sel of allSelections) {
+    if (!sel.isEmpty) {
+      const start = editor.document.offsetAt(sel.start);
+      const end = editor.document.offsetAt(sel.end);
+      pieces.push(sql.substring(start, end));
+    } else {
+      const found = statementAtCursor(
+        sql,
+        editor.document.offsetAt(sel.active),
+        dialect,
+      );
+      if (found) {
+        // Use the [start, end] range instead of `.text` so the trailing
+        // terminator (`;`, etc.) is included — otherwise multiple cursor
+        // pieces get joined without separators and `splitStatements` sees
+        // a single statement.
+        pieces.push(sql.substring(found.start, found.end));
       }
-    : undefined;
+    }
+  }
+
+  // Join with newlines so `splitStatements` gets clean boundary whitespace
+  // between concatenated selection snippets. Trim once at the end so the
+  // "no statement" guard below is robust against whitespace-only inputs.
+  const combined = pieces.join("\n").trim();
+  if (combined.length === 0) {
+    void vscode.window.showInformationMessage("UnicDB: không có statement để chạy.");
+    return;
+  }
+
   // (review fix round C, Finding #3) — pass the active connection's real
   // dialect through so MSSQL `GO` batch separators / MySQL backslash string
   // escaping actually apply instead of always splitting as if Postgres.
-  const { statements } = sqlToRun(sql, sel, cursorOffset, toSqlDialect(mgr.getActive()?.driver));
+  // Line-aware mode (NEW): a newline followed by a statement-starter keyword
+  // (SELECT/INSERT/CREATE/...) at top-level is treated as a soft boundary —
+  // same role as `;` for users who forgot to terminate. Without this, the
+  // common "3 queries on 3 lines, no `;`" paste/highlight still collapses
+  // to one statement and `executeAll` cancels the rest after the first
+  // parses as broken SQL — that's the exact "3 highlighted, only 1 runs"
+  // bug the user reported.
+  const statements = splitStatements(combined, dialect, { lineBoundaries: true });
   if (statements.length === 0) {
     void vscode.window.showInformationMessage("UnicDB: không có statement để chạy.");
     return;
