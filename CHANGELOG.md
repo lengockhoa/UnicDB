@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.22] — 2026-09-07
+
+- Summary: Fix — lineBoundaries split CREATE ... AS <body> DDL: when running a multi-line CREATE OR REPLACE VIEW / CREATE TABLE AS / CREATE MATERIALIZED VIEW whose body starts with SELECT/WITH/VALUES on a new line (no terminator between AS and the body), the splitter was flushing the statement at the newline after AS — sending 'CREATE OR REPLACE VIEW v AS' (no body) to Postgres and producing 'syntax error at end of input' (image #30). Added an AS_BODY construct-stack frame, pushed only when CREATE ... AS <select-starter> is detected, that suppresses lineBoundaries inside the body while letting the terminating ; still pop and end the statement normally. CREATE FUNCTION ... AS $ ... $ and CREATE TYPE ... AS ENUM are unaffected (AS followed by $ / ENUM is not a select-starter, so no AS_BODY frame is pushed).
+- Files: src/core/statementParser.ts (AS_BODY ConstructKind + pendingCreateAs flag + peekNextKeyword + isCreateAsBodyStarter + countAsBodies + EOF cleanup), src/core/__tests__/statementParser.test.ts (+10 regression tests)
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.22.vsix packaged
+
+---
+
 ## [1.53.21] — 2026-09-07
 
 - Summary: DataGrip-parity active-schema selection for PostgreSQL — pin a schema per connection and every SQL run is wrapped with `SET search_path TO "<schema>", public;` so `CREATE FUNCTION`, unqualified `SELECT`, etc. land in the chosen schema instead of defaulting to `public`. Adds the `UnicDB.selectActiveSchema` command (single-select QuickPick over `listSchemas(true)`, current pin sticky, "no pinned schema" reset option), a dedicated `$(symbol-namespace)` status bar chip next to the connection chip, per-workspace persistence in `workspaceState` (key `unicDb.activeSchema.<connectionId>`), and a dynamic wrap (re-reads the pin on every `runQuery` so a picker switch takes effect on the very next run — no reconnect). `mysql`/`mssql`/`bigquery` drivers are untouched; probe adapters used by add/edit validation are skipped.
