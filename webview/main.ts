@@ -301,6 +301,14 @@ let headerText = "";
 let results: StatementResult[] = [];
 let busy = false;
 let activeTab = 0;
+/** Maximum number of tabs in the results strip (includes the Messages tab).
+ *  Beyond this, the oldest result tabs are dropped from the visible strip —
+ *  the underlying `results` entries are kept so closeTab, distinct caches
+ *  and the `activeTab` index remain consistent. Mirrors the pattern used by
+ *  CONSOLE_DRAFTS_MAX_TABS in src/ui/consolePanelMessages.ts. */
+const MAX_TABS = 10;
+/** Maximum number of RESULT tabs (excludes the Messages tab). */
+const MAX_RESULT_TABS = MAX_TABS - 1;
 /** TASK-007 (cycle Y) — typed dialect from the latest state message. Set
  *  preferentially; `detectDialectFromHeader` stays the fallback for states
  *  that omit it (older hosts, hand-built test headers). */
@@ -1207,7 +1215,48 @@ function showTabMenu(tabEl: HTMLButtonElement, index: number, x: number, y: numb
 
 function rebuildTabs(tabsEl: HTMLDivElement): void {
   tabsEl.innerHTML = "";
-  results.forEach((r, i) => {
+  // Cap visible result tabs to the most-recent MAX_RESULT_TABS entries.
+  // Older entries stay in `results` (so the host-side cache + closeTab
+  // index paths still work), but they are not surfaced in the strip.
+  const startIdx = Math.max(0, results.length - MAX_RESULT_TABS);
+  // Visible order: Messages FIRST, then result tabs in REVERSE chronological
+  // order (most recent first). Each entry carries its canonical
+  // `resultsIndex` — for Messages this is the sentinel `results.length`,
+  // matching the activeTab convention used by renderActivePanel below.
+  // This way the click/close/menu handlers keep using the real index even
+  // though the visible order is reversed.
+  type DisplayEntry = { resultsIndex: number };
+  const displayEntries: DisplayEntry[] = [{ resultsIndex: results.length }]; // Messages
+  for (let i = results.length - 1; i >= startIdx; i--) {
+    displayEntries.push({ resultsIndex: i });
+  }
+  const hasErrors = results.some((r) => r.status === "error");
+
+  displayEntries.forEach((entry) => {
+    const i = entry.resultsIndex;
+    if (i === results.length) {
+      // Messages tab — first in the strip.
+      const msgTab = document.createElement("button");
+      msgTab.className = "UnicDB-tab" + (results.length === activeTab ? " UnicDB-tab-active" : "");
+      msgTab.textContent = `Messages${hasErrors ? " ⚠" : ""}`;
+      // Native tooltip + CSS instant tooltip (mirrors the toolbar button
+      // pattern). Hover text explains the purpose even when no errors.
+      const msgTabTip = hasErrors
+        ? "Messages — open the messages panel (errors / warnings from the most recent queries)"
+        : "Messages — open the messages panel";
+      msgTab.title = msgTabTip;
+      msgTab.setAttribute("data-tooltip", msgTabTip);
+      msgTab.setAttribute("aria-label", msgTabTip);
+      msgTab.addEventListener("click", () => {
+        if (activeTab === results.length) return;
+        activeTab = results.length;
+        render();
+      });
+      tabsEl.appendChild(msgTab);
+      return;
+    }
+    const r = results[i];
+    if (!r) return;
     const tab = document.createElement("button");
     tab.className = "UnicDB-tab" + (i === activeTab ? " UnicDB-tab-active" : "");
     if (r.status === "error") tab.classList.add("UnicDB-tab-error");
@@ -1249,25 +1298,6 @@ function rebuildTabs(tabsEl: HTMLDivElement): void {
     });
     tabsEl.appendChild(tab);
   });
-  // Messages tab.
-  const msgTab = document.createElement("button");
-  msgTab.className = "UnicDB-tab" + (results.length === activeTab ? " UnicDB-tab-active" : "");
-  const hasErrors = results.some((r) => r.status === "error");
-  msgTab.textContent = `Messages${hasErrors ? " ⚠" : ""}`;
-  // Native tooltip + CSS instant tooltip (mirrors the toolbar button
-  // pattern). Hover text explains the purpose even when no errors.
-  const msgTabTip = hasErrors
-    ? "Messages — open the messages panel (errors / warnings from the most recent queries)"
-    : "Messages — open the messages panel";
-  msgTab.title = msgTabTip;
-  msgTab.setAttribute("data-tooltip", msgTabTip);
-  msgTab.setAttribute("aria-label", msgTabTip);
-  msgTab.addEventListener("click", () => {
-    if (activeTab === results.length) return;
-    activeTab = results.length;
-    render();
-  });
-  tabsEl.appendChild(msgTab);
 }
 
 function renderActivePanel(): void {
