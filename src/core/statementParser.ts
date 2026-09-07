@@ -227,6 +227,45 @@ function startNextToken(
 }
 
 /**
+ * Peek keyword đầu tiên ở vị trí `fromIndex` trở đi — bỏ qua whitespace + comment,
+ * đọc một run identifier. Trả về chuỗi UPPERCASE, hoặc chuỗi rỗng nếu không
+ * tìm thấy identifier (vd gặp `;`, `(`, `$$`, EOF).
+ *
+ * Chỉ dùng để peek-next-sau-AS trong phát hiện `CREATE ... AS <body>`. KHÔNG dùng
+ * cho mục đích khác — peek chỉ 1 token và không tránh được mọi false-friend (vd
+ * identifier tên `select` thay vì keyword), nhưng với bộ select-starter
+ * conservative (`SELECT`/`WITH`/`VALUES`/`TABLE`) thì đủ an toàn trong thực tế.
+ */
+function peekNextKeyword(sql: string, fromIndex: number): string {
+  const j = skipWhitespaceAndComments(sql, fromIndex);
+  const n = sql.length;
+  if (j >= n) return "";
+  const first = sql[j];
+  if (!isIdStart(first)) return "";
+  let k = j + 1;
+  while (k < n && isIdContinue(sql[k])) k += 1;
+  return sql.substring(j, k).toUpperCase();
+}
+
+/**
+ * Các keyword mở đầu body của `CREATE ... AS <...>` — chỉ những keyword mà
+ * Postgres chấp nhận sau `AS` trong CREATE VIEW / CREATE TABLE AS / CREATE
+ * MATERIALIZED VIEW:
+ *   - `SELECT`        — view body thường, table-from-select
+ *   - `WITH`          — CTE-prefixed SELECT
+ *   - `VALUES`        — `CREATE TABLE t AS VALUES (1), (2)` (Postgres 14+ edge)
+ *   - `TABLE`         — `CREATE TABLE u AS TABLE v` (rare, nhưng hợp lệ)
+ * Keyword `AS` theo sau bởi bất kỳ keyword nào khác (vd `ENUM`, `$$`) sẽ KHÔNG
+ * được coi là body — chỉ là column alias hoặc function-dollar-quote, splitter
+ * xử lý như code bình thường.
+ */
+function isCreateAsBodyStarter(kw: string): boolean {
+  return (
+    kw === "SELECT" || kw === "WITH" || kw === "VALUES" || kw === "TABLE"
+  );
+}
+
+/**
  * Nếu tại `i` bắt đầu 1 dollar-quote tag hợp lệ (`$$` hoặc `$identifier$`),
  * trả về chuỗi tag (bao gồm cả 2 dấu `$`). Ngược lại null.
  */
@@ -267,8 +306,18 @@ function isIdContinue(ch: string): boolean {
  * Construct mở bởi từ khoá (case-insensitive) — chỉ `BEGIN` tăng block depth;
  * `IF`/`CASE`/`LOOP`/`WHILE`/`FOR` mở construct riêng và CHỈ `END` của chúng đóng,
  * KHÔNG chạm vào block depth của `BEGIN...END`.
+ *
+ * `AS_BODY` (cycle S bugfix): pseudo-frame pushed khi parser thấy
+ * `CREATE [OR REPLACE] [MATERIALIZED] [VIEW|TABLE|...] AS <select-starter>`.
+ * Mục đích DUY NHẤT là chặn `lineBoundaries` (newline-as-boundary) bên trong
+ * view/materialized-view/CTE-table body — vì `SELECT` / `WITH` / `VALUES` /
+ * `TABLE` đứng đầu dòng tiếp theo là line-start keyword nên không có guard,
+ * `CREATE OR REPLACE VIEW ... AS\nSELECT ...` bị cắt thành 2 statement (đầu
+ * tiên chỉ còn `CREATE OR REPLACE VIEW v AS` — invalid SQL → Postgres trả
+ * `syntax error at end of input`). Frame KHÔNG ảnh hưởng `;`-boundary —
+ * `;` cuối body vẫn flush bình thường và pop frame.
  */
-type ConstructKind = "BLOCK" | "IF" | "CASE" | "LOOP";
+type ConstructKind = "BLOCK" | "IF" | "CASE" | "LOOP" | "AS_BODY";
 
 /**
  * TASK-004 C1: phân biệt `BEGIN` transaction-control (`BEGIN;`, `BEGIN
@@ -490,6 +539,11 @@ function splitStatementsInternal(
   // Cờ: keyword vừa xử lý là `END` — keyword kế tiếp (IF/CASE/LOOP) là phần của
   // cùng 1 cụm `END IF`/`END CASE`/`END LOOP`, KHÔNG mở construct mới.
   let prevWasEnd = false;
+  // Cờ (cycle S bugfix): true sau khi gặp keyword `CREATE`, false sau khi gặp
+  // `AS` (peek-next đã xử lý) hoặc `;` (statement boundary) hoặc EOF. Dùng để
+  // nhận biết `CREATE ... AS <select-starter>` và push frame `AS_BODY` — suppress
+  // lineBoundaries bên trong view/table-as body. Reset mỗi statement boundary.
+  let pendingCreateAs = false;
 
   while (i < n) {
     const { nextState, nextIndex } = readToken(sql, i, state, useBackslashEscape);
@@ -504,6 +558,26 @@ function splitStatementsInternal(
         // Kết thúc 1 keyword → phân tích.
         if (kwBuffer.length > 0) {
           const upper = kwBuffer.toUpperCase();
+          // Cycle S bugfix — CREATE ... AS <select-starter> body detection.
+          // `CREATE` keyword mở context cho đến khi thấy `AS` (peek-next check
+          // dưới) hoặc `;`/`(`/EOF (reset). Các keyword phụ (`OR`, `REPLACE`,
+          // `MATERIALIZED`, `VIEW`, `TABLE`, ...) KHÔNG clear cờ — false
+          // positives (ví dụ CREATE TABLE không có AS body) chỉ khiến `AS`
+          // column-alias ở đâu đó được treat như body, nhưng điều đó hiếm
+          // gặp và tác động duy nhất là suppress lineBoundaries — không gây
+          // sai lệch split cho SQL hợp lệ.
+          if (upper === "CREATE") {
+            pendingCreateAs = true;
+          } else if (upper === "AS" && pendingCreateAs) {
+            // Đang ở context CREATE, vừa thấy `AS` — peek keyword tiếp theo
+            // (bỏ qua whitespace + comment). Nếu là select-starter thì push
+            // frame `AS_BODY` để suppress lineBoundaries bên trong body.
+            const nextKw = peekNextKeyword(sql, i);
+            if (isCreateAsBodyStarter(nextKw)) {
+              constructStack.push("AS_BODY");
+            }
+            pendingCreateAs = false;
+          }
           const blockDepthNow = countBlocks(constructStack);
           if (
             goEnabled &&
@@ -576,6 +650,7 @@ function splitStatementsInternal(
 
     // Xử lý `;` chỉ khi ở Code và KHÔNG có block BEGIN đang mở.
     const blockDepth = countBlocks(constructStack);
+    const asBodyDepth = countAsBodies(constructStack);
     if (
       state.kind === TokenKind.Code &&
       blockDepth === 0 &&
@@ -594,6 +669,17 @@ function splitStatementsInternal(
           end: candidateEnd,
         });
       }
+      // Cycle S bugfix — pop `AS_BODY` (nếu đang ở top) vì body vừa kết thúc tại
+      // `;` này. Chỉ pop khi nó ở top-of-stack (không pop sâu hơn trong stack)
+      // vì AS_BODY là pseudo-frame, không lồng nhau theo cách chuẩn.
+      if (
+        constructStack.length > 0 &&
+        constructStack[constructStack.length - 1] === "AS_BODY"
+      ) {
+        constructStack.pop();
+      }
+      // Reset CREATE-context cho statement tiếp theo.
+      pendingCreateAs = false;
       // Reset cho statement tiếp theo — bắt đầu SAU `;`.
       stmtStart = -1;
     } else if (
@@ -603,9 +689,15 @@ function splitStatementsInternal(
       // terminate with `;`. Only fires when there IS a current statement
       // (stmtStart !== -1) — empty trailing lines must not produce a
       // zero-length statement.
+      //
+      // Cycle S bugfix: chặn thêm khi đang trong `CREATE ... AS <body>`
+      // (asBodyDepth > 0) — `SELECT` / `WITH` ở đầu dòng tiếp theo là
+      // nội dung body, KHÔNG phải statement mới. `blockDepth` đã được check
+      // ở nhánh `;` trên, ở đây ta chỉ bổ sung điều kiện suppress.
       lineBoundaries &&
       state.kind === TokenKind.Code &&
       blockDepth === 0 &&
+      asBodyDepth === 0 &&
       stmtStart !== -1 &&
       sql[i] === "\n"
     ) {
@@ -671,6 +763,17 @@ function splitStatementsInternal(
       });
     }
   }
+  // Cycle S bugfix — EOF cleanup: nếu `CREATE ... AS <body>` không có terminating
+  // `;`, frame `AS_BODY` vẫn trên stack. Pop nó ở đây (cùng `pendingCreateAs` reset)
+  // để stack cuối cùng phản ánh đúng trạng thái. KHÔNG ảnh hưởng statement đã flush
+  // ở trên — chỉ dọn state cho lần parse sau.
+  if (
+    constructStack.length > 0 &&
+    constructStack[constructStack.length - 1] === "AS_BODY"
+  ) {
+    constructStack.pop();
+  }
+  pendingCreateAs = false;
 
   return { statements: out, finalConstructStackSize: constructStack.length };
 }
@@ -767,6 +870,18 @@ function handleKeyword(
 function countBlocks(stack: ConstructKind[]): number {
   let n = 0;
   for (const k of stack) if (k === "BLOCK") n += 1;
+  return n;
+}
+
+/**
+ * Đếm số `AS_BODY` còn mở trên stack — dùng để suppress `lineBoundaries` bên
+ * trong `CREATE ... AS <select-body>`. Khác `countBlocks` ở chỗ AS_BODY chỉ
+ * ảnh hưởng newline-as-boundary, KHÔNG ảnh hưởng `;`-boundary (vẫn pop frame
+ * tại `;` để body kết thúc bình thường).
+ */
+function countAsBodies(stack: ConstructKind[]): number {
+  let n = 0;
+  for (const k of stack) if (k === "AS_BODY") n += 1;
   return n;
 }
 

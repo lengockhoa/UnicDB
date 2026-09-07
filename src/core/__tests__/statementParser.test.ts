@@ -974,3 +974,107 @@ describe("splitStatements — lineBoundaries option", () => {
     expect(out[1].text.trim()).toBe("SELECT 2");
   });
 });
+
+// =============================================================================
+// Cycle S regression — CREATE ... AS <select-body> must NOT be split by
+// lineBoundaries. Image #30 reproduction: `CREATE OR REPLACE VIEW ... AS\n
+// SELECT ...\nFROM ...;` previously produced 3 statements because the
+// newline after AS saw SELECT (a line-start keyword) and flushed the
+// statement mid-DDL. The first truncated statement (`CREATE OR REPLACE VIEW
+// ... AS`, no body) was sent to Postgres and failed with `syntax error at
+// end of input`. AS_BODY frame (constructStack) now suppresses
+// lineBoundaries inside the body. `;` still terminates normally and pops
+// the frame.
+// =============================================================================
+describe("splitStatements — lineBoundaries: CREATE ... AS body regression (cycle S)", () => {
+  it("regression: CREATE OR REPLACE VIEW ... AS SELECT body is ONE statement", () => {
+    const sql =
+      "CREATE OR REPLACE VIEW qas.v_rudy_project_category AS\n" +
+      "SELECT id, name\n" +
+      "FROM qas.t_rudy_project_category\n" +
+      "WHERE active = true;\n" +
+      "SELECT 1;";
+    const out = splitStatements(sql, undefined, { lineBoundaries: true });
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toBe(
+      "CREATE OR REPLACE VIEW qas.v_rudy_project_category AS\n" +
+        "SELECT id, name\n" +
+        "FROM qas.t_rudy_project_category\n" +
+        "WHERE active = true",
+    );
+    expect(out[1].text).toBe("SELECT 1");
+  });
+
+  it("regression: CREATE VIEW (no OR REPLACE) ... AS SELECT body is ONE statement", () => {
+    const sql = "CREATE VIEW v AS\nSELECT 1;";
+    const out = splitStatements(sql, undefined, { lineBoundaries: true });
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe("CREATE VIEW v AS\nSELECT 1");
+  });
+
+  it("regression: CREATE TABLE t AS SELECT body is ONE statement", () => {
+    const sql = "CREATE TABLE t AS\nSELECT * FROM other;";
+    const out = splitStatements(sql, undefined, { lineBoundaries: true });
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe("CREATE TABLE t AS\nSELECT * FROM other");
+  });
+
+  it("regression: CREATE MATERIALIZED VIEW mv AS SELECT body is ONE statement", () => {
+    const sql = "CREATE MATERIALIZED VIEW mv AS\nSELECT * FROM t;";
+    const out = splitStatements(sql, undefined, { lineBoundaries: true });
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe("CREATE MATERIALIZED VIEW mv AS\nSELECT * FROM t");
+  });
+
+  it("regression: CREATE VIEW v AS WITH CTE body is ONE statement (WITH is a select-starter)", () => {
+    const sql =
+      "CREATE VIEW v AS\nWITH foo AS (SELECT 1 AS x) SELECT * FROM foo;";
+    const out = splitStatements(sql, undefined, { lineBoundaries: true });
+    expect(out).toHaveLength(1);
+  });
+
+  it("regression: two consecutive CREATE OR REPLACE VIEW stay as TWO statements (body frame resets per statement)", () => {
+    const sql =
+      "CREATE OR REPLACE VIEW v1 AS\nSELECT 1;\n" +
+      "CREATE OR REPLACE VIEW v2 AS\nSELECT 2;";
+    const out = splitStatements(sql, undefined, { lineBoundaries: true });
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toBe("CREATE OR REPLACE VIEW v1 AS\nSELECT 1");
+    expect(out[1].text).toBe("CREATE OR REPLACE VIEW v2 AS\nSELECT 2");
+  });
+
+  it("regression: construct stack is empty after parsing CREATE ... AS body (no phantom frame leak)", () => {
+    const sql =
+      "CREATE OR REPLACE VIEW v AS\nSELECT 1;\nSELECT 2;\n" +
+      "CREATE TABLE t AS\nSELECT 3;";
+    expect(debugFinalConstructStackSizeForTest(sql, undefined)).toBe(0);
+  });
+
+  it("regression: CREATE FUNCTION AS $$ ... $$ is unaffected (dollar-quote wins, no AS_BODY pushed)", () => {
+    // `AS` followed by `$$` is NOT a select-starter, so AS_BODY is NOT pushed.
+    // The existing dollar-quote logic still captures the whole body as one
+    // statement.
+    const sql =
+      "CREATE FUNCTION f() RETURNS int AS $$ SELECT 1; SELECT 2 $$ LANGUAGE sql;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe(
+      "CREATE FUNCTION f() RETURNS int AS $$ SELECT 1; SELECT 2 $$ LANGUAGE sql",
+    );
+  });
+
+  it("regression: CREATE TYPE foo AS ENUM is unaffected (AS followed by ENUM, not a select-starter)", () => {
+    const sql = "CREATE TYPE foo AS ENUM ('a', 'b');";
+    const out = splitStatements(sql, undefined, { lineBoundaries: true });
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe("CREATE TYPE foo AS ENUM ('a', 'b')");
+  });
+
+  it("regression: default mode (no lineBoundaries) is byte-identical for CREATE ... AS body (pin prior behavior)", () => {
+    const sql = "CREATE OR REPLACE VIEW v AS\nSELECT 1;\nSELECT 2;";
+    const out = splitStatements(sql);
+    expect(out).toHaveLength(2);
+    expect(out[0].text).toBe("CREATE OR REPLACE VIEW v AS\nSELECT 1");
+    expect(out[1].text).toBe("SELECT 2");
+  });
+});
