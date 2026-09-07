@@ -14,6 +14,7 @@ import {
   registerSchemaTreeProvider,
 } from "./ui/schemaTree";
 import { SchemaFilterStore } from "./core/schemaFilterStore";
+import { ActiveSchemaStore } from "./core/activeSchemaStore";
 import { AdminTreeProvider } from "./ui/adminTree";
 import {
   AdminSessionsPanel,
@@ -411,8 +412,21 @@ export async function activate(
   );
 
   // ---- ConnectionManager ----
-  const mgr = new ConnectionManager(context, createAdapter);
+  // ACTIVE-SCHEMA — per-connection pinned schema (DataGrip parity). Built
+  // BEFORE ConnectionManager so the manager can wrap every Postgres
+  // adapter's `runQuery` with `SET search_path` to the pinned schema.
+  // Backed by `workspaceState` (same scope as the schema filter store) so
+  // each workspace keeps its own pin per connection.
+  const activeSchemaStore = new ActiveSchemaStore(context.workspaceState);
+  const mgr = new ConnectionManager(
+    context,
+    createAdapter,
+    undefined,
+    undefined,
+    activeSchemaStore,
+  );
   context.subscriptions.push(mgr);
+  context.subscriptions.push(activeSchemaStore);
 
   // ---- Schema tree ----
   const tree = new SchemaTreeProvider(mgr);
@@ -468,6 +482,49 @@ export async function activate(
   // ---- Status bar ----
   const statusBar = createStatusBar(mgr);
   context.subscriptions.push(statusBar);
+
+  // ACTIVE-SCHEMA — secondary status bar item showing the pinned schema
+  // for the ACTIVE connection. Click → `UnicDB.selectActiveSchema` (same
+  // QuickPick as the command-palette entry). Hidden when no connection is
+  // active OR when the active connection isn't postgres (the wrap only
+  // applies on postgres; showing a "schema chip" on mysql would be
+  // confusing because nothing enforces it).
+  const schemaStatusItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left,
+    99, // just below the connection chip (priority 100)
+  );
+  schemaStatusItem.command = "UnicDB.selectActiveSchema";
+  const renderSchemaStatus = (): void => {
+    const active = mgr.getActive();
+    if (!active || active.driver !== "postgres") {
+      schemaStatusItem.hide();
+      return;
+    }
+    const schema = mgr.getActiveSchema(active.id);
+    if (schema) {
+      schemaStatusItem.text = `$(symbol-namespace) ${schema}`;
+      schemaStatusItem.tooltip = `Active schema: ${schema} — click to change. CREATE FUNCTION / unqualified SELECT run here.`;
+      schemaStatusItem.show();
+    } else {
+      // Show a faint placeholder so the user knows the feature exists and
+      // can one-click into it. Fades behind the main chip visually.
+      schemaStatusItem.text = `$(symbol-namespace) default`;
+      schemaStatusItem.tooltip =
+        "No schema pinned — SQL runs with the server default search_path. Click to pin one.";
+      schemaStatusItem.show();
+    }
+  };
+  renderSchemaStatus();
+  // Re-render on active-connection change AND on schema-pick changes
+  // (so a same-connection switch reflects immediately).
+  context.subscriptions.push(mgr.onDidChangeActive(() => renderSchemaStatus()));
+  context.subscriptions.push(
+    activeSchemaStore.onDidChange((evt) => {
+      const active = mgr.getActive();
+      if (active && evt.connectionId === active.id) renderSchemaStatus();
+    }),
+  );
+  context.subscriptions.push(schemaStatusItem);
 
   // ---- Results panel + query runner ----
   const runner = new QueryRunner(() => mgr.getAdapter(), {
@@ -872,6 +929,110 @@ export async function activate(
         const conn = readConnectionFromNodeArg(arg) ?? mgr.getActive();
         if (!conn) return;
         schemaFilterStore.clear(conn.id);
+      },
+    ),
+  );
+  // ACTIVE-SCHEMA — UnicDB.selectActiveSchema: pick the schema every
+  // subsequent SQL run will execute in (DataGrip parity). Single-select
+  // QuickPick of `adapter.listSchemas(true)` for the active connection
+  // (or the connection passed via the tree-node arg). The current pin
+  // is marked so a "switch back" is one click away. The picked value
+  // flows into `ActiveSchemaStore` → `ConnectionManager.resolveAdapter`
+  // wraps the adapter's `runQuery` with a `SET search_path` prepend, so
+  // CREATE FUNCTION / unqualified SELECT / etc. land in the chosen schema
+  // (no more "everything defaults to public").
+  disposables.push(
+    vscode.commands.registerCommand(
+      "UnicDB.selectActiveSchema",
+      async (arg?: unknown) => {
+        const conn = readConnectionFromNodeArg(arg) ?? mgr.getActive();
+        if (!conn) {
+          void vscode.window.showInformationMessage(
+            "UnicDB: select a connection first.",
+          );
+          return;
+        }
+        if (conn.driver !== "postgres") {
+          void vscode.window.showInformationMessage(
+            `UnicDB: active schema selection is only supported for PostgreSQL connections (this one is "${conn.driver}").`,
+          );
+          return;
+        }
+        let adapter: import("./adapters/types").DbAdapter;
+        try {
+          adapter = await mgr.getAdapterFor(conn);
+        } catch (err) {
+          void vscode.window.showErrorMessage(
+            `UnicDB: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return;
+        }
+        let schemas: Array<{ name: string }>;
+        try {
+          schemas = await adapter.listSchemas(true);
+        } catch (err) {
+          void vscode.window.showErrorMessage(
+            `UnicDB: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          return;
+        }
+        if (schemas.length === 0) {
+          void vscode.window.showInformationMessage(
+            "UnicDB: this connection has no schemas.",
+          );
+          return;
+        }
+        const current = mgr.getActiveSchema(conn.id);
+        // Sort: currently-pinned schema first (sticky), then alphabetical.
+        const sorted = schemas
+          .slice()
+          .sort((a, b) => {
+            if (a.name === current) return -1;
+            if (b.name === current) return 1;
+            return a.name.localeCompare(b.name);
+          });
+        const picks = await vscode.window.showQuickPick<vscode.QuickPickItem>(
+          [
+            // Always offer "no schema" as the first option so the user can
+            // revert to the server default (typically "$user", public).
+            {
+              label: "$(circle-slash) No pinned schema",
+              description:
+                "Run with the server default search_path ($(user), public).",
+              picked: current === undefined,
+              _noSchema: true,
+            } as vscode.QuickPickItem & { _noSchema?: boolean },
+            ...sorted.map(
+              (s): vscode.QuickPickItem => ({
+                label: s.name,
+                description: s.name === current ? "current" : undefined,
+                picked: s.name === current,
+              }),
+            ),
+          ],
+          {
+            canPickMany: false,
+            placeHolder:
+              "Schema for new SQL runs. CREATE FUNCTION / unqualified SELECT land here.",
+            title: `UnicDB: Active schema — ${conn.name}`,
+          },
+        );
+        if (picks === undefined) return; // cancelled
+        const picked = picks as vscode.QuickPickItem & {
+          _noSchema?: boolean;
+        };
+        const next = picked._noSchema
+          ? undefined
+          : picked.label === "$(circle-slash) No pinned schema"
+            ? undefined
+            : picked.label;
+        if (next === current) return; // no change
+        mgr.setActiveSchema(conn.id, next);
+        void vscode.window.showInformationMessage(
+          next
+            ? `UnicDB: new SQL runs on "${conn.name}" will use schema "${next}".`
+            : `UnicDB: cleared schema pin on "${conn.name}" (server default).`,
+        );
       },
     ),
   );

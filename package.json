@@ -163,6 +163,12 @@
         "icon": "$(list-filter)"
       },
       {
+        "command": "UnicDB.selectActiveSchema",
+        "title": "UnicDB: Select Active Schema…",
+        "category": "UnicDB",
+        "icon": "$(symbol-namespace)"
+      },
+      {
         "command": "UnicDB.resetSchemaFilter",
         "title": "UnicDB: Show All Schemas",
         "category": "UnicDB",

@@ -27,6 +27,8 @@ import {
 import type { SqlDialect } from "./statementParser";
 import { SshTunnelManager } from "./sshTunnelManager";
 import type { TunnelExit } from "./sshTunnelManager";
+import { withSchemaSearchPath } from "./schemaEnforce";
+import type { ActiveSchemaStore } from "./activeSchemaStore";
 
 const KEY_CONNECTIONS = "UnicDB.connections";
 const KEY_ACTIVE = "UnicDB.activeConnection";
@@ -153,6 +155,12 @@ export class ConnectionManager {
     tunnels?: SshTunnelManager,
     /** RLX-03 TASK-RLX03-002 — pinned injectable recovery options. */
     recoveryOptions: ConnectionRecoveryOptions = {},
+    /** ACTIVE-SCHEMA — per-connection pinned schema (DataGrip parity). When
+     *  supplied AND a schema is pinned for the connection AND driver is
+     *  postgres, every `adapter.runQuery` call is wrapped to prepend
+     *  `SET search_path TO "<schema>", public;` before forwarding. Optional
+     *  so older tests keep constructing without one. */
+    private readonly activeSchemaStore?: ActiveSchemaStore,
   ) {
     this.tunnels = tunnels ?? new SshTunnelManager();
     this._onDidChangeActiveEmitter = new vscode.EventEmitter<ConnectionConfig | null>();
@@ -798,7 +806,68 @@ export class ConnectionManager {
         port: handle.localPort,
       };
     }
-    return this.factory(effective, password);
+    const adapter = this.factory(effective, password);
+    // ACTIVE-SCHEMA — wrap the adapter so every `runQuery` runs in the
+    // pinned schema (DataGrip parity). Skipped for probe adapters
+    // (validation only — they don't run user SQL anyway). Postgres only;
+    // mysql/mssql/bigquery are unaffected.
+    if (!keyOverride?.startsWith("probe-")) {
+      this.wrapWithSchemaSearchPath(adapter, cfg.id, cfg.driver);
+    }
+    return adapter;
+  }
+
+  /**
+   * ACTIVE-SCHEMA — wrap `adapter.runQuery` so every statement the user
+   * runs (console, AI tool, admin command, …) lands in the schema they
+   * pinned for this connection. Implemented as a `SET search_path`
+   * prepend; we never mutate the user's SQL otherwise. Skipped when:
+   *   - no `ActiveSchemaStore` was injected (older tests / host), or
+   *   - the driver isn't postgres (mysql/mssql/bigquery: n/a here).
+   *
+   * The wrap reads the pin DYNAMICALLY on every `runQuery` call (NOT at
+   * construction time) so a user picking a new schema via the
+   * `UnicDB.selectActiveSchema` command takes effect on the very next
+   * run — no need to reconnect or rebuild the adapter. The pin lookup
+   * is a Map.get (microsecond); the prepend is a single string concat.
+   *
+   * The replace uses `Object.defineProperty` (NOT `Object.assign`) so the
+   * adapter's prototype chain stays intact — `close` / `testConnection`
+   * (called by `dispose()` / `getAdapter()` on edit) keep resolving to
+   * the original methods. Same discipline as `guardAdapter`.
+   */
+  private wrapWithSchemaSearchPath(
+    adapter: DbAdapter,
+    connectionId: string,
+    driver: ConnectionConfig["driver"],
+  ): void {
+    if (driver !== "postgres") return;
+    if (!this.activeSchemaStore) return;
+    const store = this.activeSchemaStore;
+    const original = adapter.runQuery.bind(adapter);
+    Object.defineProperty(adapter, "runQuery", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: (
+        sql: string,
+        opts?: { pageSize?: number; useLegacySql?: boolean },
+      ) => {
+        const schema = store.get(connectionId);
+        const wrapped = schema ? withSchemaSearchPath(sql, schema) : sql;
+        return original(wrapped, opts);
+      },
+    });
+  }
+
+  /** ACTIVE-SCHEMA — read the pinned schema for `connectionId`. */
+  getActiveSchema(connectionId: string): string | undefined {
+    return this.activeSchemaStore?.get(connectionId);
+  }
+
+  /** ACTIVE-SCHEMA — pin (or clear) the schema for `connectionId`. */
+  setActiveSchema(connectionId: string, schema: string | undefined): void {
+    this.activeSchemaStore?.set(connectionId, schema);
   }
 
   private guardAdapter(adapter: DbAdapter, cfg: ConnectionConfig): DbAdapter {
