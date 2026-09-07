@@ -302,4 +302,49 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
     expect(loaded!.models.lite).toEqual({ modelId: "vendor/lite-fast", vision: false, engine: "omp" });
     expect(loaded!.engine).toBe("builtin");
   });
+
+  // ---- TASK-001: AiEngine widens to 4 values (builtin/omp/claude-code/codex)
+
+  it("T1#1 — save → load round-trip preserves engine 'claude-code'", async () => {
+    const { store } = makeStore();
+    const s: AiSettings = {
+      ...validSettings(),
+      engine: "claude-code",
+    };
+    await store.save(s, "sk-1");
+    const loaded = await store.loadSettings();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.engine).toBe("claude-code");
+  });
+
+  it("T1#1 — save → load round-trip preserves engine 'codex'", async () => {
+    const { store } = makeStore();
+    const s: AiSettings = {
+      ...validSettings(),
+      engine: "codex",
+    };
+    await store.save(s, "sk-1");
+    const loaded = await store.loadSettings();
+    expect(loaded).not.toBeNull();
+    expect(loaded!.engine).toBe("codex");
+  });
+
+  it("T1#2 — stored engine 'vscode-copilot' → loadSettings returns null", async () => {
+    const { store, global } = makeStore();
+    const stored = {
+      baseUrl: "https://api.openai.com/v1",
+      method: "chat/completions" as const,
+      timeoutMs: 60000,
+      maxSteps: 12,
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+        autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
+        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+      },
+      engine: "vscode-copilot",
+    };
+    global._setRaw("UnicDB.ai.settings", stored);
+    expect(await store.loadSettings()).toBeNull();
+  });
 });

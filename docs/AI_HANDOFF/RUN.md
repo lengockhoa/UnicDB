@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Add Claude Code + Codex as first-class agents (ACP-based wrapper), parallel omp UKit audit, AIChat panel image+text support across all engines.
 Base: main @ d60b743 (release 1.53.23)
-Phase: P3
-Cursor: Round 2 plan review APPROVED by unic-smart (3/3 Round 1 fixes verified, 0 critical/important/minor). PLAN_REVIEW line appended to PLAN.md footer.
-Next: P3 commit (lite agent) — git add docs/AI_HANDOFF/ && git commit -m "handoff: plan — …" then Phase 3 implement in waves of ≤2 tasks.
+Phase: I3
+Cursor: Wave 1 Batch 1 done — TASK-001 (engine vocab) PASS after orchestrator-applied typecheck fix (commitGenCommand.ts:125 widened to AiEngine); TASK-002 (claude detect) PASS; typecheck clean, 36 in-scope tests green.
+Next: spawn Wave 1 Batch 2 = TASK-003 (codex detect) + TASK-013 (manifest) in parallel, then Batch 3 = TASK-004 (omp audit, read-only).

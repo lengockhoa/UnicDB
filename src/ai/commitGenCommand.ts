@@ -9,7 +9,7 @@
 //
 // Frozen strings (PLAN §1): see TOAST_NO_LITE / TOAST_NO_CHANGES /
 // TOAST_NO_BACKEND_CONFIG / ERROR_OMP_UNAVAILABLE.
-import type { AiSettings, AiConfig } from "./settings";
+import type { AiSettings, AiConfig, AiEngine } from "./settings";
 import type { EngineChoice } from "./engineChoice";
 import type { OmpDetection } from "./omp/detect";
 import type { ProviderRequest, ProviderResult } from "./provider";
@@ -122,7 +122,11 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
   }
 
   // 3. Engine selection.
-  const engine: "omp" | "builtin" = lite.engine ?? "omp";
+  // Cycle AGT: AiEngine widened to 4 values. The commit-gen path only wires
+  // "omp" (one-shot OmpChatEngine.generate) and "builtin" (provider.complete);
+  // claude-code / codex engines at the lite role fall through to the builtin
+  // path until TASK-005/006 wire them into commit-gen (out of scope this cycle).
+  const engine: AiEngine = lite.engine ?? "omp";
   const prompt = buildCommitPrompt({
     repoName: diff.repoName,
     ...(diff.branch !== undefined ? { branch: diff.branch } : {}),

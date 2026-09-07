@@ -239,7 +239,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
       },
     };
     const errs = aiSettingsErrors(s);
-    expect(errs).toContain("Engine must be builtin or omp");
+    expect(errs).toContain("Engine must be builtin, omp, claude-code, or codex");
   });
 
   it("GC #5 — global engine 'x' is rejected (still validated)", () => {
@@ -248,7 +248,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
       engine: "x" as AiEngine,
     };
     const errs = aiSettingsErrors(s);
-    expect(errs).toContain("Engine must be builtin or omp");
+    expect(errs).toContain("Engine must be builtin, omp, claude-code, or codex");
   });
 
   it("GC #8 — redactAiConfig preserves lite.modelId/vision/engine and omits apiKey", () => {
@@ -273,5 +273,91 @@ describe("ai/settings — defaults + validation + helpers", () => {
     expect("engine" in red.models.work).toBe(false);
     expect("engine" in red.models.smart).toBe(false);
     expect("engine" in red.models.autocomplete).toBe(false);
+  });
+
+  // ---- TASK-001: AiEngine widens to 4 values (builtin/omp/claude-code/codex)
+
+  it("T1#1 — valid AiSettings with engine 'claude-code' → no errors", () => {
+    const s: AiSettings = {
+      ...defaultAiSettings(),
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+        autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
+        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+      },
+      engine: "claude-code",
+    };
+    expect(aiSettingsErrors(s)).toEqual([]);
+  });
+
+  it("T1#1 — valid AiSettings with engine 'codex' → no errors", () => {
+    const s: AiSettings = {
+      ...defaultAiSettings(),
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+        autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
+        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+      },
+      engine: "codex",
+    };
+    expect(aiSettingsErrors(s)).toEqual([]);
+  });
+
+  it("T1#2 — stored engine 'vscode-copilot' is rejected with exact normative message", () => {
+    const s: AiSettings = {
+      ...defaultAiSettings(),
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+        autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
+        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+      },
+      engine: "vscode-copilot" as AiEngine,
+    };
+    const errs = aiSettingsErrors(s);
+    expect(errs).toContain("Engine must be builtin, omp, claude-code, or codex");
+  });
+
+  it("T1#4 — redactAiConfig preserves engine verbatim for builtin / omp / claude-code / codex", () => {
+    for (const eng of ["builtin", "omp", "claude-code", "codex"] as const) {
+      const cfg: AiConfig = {
+        ...defaultAiSettings(),
+        engine: eng,
+        apiKey: "sk-x",
+      };
+      const red = redactAiConfig(cfg);
+      expect(red.engine).toBe(eng);
+    }
+  });
+
+  it("T1#5 — per-model engine override accepts all 4 values", () => {
+    for (const eng of ["builtin", "omp", "claude-code", "codex"] as const) {
+      const s: AiSettings = {
+        ...defaultAiSettings(),
+        models: {
+          work: { modelId: "gpt-4o-mini", vision: true },
+          smart: { modelId: "gpt-4o", vision: false },
+          autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
+          lite: { modelId: "vendor/lite-fast", vision: false, engine: eng },
+        },
+      };
+      expect(aiSettingsErrors(s)).toEqual([]);
+    }
+  });
+
+  it("T1#5 — per-model engine override 'omp2' is rejected with the normative message", () => {
+    const s: AiSettings = {
+      ...defaultAiSettings(),
+      models: {
+        work: { modelId: "gpt-4o-mini", vision: true },
+        smart: { modelId: "gpt-4o", vision: false },
+        autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
+        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp2" as AiEngine },
+      },
+    };
+    const errs = aiSettingsErrors(s);
+    expect(errs).toContain("Engine must be builtin, omp, claude-code, or codex");
   });
 });

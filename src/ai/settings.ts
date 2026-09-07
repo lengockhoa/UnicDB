@@ -12,12 +12,14 @@ export type AiCompletionMethod = "responses" | "chat/completions";
  */
 export type AiModelRole = "work" | "smart" | "autocomplete" | "lite";
 /**
- * Cycle AE TASK-003 §Engine selection — chat engine routing.
- * `"builtin"` runs `runAgent` against `provider.completeStream`. `"omp"`
- * delegates to `OmpChatEngine.send` (the hostMcp bridge + ACP session).
- * Default is `"builtin"` for back-compat with every existing config.
+ * Cycle AE TASK-003 §Engine selection + Cycle AGT TASK-001 — chat engine
+ * routing. `"builtin"` runs `runAgent` against `provider.completeStream`.
+ * `"omp"` delegates to `OmpChatEngine.send` (the hostMcp bridge + ACP
+ * session). `"claude-code"` and `"codex"` route to first-class Claude Code
+ * and Codex chat agents added by the AGT cycle. Default is `"builtin"`
+ * for back-compat with every existing config.
  */
-export type AiEngine = "builtin" | "omp";
+export type AiEngine = "builtin" | "omp" | "claude-code" | "codex";
 
 export interface AiModelConfig {
   modelId: string;
@@ -129,17 +131,17 @@ export function aiSettingsErrors(s: AiSettings): string[] {
       }
       // Per-model engine override — undefined means "follow global engine"
       // (allowed). Any other value must be one of the legal engines.
-      if (m.engine !== undefined && m.engine !== "builtin" && m.engine !== "omp") {
-        errors.push("Engine must be builtin or omp");
+      if (m.engine !== undefined && m.engine !== "builtin" && m.engine !== "omp" && m.engine !== "claude-code" && m.engine !== "codex") {
+        errors.push("Engine must be builtin, omp, claude-code, or codex");
       }
     }
   }
 
-  // engine (cycle AE) — undefined / anything other than the two legal
-  // values is rejected so a mis-saved config can't silently degrade to
-  // the wrong engine.
-  if (s.engine !== "builtin" && s.engine !== "omp") {
-    errors.push("Engine must be builtin or omp");
+  // engine (cycle AE / AGT) — undefined / anything other than the four
+  // legal values is rejected so a mis-saved config can't silently degrade
+  // to the wrong engine.
+  if (s.engine !== "builtin" && s.engine !== "omp" && s.engine !== "claude-code" && s.engine !== "codex") {
+    errors.push("Engine must be builtin, omp, claude-code, or codex");
   }
 
   return errors;
@@ -156,7 +158,7 @@ export function normalizeBaseUrl(url: string): string {
 
 /** Strip apiKey only — return settings-shape. */
 export function redactAiConfig(cfg: AiConfig): AiSettings {
-  const engine: AiEngine = cfg.engine === "omp" ? "omp" : "builtin";
+  const engine: AiEngine = cfg.engine;
   const redactedModels: Record<AiModelRole, AiModelConfig> = {
     work: {
       modelId: cfg.models.work.modelId,

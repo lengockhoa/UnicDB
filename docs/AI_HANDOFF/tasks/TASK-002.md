@@ -68,3 +68,25 @@ Version parse target: `claude --version` prints e.g. `2.0.1 (Claude Code)` — p
 ---
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
+
+## Executor Report
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-002
+   ❯ src/ai/claudeCode/__tests__/detect.test.ts  (0 test)
+   FAIL  src/ai/claudeCode/__tests__/detect.test.ts [ src/ai/claudeCode/__tests__/detect.test.ts ]
+  Error: Failed to load url ../detect (resolved id: ../detect) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-002/src/ai/claudeCode/__tests__/detect.test.ts. Does the file exist?
+   Test Files  1 failed (1)
+        Tests  no tests
+VERIFICATION_OUTPUT: |
+  > npx vitest run src/ai/claudeCode/__tests__/detect.test.ts
+   ✓ src/ai/claudeCode/__tests__/detect.test.ts  (11 tests) 3ms
+     Tests  11 passed (11)
+  > npm run typecheck
+   > UnicDB@1.53.23 typecheck
+   > tsc --noEmit
+   (exit 0, no errors)
+STATUS: PASS
+NOTE: compareVersions is imported and reused from src/ai/omp/detect.ts. MIN_CLAUDE_CODE_VERSION = "1.0.0" and CLAUDE_CODE_INSTALL_HINT = "npm install -g @anthropic-ai/claude-code" exported. Win32 uses `where claude`; multi-line output → first non-empty path. quoteForShell applied for paths with spaces.
