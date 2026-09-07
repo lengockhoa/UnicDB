@@ -133,11 +133,11 @@ function state(results: Array<Record<string, unknown>>): Record<string, unknown>
   return { type: "state", header: "Browse public.users at 2026-01-01T00:00:00Z", busy: false, results };
 }
 
-/** Statement tab #i (index 0-based; the trailing Messages tab is NOT one). */
+/** Statement tab #i (index 0-based; the leading Messages tab is NOT one). */
 function statementTab(i: number): HTMLButtonElement {
   const tabs = document.querySelectorAll<HTMLButtonElement>(".UnicDB-tabs .UnicDB-tab");
-  // Statement tabs are rendered first; the last .UnicDB-tab is Messages.
-  const stmtTabs = Array.from(tabs).slice(0, tabs.length - 1);
+  // Messages tab is rendered FIRST; statement tabs follow in reverse-chrono.
+  const stmtTabs = Array.from(tabs).slice(1);
   return stmtTabs[i];
 }
 
@@ -217,24 +217,28 @@ describeIfBundle("webview/main.ts bundle — TASK-007 per-table tab labels", () 
 
     const t0 = statementTab(0);
     const t1 = statementTab(1);
-    expect(t0.textContent!.startsWith("Run 1 · public.users")).toBe(true);
-    expect(t1.textContent!.startsWith("Run 2 · sales.orders")).toBe(true);
+    // Tab order: Messages first, then statements in REVERSE chronological.
+    // statementTab(0) → statement[1] (sales.orders, newest)
+    // statementTab(1) → statement[0] (public.users, oldest)
+    expect(t0.textContent!.startsWith("Run 2 · sales.orders")).toBe(true);
+    expect(t1.textContent!.startsWith("Run 1 · public.users")).toBe(true);
 
-    // Tab switching still works with labeled tabs: click tab 2 → it becomes
-    // active, tab 1 loses the active class. NOTE: rebuildTabs() recreates the
-    // buttons on every render, so re-query AFTER the click — the pre-click
-    // t0/t1 references are detached nodes by then.
-    expect(t0.classList.contains("UnicDB-tab-active")).toBe(true);
-    expect(t1.classList.contains("UnicDB-tab-active")).toBe(false);
-    t1.click();
+    // Tab switching still works with labeled tabs: click sales.orders (t0)
+    // → it becomes active, public.users (t1) loses the active class.
+    // NOTE: rebuildTabs() recreates the buttons on every render, so re-query
+    // AFTER the click — the pre-click t0/t1 references are detached nodes.
+    // Active is the FIRST newly appended = canonical 0 = public.users (t1).
+    expect(t1.classList.contains("UnicDB-tab-active")).toBe(true);
+    expect(t0.classList.contains("UnicDB-tab-active")).toBe(false);
+    t0.click();
     await flush();
     const t0After = statementTab(0);
     const t1After = statementTab(1);
-    expect(t1After.classList.contains("UnicDB-tab-active")).toBe(true);
-    expect(t0After.classList.contains("UnicDB-tab-active")).toBe(false);
+    expect(t0After.classList.contains("UnicDB-tab-active")).toBe(true);
+    expect(t1After.classList.contains("UnicDB-tab-active")).toBe(false);
     // Labeled text survived the switch re-render.
-    expect(t1After.textContent!.startsWith("Run 2 · sales.orders")).toBe(true);
-    expect(t0After.textContent!.startsWith("Run 1 · public.users")).toBe(true);
+    expect(t0After.textContent!.startsWith("Run 2 · sales.orders")).toBe(true);
+    expect(t1After.textContent!.startsWith("Run 1 · public.users")).toBe(true);
   });
 
   itIfBundle("5. empty label + empty sql falls back to Run N · Stmt M", async () => {

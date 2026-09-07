@@ -189,12 +189,15 @@ describeIfBundle("webview/main.ts bundle (TASK-203)", () => {
     expect(tabs.length).toBe(4);
 
     // TASK-UX2-002 — auto-open Messages when any error row is present.
-    // The error is at index 2, so the Messages tab (last .UnicDB-tab) is
-    // auto-activated. Click tab 0 to switch back to the SELECT tab and
-    // verify the grid still renders 200 rows.
-    const messagesTab = tabs[tabs.length - 1] as HTMLElement;
+    // Tab order is Messages first, then statements in reverse-chrono:
+    //   tabs[0] = Messages (AUTO-ACTIVE due to error at index 2)
+    //   tabs[1] = statement[2] (ERROR, newest)
+    //   tabs[2] = statement[1] (INSERT)
+    //   tabs[3] = statement[0] (SELECT — click here to verify 200-row grid)
+    const messagesTab = tabs[0] as HTMLElement;
+    expect(messagesTab.textContent ?? "").toMatch(/^Messages/);
     expect(messagesTab.classList.contains("UnicDB-tab-active")).toBe(true);
-    (tabs[0] as HTMLElement).click();
+    (tabs[3] as HTMLElement).click();
 
     const gridHost = root.querySelector(".UnicDB-grid-host");
     expect(gridHost).toBeTruthy();
@@ -478,13 +481,16 @@ describeIfBundle("webview/main.ts bundle (TASK-203)", () => {
     );
     void received;
 
-    // TASK-UX2-002 — auto-open Messages on error. Click the first
-    // statement tab to view the error card body (TASK-UX1-010).
+    // TASK-UX2-002 — auto-open Messages on error. Tab order is Messages
+    // first, then statements in reverse-chrono:
+    //   tabs[0] = Messages (AUTO-ACTIVE due to error)
+    //   tabs[1] = statement[0] (the failing SELECT) — click here to see card.
     const tabs = root.querySelectorAll(".UnicDB-tab");
     expect(tabs.length).toBe(2);
-    const messagesTab = tabs[tabs.length - 1] as HTMLElement;
+    const messagesTab = tabs[0] as HTMLElement;
+    expect(messagesTab.textContent ?? "").toMatch(/^Messages/);
     expect(messagesTab.classList.contains("UnicDB-tab-active")).toBe(true);
-    (tabs[0] as HTMLElement).click();
+    (tabs[1] as HTMLElement).click();
 
     // The error card renders the verbatim pg error text under
     // .UnicDB-ddl-card-error-text (TASK-UX1-010 surface).

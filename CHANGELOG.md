@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.17] — 2026-09-07
+
+- Summary: Fix two Cmd+Enter / tab UX bugs — (1) Run ALL highlighted queries on Cmd+Enter: `runQueryFromEditor` now iterates `editor.selections` (multi-cursor support) AND `splitStatements` gains an opt-in `lineBoundaries` flag that recognizes top-level newlines before statement-starter keywords as soft boundaries, so 3 newline-separated SELECT queries without `;` all run instead of collapsing to one. (2) Cap result-tab strip to 10 entries with Messages tab FIRST and result tabs in reverse-chronological order (most recent first), so the 2nd visual tab after Messages always shows the newest query's result.
+- Files: src/extension.ts (multi-selection + lineBoundaries wiring), src/core/statementParser.ts (lineBoundaries flag + LINE_START_STATEMENT_KEYWORDS set + isIdentChar helper), src/extension.test.ts (+7 TASK-MSEL tests), src/core/__tests__/statementParser.test.ts (+7 lineBoundaries tests), webview/main.ts (MAX_TABS=10 + reverse-chronological rebuildTabs)
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.17.vsix packaged
+
+---
+
 ## [1.53.3] — 2026-09-06
 
 - Summary: Fix — Generate Commit Message sparkle regression: remove non-existent `scmProviderHasChanges` when-clause introduced in 1.52.0 so the sparkle button actually renders in the Source Control title bar.

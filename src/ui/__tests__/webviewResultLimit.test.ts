@@ -257,9 +257,11 @@ describeIfBundle("webview resultLimited UX (TASK-ARP03-004)", () => {
     expect(tab!.textContent ?? "").not.toMatch(/[⌀✗⚠]/);
 
     // ...and the cancelled message card on the Messages tab.
+    // Tab order is Messages first, then statements in reverse-chrono:
+    //   tabs[0] = Messages, tabs[1] = statement[0].
     const tabs = root.querySelectorAll(".UnicDB-tab");
     expect(tabs.length).toBe(2);
-    (tabs[tabs.length - 1] as HTMLButtonElement).click();
+    (tabs[0] as HTMLButtonElement).click();
     const card = root.querySelector(".UnicDB-msg-card.UnicDB-msg-cancelled");
     expect(card).toBeTruthy();
     expect(card!.textContent ?? "").toContain("Statement 1 — CANCELLED");
