@@ -1,13 +1,5 @@
 # Changelog
 
-## [1.53.20] — 2026-09-07
-
-- Summary: Extend multi-selection Cmd+Enter to shellscript files — add `UnicDB.runShellSelection` command + Cmd/Ctrl+Enter keybindings for `resourceLangId == shellscript`, plus `commandRunShellSelection()` in src/extension.ts that iterates `editor.selections`, takes range text for non-empty selections, takes the cursor's current line for empty selections, and sends each piece to the reused "UnicDB Script" terminal. Mirrors the SQL multi-selection pattern shipped in 1.53.17 (commit 3e33f0a). Also fix the bq04 + bqFollowup frozen-surface guards to filter the `key` and `keybindings` keys as legitimate contributes changes (the previous regex missed them and would trip on any new keybinding).
-- Files: package.json (new command + keybindings + activation event), src/scaffold.test.ts (+4 TASK-SH-001 tests), src/extension.ts (new `commandRunShellSelection()` function + registration), src/extension.test.ts (9 new tests covering 3 happy / 3 edge / 2 regression), src/adapters/__tests__/bq04SurfaceGuard.test.ts, src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts (regex fix)
-- Verification: npm run typecheck ✅ · npm test ✅ (250 files / 3743 tests / 0 failed · 2 skipped) · UnicDB-1.53.20.vsix packaged (2.04 MB)
-
----
-
 ## [1.53.19] — 2026-09-07
 
 - Summary: Extend multi-selection Cmd+Enter to shellscript files — add `UnicDB.runShellSelection` command + Cmd/Ctrl+Enter keybindings for `resourceLangId == shellscript`, plus `commandRunShellSelection()` in src/extension.ts that iterates `editor.selections`, takes range text for non-empty selections, takes the cursor's current line for empty selections, and sends each piece to the reused "UnicDB Script" terminal. Mirrors the SQL multi-selection pattern shipped in 1.53.17 (commit 3e33f0a). Also fix the bq04 + bqFollowup frozen-surface guards to filter the `key` and `keybindings` keys as legitimate contributes changes (the previous regex missed them and would trip on any new keybinding).
