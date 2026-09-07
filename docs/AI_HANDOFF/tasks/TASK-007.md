@@ -74,3 +74,68 @@ The conflict is intentional and resolved: current engineChoice locked an omp-fir
 ---
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
+
+## Executor Report
+
+EXECUTOR_TOOL: Claude Code (Agent tool)
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+
+```
+ FAIL  src/ai/__tests__/engineChoice.test.ts > resolveEngine — TASK-007 P0.3 selected-engine policy > configured healthy Claude Code wins over any other installed agent
+TypeError: Cannot read properties of undefined (reading 'ok')
+ ❯ Module.resolveEngine src/ai/engineChoice.ts:49:17
+     47|   const { detection, config } = input;
+     48|
+     49|   if (detection.ok) {
+       |                 ^
+
+ FAIL  src/ai/__tests__/engineChoice.test.ts > resolveEngine — TASK-007 P0.3 selected-engine policy > configured missing Codex falls back builtin with CODEX_INSTALL_HINT
+TypeError: Cannot read properties of undefined (reading 'ok')
+ ❯ Module.resolveEngine src/ai/engineChoice.ts:49:17
+     49|   if (detection.ok) {
+
+ FAIL  src/ai/__tests__/engineChoice.test.ts > resolveEngine — TASK-007 P0.3 selected-engine policy > explicit builtin ignores a healthy omp; no hint; requiresConfig reflects config presence
+TypeError: Cannot read properties of undefined (reading 'ok')
+ ❯ Module.resolveEngine src/ai/engineChoice.ts:49:17
+
+ FAIL  src/ai/__tests__/engineChoice.test.ts > resolveEngine — TASK-007 P0.3 selected-engine policy > unknown configured engine fails closed to builtin with no unsafe external engine
+TypeError: Cannot read properties of undefined (reading 'ok')
+ ❯ Module.resolveEngine src/ai/engineChoice.ts:49:17
+
+ FAIL  src/ai/__tests__/policy.test.ts > isEngineChoice — TASK-007 four-engine vocabulary guard > accepts the four real EngineChoice values and rejects a fifth
+TypeError: isEngineChoice is not a function
+ ❯ src/ai/__tests__/policy.test.ts:188:12
+
+ Test Files  2 failed (2)
+      Tests  5 failed | 17 passed (22)
+```
+
+Verification Output:
+
+```
+> UnicDB@1.53.23 typecheck
+> tsc --noEmit
+$ npx vitest run src/ai/__tests__/engineChoice.test.ts src/ai/__tests__/policy.test.ts
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-007
+
+ ✓ src/ai/__tests__/policy.test.ts  (11 tests) 3ms
+ ✓ src/ai/__tests__/engineChoice.test.ts  (11 tests) 2ms
+
+ Test Files  2 passed (2)
+      Tests  22 passed (22)
+   Duration  208ms
+```
+
+Wider regression sweep (dependent modules): `npx vitest run src/__tests__/aix05Scaffold.test.ts src/ui/__tests__/aiChatPanelPolicy.test.ts src/ui/__tests__/commitGenIntegration.test.ts src/ai/__tests__/commitGenCommand.test.ts` → 6 test files, 70 tests, all pass.
+
+Status: PASS
+
+Note:
+
+- `isValidEngineChoice` was renamed to `isEngineChoice` (test 6 imports it by that name). Internal callers within `policy.ts` updated; the only pre-existing import site was internal. Added an internal `isValidEngineChoice` alias for in-module forward-compat — non-breaking.
+- The 5 new tests were added as a new `describe` block in `engineChoice.test.ts`; the 6 prior AIX-05 reason→hint regression tests were kept (still green) to preserve the locked mapping documentation.
+- `engineChoice.ts` keeps `detection.reason === "version-too-old"` literal in the legacy branch so `aix05Scaffold.test.ts`'s source-string regex stays green.
+- `ClaudeCodeDetection` / `CodexDetection` types are imported and projected into the shared `AgentDetection` projection; legacy `{ detection, config }` callers with `engine==="omp"` still resolve exactly as before.

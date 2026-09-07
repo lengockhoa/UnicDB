@@ -65,3 +65,66 @@ Grounded current paths: source is `webview/aiSettingsFormMain.ts` (esbuild entry
 ---
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
+
+## Executor Report
+EXECUTOR_TOOL: Claude Code (Agent tool)
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+```
+ ✓ webview/__tests__/aiSettingsFormMain.test.ts > TASK-008 four-engine webview > #1 init renders global Claude Code setting + save posts engine:claude-code
+   AssertionError: expected '' to be 'claude-code' // Object.is equality
+   ❯ webview/__tests__/aiSettingsFormMain.test.ts:175:40
+ FAIL  webview/__tests__/aiSettingsFormMain.test.ts > TASK-008 four-engine webview > #2 init/save Codex from global and lite override round-trips
+   AssertionError: expected '' to be 'codex' // Object.is equality
+   ❯ webview/__tests__/aiSettingsFormMain.test.ts:207:40
+ FAIL  webview/__tests__/aiSettingsFormMain.test.ts > TASK-008 four-engine webview > #3 unknown engine: blocks save + visible error is exact 4-engine string
+   AssertionError: expected 'Engine must be builtin or omp' to contain 'Engine must be builtin, omp, claude-c…'
+   ❯ webview/__tests__/aiSettingsFormMain.test.ts:261:40
+ FAIL  webview/__tests__/aiSettingsFormMain.test.ts > TASK-008 select option shape > global + lite selects carry the four engines in the user-confirmed order
+   AssertionError: expected [ 'builtin', 'omp' ] to deeply equal [ 'omp', 'claude-code', 'codex', …(1) ]
+   ❯ webview/__tests__/aiSettingsFormMain.test.ts:320:26
+ Test Files  1 failed (1)
+      Tests  4 failed | 1 passed (5)
+```
+
+Verification Output:
+```
+$ npx vitest run webview/__tests__/aiSettingsFormMain.test.ts src/ui/__tests__/aiSettingsFormBundle.test.ts
+ ✓ webview/__tests__/aiSettingsFormMain.test.ts  (5 tests) 39ms
+ ✓ src/ui/__tests__/aiSettingsFormBundle.test.ts  (11 tests) 61ms
+ Test Files  2 passed (2)
+      Tests  16 passed (16)
+   Duration  492ms
+
+$ npm run typecheck
+> tsc --noEmit
+(no output, exit 0)
+
+$ npm run compile
+  dist/aiSettingsForm.js      12.8kb
+  dist/aiSettingsForm.js.map  24.7kb
+esbuild: build complete
+
+$ ls -la dist/aiSettingsForm.js
+-rw-r--r--@ 1 lenk  staff  13109 Sep  7 18:23 dist/aiSettingsForm.js
+```
+
+Status: PASS
+Note: Updated `src/ui/__tests__/aiSettingsFormBundle.test.ts` test #6 to expect the new 4-value error string ("Engine must be builtin, omp, claude-code, or codex") so the bundle test stays green with the TASK-008 source change. Default values preserved: global=`builtin`, lite=`omp`. Engine union and both validator branches accept exactly the four canonical values; error string is byte-for-byte identical to `src/ai/settings.ts`.
+
+### 2026-09-07 · orchestrator — dist re-compile after copy-back
+
+The executor's worktree verification was fresh, but after copy-back to main
+the dist/ bundle was stale (still emitted the old 2-engine validator
+`"Engine must be builtin or omp"`), so `aiSettingsFormBundle.test.ts`
+failed against the main bundle. Re-ran `npm run compile` to refresh
+`dist/aiSettingsForm.js`; all 38 wave-2-batch-2 tests now pass
+(engineChoice 11 + policy 11 + new webview aiSettingsFormMain 5 +
+bundle 11).
+
+Process follow-up for wave 3+: any task that touches webview source
+should add `npm run compile` to its §Verification Commands, AND the
+orchestrator's wave-boundary gate must run `npm run compile` after
+copy-back before declaring the wave green. Captured here for the
+reviewer's awareness; no executor-side bug.

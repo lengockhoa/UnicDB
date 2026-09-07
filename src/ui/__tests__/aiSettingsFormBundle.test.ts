@@ -444,7 +444,7 @@ describe("webview/aiSettingsFormMain.ts bundle — TASK-GC-006 (engine + lite)",
     expect(btn("saveBtn").disabled).toBe(false);
   });
 
-  it("#6 invalid engine blocks OK with 'Engine must be builtin or omp' error", () => {
+  it("#6 invalid engine blocks OK with 'Engine must be builtin, omp, claude-code, or codex' error", () => {
     loadBundle();
     dispatch({
       type: "init",
@@ -460,6 +460,6 @@ describe("webview/aiSettingsFormMain.ts bundle — TASK-GC-006 (engine + lite)",
     engineSelect.dispatchEvent(new Event("change", { bubbles: true }));
     expect(btn("saveBtn").disabled).toBe(true);
     const errors = document.getElementById("errors") as HTMLElement;
-    expect(errors.textContent ?? "").toMatch(/Engine must be builtin or omp/);
+    expect(errors.textContent ?? "").toMatch(/Engine must be builtin, omp, claude-code, or codex/);
   });
 });

@@ -81,7 +81,12 @@ export interface PolicyInput {
   resolvedEngine: EngineChoice | null;
 }
 
-const CONFIGURED_ENGINE_VALUES: readonly string[] = ["builtin", "omp"];
+const CONFIGURED_ENGINE_VALUES: readonly AiEngine[] = [
+  "builtin",
+  "omp",
+  "claude-code",
+  "codex",
+];
 
 // Decision objects are flat (boolean fields only), so Object.freeze is a deep
 // freeze for them: no host can mutate a shared ALLOWED_*/DENIED_* constant
@@ -109,19 +114,25 @@ const DENIED_TOOLS: Readonly<PolicyToolDecision> = Object.freeze({
  * Migrated/unsupported values (e.g. a pre-cycle engine string) fail closed. */
 export function isKnownConfiguredEngine(value: ConfiguredEngineInput): value is AiEngine {
   return (
-    typeof value === "string" && CONFIGURED_ENGINE_VALUES.includes(value)
+    typeof value === "string" &&
+    (CONFIGURED_ENGINE_VALUES as readonly string[]).includes(value)
   );
 }
 
 /** True only when `resolvedEngine` is a usable `EngineChoice` — i.e. it
- * carries a valid engine discriminator. Guards migrated/host-side drift. */
-export function isValidEngineChoice(value: EngineChoice | null): value is EngineChoice {
+ * carries a valid engine discriminator across the four-engine `AiEngine`
+ * vocabulary. Guards migrated/host-side drift. */
+export function isEngineChoice(value: EngineChoice | null): value is EngineChoice {
   return (
     value !== null &&
     typeof value === "object" &&
-    (value.engine === "omp" || value.engine === "builtin")
+    (CONFIGURED_ENGINE_VALUES as readonly string[]).includes(value.engine)
   );
 }
+
+/** Backward-compatible alias for the old `isValidEngineChoice` name used by
+ * pre-TASK-007 callers inside this module. */
+const isValidEngineChoice = isEngineChoice;
 
 /**
  * Resolve the effective AI policy. Default deny: sensitive context classes,

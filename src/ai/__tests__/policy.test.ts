@@ -13,7 +13,12 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { resolvePolicy, isExcludedWorkspacePath, type PolicyInput } from "../policy";
+import {
+  isEngineChoice,
+  resolvePolicy,
+  isExcludedWorkspacePath,
+  type PolicyInput,
+} from "../policy";
 import type { EngineChoice } from "../engineChoice";
 
 const choice = (engine: "omp" | "builtin"): EngineChoice => ({
@@ -170,5 +175,23 @@ describe("purity guard — TASK-AIX07-001 acceptance", () => {
     expect(src).not.toMatch(/["'](node:)?fs["']/);
     expect(src).not.toMatch(/["'](node:)?(net|http|https|child_process)["']/);
     expect(src).not.toMatch(/\bexecSync\b|\bspawnSync\b/);
+  });
+});
+
+// =============================================================================
+// TASK-007 test 6 — policy guard widened to four-engine AiEngine vocabulary.
+// =============================================================================
+
+describe("isEngineChoice — TASK-007 four-engine vocabulary guard", () => {
+  it("accepts the four real EngineChoice values and rejects a fifth", () => {
+    const base = { requiresConfig: false } as const;
+    expect(isEngineChoice({ engine: "builtin", ...base } as unknown as EngineChoice)).toBe(true);
+    expect(isEngineChoice({ engine: "omp", ...base } as unknown as EngineChoice)).toBe(true);
+    expect(isEngineChoice({ engine: "claude-code", ...base } as unknown as EngineChoice)).toBe(true);
+    expect(isEngineChoice({ engine: "codex", ...base } as unknown as EngineChoice)).toBe(true);
+    expect(isEngineChoice({ engine: "unknown", ...base } as unknown as EngineChoice)).toBe(false);
+    // null / malformed shapes must still fail closed.
+    expect(isEngineChoice(null)).toBe(false);
+    expect(isEngineChoice({} as unknown as EngineChoice)).toBe(false);
   });
 });

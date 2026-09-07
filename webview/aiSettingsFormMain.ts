@@ -18,7 +18,9 @@ const vscodeApi =
 
 type Method = "responses" | "chat/completions";
 type Role = "work" | "smart" | "autocomplete" | "lite";
-type Engine = "builtin" | "omp";
+// TASK-008 — mirror src/ai/settings.ts `AiEngine` (TASK-001). The webview
+// bundle cannot import the host module so the union is duplicated verbatim.
+type Engine = "builtin" | "omp" | "claude-code" | "codex";
 
 interface ModelConfig {
   modelId: string;
@@ -175,16 +177,29 @@ function validateSettings(s: State["settings"]): string[] {
     // Cycle AIC: empty autocomplete is allowed (feature disabled), not invalid.
     // Cycle GC: empty lite is also allowed (feature disabled), not invalid.
     // Per-model engine override (cycle AE) — when present must be one of the
-    // legal values; undefined means "follow global engine".
-    if (s.models.lite && s.models.lite.engine !== undefined && s.models.lite.engine !== "builtin" && s.models.lite.engine !== "omp") {
-      errors.push("Engine must be builtin or omp");
+    // legal values; undefined means "follow global engine". TASK-008 mirrors
+    // exactly the four-value set + error string from src/ai/settings.ts.
+    if (
+      s.models.lite &&
+      s.models.lite.engine !== undefined &&
+      s.models.lite.engine !== "builtin" &&
+      s.models.lite.engine !== "omp" &&
+      s.models.lite.engine !== "claude-code" &&
+      s.models.lite.engine !== "codex"
+    ) {
+      errors.push("Engine must be builtin, omp, claude-code, or codex");
     }
   }
-  // engine (cycle AE) — undefined / anything other than the two legal
-  // values is rejected so a mis-saved config can't silently degrade to
+  // engine (cycle AE / AGT) — undefined / anything other than the four
+  // legal values is rejected so a mis-saved config can't silently degrade to
   // the wrong engine. Mirrors src/ai/settings.ts `aiSettingsErrors`.
-  if (s.engine !== "builtin" && s.engine !== "omp") {
-    errors.push("Engine must be builtin or omp");
+  if (
+    s.engine !== "builtin" &&
+    s.engine !== "omp" &&
+    s.engine !== "claude-code" &&
+    s.engine !== "codex"
+  ) {
+    errors.push("Engine must be builtin, omp, claude-code, or codex");
   }
   return errors;
 }
@@ -295,8 +310,10 @@ function liteBlock(): string {
         <div class="UnicDB-field">
           <label for="engineLite">Engine</label>
           <select id="engineLite">
-            <option value="builtin">builtin</option>
             <option value="omp" selected>omp</option>
+            <option value="claude-code">claude-code</option>
+            <option value="codex">codex</option>
+            <option value="builtin">builtin</option>
           </select>
         </div>
       </div>
@@ -324,8 +341,10 @@ function render(): void {
       <div class="UnicDB-field">
         <label for="engine">Engine</label>
         <select id="engine">
-          <option value="builtin" selected>builtin</option>
           <option value="omp">omp</option>
+          <option value="claude-code">claude-code</option>
+          <option value="codex">codex</option>
+          <option value="builtin" selected>builtin</option>
         </select>
       </div>
     </div>
