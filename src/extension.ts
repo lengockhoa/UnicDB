@@ -67,12 +67,28 @@ import { ConsolePanel, ensureTrailingSemicolon } from "./ui/consolePanel";
 import { HelpGridPanel } from "./ui/helpGridPanel";
 import { AcpProcess, type AcpProcessHandle, type OmpEngineState } from "./ai/omp/acpProcess";
 import { detectOmp, OMP_INSTALL_HINT, OMP_UPDATE_HINT } from "./ai/omp/detect";
-import { resolveEngine } from "./ai/engineChoice";
+import {
+  detectClaudeCode,
+  CLAUDE_CODE_INSTALL_HINT,
+  type ClaudeCodeDetection,
+} from "./ai/claudeCode/detect";
+import {
+  detectCodex,
+  CODEX_INSTALL_HINT,
+  type CodexDetection,
+} from "./ai/codex/detect";
+import { resolveEngine, type AgentDetections } from "./ai/engineChoice";
 import {
   createOmpChatEngine,
   type AcpSession,
   type OmpChatEngine,
 } from "./ai/omp/ompChatEngine";
+import { createClaudeCodeChatEngine } from "./ai/claudeCode/claudeCodeChatEngine";
+import { createCodexChatEngine } from "./ai/codex/codexChatEngine";
+import { createClaudeCodeProcess } from "./ai/claudeCode/claudeCodeProcess";
+import { CodexProcess } from "./ai/codex/codexProcess";
+import { promises as fsp } from "node:fs";
+import * as path from "node:path";
 import { createMcpBridge } from "./ai/omp/mcpBridge";
 import {
   createHostMcp,
@@ -1428,6 +1444,26 @@ export async function activate(
     ),
   );
 
+  // TASK-012 — `UnicDB.ai.useWithClaudeCode` / `UnicDB.ai.useWithCodex`.
+  // Reuse the existing `writeUnicDBAiConfig` context export (the same
+  // YAML + DB-context markdown written by `useWithOmp`) and surface an
+  // agent-specific copy-pasteable command line. No new workspace config
+  // format — the same `.vscode/UnicDB-ai-config.yml` and
+  // `.vscode/UnicDB-db-context.md` files are reused. Manifest identifiers
+  // are supplied by TASK-013.
+  disposables.push(
+    vscode.commands.registerCommand(
+      "UnicDB.ai.useWithClaudeCode",
+      async () => commandUseWithClaudeCode(aiStore, adapterFactory),
+    ),
+  );
+  disposables.push(
+    vscode.commands.registerCommand(
+      "UnicDB.ai.useWithCodex",
+      async () => commandUseWithCodex(aiStore, adapterFactory),
+    ),
+  );
+
   // 19. UnicDB.ai.refreshDbContext — cycle AD TASK-003 §9 (refresh path).
   // Re-runs the DB introspection that powers `UnicDB-db-context.md` so the
   // appended system-prompt OMP loads is current. Same write path as
@@ -1915,34 +1951,42 @@ async function commandOpenAiChat(
   mgr: ConnectionManager,
 ): Promise<void> {
   // Cycle AE R4.5/AE.5 — `UnicDB.ai.engine` is the user's source of truth.
-  // One path: fresh detectOmp() per open; when detection ok, the panel
-  // runs the ACP runtime (AcpProcess-backed) with omp's real binary —
-  // `resolveEngine()` gates omp-vs-builtin and the config interstitial
-  // applies to the builtin engine only. The activation IIFE only does
-  // the install-hint gate; no engine object is built at activation.
+  // TASK-012 widens the gating policy to the four-engine vocabulary
+  // (builtin / omp / claude-code / codex). ONE non-builtin agent is probed
+  // per open — the one the user selected — and the resolved choice is
+  // funnelled through TASK-007's explicit
+  // `resolveEngine({ engine, detections, config })` mode. Healthy other
+  // agents are NEVER silently substituted.
   if (aiChatPanel) {
     aiChatPanel.show();
     return;
   }
-  const engine = vscode.workspace
+  const configuredRaw = vscode.workspace
     .getConfiguration("UnicDB")
-    .get<string>("ai.engine", "builtin");
-  const [detection, cfg] = await Promise.all([
-    detectOmp(),
+    .get<unknown>("ai.engine", "builtin");
+  const engine = normalizeEngineChoice(configuredRaw);
+  // Probe ONLY the user-selected non-builtin agent. Other agent detections
+  // are intentionally NOT performed — keeps the open cheap and prevents
+  // any chance of a healthy-other-agent silent substitution. The
+  // `detections` dictionary carries exactly one entry, the selected one.
+  const [detections, cfg] = await Promise.all([
+    probeSelectedEngine(engine),
     aiStore.loadConfig(),
   ]);
-  if (engine === "omp" && !detection.ok) {
-    // User chose omp but binary is missing/too old at open-time — flip
-    // back and continue on the builtin path this invocation.
-    const hint = detection.available ? OMP_UPDATE_HINT : OMP_INSTALL_HINT;
+  // Mirror the activation-gate hint for the user's selected engine when
+  // the binary is missing/too old at open-time. The persisted fallback is
+  // GLOBAL so the next open stays on the safe path until the user
+  // re-selects the (now-installed) agent.
+  if (engine !== "builtin" && !detections[engine]?.ok) {
+    const hint = engineHint(engine, detections[engine]);
     void vscode.window.showInformationMessage(
-      `UnicDB: omp engine unavailable — falling back to builtin. ${hint}`,
+      `UnicDB: ${engine} engine unavailable — falling back to builtin. ${hint}`,
     );
     await vscode.workspace
       .getConfiguration("UnicDB")
       .update("ai.engine", "builtin", vscode.ConfigurationTarget.Global);
   }
-  const choice = resolveEngine({ detection, config: cfg });
+  const choice = resolveEngine({ engine, detections, config: cfg });
   if (choice.requiresConfig) {
     void vscode.window.showInformationMessage(
       "UnicDB: Configure AI settings first.",
@@ -1956,6 +2000,40 @@ async function commandOpenAiChat(
   if (isGroundingEnabled()) {
     await refreshGroundingFiles();
   }
+  // TASK-012: build the chat-engine option that matches the resolved
+  // choice. Exactly one of {ompChatEngine, claudeCodeChatEngine,
+  // codexChatEngine} is wired; the panel's dispatch logic picks the one
+  // matching `this.engine`. The factories reuse the SAME HostMcp +
+  // McpBridge plumbing — no duplicate DB tool registry.
+  let ompEngine: OmpChatEngine | undefined;
+  let claudeEngine: ReturnType<typeof createClaudeCodeChatEngine> | undefined;
+  let codexEngine: ReturnType<typeof createCodexChatEngine> | undefined;
+  if (choice.engine === "omp") {
+    ompEngine = await buildOmpChatEngine(
+      adapterFactory,
+      choice.path ?? "omp",
+      (state, generation) => {
+        const panel = aiChatPanel;
+        if (panel !== null) panel.driveEngineState(state, generation);
+      },
+      () => {
+        const panel = aiChatPanel;
+        if (panel !== null) return panel.installOmpEngineObserver();
+        return 0;
+      },
+      (id: number) => id,
+    );
+  } else if (choice.engine === "claude-code") {
+    claudeEngine = await buildClaudeCodeChatEngine(
+      adapterFactory,
+      choice.path ?? "claude",
+    );
+  } else if (choice.engine === "codex") {
+    codexEngine = await buildCodexChatEngine(
+      adapterFactory,
+      choice.path ?? "codex",
+    );
+  }
   aiChatPanel = new AiChatPanel({
     extensionUri: extensionUriForForm,
     deps,
@@ -1963,9 +2041,7 @@ async function commandOpenAiChat(
     // AIX-07: feed the RAW configured engine preference into the panel so
     // its funnels consume the central policy — migrated/invalid values
     // fail closed inside resolvePolicy (never re-derived here).
-    configuredEngine: vscode.workspace
-      .getConfiguration("UnicDB")
-      .get<unknown>("ai.engine", "builtin"),
+    configuredEngine: configuredRaw,
     // AIX-01/AIX-02: opt-in workspace grounding + gated file writes.
     // `UnicDB.ai.grounding` defaults to false so the pre-AIX-01 turn path is
     // unchanged; writeFile absent → workspace_write is never registered.
@@ -1981,39 +2057,12 @@ async function commandOpenAiChat(
     // registration — untrusted workspaces get neither.
     isWorkspaceTrusted: () => vscode.workspace.isTrusted,
     acp: choice.engine === "omp" ? buildAcpDeps() : undefined,
-    // TASK-AIX05-103: the resolved OMP route gets the production engine
-    // adapter (one bridge-owned descriptor/runtime); builtin fallback gets
-    // none. See buildOmpChatEngine below for the adapter contract.
-    // R4.5 fix (critical_block): the panel's `handleEngineState` is the
-    // single restart/fallback owner — AcpProcess lifecycle events MUST
-    // reach it. The `onEngineState` closure is resolved LAZILY at event
-    // time (not at call time) so the panel reference is valid even
-    // though this `commandOpenAiChat` returns BEFORE the panel finishes
-    // its first `show()`.
-    ompChatEngine:
-      choice.engine === "omp"
-        ? await buildOmpChatEngine(
-            adapterFactory,
-            choice.path ?? "omp",
-            (state, generation) => {
-              const panel = aiChatPanel;
-              if (panel !== null) panel.driveEngineState(state, generation);
-            },
-            // R4.5 fix round 2: closures resolve the LIVE panel at call
-            // time (not at commandOpenAiChat time). `installGeneration`
-            // bumps the panel's `engineGeneration` via
-            // `installOmpEngineObserver` so the captured id matches the
-            // LIVE stale-generation guard value. The returned id is
-            // captured by `getGeneration`; every state transition
-            // threads that id into `driveEngineState`.
-            () => {
-              const panel = aiChatPanel;
-              if (panel !== null) return panel.installOmpEngineObserver();
-              return 0;
-            },
-            (id: number) => id,
-          )
-        : undefined,
+    // TASK-012: wire the resolved chat-engine onto the panel seam defined
+    // by TASK-011. Exactly one is supplied per open — the panel's
+    // `handleSend` dispatch consumes the matching engine by `this.engine`.
+    ompChatEngine: ompEngine,
+    claudeCodeChatEngine: claudeEngine,
+    codexChatEngine: codexEngine,
     engineVersion: choice.version,
     engineHint: choice.hint,
     engineOmpPath: choice.path,
@@ -2039,6 +2088,81 @@ async function commandOpenAiChat(
     },
   });
   aiChatPanel.show();
+}
+
+/** TASK-012: narrow the raw `UnicDB.ai.engine` setting into the closed
+ * `AiEngine` vocabulary. Anything else (migrated / corrupted / hostile)
+ * falls back to `builtin` so the open-time policy never silently picks
+ * an unknown engine. */
+function normalizeEngineChoice(
+  raw: unknown,
+): "builtin" | "omp" | "claude-code" | "codex" {
+  if (
+    raw === "builtin" ||
+    raw === "omp" ||
+    raw === "claude-code" ||
+    raw === "codex"
+  ) {
+    return raw;
+  }
+  return "builtin";
+}
+
+/** TASK-012: probe ONLY the user-selected non-builtin agent. The returned
+ * dictionary carries a single entry — exactly the one matching `engine`.
+ * `builtin` produces an empty dictionary (no detection is required). */
+async function probeSelectedEngine(
+  engine: "builtin" | "omp" | "claude-code" | "codex",
+): Promise<AgentDetections> {
+  if (engine === "builtin") return {};
+  if (engine === "omp") {
+    const d = await detectOmp();
+    return { omp: projectAgent(d) };
+  }
+  if (engine === "claude-code") {
+    const d = await detectClaudeCode();
+    return { "claude-code": projectAgent(d) };
+  }
+  const d = await detectCodex();
+  return { codex: projectAgent(d) };
+}
+
+/** TASK-012: project the typed detection shape into the
+ * `AgentDetection` projection used by `resolveEngine`. All three detection
+ * shapes carry the same five fields (ok, reason, path, version, available)
+ * so one shared projector fits. */
+function projectAgent(d: {
+  available: boolean;
+  ok: boolean;
+  reason?: string;
+  path?: string;
+  version?: string;
+}) {
+  return {
+    available: d.available,
+    ok: d.ok,
+    reason: d.reason,
+    path: d.path,
+    version: d.version,
+  };
+}
+
+/** TASK-012: per-engine install/update hint for the
+ * `<engine> engine unavailable — falling back to builtin` notice. omp
+ * keeps the version-too-old → update mapping; the other two agents have
+ * no update-hint yet so the install hint is reused (mirrors the existing
+ * `engineChoice.hintForEngine` policy). */
+function engineHint(
+  engine: "omp" | "claude-code" | "codex",
+  detection: { reason?: string } | undefined,
+): string {
+  if (engine === "omp") {
+    return detection?.reason === "version-too-old"
+      ? OMP_UPDATE_HINT
+      : OMP_INSTALL_HINT;
+  }
+  if (engine === "claude-code") return CLAUDE_CODE_INSTALL_HINT;
+  return CODEX_INSTALL_HINT;
 }
 
 /**
@@ -2126,6 +2250,143 @@ async function buildOmpChatEngine(
     cwd,
     mcpServers,
   });
+}
+
+// ============================================================================
+// TASK-012 — Claude Code + Codex chat-engine factories for `commandOpenAiChat`.
+// These mirror the `buildOmpChatEngine` shape on purpose: same HostMcp +
+// McpBridge plumbing, same gatePost closure against the live panel,
+// same `adapterFactory`-backed DB tool registry. NO duplicate DB tool
+// registry or secret wire plumbing — both engines reuse the OMP seam.
+// ============================================================================
+
+/**
+ * TASK-012 — production Claude Code chat-engine factory.
+ *
+ * Wires `createClaudeCodeProcess` (TASK-005) → `createClaudeCodeChatEngine`
+ * (TASK-009) with the SAME HostMcp + McpBridge stack `buildOmpChatEngine`
+ * uses. The MCP config descriptor is the `bridge.descriptor` itself; the
+ * chat engine threads its `mcpConfigPath` into the process's
+ * `--mcp-config` flag. We write an EPHEMERAL, restrictive-local-path JSON
+ * config file that contains ONLY the `127.0.0.1` MCP endpoint metadata —
+ * NEVER apiKey/DB credentials. The file is deleted on engine dispose.
+ */
+async function buildClaudeCodeChatEngine(
+  adapterFactory: AdapterFactory,
+  claudePath: string,
+): Promise<ReturnType<typeof createClaudeCodeChatEngine>> {
+  const tools: ReadonlyArray<HostMcpTool> = createDbAwareTools(adapterFactory);
+  const hostMcp = createHostMcp({
+    gatePost: (msg) => {
+      const panel = aiChatPanel;
+      if (panel !== null) {
+        void panel.requestHostPermission(msg).then((optionId) => {
+          hostMcp.respond(msg.requestId, optionId);
+        });
+      }
+    },
+    tools,
+  });
+  await hostMcp.start();
+  const bridge = await createMcpBridge(hostMcp);
+  // Write the ephemeral MCP config file referenced by `--mcp-config`.
+  // Shape verified from `claude --help` (Claude 2.1.261, local):
+  //   `--mcp-config <configs...>` — Load MCP servers from JSON files or
+  //   strings (space-separated).
+  // The standard MCP JSON shape is `{ "mcpServers": { <name>: { "type":
+  // "http", "url": "http://127.0.0.1:<port>" } } }`. We record only the
+  // 127.0.0.1 endpoint — no apiKey / DB credential / bearer token.
+  const mcpConfigPath = await writeClaudeMcpConfigFile(bridge.descriptor);
+  const cwd =
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+  const proc = createClaudeCodeProcess({ claudePath, cwd });
+  // Wrap hostMcp.dispose to also delete the temp config file so the
+  // ephemeral secret-shaped artifact cannot survive engine disposal. The
+  // chat engine's dispose() calls hostMcp.stop() once; we layer the file
+  // deletion onto the same stop() so the temp file is gone before the
+  // listener unwinds.
+  const originalStop = hostMcp.stop.bind(hostMcp);
+  hostMcp.stop = async (): Promise<void> => {
+    await originalStop();
+    await fsp.unlink(mcpConfigPath).catch(() => undefined);
+  };
+  return createClaudeCodeChatEngine({
+    process: proc,
+    hostMcp,
+    mcpConfigPath,
+  });
+}
+
+/**
+ * TASK-012 — production Codex chat-engine factory.
+ *
+ * Wires `CodexProcess` (TASK-006) → `createCodexChatEngine` (TASK-010)
+ * with the SAME HostMcp + McpBridge stack. The Codex CLI does NOT consume
+ * `--mcp-config` in `codex exec` mode (verified by TASK-006's
+ * `cli.rs:80` source citation — only `--json` and the `-` stdin sentinel
+ * are passed) so we don't ship a Codex-shaped MCP config file in this
+ * lane; the HostMcp lifecycle is still started (and stopped on dispose)
+ * for parity with the OMP/Claude routes, but no temp config file is
+ * written for it.
+ */
+async function buildCodexChatEngine(
+  adapterFactory: AdapterFactory,
+  codexPath: string,
+): Promise<ReturnType<typeof createCodexChatEngine>> {
+  const tools: ReadonlyArray<HostMcpTool> = createDbAwareTools(adapterFactory);
+  const hostMcp = createHostMcp({
+    gatePost: (msg) => {
+      const panel = aiChatPanel;
+      if (panel !== null) {
+        void panel.requestHostPermission(msg).then((optionId) => {
+          hostMcp.respond(msg.requestId, optionId);
+        });
+      }
+    },
+    tools,
+  });
+  await hostMcp.start();
+  await createMcpBridge(hostMcp); // descriptor kept for parity with OMP/Claude routes
+  const cwd =
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+  const proc = new CodexProcess({ codexPath, cwd });
+  const handle = await proc.start();
+  return createCodexChatEngine({
+    createProcess: async () => handle,
+    hostMcp: {
+      start: hostMcp.start.bind(hostMcp),
+      stop: hostMcp.stop.bind(hostMcp),
+    },
+  });
+}
+
+/**
+ * TASK-012 — write the ephemeral MCP config file Claude Code consumes
+ * via `--mcp-config`. We only ever write the 127.0.0.1 HTTP endpoint
+ * metadata — NEVER apiKey / DB credentials. The file lives under the
+ * workspace's `.vscode/` directory when one is open, otherwise in the
+ * extension's global storage; it is removed on engine dispose.
+ */
+async function writeClaudeMcpConfigFile(
+  descriptor: Record<string, unknown>,
+): Promise<string> {
+  const url = typeof descriptor["url"] === "string" ? descriptor["url"] : "";
+  const name =
+    typeof descriptor["name"] === "string" ? descriptor["name"] : "UnicDB";
+  const payload = JSON.stringify({
+    mcpServers: {
+      [name]: { type: "http", url },
+    },
+  });
+  const baseDir =
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ??
+    vscode.Uri.file(process.cwd()).fsPath;
+  const dir = path.join(baseDir, ".vscode");
+  await fsp.mkdir(dir, { recursive: true });
+  const filename = `.unicdb-claude-mcp-${process.pid}-${Date.now()}.json`;
+  const filePath = path.join(dir, filename);
+  await fsp.writeFile(filePath, payload, { encoding: "utf8", mode: 0o600 });
+  return filePath;
 }
 
 /**
@@ -3517,6 +3778,92 @@ async function commandUseWithOmp(
   );
   if (choice === "Copy") {
     await vscode.env.clipboard.writeText(result.ompCommandLine);
+  }
+}
+
+/**
+ * TASK-012 — `UnicDB.ai.useWithClaudeCode`.
+ *
+ * Reuses the same `writeUnicDBAiConfig` shim as `useWithOmp` — the YAML
+ * + DB context files written are the same shape; only the surfaced
+ * copy-pasteable command line is agent-specific (Claude's verified
+ * `--append-system-prompt` + `--mcp-config <contextPath>` flags). No new
+ * workspace config format is introduced. Manifest wiring is TASK-013.
+ */
+async function commandUseWithClaudeCode(
+  aiStore: AiConfigStore,
+  adapterFactory: AdapterFactory,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    void vscode.window.showErrorMessage(
+      "UnicDB: open a folder before running `Use with Claude Code`.",
+    );
+    return;
+  }
+  const live = await aiStore.loadSettings();
+  const settings: AiSettings = live ?? defaultAiSettings();
+  const history: ReadonlyArray<never> = [];
+  const result = await writeUnicDBAiConfig(
+    folder,
+    settings,
+    adapterFactory,
+    history,
+  );
+  // Claude Code's CLI accepts `--append-system-prompt <file>` and the
+  // YAML context file (verified from `claude --help` 2.1.261, local —
+  // see TASK-005 Discussion). Reuse the same context path written for
+  // OMP so there is no second workspace config format.
+  const commandLine = `claude --append-system-prompt "${result.contextPath}" -p "Use the UnicDB schema context to help me with my database question."`;
+  const choice = await vscode.window.showInformationMessage(
+    `UnicDB: Claude Code config written. Run this in a terminal:\n\n${commandLine}`,
+    { modal: false },
+    "Copy",
+  );
+  if (choice === "Copy") {
+    await vscode.env.clipboard.writeText(commandLine);
+  }
+}
+
+/**
+ * TASK-012 — `UnicDB.ai.useWithCodex`.
+ *
+ * Same reuse pattern as `useWithClaudeCode` — the YAML + DB context are
+ * written through `writeUnicDBAiConfig`; the surfaced copy-pasteable
+ * command line is Codex-specific. Codex's `codex exec --json -` is the
+ * verified wire (TASK-006 §CLI flags), so we point the user at the
+ * equivalent one-shot invocation: `codex exec --json -` with the context
+ * piped on stdin. The on-screen command text is a copyable, agent-specific
+ * string — no additional workspace config format.
+ */
+async function commandUseWithCodex(
+  aiStore: AiConfigStore,
+  adapterFactory: AdapterFactory,
+): Promise<void> {
+  const folder = vscode.workspace.workspaceFolders?.[0];
+  if (!folder) {
+    void vscode.window.showErrorMessage(
+      "UnicDB: open a folder before running `Use with Codex`.",
+    );
+    return;
+  }
+  const live = await aiStore.loadSettings();
+  const settings: AiSettings = live ?? defaultAiSettings();
+  const history: ReadonlyArray<never> = [];
+  const result = await writeUnicDBAiConfig(
+    folder,
+    settings,
+    adapterFactory,
+    history,
+  );
+  const commandLine = `cat "${result.contextPath}" | codex exec --json -`;
+  const choice = await vscode.window.showInformationMessage(
+    `UnicDB: Codex config written. Run this in a terminal:\n\n${commandLine}`,
+    { modal: false },
+    "Copy",
+  );
+  if (choice === "Copy") {
+    await vscode.env.clipboard.writeText(commandLine);
   }
 }
 

@@ -78,3 +78,69 @@ Avoid touching `package.json` here; TASK-013 owns it. Grounded call sites: activ
 ---
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer (handoff-fullstack I3)
+
+### RED Output
+
+Wrote 18 new tests across the two test files (7 in extension.test.ts TASK-012 describe block, 11 in aiChatPanelWebview.test.ts across 4-engine banner + unknown engine blocks). Initial RED phase confirmed — new TASK-012 describe blocks failed because the helpers/factories did not yet exist (TS errors `Cannot find name 'claudeCodeState'/'codexState'` plus runtime `expected "spy" to be called` failures). Captured each failing assertion before implementing the corresponding helper. Tests immediately GREEN after implement would have been flagged; none were.
+
+### Implementation summary
+
+- `src/extension.ts` (+451): added imports (`detectClaudeCode`, `detectCodex`, `createClaudeCodeChatEngine`, `createCodexChatEngine`, `createClaudeCodeProcess`, `CodexProcess`, `fsp`, `path`, install hints, `AgentDetections`); rewrote `commandOpenAiChat` to normalize raw engine setting, probe only the selected non-builtin agent, pass `{engine, detections, config}` to `resolveEngine`, surface engine-specific unavailable notice, persist global builtin fallback, build matching chat engine and wire onto TASK-011 seams (`ompChatEngine` / `claudeCodeChatEngine` / `codexChatEngine`); added helpers `normalizeEngineChoice`, `probeSelectedEngine`, `projectAgent`, `engineHint`; added factories `buildClaudeCodeChatEngine`, `buildCodexChatEngine`, `writeClaudeMcpConfigFile`; added commands `commandUseWithClaudeCode`, `commandUseWithCodex` reusing `writeUnicDBAiConfig`; registered `UnicDB.ai.useWithClaudeCode` + `UnicDB.ai.useWithCodex`. Claude factory writes ephemeral MCP config (`{"mcpServers":{"UnicDB":{"type":"http","url":"http://127.0.0.1:<port>"}}}` — 127.0.0.1 metadata only, no apiKey/DB credentials), 0o600 perms, deleted on engine dispose via wrapped `hostMcp.stop`. Codex factory reuses same HostMcp + McpBridge but does not write a temp config (TASK-006 verified `codex exec --json -` does not consume `--mcp-config`).
+
+- `webview/aiChatPanelMain.ts` (+70): widened inbound `EngineMsg.name` to `string` with closed-set whitelist; added `ENGINE_LABELS` (builtin→"builtin", omp→"oh-my-pi (omp)", claude-code→"Claude Code", codex→"Codex"); added `safeEngineClassName` + `safeEngineLabel` mapping unknown values to builtin; updated `applyEngine` to render all 4 labels with safe fallback.
+
+- `src/extension.test.ts` (+369): added `state.workspaceConfigUpdates` array (each `update()` call pushes); added `claudeCodeState` / `codexState` vi.hoisted stubs; added vi.mocks for `./ai/claudeCode/detect`, `./ai/codex/detect`, `./ai/claudeCode/claudeCodeProcess` (returns stub handle that never spawns), `./ai/codex/codexProcess` (returns `CodexProcessStub` with stub `start()`); added `TASK-012 — Claude Code / Codex engine routing` describe block with 7 tests covering tests 1–5 + 7 from the task file.
+
+- `src/ui/__tests__/aiChatPanelWebview.test.ts` (+171): added `TASK-012 4-engine banner` block (8 tests covering omp, claude-code, codex, builtin banners + versions + hint) and `TASK-012 unknown engine name fails safely` block (4 tests covering unknown name, hostile `<script>`, hostile `<img onerror>`, missing name field).
+
+### Verification Output
+
+```
+> npx vitest run src/extension.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts
+Test Files  1 failed | 1 passed (2)
+Tests       1 failed | 223 passed (224)
+```
+
+All 18 TASK-012 tests pass. The single failure is `TASK-AIX07-003 #1 — showPolicy reports provider+context+tools+export; exportTrace calls saveDialog and writes envelope; clearTrace calls the panel` — assertion `expect(win.showSaveDialog).toHaveBeenCalledTimes(1)` got 0. Verified pre-existing on main by stashing TASK-012 changes and re-running the same test on main: same failure. Not introduced by TASK-012; out of scope here (TASK-AIX07 belongs to its own wave).
+
+```
+> npm run typecheck
+> UnicDB@1.53.23 typecheck
+> tsc --noEmit
+(no errors)
+```
+
+```
+> npm run compile
+> UnicDB@1.53.23 compile
+(esbuild output — dist/webview.js 2.3mb, dist/webview.css 41.1kb, dist/extension.js 6.5mb)
+esbuild: build complete
+```
+
+```
+> git diff --stat HEAD package.json
+(empty — package.json untouched, manifest registration deferred to TASK-013)
+```
+
+### MCP config shape (verified)
+
+`buildClaudeCodeChatEngine` writes a temp file (0o600, `.vscode/.unicdb-claude-mcp-<port>-<ts>.json`) containing:
+
+```json
+{"mcpServers":{"UnicDB":{"type":"http","url":"http://127.0.0.1:<port>"}}}
+```
+
+Confirmed via `claude --help` (local 2.1.261): `--mcp-config <file>` accepts JSON with `mcpServers` map keyed by server name; URL is the Streamable-HTTP endpoint HostMcp listens on (127.0.0.1 only, no apiKey/DB credentials ever appear in this file). File is removed by the `hostMcp.stop` wrapper installed in the factory dispose path. Codex exec mode (TASK-006 verified) does not accept `--mcp-config`, so no temp file is written.
+
+### package.json untouched
+
+Verified `git diff --stat HEAD package.json` → empty. Manifest registration of `UnicDB.ai.useWithClaudeCode` / `UnicDB.ai.useWithCodex` is TASK-013's job per the planner's Discussion note.
+
+Status: PASS
+Note: TASK-AIX07-003 #1 pre-existing failure unrelated to TASK-012 (verified by stash-and-rerun on main); defer to its own wave. No other issues.

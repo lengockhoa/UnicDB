@@ -40,6 +40,19 @@ const state = {
   confirmDestructive: undefined as boolean | undefined,
 
   /**
+   * TASK-012 — captured `vscode.workspace.getConfiguration(...).update(...)`
+   * calls. The vscode mock factory returns a fresh object per call so
+   * `vi.mocked(...update)` only sees ONE capture, not the update that
+   * extension.ts actually made. We capture every update in this array
+   * so tests can assert which key/value/target the host persisted.
+   */
+  workspaceConfigUpdates: [] as Array<{
+    key: string;
+    value: unknown;
+    target: unknown;
+  }>,
+
+  /**
    * Cycle AE R4.5 — value returned by `vscode.workspace.getConfiguration("UnicDB").get("ai.engine")`.
    * undefined → default arg `"builtin"` applies. Tests that exercise the omp
    * path set this to `"omp"` to mirror the user-toggled setting.
@@ -203,7 +216,15 @@ vi.mock("vscode", () => {
         // TASK-AIX05-103: best-effort engine flip path
         // (flipEngineToBuiltinInSettings / commandOpenAiChat fallback) calls
         // `.update()` — resolve as a no-op so the fallback flow completes.
-        update: vi.fn(async () => undefined),
+        // TASK-012: every `.update()` call is captured into
+        // `state.workspaceConfigUpdates` so tests can assert which key +
+        // value + ConfigurationTarget the host persisted (the original
+        // vi.fn() only sees ONE capture because the mock factory returns
+        // a fresh object per getConfiguration call).
+        update: vi.fn(async (key: string, value: unknown, target: unknown) => {
+          state.workspaceConfigUpdates.push({ key, value, target });
+          return undefined;
+        }),
       })),
       fs: {
         writeFile: vi.fn().mockResolvedValue(undefined),
@@ -1662,6 +1683,352 @@ describe("TASK-011 (B3) — commandOpenAiChat resolves engine via detectOmp() + 
         dispose(): void {}
       },
     }));
+  });
+});
+
+// =============================================================================
+// TASK-012 — engine routing for Claude Code + Codex. The host wiring:
+//   1. reads the user's `UnicDB.ai.engine` setting,
+//   2. probes ONLY the selected non-builtin agent (no silent substitution),
+//   3. funnels through `resolveEngine({ engine, detections, config })`,
+//   4. wires the matching chat-engine onto the panel's `AiChatPanelOptions`
+//      seam (TASK-011),
+//   5. persists a global `builtin` fallback when the selected agent is
+//      unavailable,
+//   6. registers `UnicDB.ai.useWithClaudeCode` / `UnicDB.ai.useWithCodex`
+//      commands that reuse `writeUnicDBAiConfig` for the workspace
+//      YAML+context.
+//
+// We mock the detect + factory modules so the test never touches the real
+// `claude` / `codex` binaries.
+// =============================================================================
+const claudeCodeState = vi.hoisted(() => ({
+  impl: async () =>
+    ({ available: false, ok: false, reason: "not-installed" }) as {
+      available: boolean;
+      ok: boolean;
+      path?: string;
+      version?: string;
+      reason?: string;
+    },
+}));
+const codexState = vi.hoisted(() => ({
+  impl: async () =>
+    ({ available: false, ok: false, reason: "not-installed" }) as {
+      available: boolean;
+      ok: boolean;
+      path?: string;
+      version?: string;
+      reason?: string;
+    },
+}));
+
+vi.mock("./ai/claudeCode/detect", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("./ai/claudeCode/detect")>();
+  return {
+    ...actual,
+    detectClaudeCode: (...args: unknown[]) =>
+      (claudeCodeState.impl as (...a: unknown[]) => unknown)(...args),
+  };
+});
+vi.mock("./ai/codex/detect", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./ai/codex/detect")>();
+  return {
+    ...actual,
+    detectCodex: (...args: unknown[]) =>
+      (codexState.impl as (...a: unknown[]) => unknown)(...args),
+  };
+});
+// TASK-012 — the process adapters spawn the real `claude` / `codex`
+// binaries on `start()`. We don't want tests to actually spawn them —
+// that would make the suite nondeterministic on machines that happen to
+// have either CLI on PATH. Provide fake handles that never spawn.
+vi.mock("./ai/claudeCode/claudeCodeProcess", async () => {
+  const stubHandle = {
+    state: () => "stopped" as const,
+    send: async () => undefined,
+    cancel: () => undefined,
+    dispose: async () => undefined,
+    getStderrTail: () => "",
+  };
+  return {
+    createClaudeCodeProcess: () => stubHandle,
+  };
+});
+vi.mock("./ai/codex/codexProcess", async () => {
+  const stubHandle = {
+    sessionId: "codex-stub",
+    version: "0.42.0",
+    state: () => "stopped" as const,
+    cancel: () => undefined,
+    dispose: async () => undefined,
+    send: async () => undefined,
+    getStderrTail: () => "",
+  };
+  class CodexProcessStub {
+    constructor(_opts: unknown) {}
+    async start() {
+      return stubHandle;
+    }
+  }
+  return {
+    CodexProcess: CodexProcessStub,
+    CODEX_DISPOSE_TIMEOUT_MS: 2000,
+  };
+});
+
+describe("TASK-012 — Claude Code / Codex engine routing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.createdWebviewPanels.length = 0;
+    panelConstructorCalls.length = 0;
+    state.workspaceConfigUpdates.length = 0;
+    detectOmpState.impl = async () => ({
+      available: false,
+      ok: false,
+      reason: "not-installed",
+    });
+    claudeCodeState.impl = async () => ({
+      available: false,
+      ok: false,
+      reason: "not-installed",
+    });
+    codexState.impl = async () => ({
+      available: false,
+      ok: false,
+      reason: "not-installed",
+    });
+    state.aiEngine = undefined;
+    state.workspaceFolders = undefined;
+    state.workspaceIsTrusted = true;
+  });
+
+  afterEach(async () => {
+    await deactivate();
+  });
+
+  // ----- #1 happy: healthy claude-code → claudeCodeChatEngine wired --------
+  it("#1 healthy claude-code selected → AiChatPanel receives claudeCodeChatEngine + resolved path/version", async () => {
+    state.aiEngine = "claude-code";
+    claudeCodeState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/local/bin/claude",
+      version: "2.0.1",
+    });
+    const ctx = makeCtx();
+    activate(ctx as never);
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(panelConstructorCalls.length).toBe(1);
+    const opts = panelConstructorCalls[0] as {
+      claudeCodeChatEngine?: unknown;
+      codexChatEngine?: unknown;
+      ompChatEngine?: unknown;
+      engineVersion?: string;
+      engineHint?: string;
+    };
+    expect(opts.claudeCodeChatEngine).toBeDefined();
+    expect(opts.codexChatEngine).toBeUndefined();
+    expect(opts.ompChatEngine).toBeUndefined();
+    expect(opts.engineVersion).toBe("2.0.1");
+    expect(opts.engineHint).toBeUndefined();
+  });
+
+  // ----- #2 happy: healthy codex → codexChatEngine wired --------------------
+  it("#2 healthy codex selected → AiChatPanel receives codexChatEngine + resolved path/version", async () => {
+    state.aiEngine = "codex";
+    codexState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/local/bin/codex",
+      version: "0.42.0",
+    });
+    const ctx = makeCtx();
+    activate(ctx as never);
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(panelConstructorCalls.length).toBe(1);
+    const opts = panelConstructorCalls[0] as {
+      claudeCodeChatEngine?: unknown;
+      codexChatEngine?: unknown;
+      ompChatEngine?: unknown;
+      engineVersion?: string;
+      engineHint?: string;
+    };
+    expect(opts.codexChatEngine).toBeDefined();
+    expect(opts.claudeCodeChatEngine).toBeUndefined();
+    expect(opts.ompChatEngine).toBeUndefined();
+    expect(opts.engineVersion).toBe("0.42.0");
+    expect(opts.engineHint).toBeUndefined();
+  });
+
+  // ----- #3 edge: selected codex missing → info + global builtin flip ------
+  it("#3 codex selected but missing → info message + ai.engine set back to builtin (Global)", async () => {
+    state.aiEngine = "codex";
+    codexState.impl = async () => ({
+      available: false,
+      ok: false,
+      reason: "not-installed",
+    });
+    const ctx = makeCtx();
+    activate(ctx as never);
+
+    const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
+    showInfoSpy.mockClear();
+
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    // The user's chosen-engine notice fired with the precise wording the
+    // acceptance criteria pin.
+    expect(showInfoSpy).toHaveBeenCalled();
+    const text = String(showInfoSpy.mock.calls[0]?.[0] ?? "");
+    expect(text).toMatch(/UnicDB: codex engine unavailable/);
+    expect(text).toMatch(/falling back to builtin/);
+
+    // Global fallback was persisted to ai.engine → builtin.
+    const fallback = state.workspaceConfigUpdates.find(
+      (u) => u.key === "ai.engine" && u.value === "builtin",
+    );
+    expect(fallback).toBeDefined();
+    // ConfigurationTarget.Global is the pinned target for the fallback —
+    // anything else (workspace) would leak across projects.
+    expect(fallback?.target).toBe(vscodeMock.ConfigurationTarget.Global);
+  });
+
+  // ----- #4 edge: builtin + healthy other agents → no chat-engine wired ----
+  it("#4 builtin selected with all three other agents healthy → builtin route, no chat-engine seam wired", async () => {
+    state.aiEngine = "builtin";
+    detectOmpState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/bin/omp",
+      version: "18.0.1",
+    });
+    claudeCodeState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/bin/claude",
+      version: "2.0.1",
+    });
+    codexState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/bin/codex",
+      version: "0.42.0",
+    });
+    // Provide a configured AI store so the panel doesn't short-circuit
+    // into the config interstitial.
+    const ctx = makeConfiguredCtx();
+    activate(ctx as never);
+
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(panelConstructorCalls.length).toBe(1);
+    const opts = panelConstructorCalls[0] as {
+      ompChatEngine?: unknown;
+      claudeCodeChatEngine?: unknown;
+      codexChatEngine?: unknown;
+      acp?: unknown;
+    };
+    // The user picked builtin; none of the agent factories wins even
+    // though they would have all been healthy. P0.3 selection precedence.
+    expect(opts.ompChatEngine).toBeUndefined();
+    expect(opts.claudeCodeChatEngine).toBeUndefined();
+    expect(opts.codexChatEngine).toBeUndefined();
+    expect(opts.acp).toBeUndefined();
+  });
+
+  // ----- #5 edge: useWith* without workspace → info + no fs write ----------
+  it("#5a UnicDB.ai.useWithClaudeCode without workspace folder → info message, no fs write", async () => {
+    state.workspaceFolders = undefined;
+    const writeSpy = vi.mocked(
+      (vscodeMock.workspace.fs as { writeFile: Mock }).writeFile,
+    );
+    writeSpy.mockClear();
+
+    const ctx = makeCtx();
+    activate(ctx as never);
+
+    const showErrorSpy = vi.mocked(vscodeMock.window.showErrorMessage);
+    showErrorSpy.mockClear();
+
+    const fn = state.registeredCommands.get("UnicDB.ai.useWithClaudeCode");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(showErrorSpy).toHaveBeenCalled();
+    const text = String(showErrorSpy.mock.calls[0]?.[0] ?? "");
+    expect(text).toMatch(/open a folder before running/);
+    expect(text).toMatch(/Claude Code/);
+    // No filesystem write happened.
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
+  it("#5b UnicDB.ai.useWithCodex without workspace folder → info message, no fs write", async () => {
+    state.workspaceFolders = undefined;
+    const writeSpy = vi.mocked(
+      (vscodeMock.workspace.fs as { writeFile: Mock }).writeFile,
+    );
+    writeSpy.mockClear();
+
+    const ctx = makeCtx();
+    activate(ctx as never);
+
+    const showErrorSpy = vi.mocked(vscodeMock.window.showErrorMessage);
+    showErrorSpy.mockClear();
+
+    const fn = state.registeredCommands.get("UnicDB.ai.useWithCodex");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(showErrorSpy).toHaveBeenCalled();
+    const text = String(showErrorSpy.mock.calls[0]?.[0] ?? "");
+    expect(text).toMatch(/open a folder before running/);
+    expect(text).toMatch(/Codex/);
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
+  // ----- #7 regression: omp configured route unchanged ---------------------
+  it("#7 regression: omp selected + healthy → buildOmpChatEngine wired with detection.path (not bare string)", async () => {
+    state.aiEngine = "omp";
+    detectOmpState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/bin/omp",
+      version: "18.0.1",
+    });
+    const ctx = makeCtx();
+    activate(ctx as never);
+
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(panelConstructorCalls.length).toBe(1);
+    const opts = panelConstructorCalls[0] as {
+      ompChatEngine?: unknown;
+      claudeCodeChatEngine?: unknown;
+      codexChatEngine?: unknown;
+      engineVersion?: string;
+    };
+    // OMP path stays green: ompChatEngine wired with the resolved path,
+    // the other two engine seams stay undefined (no other agent is
+    // silently substituted).
+    expect(opts.ompChatEngine).toBeDefined();
+    expect(opts.claudeCodeChatEngine).toBeUndefined();
+    expect(opts.codexChatEngine).toBeUndefined();
+    expect(opts.engineVersion).toBe("18.0.1");
   });
 });
 

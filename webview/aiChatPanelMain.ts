@@ -58,10 +58,17 @@ interface DeltaMsg {
   type: "delta";
   text: string;
 }
-/** Engine mode announcement — emitted on first ready (and on crash fallback). */
+/** Engine mode announcement — emitted on first ready (and on crash fallback).
+ *
+ * TASK-012 widens `name` to the full `AiEngine` vocabulary so the webview
+ * accepts `omp`, `claude-code`, `codex`, and `builtin`. Unknown values
+ * (migrated / corrupted / hostile hosts) MUST render as the safe builtin
+ * state — no unsafe class injection, no verbatim text passthrough. The
+ * label-mapping function below implements this fail-safe behavior.
+ */
 interface EngineMsg {
   type: "engine";
-  name: "omp" | "builtin";
+  name: string;
   hint?: string;
   version?: string;
 }
@@ -1420,7 +1427,46 @@ function appendCopyMessageAction(bubble: HTMLElement, rawSource: string): void {
 }
 
 const root = document.getElementById("UnicDB-root") as HTMLDivElement;
-/** Show / replace the engine banner (omp active, or builtin fallback with hint). */
+
+/** TASK-012: closed-set label map for the four engine values. Anything
+ * outside the closed set falls back to the builtin label — never to the
+ * raw wire value (defense-in-depth against hostile / migrated / corrupted
+ * `name` payloads). The `safeName` is also used to derive the
+ * `UnicDB-chat-engine-<name>` CSS class via a fixed whitelist below so
+ * unknown strings cannot reach `classList`. */
+const ENGINE_LABELS: Readonly<Record<string, string>> = {
+  "builtin": "builtin",
+  "omp": "oh-my-pi (omp)",
+  "claude-code": "Claude Code",
+  "codex": "Codex",
+};
+
+/** Map an inbound `name` to a closed-set CSS-class suffix. Unknown inputs
+ * are mapped to `builtin` so the banner DOM class never contains an
+ * attacker-controlled string. */
+function safeEngineClassName(rawName: string): string {
+  switch (rawName) {
+    case "omp":
+    case "claude-code":
+    case "codex":
+    case "builtin":
+      return rawName;
+    default:
+      return "builtin";
+  }
+}
+
+/** Map an inbound `name` to its display label. Unknown inputs render as
+ * `builtin` so the banner textContent is never derived from a raw wire
+ * value (no script injection / no verbatim foreign content). */
+function safeEngineLabel(rawName: string): string {
+  const label = ENGINE_LABELS[rawName];
+  return label ?? ENGINE_LABELS["builtin"];
+}
+
+/** Show / replace the engine banner (omp / claude-code / codex active, or
+ * builtin fallback with hint). TASK-012 widened this to all four engine
+ * values; unknown inbound values render as the builtin fallback. */
 function applyEngine(msg: EngineMsg): void {
   const root = document.getElementById("UnicDB-root");
   if (!root) return;
@@ -1428,15 +1474,21 @@ function applyEngine(msg: EngineMsg): void {
   if (banner) banner.remove();
   banner = document.createElement("div");
   banner.id = "engineBanner";
-  banner.className = `UnicDB-chat-engine UnicDB-chat-engine-${msg.name}`;
+  const className = safeEngineClassName(msg.name);
+  const displayLabel = safeEngineLabel(msg.name);
+  banner.className = `UnicDB-chat-engine UnicDB-chat-engine-${className}`;
   const label =
     msg.name === "omp"
       ? msg.version
-        ? `Engine: oh-my-pi (omp) v${msg.version} — streaming`
-        : "Engine: oh-my-pi (omp) — streaming"
-      : msg.hint
-        ? `Engine: builtin — ${msg.hint} — streaming`
-        : `Engine: builtin — streaming`;
+        ? `Engine: ${displayLabel} v${msg.version} — streaming`
+        : `Engine: ${displayLabel} — streaming`
+      : msg.name === "claude-code" || msg.name === "codex"
+        ? msg.version
+          ? `Engine: ${displayLabel} v${msg.version} — streaming`
+          : `Engine: ${displayLabel} — streaming`
+        : msg.hint
+          ? `Engine: builtin — ${msg.hint} — streaming`
+          : `Engine: builtin — streaming`;
   banner.textContent = label;
   // Insert at the top of the thread (before any chat bubbles).
   const thread = document.getElementById("thread");

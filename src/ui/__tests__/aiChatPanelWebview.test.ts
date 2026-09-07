@@ -873,3 +873,174 @@ describe("AiChatPanelWebview — TASK-AG-001 icon-only composer", () => {
   });
 });
 
+// ============================================================================
+// TASK-012 — engine banner widened to 4 values; unknown values fail safely.
+//
+// Coverage:
+//   1. `omp`      banner — text reads "Engine: oh-my-pi (omp) — streaming"
+//   2. `claude-code` banner — text reads "Engine: Claude Code — streaming"
+//   3. `codex`    banner — text reads "Engine: Codex — streaming"
+//   4. `builtin`  banner — text reads "Engine: builtin — streaming"
+//   5. Unknown inbound `name` — banner class falls back to "builtin", text
+//      does NOT echo the raw wire value verbatim, no script-style payload
+//      can escape into textContent. Defense-in-depth against hostile /
+//      migrated / corrupted host messages.
+//   6. claude-code + version banner reads "Engine: Claude Code v2.0.1 — streaming"
+// ============================================================================
+
+describe("AiChatPanelWebview — TASK-012 4-engine banner", () => {
+  it("#T12-engine-1: omp banner text", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({ type: "engine", name: "omp", version: "18.0.1" });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toBe(
+      "Engine: oh-my-pi (omp) v18.0.1 — streaming",
+    );
+  });
+
+  it("#T12-engine-2: claude-code banner text", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({ type: "engine", name: "claude-code" });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toBe("Engine: Claude Code — streaming");
+    // CSS class uses the raw wire value verbatim — the closed-set
+    // whitelist in applyEngine passes it through unmolested.
+    expect(
+      banner!.classList.contains("UnicDB-chat-engine-claude-code"),
+    ).toBe(true);
+  });
+
+  it("#T12-engine-3: codex banner text", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({ type: "engine", name: "codex" });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toBe("Engine: Codex — streaming");
+    expect(banner!.classList.contains("UnicDB-chat-engine-codex")).toBe(
+      true,
+    );
+  });
+
+  it("#T12-engine-4: builtin banner text", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({ type: "engine", name: "builtin" });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toBe("Engine: builtin — streaming");
+    expect(banner!.classList.contains("UnicDB-chat-engine-builtin")).toBe(
+      true,
+    );
+  });
+
+  it("#T12-engine-6: claude-code with version", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({ type: "engine", name: "claude-code", version: "2.0.1" });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toBe(
+      "Engine: Claude Code v2.0.1 — streaming",
+    );
+  });
+
+  it("#T12-engine-7: codex with version", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({ type: "engine", name: "codex", version: "0.42.0" });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toBe("Engine: Codex v0.42.0 — streaming");
+  });
+
+  it("#T12-engine-8: builtin with hint carries the hint in textContent", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({
+      type: "engine",
+      name: "builtin",
+      hint: "claude-code engine unavailable",
+    });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    expect(banner!.textContent).toBe(
+      "Engine: builtin — claude-code engine unavailable — streaming",
+    );
+  });
+});
+
+// ============================================================================
+// TASK-012 #6 — unknown inbound `engine.name` must NOT inject unsafe class
+// or textContent. The webview's closed-set whitelist maps anything outside
+// `omp | claude-code | codex | builtin` to the builtin fallback class +
+// label. Defense-in-depth against migrated / corrupted / hostile hosts.
+// ============================================================================
+describe("AiChatPanelWebview — TASK-012 unknown engine name fails safely", () => {
+  it("#T12-unknown-1: unknown name maps to builtin class + builtin label", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({ type: "engine", name: "copilot" });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    // Class MUST NOT contain the raw wire value "copilot" — that would
+    // be an attacker-controlled CSS class injection.
+    expect(banner!.className).not.toMatch(/copilot/i);
+    expect(banner!.classList.contains("UnicDB-chat-engine-builtin")).toBe(
+      true,
+    );
+    // TextContent MUST NOT echo "copilot" verbatim — that would be a
+    // verification-free textContent injection point.
+    expect(banner!.textContent).toBe("Engine: builtin — streaming");
+  });
+
+  it("#T12-unknown-2: hostile name with HTML does not inject script", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({
+      type: "engine",
+      name: "<script>window.__pwned=1</script>",
+    });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    const html = banner!.innerHTML;
+    // textContent-only render path → no live <script> tag ever reaches DOM.
+    expect(html).not.toMatch(/<script/i);
+    // Class stays on the closed whitelist.
+    expect(banner!.className).not.toMatch(/<script/i);
+    // The host-side flag never flips on.
+    const w = window as unknown as Record<string, unknown>;
+    expect("__pwned" in w).toBe(false);
+  });
+
+  it("#T12-unknown-3: hostile name with onerror does not inject img", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    h.dispatch({
+      type: "engine",
+      name: '"><img src=x onerror=alert(1)>',
+    });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    expect(banner!.innerHTML).not.toMatch(/<img[^>]*onerror/i);
+  });
+
+  it("#T12-unknown-4: postMessage missing name field falls back to builtin", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false });
+    // Missing name — typeof undefined, neither matches the closed set nor
+    // is a hostile string, so the safe fallback applies.
+    h.dispatch({ type: "engine" });
+    const banner = document.getElementById("engineBanner");
+    expect(banner).not.toBeNull();
+    expect(banner!.classList.contains("UnicDB-chat-engine-builtin")).toBe(
+      true,
+    );
+    expect(banner!.textContent).toBe("Engine: builtin — streaming");
+  });
+});
+
