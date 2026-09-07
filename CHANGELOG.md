@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.18] — 2026-09-07
+
+- Summary: Test-only hotfix patch — align the 4 webview tab-order test files (webviewBundle, webviewPerTableTabs, webviewResultLimit, webviewMultiRunTabs) with the Messages-first + reverse-chronological tab order shipped in 1.53.17. No production code changes; CI was failing the published 1.53.17 .vsix's test suite.
+- Files: src/ui/__tests__/webviewBundle.test.ts, src/ui/__tests__/webviewPerTableTabs.test.ts, src/ui/__tests__/webviewResultLimit.test.ts, tests/webviewMultiRunTabs.test.ts
+- Verification: npm run typecheck ✅ · npm test ✅ (250 files / 3730 tests / 0 failed) · UnicDB-1.53.18.vsix packaged
+
+---
+
 ## [1.53.17] — 2026-09-07
 
 - Summary: Fix two Cmd+Enter / tab UX bugs — (1) Run ALL highlighted queries on Cmd+Enter: `runQueryFromEditor` now iterates `editor.selections` (multi-cursor support) AND `splitStatements` gains an opt-in `lineBoundaries` flag that recognizes top-level newlines before statement-starter keywords as soft boundaries, so 3 newline-separated SELECT queries without `;` all run instead of collapsing to one. (2) Cap result-tab strip to 10 entries with Messages tab FIRST and result tabs in reverse-chronological order (most recent first), so the 2nd visual tab after Messages always shows the newest query's result.
