@@ -208,4 +208,82 @@ describe("scaffold", () => {
     expect(showRunLensSh.type).toBe("boolean");
     expect(showRunLensSh.default).toBe(true);
   });
+
+  // ===== TASK-SH-001: UnicDB.runShellSelection manifest + shellscript keybindings =====
+
+  it("Test #1 (TASK-SH-001) — keybindings chứa UnicDB.runShellSelection với mac cmd+enter (shellscript)", () => {
+    const pkgPath = path.resolve(__dirname, "..", "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+
+    expect(Array.isArray(pkg.contributes.keybindings)).toBe(true);
+    const shellKeybindings = pkg.contributes.keybindings.filter(
+      (k: { command: string }) => k.command === "UnicDB.runShellSelection",
+    );
+    expect(shellKeybindings.length).toBeGreaterThanOrEqual(1);
+
+    const mac = shellKeybindings.find((k: { mac?: string }) => k.mac === "cmd+enter");
+    expect(mac, "phải có row mac=cmd+enter cho UnicDB.runShellSelection").toBeTruthy();
+    expect(mac.when).toBe("editorTextFocus && resourceLangId == shellscript");
+  });
+
+  it("Test #2 (TASK-SH-001) — command UnicDB.runShellSelection + activation event được contribute", () => {
+    const pkgPath = path.resolve(__dirname, "..", "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+
+    const runShellSelectionCmd = pkg.contributes.commands.find(
+      (c: { command: string }) => c.command === "UnicDB.runShellSelection",
+    );
+    expect(runShellSelectionCmd, "contributes.commands phải có UnicDB.runShellSelection").toBeTruthy();
+    expect(runShellSelectionCmd.title).toMatch(/^UnicDB: Run Selection/);
+    expect(runShellSelectionCmd.category).toBe("UnicDB");
+    // icon codicon (string starting with $(...)) — same shape as UnicDB.runScript
+    expect(
+      typeof runShellSelectionCmd.icon === "string" && /^\$\(/.test(runShellSelectionCmd.icon),
+      `UnicDB.runShellSelection phải có icon codicon (got ${JSON.stringify(runShellSelectionCmd.icon)})`,
+    ).toBe(true);
+
+    const events: string[] = Array.isArray(pkg.activationEvents) ? pkg.activationEvents : [];
+    expect(events).toContain("onCommand:UnicDB.runShellSelection");
+    expect(events).toContain("onLanguage:shellscript");
+  });
+
+  it("Test #3 (TASK-SH-001) — win/linux ctrl+enter variant tồn tại cho UnicDB.runShellSelection", () => {
+    const pkgPath = path.resolve(__dirname, "..", "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+
+    const shellKeybindings = pkg.contributes.keybindings.filter(
+      (k: { command: string }) => k.command === "UnicDB.runShellSelection",
+    );
+    const win = shellKeybindings.find((k: { win?: string }) => k.win === "ctrl+enter");
+    expect(win, "phải có row win=ctrl+enter cho UnicDB.runShellSelection").toBeTruthy();
+    expect(win.linux).toBe("ctrl+enter");
+    expect(win.when).toBe("editorTextFocus && resourceLangId == shellscript");
+  });
+
+  it("Test #4 (TASK-SH-001) — keybinding mới không clobber runQuery (SQL), đúng ngôn ngữ tách biệt", () => {
+    const pkgPath = path.resolve(__dirname, "..", "package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+
+    const runQueryKeybindings = pkg.contributes.keybindings.filter(
+      (k: { command: string }) => k.command === "UnicDB.runQuery",
+    );
+    expect(runQueryKeybindings.length).toBeGreaterThanOrEqual(2);
+    for (const k of runQueryKeybindings) {
+      expect(k.when, `UnicDB.runQuery row phải scope vào sql (got ${k.when})`).toMatch(
+        /resourceLangId == sql/,
+      );
+    }
+
+    const shellKeybindings = pkg.contributes.keybindings.filter(
+      (k: { command: string }) => k.command === "UnicDB.runShellSelection",
+    );
+    expect(shellKeybindings.length).toBeGreaterThanOrEqual(2);
+    for (const k of shellKeybindings) {
+      expect(k.when, `UnicDB.runShellSelection row phải scope vào shellscript (got ${k.when})`).toMatch(
+        /shellscript/,
+      );
+      // negative: không lan sang SQL
+      expect(k.when).not.toMatch(/resourceLangId == sql/);
+    }
+  });
 });

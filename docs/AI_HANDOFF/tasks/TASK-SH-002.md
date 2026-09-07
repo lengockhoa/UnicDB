@@ -107,3 +107,78 @@ npm test
   a second factory.
 - `onLanguage:shellscript` activation already exists in `package.json` (verified), so no
   activation-event work is needed on this side.
+
+## Executor Report
+EXECUTOR_TOOL: Claude Code (claude CLI)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-sh-002
+
+ ❯ src/extension.test.ts  (171 tests | 8 failed | 162 skipped) 162ms
+   ❯ src/extension.test.ts > TASK-SH-002 — UnicDB.runShellSelection multi-selection > Test #1: UnicDB.runShellSelection được register khi activate
+     → expected false to be true // Object.is equality
+   ❯ src/extension.test.ts > TASK-SH-002 — UnicDB.runShellSelection multi-selection > Test #2 happy: 3 disjoint single-line selections → 3 sendText calls in order + 1 createTerminal
+     → expected undefined not to be undefined
+   ❯ src/extension.test.ts > TASK-SH-002 — UnicDB.runShellSelection multi-selection > Test #3 happy: cursor-only (empty selection) trên line N → 1 sendText với text của line N
+     → expected undefined not to be undefined
+   ❯ src/extension.test.ts > TASK-SH-002 — UnicDB.runShellSelection multi-selection > Test #4 happy: 1 selection spanning 3 consecutive lines → 1 sendText với embedded newline
+     → expected undefined not to be undefined
+   ❯ src/extension.test.ts > TASK-SH-002 — UnicDB.runShellSelection multi-selection > Test #5 edge: whitespace-only selection + blank cursor line → 0 sendText, KHÔNG tạo terminal
+     → expected undefined not to be undefined
+   ❯ src/extension.test.ts > TASK-SH-002 — UnicDB.runShellSelection multi-selection > Test #6 edge: editor languageId !== 'shellscript' (sql) → trả về sớm, 0 sendText
+     → expected undefined not to be undefined
+   ❯ src/extension.test.ts > TASK-SH-002 — UnicDB.runShellSelection multi-selection > Test #7 edge: no active editor → no-op, KHÔNG showWarning/showError
+     → expected undefined not to be undefined
+   ❯ src/extension.test.ts > TASK-SH-002 — UnicDB.runShellSelection multi-selection > Test #8 edge: terminal đã chết (exitStatus !== undefined) → tạo terminal mới
+     → fn is not a function
+
+ Test Files  1 failed (1)
+      Tests  8 failed | 1 passed | 162 skipped (171)
+```
+The 1 passing test is the regression test (#9) which only exercises the existing
+`UnicDB.runScript` whole-file behavior and does not depend on the new command.
+8 of 9 new tests fail with the expected reason — `UnicDB.runShellSelection` is
+not yet registered (Test #1: command missing in `state.registeredCommands`;
+Tests #2-#8: `fn` is `undefined` when looked up by id).
+
+Verification Output:
+GREEN — task-focused subset (TASK-SH-002 + TASK-505 regression + TASK-MSEL regression):
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-sh-002
+
+ ✓ src/extension.test.ts  (171 tests | 148 skipped) 332ms
+
+ Test Files  1 passed (1)
+      Tests  23 passed | 148 skipped (171)
+   Duration  1.05s (transform 397ms, setup 0ms, collect 574ms, tests 332ms, environment 0ms, prepare 47ms)
+```
+23 tests = 9 new (TASK-SH-002) + 7 TASK-505 + 7 TASK-MSEL. All green; no regression
+in existing `commandRunScript` whole-file behavior nor in SQL multi-selection.
+
+`npm run typecheck`:
+```
+> UnicDB@1.53.18 typecheck
+> tsc --noEmit
+```
+Exit code 0, no output.
+
+Full `npx vitest run src/extension.test.ts` (171 tests):
+```
+ Test Files  1 failed (1)
+      Tests  1 failed | 170 passed (171)
+```
+The single failure is `expect(schemaFormBundlePresent).toBe(true)` at line 1931 —
+pre-existing build-artifact test (`dist/schemaForm.js` not produced because the
+worktree has no compiled `dist/` directory). Unrelated to TASK-SH-002; the same
+failure occurs on the parent branch baseline before any task changes.
+
+Status: PASS
+Note: Added a `makeShellEditor` factory (mirror of TASK-MSEL `makeEditor` at
+~line 2276 with an extra `document.lineAt(line)` stub) — the editor factory
+from TASK-MSEL was SQL-specific (`languageId: "sql"`) and lacked `lineAt`.
+Did not fork a second factory for shellscript — instead added the small
+`lineAt` extension to a focused new factory inside the TASK-SH-002 describe
+block. Did NOT touch package.json or src/scaffold.test.ts (those belong to
+TASK-SH-001).

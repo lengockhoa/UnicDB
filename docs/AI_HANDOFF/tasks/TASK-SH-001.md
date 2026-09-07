@@ -79,3 +79,130 @@ npm test
 - Command palette entry is a deliberate byproduct of `contributes.commands` (matches
   `UnicDB.runQuery`/`UnicDB.runScript`); no editor/title menu this cycle per PLAN §2.
 - No `selection`/code changes allowed here — TASK-SH-002 owns `src/extension.ts`.
+
+## Executor Report
+
+EXECUTOR_TOOL: Claude Code (claude CLI)
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+
+### Choice on activation event (per "smaller change" hint in task brief)
+
+Repo convention: every command contributes its own `onCommand:UnicDB.<id>` row in
+`activationEvents` (the existing `UnicDB.runScript` is paired with both
+`onCommand:UnicDB.runScript` AND `onLanguage:shellscript`). To follow that
+convention AND keep both layers active, the manifest now has **three** shellscript
+related activation events:
+
+- `onLanguage:shellscript` (already existed)
+- `onCommand:UnicDB.runScript` (already existed)
+- `onCommand:UnicDB.runShellSelection` (added this task)
+
+This is the smallest change consistent with the existing pattern — TASK-SH-002
+later needs `onCommand:UnicDB.runShellSelection` to register its handler before
+the keybinding fires, and the per-command activation row is the cheapest way to
+guarantee that.
+
+### RED output (4 failing tests, baseline 7 passing)
+
+```
+ FAIL  src/scaffold.test.ts > scaffold > Test #1 (TASK-SH-001) — keybindings chứa UnicDB.runShellSelection với mac cmd+enter (shellscript)
+AssertionError: expected 0 to be greater than or equal to 1
+  ❯ src/scaffold.test.ts:222:37
+
+ FAIL  src/scaffold.test.ts > scaffold > Test #2 (TASK-SH-001) — command UnicDB.runShellSelection + activation event được contribute
+AssertionError: contributes.commands phải có UnicDB.runShellSelection: expected undefined to be truthy
+  ❯ src/scaffold.test.ts:236:91
+
+ FAIL  src/scaffold.test.ts > scaffold > Test #3 (TASK-SH-001) — win/linux ctrl+enter variant tồn tại cho UnicDB.runShellSelection
+AssertionError: phải có row win=ctrl+enter cho UnicDB.runShellSelection: expected undefined to be truthy
+  ❯ src/scaffold.test.ts:258:76
+
+ FAIL  src/scaffold.test.ts > scaffold > Test #4 (TASK-SH-001) — keybinding mới không clobber runQuery (SQL), đúng ngôn ngữ tách biệt
+AssertionError: expected 0 to be greater than or equal to 2
+  ❯ src/scaffold.test.ts:280:37
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 7 passed (11)
+```
+
+All 4 fail for the expected reasons (no keybinding row, no command entry, no win/linux variant, no rows at all). TASK-605 regression tests + existing scaffold assertions remained green through the RED phase.
+
+### Verification output (post-implementation)
+
+#### `npx vitest run src/scaffold.test.ts`
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-sh-001
+
+ ✓ src/scaffold.test.ts  (11 tests) 499ms
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  12:15:45
+   Duration  658ms
+```
+
+#### `npm run typecheck`
+
+```
+> UnicDB@1.53.18 typecheck
+> tsc --noEmit
+```
+
+Exit 0, no errors.
+
+### Manifest snapshot (post-change)
+
+`activationEvents` shellscript-related rows:
+
+```
+"onCommand:UnicDB.runScript",
+"onLanguage:shellscript",
+"onCommand:UnicDB.runShellSelection",
+```
+
+`contributes.commands` new entry:
+
+```json
+{
+  "command": "UnicDB.runShellSelection",
+  "title": "UnicDB: Run Selection in Script Terminal",
+  "category": "UnicDB",
+  "icon": "$(play)"
+}
+```
+
+`contributes.keybindings` new rows (added directly below the existing two
+`UnicDB.runQuery` rows):
+
+```json
+{
+  "command": "UnicDB.runShellSelection",
+  "key": "cmd+enter",
+  "mac": "cmd+enter",
+  "when": "editorTextFocus && resourceLangId == shellscript"
+},
+{
+  "command": "UnicDB.runShellSelection",
+  "key": "ctrl+enter",
+  "win": "ctrl+enter",
+  "linux": "ctrl+enter",
+  "when": "editorTextFocus && resourceLangId == shellscript"
+}
+```
+
+No other manifest keys touched: no menu additions, no views, no version bump.
+`UnicDB.runScript` whole-file behavior, its existing keybinding, and its
+`editor/title` entry are all preserved unchanged.
+
+### Files changed
+
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-sh-001/package.json` (+20 lines)
+- `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-sh-001/src/scaffold.test.ts` (+78 lines)
+
+`src/extension.ts` and `src/extension.test.ts` NOT touched (per task scope —
+TASK-SH-002 owns those).
+
+Status: PASS
+Note: none

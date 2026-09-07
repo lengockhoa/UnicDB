@@ -5955,3 +5955,319 @@ describe("TASK-UX1-004 — UnicDB.openUserGuide", () => {
     expect(ignore).toMatch(/^!docs\/UNICDB_USER_GUIDE\.md/m); // allow-rule present
   });
 });
+
+// =============================================================================
+// TASK-SH-002 — `commandRunShellSelection` (UnicDB.runShellSelection).
+// On Cmd+Enter in a `shellscript` editor, send ONLY the selected line(s) (or
+// cursor line when no selection) to the reused `runScriptTerminal` ("UnicDB
+// Script"). Mirrors the SQL multi-selection pattern from `runQueryFromEditor`
+// without touching any SQL path.
+//
+// Reference: src/extension.ts ~3215 (commandRunScript) + 2495 (multi-select
+// pattern), package.json `onLanguage:shellscript` activation.
+// =============================================================================
+describe("TASK-SH-002 — UnicDB.runShellSelection multi-selection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.registeredContentProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
+    // Reset module để drop module-level `runScriptTerminal` từ test trước.
+    vi.resetModules();
+  });
+
+  /** Re-import + activate sau resetModules (mỗi test lấy module + registeredCommands mới). */
+  async function activateFresh(ctx: ReturnType<typeof makeCtx>) {
+    const mod = await import("./extension");
+    await mod.activate(ctx as never);
+  }
+
+  /**
+   * Build a fake shellscript editor stub that mirrors the TASK-MSEL
+   * `makeEditor` factory (~line 2276) but for shell. Adds `lineAt(line)` so
+   * the empty-selection branch in `commandRunShellSelection` can resolve the
+   * cursor line text (extension.ts lineAt pattern).
+   */
+  function makeShellEditor(
+    script: string,
+    selections: Array<{
+      startLine: number;
+      startChar: number;
+      endLine: number;
+      endChar: number;
+    }>,
+  ): {
+    document: {
+      languageId: string;
+      getText(): string;
+      offsetAt(p: { line: number; character: number }): number;
+      lineAt(line: number): { text: string };
+    };
+    selection: unknown;
+    selections: unknown[];
+    insertSnippet: unknown;
+  } {
+    const lines = script.split("\n");
+    function offsetAt(line: number, character: number): number {
+      let off = 0;
+      for (let i = 0; i < line; i++) off += lines[i]!.length + 1;
+      return off + character;
+    }
+    const selObjs = selections.map((s) => {
+      const startOffset = offsetAt(s.startLine, s.startChar);
+      const endOffset = offsetAt(s.endLine, s.endChar);
+      const isEmpty = startOffset === endOffset;
+      return {
+        isEmpty,
+        active: { line: s.endLine, character: s.endChar },
+        start: { line: s.startLine, character: s.startChar },
+        end: { line: s.endLine, character: s.endChar },
+      };
+    });
+    return {
+      document: {
+        languageId: "shellscript",
+        getText: () => script,
+        offsetAt: (p: { line: number; character: number }) =>
+          offsetAt(p.line, p.character),
+        lineAt: (line: number) => ({ text: lines[line] ?? "" }),
+      },
+      selection: selObjs[0],
+      selections: selObjs,
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  it("Test #1: UnicDB.runShellSelection được register khi activate", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+    expect(state.registeredCommands.has("UnicDB.runShellSelection")).toBe(true);
+  });
+
+  it("Test #2 happy: 3 disjoint single-line selections → 3 sendText calls in order + 1 createTerminal", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    const script = "echo lineA\necho lineB\necho lineC";
+    // Each `echo lineX` is exactly 10 chars (offsets: 0..10, 11..21, 22..32).
+    state.activeEditor = makeShellEditor(script, [
+      { startLine: 0, startChar: 0, endLine: 0, endChar: 10 },
+      { startLine: 1, startChar: 0, endLine: 1, endChar: 10 },
+      { startLine: 2, startChar: 0, endLine: 2, endChar: 10 },
+    ]) as never;
+
+    const fn = state.registeredCommands.get("UnicDB.runShellSelection");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(state.createdTerminals.length).toBe(1);
+    expect(state.createdTerminals[0].name).toBe("UnicDB Script");
+    const term = state.createdTerminals[0];
+    expect(term.sendText).toHaveBeenCalledTimes(3);
+    expect(term.sendText.mock.calls.map((c) => c[0])).toEqual([
+      "echo lineA\n",
+      "echo lineB\n",
+      "echo lineC\n",
+    ]);
+    // show() chỉ gọi 1 lần sau khi gửi hết các piece.
+    expect(term.show).toHaveBeenCalledTimes(1);
+  });
+
+  it("Test #3 happy: cursor-only (empty selection) trên line N → 1 sendText với text của line N", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    const script = "echo line0\necho line1\necho line2";
+    // Empty selection ở line 1 (cursor-only).
+    state.activeEditor = makeShellEditor(script, [
+      { startLine: 1, startChar: 3, endLine: 1, endChar: 3 },
+    ]) as never;
+
+    const fn = state.registeredCommands.get("UnicDB.runShellSelection");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(state.createdTerminals.length).toBe(1);
+    const term = state.createdTerminals[0];
+    expect(term.sendText).toHaveBeenCalledTimes(1);
+    expect(term.sendText.mock.calls[0][0]).toBe("echo line1\n");
+    expect(term.show).toHaveBeenCalledTimes(1);
+  });
+
+  it("Test #4 happy: 1 selection spanning 3 consecutive lines → 1 sendText với embedded newline", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    const script = "echo A\necho B\necho C";
+    // Selection kéo từ đầu line 0 đến hết line 2 (hết "echo C" = char 6).
+    state.activeEditor = makeShellEditor(script, [
+      { startLine: 0, startChar: 0, endLine: 2, endChar: 6 },
+    ]) as never;
+
+    const fn = state.registeredCommands.get("UnicDB.runShellSelection");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(state.createdTerminals.length).toBe(1);
+    const term = state.createdTerminals[0];
+    expect(term.sendText).toHaveBeenCalledTimes(1);
+    expect(term.sendText.mock.calls[0][0]).toBe("echo A\necho B\necho C\n");
+    expect(term.show).toHaveBeenCalledTimes(1);
+  });
+
+  it("Test #5 edge: whitespace-only selection + blank cursor line → 0 sendText, KHÔNG tạo terminal", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    // Doc có 3 dòng: 2 dòng đầu chỉ whitespace, line 2 là empty string (sau newline).
+    const script = "   \n   \n";
+    state.activeEditor = makeShellEditor(script, [
+      // Whitespace-only selection ở line 0.
+      { startLine: 0, startChar: 0, endLine: 0, endChar: 3 },
+      // Empty cursor ở line 1 (whitespace line).
+      { startLine: 1, startChar: 1, endLine: 1, endChar: 1 },
+    ]) as never;
+
+    const fn = state.registeredCommands.get("UnicDB.runShellSelection");
+    expect(fn).toBeDefined();
+    await expect(fn!()).resolves.toBeUndefined();
+
+    // Không tạo terminal, không gọi sendText, không gọi show.
+    expect(state.createdTerminals.length).toBe(0);
+  });
+
+  it("Test #6 edge: editor languageId !== 'shellscript' (sql) → trả về sớm, 0 sendText", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    state.activeEditor = {
+      document: {
+        languageId: "sql",
+        getText: () => "SELECT 1;",
+        offsetAt: (_p: unknown) => 0,
+        lineAt: (_line: number) => ({ text: "SELECT 1;" }),
+      },
+      selection: {
+        isEmpty: false,
+        active: { line: 0, character: 9 },
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 9 },
+      },
+      selections: [
+        {
+          isEmpty: false,
+          active: { line: 0, character: 9 },
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 9 },
+        },
+      ],
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    } as never;
+
+    const fn = state.registeredCommands.get("UnicDB.runShellSelection");
+    expect(fn).toBeDefined();
+    await expect(fn!()).resolves.toBeUndefined();
+
+    expect(state.createdTerminals.length).toBe(0);
+  });
+
+  it("Test #7 edge: no active editor → no-op, KHÔNG showWarning/showError", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    state.activeEditor = undefined;
+
+    const showWarningSpy = vi.mocked(
+      (vscodeMock.window as unknown as {
+        showWarningMessage: ReturnType<typeof vi.fn>;
+      }).showWarningMessage,
+    );
+    const showErrorSpy = vi.mocked(
+      (vscodeMock.window as unknown as {
+        showErrorMessage: ReturnType<typeof vi.fn>;
+      }).showErrorMessage,
+    );
+
+    const fn = state.registeredCommands.get("UnicDB.runShellSelection");
+    expect(fn).toBeDefined();
+    await expect(fn!()).resolves.toBeUndefined();
+
+    expect(state.createdTerminals.length).toBe(0);
+    expect(showWarningSpy).not.toHaveBeenCalled();
+    expect(showErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it("Test #8 edge: terminal đã chết (exitStatus !== undefined) → tạo terminal mới", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    state.activeEditor = makeShellEditor("echo dead\n", [
+      { startLine: 0, startChar: 0, endLine: 0, endChar: 9 },
+    ]) as never;
+
+    // Pre-set một terminal đã chết làm state ban đầu: gọi runScript trước
+    // rồi đánh dấu dead, sau đó gọi runShellSelection. Cả hai command dùng
+    // chung module-level `runScriptTerminal`, nên đây là cách tái sử dụng
+    // guard pattern y hệt TASK-505.
+    const runScriptFn = state.registeredCommands.get("UnicDB.runScript");
+    await runScriptFn!();
+    expect(state.createdTerminals.length).toBe(1);
+    const deadTerm = state.createdTerminals[0];
+    deadTerm.exitStatus = { code: 0 };
+
+    const fn = state.registeredCommands.get("UnicDB.runShellSelection");
+    await fn!();
+
+    // Phải có terminal thứ 2 (terminal cũ đã chết, không reuse).
+    expect(state.createdTerminals.length).toBe(2);
+    const newTerm = state.createdTerminals[1];
+    expect(newTerm).not.toBe(deadTerm);
+    expect(newTerm.name).toBe("UnicDB Script");
+    // Terminal mới nhận text.
+    expect(newTerm.sendText).toHaveBeenCalledTimes(1);
+    expect(newTerm.sendText.mock.calls[0][0]).toBe("echo dead\n");
+    // Terminal cũ không bị gọi thêm.
+    expect(deadTerm.sendText).toHaveBeenCalledTimes(1);
+    expect(newTerm.show).toHaveBeenCalled();
+  });
+
+  it("Test #9 regression: UnicDB.runScript vẫn whole-file (line nội bộ đầy đủ) sau khi thêm runShellSelection", async () => {
+    const ctx = makeCtx();
+    await activateFresh(ctx);
+
+    const scriptText = "echo whole\necho file\n";
+    state.activeEditor = {
+      document: {
+        languageId: "shellscript",
+        getText: () => scriptText,
+        offsetAt: (_p: unknown) => 0,
+      },
+      selection: {
+        isEmpty: true,
+        active: { line: 0, character: 0 },
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 0 },
+      },
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    } as never;
+
+    const fn = state.registeredCommands.get("UnicDB.runScript");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(state.createdTerminals.length).toBe(1);
+    const term = state.createdTerminals[0];
+    expect(term.sendText).toHaveBeenCalledTimes(1);
+    expect(term.sendText.mock.calls[0][0]).toBe(scriptText + "\n");
+    expect(term.show).toHaveBeenCalledTimes(1);
+  });
+});

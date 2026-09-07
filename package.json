@@ -45,6 +45,7 @@
     "onCommand:UnicDB.refreshSchema",
     "onCommand:UnicDB.runScript",
     "onLanguage:shellscript",
+    "onCommand:UnicDB.runShellSelection",
     "onCommand:UnicDB.runStatement",
     "onCommand:UnicDB.newTable",
     "onCommand:UnicDB.modifyTable",
@@ -170,6 +171,12 @@
       {
         "command": "UnicDB.runScript",
         "title": "UnicDB: Run Script",
+        "category": "UnicDB",
+        "icon": "$(play)"
+      },
+      {
+        "command": "UnicDB.runShellSelection",
+        "title": "UnicDB: Run Selection in Script Terminal",
         "category": "UnicDB",
         "icon": "$(play)"
       },
@@ -442,6 +449,19 @@
         "win": "ctrl+enter",
         "linux": "ctrl+enter",
         "when": "editorTextFocus && resourceLangId == sql"
+      },
+      {
+        "command": "UnicDB.runShellSelection",
+        "key": "cmd+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && resourceLangId == shellscript"
+      },
+      {
+        "command": "UnicDB.runShellSelection",
+        "key": "ctrl+enter",
+        "win": "ctrl+enter",
+        "linux": "ctrl+enter",
+        "when": "editorTextFocus && resourceLangId == shellscript"
       }
     ],
     "menus": {

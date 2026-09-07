@@ -900,6 +900,16 @@ export async function activate(
     vscode.commands.registerCommand("UnicDB.runScript", () => commandRunScript()),
   );
 
+  // 14b. UnicDB.runShellSelection — TASK-SH-002: send ONLY highlighted
+  // selections (or cursor line) from a .sh file to the same reused terminal.
+  // Keybinding-driven (Cmd+Enter); silent no-op on wrong language / no
+  // selection / whitespace-only.
+  disposables.push(
+    vscode.commands.registerCommand("UnicDB.runShellSelection", () =>
+      commandRunShellSelection(),
+    ),
+  );
+
   // 15. UnicDB.openAiSettings — TASK-004: open AI Settings form (single instance).
   // TASK-003 cycle AE — read the user-toggled `UnicDB.ai.engine` setting.
   // When "omp", detect OMP once at activation. If the binary is missing
@@ -3227,6 +3237,67 @@ async function commandRunScript(): Promise<void> {
     runScriptTerminal = vscode.window.createTerminal({ name: "UnicDB Script" });
   }
   runScriptTerminal.sendText(text + "\n");
+  runScriptTerminal.show();
+}
+
+/**
+ * TASK-SH-002 — On Cmd+Enter in a `shellscript` editor, send ONLY the
+ * selected line(s) (or cursor line when no selection) to the reused
+ * `runScriptTerminal` ("UnicDB Script"). Mirrors the SQL multi-selection
+ * pattern from `runQueryFromEditor` without touching any SQL path.
+ *
+ * - Silent no-op (no warning) on missing editor / wrong languageId: this is
+ *   a keybinding command, not a palette command; the user did not explicitly
+ *   invoke it via menu, so we do not surface a "what happened?" toast.
+ * - Per-piece `sendText(piece + "\n")` so N disjoint selections → N sends,
+ *   and a single multi-line selection stays as ONE piece (one send).
+ * - Skips pieces that are empty after trim; if all pieces are skipped, no
+ *   terminal is created and nothing is shown.
+ */
+async function commandRunShellSelection(): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || editor.document.languageId !== "shellscript") {
+    return;
+  }
+  // Same compat fallback as `runQueryFromEditor`: real VS Code exposes
+  // `editor.selections` (plural); the legacy test mock only sets
+  // `selection`, so fall back to `[editor.selection]` when plural is empty.
+  const allSelections =
+    editor.selections && editor.selections.length > 0
+      ? editor.selections
+      : [editor.selection];
+  const pieces: string[] = [];
+  for (const sel of allSelections) {
+    if (!sel.isEmpty) {
+      const start = editor.document.offsetAt(sel.start);
+      const end = editor.document.offsetAt(sel.end);
+      pieces.push(editor.document.getText().substring(start, end));
+    } else {
+      // Empty selection (cursor only, possibly multi-cursor on a different
+      // line) → take the whole line text at the cursor's active position.
+      // Strip a trailing `\r` so CRLF documents (Windows line endings) do
+      // not produce a stray carriage return in the sent text.
+      const lineText = editor.document.lineAt(sel.active.line).text;
+      pieces.push(lineText.replace(/\r$/, ""));
+    }
+  }
+  // Skip whitespace-only / empty pieces so a blank cursor line or a
+  // whitespace selection contributes nothing. If nothing remains, we do not
+  // create the terminal at all (avoids a stray "UnicDB Script" tab on a
+  // no-op invocation).
+  const meaningful = pieces.filter((p) => p.trim().length > 0);
+  if (meaningful.length === 0) {
+    return;
+  }
+  // Reuse the same terminal lifecycle as `commandRunScript`: alive →
+  // reuse, dead → create new. Same name "UnicDB Script" so a single
+  // visible terminal is shared across both commands.
+  if (!runScriptTerminal || runScriptTerminal.exitStatus !== undefined) {
+    runScriptTerminal = vscode.window.createTerminal({ name: "UnicDB Script" });
+  }
+  for (const piece of meaningful) {
+    runScriptTerminal.sendText(piece + "\n");
+  }
   runScriptTerminal.show();
 }
 
