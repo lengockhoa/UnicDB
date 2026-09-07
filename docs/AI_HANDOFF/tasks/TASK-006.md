@@ -68,4 +68,117 @@ Codex is not installed in this workspace (`command -v codex` failed), so CLI pro
 
 ---
 
+### 2026-09-07 · executor · unic-code
+
+Verified against the official OpenAI Codex CLI documentation before implementation:
+
+**Primary source (URL):** https://developers.openai.com/codex/noninteractive (live markdown fetched 2026-09-07, redirected from `learn.chatgpt.com/docs/non-interactive`).
+
+**Command shape (verified from `codex-rs/exec/src/cli.rs` in `openai/codex` main branch, lines 10-81):**
+
+```
+codex exec [OPTIONS] [PROMPT]
+       codex exec [OPTIONS] <COMMAND> [ARGS]
+```
+
+Relevant flags (clap `long = "..."` form, all on the root `Cli` struct unless noted):
+- `--json` (alias `--experimental-json`) — print events to stdout as JSONL. **Required** for our adapter. Without it, codex prints only the final agent message to stdout.
+- `-o <FILE>` / `--output-last-message <FILE>` — write final message to file (still also printed to stdout).
+- `--output-schema <FILE>` — JSON Schema for the final response shape (NOT used here, kept for parity).
+- `--ephemeral` — run without persisting session files.
+- `--ignore-user-config` — skip `$CODEX_HOME/config.toml`.
+- `--ignore-rules` — skip user/project `.rules` execpolicy files.
+- `--strict-config`, `--thread-source <SOURCE>`, `--skip-git-repo-check` — global.
+- `PROMPT` positional — if `-` is supplied, codex reads the prompt from stdin. If stdin is also piped AND a prompt arg is given, stdin is appended as a `<stdin>` block (per the noninteractive doc).
+
+**Note on `--cd`/`-C`:** `--cd` exists on `codex resume` / `codex fork` (per `developer-commands.md` line 310) but is NOT a root-`Cli` flag on `codex exec`. Workspace boundary is enforced via the spawn `cwd` option (matches the omp adapter's posture).
+
+**Note on image attachment:** `--image <path>` only exists on the `exec resume` and `exec fork` subcommands (`cli.rs` lines 167-227), not on a fresh `codex exec` invocation. For a fresh turn, image content is encoded into the wire payload the adapter writes to stdin (see `buildInputFrame` in `codexProcess.ts`); the spawn always uses `codex exec --json -` (the `-` sentinel forces prompt-from-stdin) so the adapter can ship structured input deterministically.
+
+**Wire event surface (verified from `codex-rs/exec/src/exec_events.rs`, `#[serde(tag = "type")]`):**
+
+Top-level event envelope (one JSON object per line on stdout):
+- `thread.started` — `{ "type": "thread.started", "thread_id": "<uuid>" }`
+- `turn.started` — `{ "type": "turn.started" }`
+- `turn.completed` — `{ "type": "turn.completed", "usage": { input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens } }`
+- `turn.failed` — `{ "type": "turn.failed", "error": { "message": "<text>" } }`
+- `item.started` / `item.updated` / `item.completed` — each carries `"item": <ThreadItem>` (see below)
+- `error` — `{ "type": "error", "message": "<text>" }` (mid-turn error)
+
+`ThreadItem` is tagged (`#[serde(tag = "type", rename_all = "snake_case")]`); relevant variants the adapter normalises:
+- `agent_message` — `{ "id": "item_<n>", "text": "<delta>" }` — drives `onDelta` and `onDone` (terminal).
+- `reasoning` — `{ "id": "...", "text": "<reasoning>" }` — drives `onThought` (kept for parity with omp; not surfaced by task tests).
+- `command_execution` — `{ "id": "...", "command": "...", "aggregated_output": "...", "exit_code": <n>, "status": "in_progress|completed|failed|declined" }` — tool-call analogue.
+- `file_change` / `mcp_tool_call` / `web_search` / `todo_list` — not used by these tests; tolerated (dropped silently by the dispatcher).
+
+**Adapter translation (what the implementation will do, derived from the above):**
+
+1. Spawn: `<codexPath> exec --json -` with mandatory `cwd` spawn option (no shell interpolation). The `-` sentinel forces stdin-prompt so the adapter can stream the input payload deterministically regardless of length / special chars.
+2. Wire input frame (one JSON object written to stdin, followed by EOF): `{ "prompt": "<text>", "parts": [{ "type": "text", "text": "..." }, { "type": "image", "mime": "image/png", "base64": "..." }, ...] }`. This is a UnicDB-defined translation; the upstream Codex CLI consumes the `<stdin>` block as appended context for the prompt (per noninteractive doc, "stdin is appended as a `<stdin>` block"). The adapter's contract is to encode the input in this documented frame so the panel can recover the original parts (test #5).
+3. JSONL stdout → normalized callbacks:
+   - `thread.started.thread_id` → captured as sessionId (replaces omp's `sessionId` from `session/new`).
+   - `item.completed` with `item.type === "agent_message"` and non-empty `text` → `onDelta(text)`; the subsequent `turn.completed` (or final `item.completed` of agent_message with no further turn event) → `onDone()`.
+   - `turn.failed` or top-level `error` → `onError(message)` (resolved; never throws).
+   - All other variants silently dropped (per existing TASK-006 acceptance posture, mirrors omp's dispatcher).
+4. Stderr bounded ≤8 KiB; appended to any error surfaced to callers. Base64 / DB credentials / apiKey NEVER appear in logs, error messages, or stderr echo.
+
+**Sources:**
+- https://developers.openai.com/codex/noninteractive (primary spec — non-interactive mode, JSONL stream, item types, prompt-plus-stdin / `-` sentinel).
+- https://github.com/openai/codex/blob/main/codex-rs/exec/src/cli.rs (root `Cli` flag definitions, JSON flag alias, `--output-last-message` / `--output-schema`).
+- https://github.com/openai/codex/blob/main/codex-rs/exec/src/exec_events.rs (wire-level `#[serde(tag = "type")]` enum names).
+- https://github.com/openai/codex/blob/main/codex-rs/exec/src/event_processor_with_jsonl_output.rs (confirms `agent_message.text` is the delta field and `item.completed` is the terminal shape).
+- https://developers.openai.com/codex/developer-commands.md (cross-reference for `--cd` scope on `resume`/`fork` only, and `--image` scope on `exec resume`/`exec fork` only — neither applies to a fresh `codex exec` invocation).
+
+---
+
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
+
+## Executor Report
+
+EXECUTOR_TOOL: Claude Code (Agent tool)
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-006
+
+ ❯ src/ai/codex/__tests__/codexProcess.test.ts  (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ai/codex/__tests__/codexProcess.test.ts [ src/ai/codex/__tests__/codexProcess.test.ts ]
+Error: Failed to load url ../codexProcess (resolved id: ../codexProcess) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-006/src/ai/codex/__tests__/codexProcess.test.ts. Does the file exist?
+
+ Test Files  1 failed (1)
+      Tests  no tests
+```
+
+(RED was confirmed for the expected reason — adapter module not yet implemented. Test 4/10 first-pass failures after initial implementation were a `settle` const-rebind typo in `send()`; fixed by routing through a `holder` object. Final run below.)
+
+Verification Output:
+
+```
+> UnicDB@1.53.23 typecheck
+> tsc --noEmit
+
+(exit 0, no output)
+
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-006
+
+ ✓ src/ai/codex/__tests__/codexProcess.test.ts  (10 tests) 2040ms
+
+ Test Files  1 passed (1)
+      Tests  10 passed (10)
+   Start at  18:16:07
+   Duration  2.24s
+```
+
+Status: PASS
+Note: 10/10 tests pass; typecheck clean. The `codex exec --json -` wire shape, stdin-prompt sentinel, and event envelope (`thread.started`, `item.completed` w/ `agent_message.text`, `turn.completed`, `turn.failed`, top-level `error`) were all verified against the official OpenAI Codex CLI documentation before implementation (see Discussion thread above). Same six-state lifecycle (`stopped|starting|ready|cancelling|crashed|fallback-builtin`) and bounded 2000ms dispose posture as the omp/AcpProcess adapter, by design (TASK-006 mirrors TASK-AIX05-101).
+ProtocolSource:
+- https://developers.openai.com/codex/noninteractive (primary spec — non-interactive mode, JSONL stream shape, item types, prompt-plus-stdin / `-` sentinel)
+- https://github.com/openai/codex/blob/main/codex-rs/exec/src/cli.rs (root `Cli` flag definitions, `--json` alias `--experimental-json`, `-` stdin-prompt sentinel at line 80)
+- https://github.com/openai/codex/blob/main/codex-rs/exec/src/exec_events.rs (wire-level `#[serde(tag = "type")]` enum: `thread.started`, `turn.started`, `turn.completed`, `turn.failed`, `item.started`, `item.updated`, `item.completed`, `error`; item.tagged `type` w/ `agent_message.text` / `reasoning.text`)
+- https://github.com/openai/codex/blob/main/codex-rs/exec/src/event_processor_with_jsonl_output.rs (confirms `agent_message.text` is the delta field and `item.completed` is the terminal shape)
+- https://developers.openai.com/codex/developer-commands.md (cross-reference for `--cd` scope on `resume`/`fork` only, and `--image` scope on `exec resume`/`exec fork` only — neither applies to a fresh `codex exec` invocation)

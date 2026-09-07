@@ -69,3 +69,87 @@ Local evidence: `claude --version` = `2.1.261`; `claude --help` explicitly suppo
 ---
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
+
+## Executor Report
+
+EXECUTOR_TOOL: Claude Code (Agent tool)
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+
+### Discussion (executor additions)
+
+#### CLI flag selection (local probe)
+Verified on Claude 2.1.261 (local). `claude --help` confirms:
+- `--print` — print response and exit (mandatory for non-interactive turns).
+- `--input-format stream-json` — chosen from {`text`, `stream-json`}; stream-json lets us pipe newline-delimited user-message envelopes on stdin instead of arg-concatenating the prompt into a shell argv.
+- `--output-format stream-json` — chosen from {`text`, `json`, `stream-json`}; stream-json emits Anthropic Messages-style envelopes we can parse incrementally.
+- `--verbose` — required by the CLI itself for stream-json output to include intermediate frames (the CLI docstring notes stream-json frames only arrive in `--verbose` mode).
+- `--mcp-config <configs...>` — passed ONLY when `input.mcpConfigPath` is supplied (TASK-012 wires the live path; tests omit it).
+- `--permission-mode manual` + `--permission-prompts none` — chosen for default-deny semantics. `--permission-mode` choices are `acceptEdits | auto | bypassPermissions | manual | dontAsk | plan`. We use `manual` (no automatic approval) and pair it with `--permission-prompts none` (the SDK host / `--permission-prompt-tool` does not answer), so any tool that would normally prompt is auto-denied. **NEVER** `--dangerously-skip-permissions` or `--allow-dangerously-skip-permissions` (test #1 explicitly forbids both).
+
+#### Stream-json wire shape (best-effort, not locally probed)
+Per the planner note that the exact JSON frame/event field mapping is NOT verified by local help output: I implemented a defensive subset that matches the documented Anthropic Messages API streaming shape — the same shape `claude --output-format stream-json` is documented to emit in the public CLI protocol. Concretely:
+
+Input (stdin, newline-delimited JSON):
+```json
+{"type":"user","message":{"role":"user","content":[
+  {"type":"text","text":"..."},
+  {"type":"image","source":{"type":"base64","media_type":"image/png","data":"..."}}
+]}}
+```
+
+Output (stdout, newline-delimited JSON):
+```json
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"..."}]}}
+{"type":"result","subtype":"success"|"error","is_error":false,...}
+{"type":"error","message":"..."}
+```
+
+The adapter: (a) extracts text from `assistant.message.content[].type === "text"` → `onDelta`; (b) extracts tool-use from `assistant.message.content[].type === "tool_use"` → `onToolStart`; (c) extracts tool-result from `user.message.content[].type === "tool_result"` → `onToolEnd`; (d) settles the turn on `result.subtype === "success"` and fires `onError` on `result.subtype === "error"` or top-level `error` frames. Unknown frame types are silently ignored (Acceptance §5: malformed/unknown MUST NOT throw, kill, or hang).
+
+A real-wire probe against Claude Code 2.1.261 has NOT been performed in this executor pass — fixture-based testing only. The seam (`ClaudeCodeProcessEvents` + the `extractAssistantText` / `extractToolUse` / `extractToolResult` helpers) is shaped so TASK-009 / TASK-014 can tighten individual mappings without churning the public interface.
+
+#### Per-turn state semantics (deliberate divergence from AcpProcess)
+Claude Code `--print` exits after one turn; a clean exit (code 0) after a `result` frame lands at `"stopped"` (per-turn completion), not `"crashed"`. `crashed` is reserved for unexpected failures: non-zero exit, no result frame, spawn error, or error frame. `fallback-builtin` is the terminal reached after `crashed`, mirroring AcpProcess so the panel's fallback/restart owner can observe a uniform terminal across both engines. After `"stopped"` the next `send()` spawns a fresh child; after `"fallback-builtin"` the handle is locked.
+
+### Verification
+
+RED_OUTPUT:
+```
+RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-005
+
+ ❯ src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts  (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts [ src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts ]
+Error: Failed to load url ../claudeCodeProcess (resolved id: ../claudeCodeProcess) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-005/src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts. Does the file exist?
+ ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  18:11:15
+   Duration  201ms
+```
+
+Verification Output:
+```
+$ npx vitest run src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-005
+
+ ✓ src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts  (5 tests) 6ms
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  18:17:40
+   Duration  178ms
+
+$ npm run typecheck
+> UnicDB@1.53.23 typecheck
+> tsc --noEmit
+(exit 0, no errors)
+```
+
+Status: PASS
+Note: Implementation required two fix iterations beyond the initial RED→GREEN pass: (1) `dispose()` was `async`, which wrapped the cached promise in a new Promise on each call and broke the identity contract that second `dispose()` returns the same instance — switched to non-async and now caches the resolved Promise explicitly; (2) when the SIGKILL escalation timer fired before the child actually exited, the pending `send()` promise was never resolved (the exit handler later saw `turnInFlight === false` and bailed) — added `settleInFlightTurn()` to the dispose resolve callback so a turn-in-flight always settles, even when the timer path wins the race.
+ProtocolSource: `claude --help` 2.1.261 (local) — `--print`, `--input-format stream-json`, `--output-format stream-json`, `--verbose`, `--mcp-config`, `--permission-mode` (choices: acceptEdits/auto/bypassPermissions/manual/dontAsk/plan; we pick `manual`), `--permission-prompts` (choices: host/none; we pick `none`). Never `--dangerously-skip-permissions`.

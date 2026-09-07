@@ -2,5 +2,5 @@ Command: handoff-fullstack
 Goal: Add Claude Code + Codex as first-class agents (ACP-based wrapper), parallel omp UKit audit, AIChat panel image+text support across all engines.
 Base: main @ d60b743 (release 1.53.23)
 Phase: I3
-Cursor: Wave 1 Batch 2 checkpointed at ad7360b — TASK-003 (codex detect) PASS 12/12, TASK-013 (manifest) PASS 19/19, typecheck clean. Wave 1 Batch 3 in flight — TASK-004 (omp audit, read-only) executor running.
-Next: wait for TASK-004 notification, append findings to TASK-004.md (verify `git diff --stat -- src/ai/omp` empty), then commit wave 1 checkpoint + proceed to wave 2 (TASK-005/006/007/008 in 2 batches).
+Cursor: Wave 2 Batch 1 partial — TASK-006 (codex process) PASS, claude-sonnet-4-5, 10/10 tests green, files copied back + branch handoff/task-006 deleted; TASK-005 (claudeCode process) still running.
+Next: wait for TASK-005 notification, copy back, commit wave 2 batch 1 checkpoint, then Wave 2 Batch 2 = TASK-007 (engineChoice) + TASK-008 (settings form UI) in parallel.
