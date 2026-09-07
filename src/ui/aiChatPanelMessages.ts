@@ -86,7 +86,14 @@ export interface AiChatPanelThought {
 /** Engine mode announcement — emitted exactly once when panel first resolves engine. */
 export interface AiChatPanelEngine {
   type: "engine";
-  name: "omp" | "builtin";
+  /**
+   * TASK-011: widened to the full `AiEngine` vocabulary. The webview must
+   * accept `omp` (legacy), `claude-code` (TASK-009), `codex` (TASK-010),
+   * and `builtin` (fallback / no-omp). The closed-set change was driven by
+   * the panel dispatch refactor (engine state is decided eagerly on first
+   * ready, not by late capability discovery).
+   */
+  name: "omp" | "claude-code" | "codex" | "builtin";
   /** Hint shown to user when engine is not omp (install/update instructions). */
   hint?: string;
   /** Detected omp version for the banner, e.g. "18.0.1". Absent for builtin. */

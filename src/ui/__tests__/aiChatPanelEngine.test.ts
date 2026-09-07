@@ -764,3 +764,263 @@ describe("AiChatPanel — TASK-AIX05-103 R4.5 production OMP lifecycle", () => {
     expect(afterStale).toBe(beforeStale);
   });
 });
+
+// ============================================================================
+// TASK-011 — widened engine dispatch: Claude Code + Codex routing.
+//
+// Test #T011-1, #T011-5, #T011-7 (engine routing + engine-unavailable
+// fallback). The fixture model is "the chat panel is a universal interface
+// for the four-engine world" — `options.engine` selects, the matching
+// `*ChatEngine` seam receives the dispatch, every other path is silent.
+// ============================================================================
+
+interface FakeClaudeEngineHandle {
+  send: Mock;
+  resume: Mock;
+  dispose: Mock;
+}
+
+/** Build a `ClaudeCodeChatEngine`-shaped fake. We use `as unknown as` to
+ * duck-type the full interface so the panel accepts the seam without
+ * importing the real createClaudeCodeChatEngine. */
+function makeFakeClaudeCodeChatEngine(
+  behavior: (
+    text: string,
+    events: import("../../ai/claudeCode/claudeCodeChatEngine").ClaudeCodeChatEvents,
+    attachments?: ReadonlyArray<{ mime: string; base64: string }>,
+  ) => Promise<void> | void,
+): FakeClaudeEngineHandle & import("../../ai/claudeCode/claudeCodeChatEngine").ClaudeCodeChatEngine {
+  const send = vi.fn(
+    async (
+      text: string,
+      events: import("../../ai/claudeCode/claudeCodeChatEngine").ClaudeCodeChatEvents,
+      attachments?: ReadonlyArray<{ mime: string; base64: string }>,
+    ) => {
+      void events.onDelta?.(text);
+      await behavior(text, events, attachments);
+      events.onDone?.();
+    },
+  );
+  const resume = vi.fn(async () => undefined);
+  const dispose = vi.fn(async () => undefined);
+  return {
+    send,
+    resume,
+    dispose,
+  } as unknown as FakeClaudeEngineHandle &
+    import("../../ai/claudeCode/claudeCodeChatEngine").ClaudeCodeChatEngine;
+}
+
+interface FakeCodexHandle {
+  send: Mock;
+  resume: Mock;
+  dispose: Mock;
+}
+
+function makeFakeCodexChatEngine(
+  behavior: (
+    text: string,
+    events: import("../../ai/codex/codexChatEngine").CodexChatEvents,
+    attachments?: ReadonlyArray<{ mime: string; base64: string }>,
+  ) => Promise<void> | void,
+): FakeCodexHandle & import("../../ai/codex/codexChatEngine").CodexChatEngine {
+  const send = vi.fn(
+    async (
+      text: string,
+      events: import("../../ai/codex/codexChatEngine").CodexChatEvents,
+      attachments?: ReadonlyArray<{ mime: string; base64: string }>,
+    ) => {
+      void events.onDelta?.(text);
+      await behavior(text, events, attachments);
+      events.onDone?.();
+    },
+  );
+  const resume = vi.fn(async () => undefined);
+  const dispose = vi.fn(async () => undefined);
+  return {
+    send,
+    resume,
+    dispose,
+  } as unknown as FakeCodexHandle &
+    import("../../ai/codex/codexChatEngine").CodexChatEngine;
+}
+
+// ---------------------------------------------------------------------------
+// #T011-1 — Claude Code text turn → injected engine receives text + undefined
+// attachments; delta posted; no other engine path runs.
+// ---------------------------------------------------------------------------
+describe("AiChatPanel — TASK-011 Claude Code dispatch", () => {
+  it("#T011-1 Claude Code text turn: dispatches to injected engine; delta posted; builtin/omp never run", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const engine = makeFakeClaudeCodeChatEngine((text, events) => {
+      events.onDelta?.(`claude-${text}`);
+    });
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      engine: "claude-code",
+      claudeCodeChatEngine: engine,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({ type: "send", text: "hello" });
+    await until(() => engine.send.mock.calls.length >= 1);
+    // Allow error/done to settle too so no late posts surprise us.
+    await until(() => postedMessages(p).some(isDone));
+
+    // Engine invoked EXACTLY once with the trimmed text and undefined
+    // attachments (TASK-011 acceptance: no payload on no images).
+    expect(engine.send).toHaveBeenCalledTimes(1);
+    const firstCall = engine.send.mock.calls[0] as unknown as [
+      string,
+      import("../../ai/claudeCode/claudeCodeChatEngine").ClaudeCodeChatEvents,
+      ReadonlyArray<{ mime: string; base64: string }> | undefined,
+    ];
+    expect(firstCall[0]).toBe("hello");
+    expect(firstCall[2]).toBeUndefined();
+
+    // delta posted to webview carries the engine's streamed text.
+    const deltas = postedMessages(p).filter(isDelta) as Array<{ type: "delta"; text: string }>;
+    expect(deltas.some((d) => d.text === "claude-hello")).toBe(true);
+
+    // No other engine path ran.
+    expect(agentState.runAgentMock).not.toHaveBeenCalled();
+    if (state.fakeEngine) {
+      expect(state.fakeEngine.send).not.toHaveBeenCalled();
+    }
+    // done posted.
+    expect(postedMessages(p).some(isDone)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #T011-5 — Claude Code / Codex with no attachment follows text-only route;
+// engine receives undefined attachments; no attach_error posted.
+// ---------------------------------------------------------------------------
+describe("AiChatPanel — TASK-011 text-only external engines", () => {
+  it("#T011-5 claude-code + no attachments: engine.send(text, events, undefined); no attach_error", async () => {
+    await runEngineNoAttachmentTest("claude-code", makeFakeClaudeCodeChatEngine);
+  });
+
+  it("#T011-5b codex + no attachments: engine.send(text, events, undefined); no attach_error", async () => {
+    await runEngineNoAttachmentTest("codex", makeFakeCodexChatEngine);
+  });
+
+  async function runEngineNoAttachmentTest(
+    eng: "claude-code" | "codex",
+    factory: (
+      b: (
+        text: string,
+        events: unknown,
+        attachments?: ReadonlyArray<{ mime: string; base64: string }>,
+      ) => Promise<void> | void,
+    ) => { send: Mock } & unknown,
+  ): Promise<void> {
+    const factorySpy: AdapterFactory = vi.fn(async () => null);
+    const engine = factory(() => undefined) as { send: Mock };
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factorySpy,
+      engine: eng,
+      [eng === "claude-code" ? "claudeCodeChatEngine" : "codexChatEngine"]: engine,
+    } as unknown as ConstructorParameters<typeof AiChatPanel>[0]);
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({ type: "send", text: "plain" });
+    await until(() => engine.send.mock.calls.length >= 1);
+    await until(() => postedMessages(p).some(isDone));
+
+    expect(engine.send).toHaveBeenCalledTimes(1);
+    const callArgs = engine.send.mock.calls[0] as unknown as [
+      string,
+      unknown,
+      ReadonlyArray<{ mime: string; base64: string }> | undefined,
+    ];
+    expect(callArgs[0]).toBe("plain");
+    expect(callArgs[2]).toBeUndefined();
+
+    // No attach_error fired (nothing to attach).
+    const attachErrors = postedMessages(p).filter(
+      (m) => (m as { type?: string }).type === "attach_error",
+    );
+    expect(attachErrors).toEqual([]);
+    // runAgent never ran.
+    expect(agentState.runAgentMock).not.toHaveBeenCalled();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// #T011-7 — engine selected but the matching seam is absent: error posted,
+// falls back to builtin runAgent, no other engine called.
+// ---------------------------------------------------------------------------
+describe("AiChatPanel — TASK-011 engine-unavailable fallback", () => {
+  it("#T011-7 engine='claude-code' with no claudeCodeChatEngine seam: error posted; falls back to builtin runAgent", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    // No claudeCodeChatEngine passed → fallback path
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      engine: "claude-code",
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({ type: "send", text: "fallback-test" });
+    // Engine-unavailable error lands first; the fallback runAgent then runs.
+    await until(() => postedMessages(p).some(isError));
+    await until(() => agentState.runAgentMock.mock.calls.length >= 1);
+    await until(() => postedMessages(p).some(isDone));
+
+    // Concrete engine-unavailable error posted (mentions Claude Code).
+    const errs = postedMessages(p).filter(isError) as Array<{ type: "error"; message: string }>;
+    expect(errs.length).toBeGreaterThan(0);
+    const combined = errs.map((e) => e.message).join("\n");
+    expect(combined).toMatch(/claude code/i);
+    expect(combined).toMatch(/not configured/i);
+
+    // runAgent was invoked (fallback ran).
+    expect(agentState.runAgentMock).toHaveBeenCalled();
+    // The banner reflects the fallback.
+    const engineMsgs = postedMessages(p).filter(
+      (m): m is { type: "engine"; name: string } =>
+        !!m && typeof m === "object" && (m as { type?: string }).type === "engine",
+    );
+    expect(engineMsgs.some((m) => m.name === "builtin")).toBe(true);
+  });
+
+  it("#T011-7b engine='codex' with no codexChatEngine seam: error posted; falls back to builtin", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      engine: "codex",
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({ type: "send", text: "fallback-test" });
+    await until(() => postedMessages(p).some(isError));
+    await until(() => agentState.runAgentMock.mock.calls.length >= 1);
+    await until(() => postedMessages(p).some(isDone));
+
+    const errs = postedMessages(p).filter(isError) as Array<{ type: "error"; message: string }>;
+    const combined = errs.map((e) => e.message).join("\n");
+    expect(combined).toMatch(/codex/i);
+    expect(combined).toMatch(/not configured/i);
+    expect(agentState.runAgentMock).toHaveBeenCalled();
+  });
+});

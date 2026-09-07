@@ -701,3 +701,298 @@ describe("AiChatPanel — mention x attachment (TASK-001 cycle AB acceptance 0b)
     expect(parts[2]!.type).toBe("image_url");
   });
 });
+
+// =========================================================================
+// TASK-011 — engine-aware image validation. The capability rule widens:
+// Claude Code + Codex engines are unconditionally image-capable (TASK-009
+// / TASK-010 contracts), and the panel must NOT hardcode `visionCapable
+// === false` for those engines. omp stays gate-locked regardless of
+// model role's vision flag; builtin still defers to
+// `cfg.models.work.vision` exactly as the cycle-AB baseline established.
+// =========================================================================
+import type { CodexChatEngine } from "../../ai/codex/codexChatEngine";
+import type { ClaudeCodeChatEngine } from "../../ai/claudeCode/claudeCodeChatEngine";
+
+// Re-import AiEngine + AiSettings for the work.vision false test.
+import { defaultAiSettings, type AiConfig } from "../../ai/settings";
+
+// -------------------------------------------------------------------------
+// #T011-2 — Codex image + text turn: engine receives the original text
+// and a structured `[{mime, base64}]` attachment array (NEVER
+// concatenated into a prompt string).
+// -------------------------------------------------------------------------
+describe("AiChatPanel — TASK-011 image routing to codex", () => {
+  it("#T011-2 Codex image + text turn: engine receives original text + [{mime:'image/png', base64}]; assistant lifecycle completes", async () => {
+    // No need for runAgent — codex takes over the turn.
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], "should-not-fire"));
+    const factory: AdapterFactory = vi.fn(async () => null);
+
+    const sendMock: Mock = vi.fn(
+      async (
+        _text: string,
+        events: { onDelta?: (s: string) => void; onDone?: () => void },
+        _attachments?: ReadonlyArray<{ mime: string; base64: string }>,
+      ) => {
+        events.onDelta?.("codex-delta");
+        events.onDone?.();
+      },
+    );
+    const codexEngine = {
+      send: sendMock,
+      resume: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined),
+    } as unknown as CodexChatEngine;
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      engine: "codex",
+      codexChatEngine: codexEngine,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    const pic = makeValidAttachment("pic", "image/png");
+    handler({ type: "send", text: "describe", attachments: [pic] });
+    await until(() => sendMock.mock.calls.length >= 1);
+    await until(() => postedMessages(p).some(isDone));
+
+    // Engine invoked once with the original TEXT and the structured image
+    // attachment array (mime + base64 preserved verbatim).
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const callArgs = sendMock.mock.calls[0] as unknown as [
+      string,
+      unknown,
+      ReadonlyArray<{ mime: string; base64: string }> | undefined,
+    ];
+    expect(callArgs[0]).toBe("describe");
+    const atts = callArgs[2];
+    expect(Array.isArray(atts)).toBe(true);
+    expect(atts).toHaveLength(1);
+    expect(atts![0]!.mime).toBe("image/png");
+    expect(atts![0]!.base64).toBe(pic.base64);
+
+    // No attach_error fired — codex is image-capable.
+    const attachErrors = postedMessages(p).filter(isAttachError);
+    expect(attachErrors).toEqual([]);
+
+    // Builtin never ran.
+    expect(agentState.runAgentMock).not.toHaveBeenCalled();
+    // delta + done posted (assistant lifecycle reaches the wire).
+    expect(
+      postedMessages(p).filter((m) => (m as { type?: string }).type === "delta").length,
+    ).toBeGreaterThan(0);
+    expect(postedMessages(p).some(isDone)).toBe(true);
+  });
+});
+
+// -------------------------------------------------------------------------
+// #T011-3 — omp STILL rejects nonempty attachments even when
+// cfg.models.work.vision is true. Engine is the belt.
+// -------------------------------------------------------------------------
+describe("AiChatPanel — TASK-011 omp rejection preserves vision gate", () => {
+  it("#T011-3 omp + work.vision=true: nonempty attachments → attach_error vision_unsupported; ompChatEngine.send receives text only", async () => {
+    // Suppress runAgent — omp path routes through the engine, not runAgent.
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], "should-not-fire"));
+    const factory: AdapterFactory = vi.fn(async () => null);
+
+    // Wire a deps.loadConfig that returns vision=true to prove the
+    // engine belt overrides the model suspenders.
+    const deps: AgentDeps = {
+      loadConfig: vi.fn(async () => null), // null cfg → defaultAiSettings().models.work.vision = true
+      complete: vi.fn(),
+    };
+
+    const sendMock: Mock = vi.fn(
+      async (
+        text: string,
+        events: { onDelta?: (s: string) => void; onDone?: () => void },
+      ) => {
+        events.onDelta?.(`omp-${text}`);
+        events.onDone?.();
+      },
+    );
+    const ompEngine: OmpChatEngine = {
+      send: sendMock,
+      resume: vi.fn(async () => undefined),
+      shutdown: vi.fn(async () => undefined),
+      cancel: vi.fn(() => undefined),
+      attachTrace: vi.fn(() => undefined),
+    };
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps,
+      adapterFactory: factory,
+      engine: "omp",
+      // acp deps are still required to set the legacy "omp" branch.
+      acp: { start: vi.fn(async () => { throw new Error("acp.start must not run when ompChatEngine is provided"); }) },
+      ompChatEngine: ompEngine,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    const a1 = makeValidAttachment("op1", "image/png");
+    const a2 = makeValidAttachment("op2", "image/jpeg");
+    handler({ type: "send", text: "describe both", attachments: [a1, a2] });
+    await until(() => postedMessages(p).filter(isAttachError).length >= 2);
+    await until(() => sendMock.mock.calls.length >= 1);
+
+    // Every attachment rejected with vision_unsupported (engine belt).
+    const errs = postedMessages(p).filter(isAttachError);
+    expect(errs).toHaveLength(2);
+    expect(errs.every((e) => e.reason === "vision_unsupported")).toBe(true);
+    const ids = errs.map((e) => e.id).sort();
+    expect(ids).toEqual(["op1", "op2"]);
+
+    // Text-only turn still flowed through the omp engine (text-only path
+    // is preserved).
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const callText = (sendMock.mock.calls[0] as unknown as [string])[0];
+    expect(callText).toBe("describe both");
+  });
+});
+
+// -------------------------------------------------------------------------
+// #T011-4 — builtin still defers to cfg.models.work.vision. When false,
+// init posts visionCapable=false and the image is rejected before
+// runAgent sees any image parts.
+// -------------------------------------------------------------------------
+describe("AiChatPanel — TASK-011 builtin respects work.vision flag", () => {
+  it("#T011-4 builtin + work.vision=false: init posts visionCapable:false; image rejected; runAgent gets text-only", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const factory: AdapterFactory = vi.fn(async () => null);
+
+    // loadConfig returns a cfg with work.vision = false.
+    const base = defaultAiSettings();
+    const cfg: AiConfig = {
+      ...base,
+      apiKey: "sk-x",
+      models: {
+        work: { modelId: "m", vision: false },
+        smart: { ...base.models.smart, modelId: "s" },
+        autocomplete: base.models.autocomplete,
+        lite: base.models.lite,
+      },
+    };
+    const deps: AgentDeps = {
+      loadConfig: vi.fn(async () => cfg),
+      complete: vi.fn(),
+    };
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps,
+      adapterFactory: factory,
+      engine: "builtin",
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    // init posts visionCapable:false (per work.vision).
+    const init = postedMessages(p).find(isInit);
+    expect(init).toBeDefined();
+    expect(asInit(init).visionCapable).toBe(false);
+
+    // Send with an attachment — must be rejected.
+    const att = makeValidAttachment("vision-off", "image/png");
+    handler({ type: "send", text: "describe", attachments: [att] });
+    await until(() => postedMessages(p).filter(isAttachError).length >= 1);
+    await until(() => postedMessages(p).some(isAssistant));
+
+    // attach_error fired with vision_unsupported (the builtin path mirrors
+    // the omp gate when the model flag is off).
+    const errs = postedMessages(p).filter(isAttachError);
+    expect(errs).toHaveLength(1);
+    expect(errs[0]!.reason).toBe("vision_unsupported");
+
+    // runAgent did receive the turn, but with a TEXT-ONLY content (no
+    // image parts reach the model).
+    expect(agentState.runAgentMock).toHaveBeenCalledTimes(1);
+    const input = agentState.runAgentMock.mock.calls[0]?.[0] as {
+      messages: ChatMessage[];
+    };
+    const last = input.messages[input.messages.length - 1] as ChatMessage;
+    expect(last.role).toBe("user");
+    expect(typeof last.content).toBe("string");
+    expect(last.content as string).toBe("describe");
+  });
+});
+
+// -------------------------------------------------------------------------
+// #T011-6 — panel no longer hardcodes visionCapable=false for ALL external
+// engines. Claude Code + Codex init posts visionCapable:true; omp stays
+// false. This is the regression on the previously-hardcoded
+// `if (this.engine === "omp") visionCapable = false; else ...` rule.
+// -------------------------------------------------------------------------
+describe("AiChatPanel — TASK-011 init visionCapable per engine", () => {
+  it("#T011-6 claude-code init: visionCapable=true (engine contract, not hardcoded false)", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const engine = {
+      send: vi.fn(async () => undefined),
+      resume: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined),
+    } as unknown as ClaudeCodeChatEngine;
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      engine: "claude-code",
+      claudeCodeChatEngine: engine,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    const init = postedMessages(p).find(isInit);
+    expect(init).toBeDefined();
+    expect(asInit(init).visionCapable).toBe(true);
+  });
+
+  it("#T011-6b codex init: visionCapable=true (engine contract, not hardcoded false)", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const engine = {
+      send: vi.fn(async () => undefined),
+      resume: vi.fn(async () => undefined),
+      dispose: vi.fn(async () => undefined),
+    } as unknown as CodexChatEngine;
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      engine: "codex",
+      codexChatEngine: engine,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    const init = postedMessages(p).find(isInit);
+    expect(init).toBeDefined();
+    expect(asInit(init).visionCapable).toBe(true);
+  });
+
+  it("#T011-6c omp init: visionCapable=false (engine belt preserved)", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      acp: { start: vi.fn() },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    const init = postedMessages(p).find(isInit);
+    expect(init).toBeDefined();
+    expect(asInit(init).visionCapable).toBe(false);
+  });
+});

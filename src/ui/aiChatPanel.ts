@@ -104,6 +104,8 @@ import { formatAttributionFooter } from "../ai/grounding/attribution";
    type AiChatPanelWebviewMessage,
 } from "./aiChatPanelMessages";
 import type { OmpChatEngine } from "../ai/omp/ompChatEngine";
+import type { ClaudeCodeChatEngine } from "../ai/claudeCode/claudeCodeChatEngine";
+import type { CodexChatEngine } from "../ai/codex/codexChatEngine";
 import { TraceRecorder, type TraceDump, redact } from "../ai/trace";
 import {
   resolvePolicy,
@@ -598,6 +600,34 @@ export interface AiChatPanelOptions {
    */
   ompChatEngine?: OmpChatEngine;
   /**
+   * TASK-009: optional Claude Code chat engine. When the resolved engine
+   * is `"claude-code"` and this seam is wired, `handleSend` dispatches
+   * `send(text, events, attachments?)` instead of running builtin. When
+   * the engine is `"claude-code"` but this seam is absent, the panel
+   * posts a concrete engine-unavailable error and falls back to the
+   * builtin turn. Tests / bare hosts may omit it.
+   */
+  claudeCodeChatEngine?: ClaudeCodeChatEngine;
+  /**
+   * TASK-010: optional Codex chat engine. When the resolved engine is
+   * `"codex"` and this seam is wired, `handleSend` dispatches
+   * `send(text, events, attachments?)` instead of running builtin. When
+   * the engine is `"codex"` but this seam is absent, the panel posts a
+   * concrete engine-unavailable error and falls back to the builtin
+   * turn. Tests / bare hosts may omit it.
+   */
+  codexChatEngine?: CodexChatEngine;
+  /**
+   * TASK-011: explicit engine selection (TASK-007's `EngineChoice.engine`).
+   * When supplied, overrides the `options.acp === undefined ? "builtin" :
+   * "omp"` default so hosts can route to `"claude-code"` (TASK-009) or
+   * `"codex"` (TASK-010). Absent → legacy derivation. Cycles through to
+   * `postEngine`, the capability gate, and the dispatch decision in
+   * `handleSend`. Backing field on the panel is `this.engine` and is set
+   * once at construction; subsequent ready-handles don't re-resolve.
+   */
+  engine?: EngineKind;
+  /**
    * AIX-01: optional workspace grounding. When set, the host will be
    * asked for the active editor selection + workspace files BEFORE
    * each turn, and the bounded result will be appended to the user
@@ -1047,8 +1077,12 @@ export async function buildMessages(
   return [{ role: "system", content: systemPrompt }, ...history, userMsg];
 }
 
-/** Engine state, computed lazily on first show. */
-type EngineKind = "omp" | "builtin";
+/** Engine state, computed lazily on first show. TASK-011 widens the
+ * 2-value union to the full `AiEngine` vocabulary so the panel can
+ * dispatch to Claude Code (TASK-009) and Codex (TASK-010) in addition to
+ * the legacy omp / builtin routes. Wire `AiChatPanelEngine.name` is
+ * widened in `aiChatPanelMessages.ts` to match. */
+type EngineKind = "omp" | "claude-code" | "codex" | "builtin";
 
 interface PendingPermission {
   serverId: unknown;
@@ -1273,6 +1307,16 @@ export class AiChatPanel {
   private schemaCacheRef: { current: SchemaContextCacheEntry | null } = {
     current: null,
   };
+  /**
+   * TASK-011: cached vision-capability from the most recent ready post.
+   * Captured so `prepareAttachments` reads the SAME capability the
+   * webview was told (otherwise the panel would silently let images
+   * through when `cfg.models.work.vision === false`). Resolved to null
+   * before the first ready fires — pre-ready sends consult the engine-
+   * kind baseline instead. `handleClear` re-publishes the cached value
+   * so subsequent sends keep the gate parity.
+   */
+  private resolvedVisionCapable: boolean | null = null;
   /**
    * Finding 7 belt: `dispose()` calling `this.panel?.dispose()` synchronously
    * re-enters the `onDidDispose` handler below (confirmed by the real
@@ -1630,19 +1674,29 @@ export class AiChatPanel {
       // see `options.acp` being present iff the engine is "omp"). This is
       // just the wire announcement; it must not re-run detection (B8: at
       // most once per show).
-      this.engine = this.options.acp === undefined ? "builtin" : "omp";
+      this.engine = this.resolveEngineKind();
       this.postEngine(this.engine);
     }
     // TASK-001 (cycle AB): the omp engine cannot accept images regardless
-    // of the active role's `vision` flag — engine is the belt. Skip the
-    // (expensive, potentially throwing) settings read in omp mode. For
-    // builtin we consult `loadSettings()` via the AI config store. Any
-    // failure (null config, store absent, transient error) collapses to
-    // the legacy default (`defaultAiSettings()` → work.vision: true) so
-    // the webview UX does not regress on first-launch-with-no-settings.
+    // of the active role's `vision` flag — engine is the belt. TASK-011
+    // extends the belt: Claude Code + Codex are image-capable by engine
+    // contract (TASK-009/010), so `visionCapable` is unconditionally true
+    // for them; builtin still defers to `cfg.models.work.vision` exactly
+    // as the cycle-AB baseline established. Any failure (null config,
+    // store absent, transient error) collapses to the legacy default
+    // (`defaultAiSettings()` → work.vision: true) so the webview UX does
+    // not regress on first-launch-with-no-settings.
     let visionCapable: boolean;
     if (this.engine === "omp") {
       visionCapable = false;
+    } else if (this.engine === "claude-code" || this.engine === "codex") {
+      // TASK-009/010 contract: the engine is image-capable regardless of
+      // model role's `vision` flag. We do not consult the config store on
+      // this path — the (potentially throwing) loadConfig cost has zero
+      // payoff when the gate is engine-owned. Hard-coded true keeps
+      // `prepareAttachments` from refusing on the image path, mirrors the
+      // TASK-001 belt-vs-suspenders rule (engine owns the truth).
+      visionCapable = true;
     } else {
       try {
         const cfg = await this.options.deps.loadConfig();
@@ -1657,6 +1711,37 @@ export class AiChatPanel {
       hasHistory: this.history.length > 0,
       visionCapable,
     });
+    // TASK-011: cache the resolved capability on the instance so the
+    // per-turn pipeline (`prepareAttachments`, etc.) reads the SAME
+    // value the webview saw. Re-resolution only happens on next ready.
+    // Null before the first ready fires — `prepareAttachments` treats
+    // the un-resolved state as a conservative "no images" until then.
+    this.resolvedVisionCapable = visionCapable;
+  }
+
+  /**
+   * TASK-011: pick the panel-scoped engine kind once, before the first
+   * ready post. Hosts that pass `options.engine` (the TASK-007
+   * `EngineChoice.engine` value, widened by AGT cycle) get exactly their
+   * declared engine; legacy hosts (no `options.engine`) keep the
+   * cycle-AE default — `acp === undefined ? "builtin" : "omp"` — so
+   * every existing test that wires `acp:` or omits it continues to work
+   * unchanged. Used by `handleReady` (set when null), `handleSend`
+   * (dispatch), `handleStop` (cancel path), and `handleClear` (reset
+   * of the engine banner).
+   */
+  private resolveEngineKind(): EngineKind {
+    if (this.options.engine !== undefined) {
+      // TASK-011 hard rule: refuse mismatched combinations. If the host
+      // asked for "claude-code" but did not wire the engine, we still
+      // surface the requested kind on the wire banner (so the user's
+      // intent is visible) but `handleSend` falls back when the seam is
+      // absent. The same logic applies to "codex" and the (legacy) omp
+      // mode. This helper returns the REQUESTED kind — fallback decisions
+      // happen at the dispatch site, not here.
+      return this.options.engine;
+    }
+    return this.options.acp === undefined ? "builtin" : "omp";
   }
 
   private async handleSend(
@@ -1818,6 +1903,51 @@ export class AiChatPanel {
     // surviving userMsg.content for an omp turn is text-only by invariant).
     const acpPrompt =
       typeof userMsg.content === "string" ? userMsg.content : trimmed;
+    // TASK-011: vision-capable external engines (TASK-009 Claude Code,
+    // TASK-010 Codex) receive surviving attachments as a SEPARATE
+    // structured array — `acpPrompt` stays reduced to plain text so
+    // base64 never smuggled into the prompt text. The wire-level engine
+    // `send(text, events, attachments?)` parameter is the only carrier.
+    const externalAttachments: ReadonlyArray<{ mime: string; base64: string }> | undefined =
+      Array.isArray(validAttachments) && validAttachments.length > 0
+        ? validAttachments.map((a) => ({ mime: a.mime, base64: a.base64 }))
+        : undefined;
+    // TASK-011: Claude Code dispatch (TASK-009). When the engine was
+    // resolved to `"claude-code"` but the host did not wire the seam,
+    // surface a concrete engine-unavailable error and fall back to the
+    // builtin turn. The fallback runs the message through `runBuiltinTurn`
+    // (which already has full system-prompt + grounding + plan plumbing),
+    // then continues as normal — the banner had already announced the
+    // fallback via `postEngine("builtin")`.
+    if (this.engine === "claude-code") {
+      const engine = this.options.claudeCodeChatEngine;
+      if (engine === undefined) {
+        await this.handleUnavailableEngineFallback(
+          "claude-code",
+          "Claude Code",
+          userMsg,
+        );
+        return;
+      }
+      await this.runClaudeCodeTurn(engine, acpPrompt, userMsg, externalAttachments);
+      return;
+    }
+    // TASK-011: Codex dispatch (TASK-010). Same fallback contract as
+    // Claude Code above. Never reaches `runAcpTurn`, `runOmpEngineTurn`,
+    // or any other engine's send().
+    if (this.engine === "codex") {
+      const engine = this.options.codexChatEngine;
+      if (engine === undefined) {
+        await this.handleUnavailableEngineFallback(
+          "codex",
+          "Codex",
+          userMsg,
+        );
+        return;
+      }
+      await this.runCodexTurn(engine, acpPrompt, userMsg, externalAttachments);
+      return;
+    }
     // Cycle AE TASK-003: when the host wired an OmpChatEngine, route the
     // turn through `engine.send(text, events)` — that module owns the
     // HostMcp bridge + ACP session lifecycle. Falling back to the raw
@@ -1840,6 +1970,13 @@ export class AiChatPanel {
    * On entry: posts zero or more `{type:"attach_error", id, reason, message}`
    * bubbles — one per rejection. Pure with respect to the user message; the
    * side effect is the post call. Never logs base64.
+   *
+   * TASK-011 widens the vision gate: `claude-code` and `codex` engines
+   * are image-capable by engine contract (TASK-009 / TASK-010), so their
+   * attachment batches must NOT be rejected as `vision_unsupported`.
+   * Builtin still defers to `cfg?.models.work.vision` via the engine
+   * banner's published capability; omp stays gate-locked regardless of
+   * the model role's `vision` flag (TASK-001 belt-vs-suspenders rule).
    */
   private prepareAttachments(
     attachments: MinimalAttachment[] | undefined,
@@ -1849,10 +1986,15 @@ export class AiChatPanel {
     }
     // Vision gate (engine belt + model flag). Order: when engine is "omp"
     // we treat the whole batch as unsupported regardless of model flag.
-    const visionOk = validateAttachmentsForVision(
-      attachments,
-      this.engine === "builtin",
-    );
+    // TASK-011: Claude Code + Codex are unconditional image-capable on
+    // the engine axis; the gate stays on for omp only. The actual
+    // vision-capability decision comes from the cached init value
+    // (`resolvedVisionCapable`); when pre-ready we fall back to the
+    // engine-kind baseline so a send racing `ready` never lets an image
+    // through unchecked.
+    const visionCapable =
+      this.resolvedVisionCapable ?? this.computeVisionCapabilityForEngine(this.engine);
+    const visionOk = validateAttachmentsForVision(attachments, visionCapable);
     if (!visionOk.ok) {
       for (const a of attachments) {
         this.post({
@@ -2306,6 +2448,202 @@ export class AiChatPanel {
       void completed;
       void userMsg;
     }
+  }
+
+  /**
+   * TASK-011: Claude Code turn (TASK-009 engine). Mirrors `runOmpEngineTurn`
+   * for the event surface but carries structured image attachments
+   * separately. The engine contract: `send(text, events, attachments?)`
+   * where `attachments` is the original image order preserved verbatim
+   * (mime + base64 only; no image-type wrapping on the panel side — the
+   * engine owns the type envelope when it forwards to the process).
+   */
+  private async runClaudeCodeTurn(
+    engine: ClaudeCodeChatEngine,
+    text: string,
+    userMsg: ChatMessage,
+    attachments?: ReadonlyArray<{ mime: string; base64: string }>,
+  ): Promise<void> {
+    await this.runImageCapableEngineTurn(
+      "claude-code",
+      engine.send.bind(engine),
+      text,
+      userMsg,
+      attachments,
+    );
+  }
+
+  /**
+   * TASK-011: Codex turn (TASK-010 engine). Same dispatch shape as
+   * `runClaudeCodeTurn`; the engine contract pins the same
+   * `send(text, events, attachments?)` signature so the per-turn plumbing
+   * is shared with Claude Code via `runImageCapableEngineTurn`.
+   */
+  private async runCodexTurn(
+    engine: CodexChatEngine,
+    text: string,
+    userMsg: ChatMessage,
+    attachments?: ReadonlyArray<{ mime: string; base64: string }>,
+  ): Promise<void> {
+    await this.runImageCapableEngineTurn(
+      "codex",
+      engine.send.bind(engine),
+      text,
+      userMsg,
+      attachments,
+    );
+  }
+
+  /**
+   * TASK-011: shared per-turn plumbing for image-capable external
+   * engines (TASK-009 Claude Code + TASK-010 Codex). Mirrors the
+   * `runOmpEngineTurn` body — session_state triplet (connecting →
+   * running → done), per-event posting, redact pass, policy notice,
+   * history promotion on clean settle — but takes a generic `send`
+   * callback with the engine-specific `attachments?` slot. ATTACHMENTS
+   * NEVER MIX INTO `text` — the planner note at TASK-011 §Discussion
+   * forbids `acpPrompt` from carrying base64. The engine owns the
+   * structured `{mime, base64}` payload.
+   *
+   * `engineName` is used purely for trace / session_state label
+   * injection (TASK-011 keeps the wire engine-state literal set closed
+   * for the omp case via the legacy six-literal set; for claude-code /
+   * codex we post session_state only, never engine_state).
+   */
+  private async runImageCapableEngineTurn(
+    engineName: "claude-code" | "codex",
+    send: (
+      text: string,
+      events: import("../ai/omp/ompChatEngine").OmpChatEvents,
+      attachments?: ReadonlyArray<{ mime: string; base64: string }>,
+    ) => Promise<void>,
+    text: string,
+    userMsg: ChatMessage,
+    attachments?: ReadonlyArray<{ mime: string; base64: string }>,
+  ): Promise<void> {
+    const token = this.token;
+    const policy = await this.resolveEffectivePolicy();
+    let postedError = false;
+    let runningPosted = false;
+    let finalText: string | null = null;
+    let completed = false;
+    this.sessionTurnSeq += 1;
+    this.postSessionState("connecting");
+    try {
+      await send(text, {
+        onDelta: (delta) => {
+          if (token?.aborted) return;
+          if (!runningPosted) {
+            runningPosted = true;
+            this.postSessionState("running");
+          }
+          finalText = (finalText ?? "") + delta;
+          this.post({ type: "delta", text: String(redact(delta)) });
+        },
+        onThought: (chunk) => {
+          if (token?.aborted) return;
+          if (!runningPosted) {
+            runningPosted = true;
+            this.postSessionState("running");
+          }
+          this.post({ type: "step", label: String(redact(chunk)) });
+        },
+        onToolStart: (toolName) => {
+          if (token?.aborted) return;
+          if (!runningPosted) {
+            runningPosted = true;
+            this.postSessionState("running");
+          }
+          this.post({ type: "step", label: toolName });
+        },
+        onToolEnd: (toolName, result, isError) => {
+          if (token?.aborted) return;
+          const status = isError ? "failed" : "ok";
+          this.post({
+            type: "tool_result",
+            tool: toolName,
+            status,
+            summary: summarizeToolOutcome(
+              toolName,
+              status,
+              toolShapeSummary(typeof result === "string" ? result : ""),
+            ),
+          });
+        },
+        onError: (message) => {
+          // TASK-011: a mid-turn crash on the image-capable engine route
+          // posts ONE error bubble and runs the turn's done settle — the
+          // engine is engine-scoped (claude-code OR codex), so we do NOT
+          // flip the engine kind to "builtin" on every mid-turn error
+          // (only the omp engine's mid-turn crash warrants a banner flip;
+          // see `runOmpEngineTurn`'s onError for that contract). The
+          // banner keeps showing the requested engine so a single transient
+          // crash doesn't permanently downgrade the panel UX.
+          if (postedError) return;
+          postedError = true;
+          this.postSessionState("error");
+          this.post({ type: "error", message });
+        },
+        onDone: () => {
+          if (!postedError && !token?.aborted) {
+            const t = (finalText ?? "").trim();
+            if (t.length > 0) {
+              this.history = [
+                ...this.history,
+                userMsg,
+                { role: "assistant", content: t },
+              ];
+            }
+            completed = true;
+          }
+        },
+      }, attachments);
+    } catch (err) {
+      // Defensive: contract says these engines never throw on crash, but
+      // if a future change makes them throw we surface a single error +
+      // continue with the same engine choice.
+      if (!postedError) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.postSessionState("error");
+        this.post({ type: "error", message });
+      }
+    } finally {
+      if (!postedError) this.postSessionState("done");
+      this.postUsage(undefined, policy.notice);
+      this.post({ type: "done" });
+      this.token = null;
+      this.turnSettled = true;
+      // Touch state so unused-locals don't trip strict-mode — documents
+      // the contract that `completed` and `userMsg` flow through the
+      // path without needing direct use here.
+      void completed;
+      void engineName;
+    }
+  }
+
+  /**
+   * TASK-011 — engine-unavailable fallback. When the user requested
+   * `"claude-code"` (or `"codex"`) but the host did not wire the matching
+   * engine seam, post a concrete engine-unavailable error message and
+   * run the same `userMsg` through the builtin engine. The engine banner
+   * re-posts `"builtin"` so the user's UI self-corrects on the same wire
+   * — never calls the wrong agent engine and never silently drops the
+   * turn. Subsequent sends continue to use builtin (latched via
+   * `this.engine = "builtin"`).
+   */
+  private async handleUnavailableEngineFallback(
+    requested: "claude-code" | "codex",
+    label: string,
+    userMsg: ChatMessage,
+  ): Promise<void> {
+    this.post({
+      type: "error",
+      message: `${label} chat engine is not configured; falling back to builtin for this turn.`,
+    });
+    void requested;
+    this.engine = "builtin";
+    this.postEngine("builtin");
+    await this.runBuiltinTurn(userMsg);
   }
 
   /** AIX-06: redacted JSON envelope of one turn (debug/AIX-07 hook). */
@@ -3223,6 +3561,26 @@ export class AiChatPanel {
     }
   }
 
+  /**
+   * TASK-011: sync, config-free vision-capability helper used by
+   * `handleClear` (which is itself sync) to mirror the engine-owned
+   * capability decision without re-running a loadConfig roundtrip.
+   * For builtin, the legacy baseline (`defaultAiSettings().models.work.vision`)
+   * is the safe default — the webview re-reads the real capability on
+   * the next init post. The legend:
+   *
+   *   - `omp`         → false (engine is the belt; refuse all images)
+   *   - `claude-code` → true  (TASK-009 contract: image-capable)
+   *   - `codex`       → true  (TASK-010 contract: image-capable)
+   *   - `builtin`     → defaultAiSettings().models.work.vision (true by default)
+   */
+  private computeVisionCapabilityForEngine(eng: EngineKind | null): boolean {
+    if (eng === null) return false; // pre-ready: refuse images by default
+    if (eng === "omp") return false;
+    if (eng === "claude-code" || eng === "codex") return true;
+    return defaultAiSettings().models.work.vision;
+  }
+
   private handleClear(): void {
     this.trace.clear();
     // Full turn reset: Clear giữa turn đang stream phải hủy turn + trả UI
@@ -3248,7 +3606,7 @@ export class AiChatPanel {
     // (history has no trailing pair) and re-sends the pre-clear text,
     // resurrecting a message the user explicitly wiped.
     this.lastSentText = null;
-    this.post({ type: "init", hasHistory: false, visionCapable: this.engine === "builtin" });
+    this.post({ type: "init", hasHistory: false, visionCapable: this.computeVisionCapabilityForEngine(this.engine) });
     this.post({ type: "done" });      // belt: webview busy flag về false
   }
 
