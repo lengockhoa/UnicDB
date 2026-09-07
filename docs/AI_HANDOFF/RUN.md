@@ -2,5 +2,5 @@ Command: handoff-fullstack
 Goal: Multi-selection Cmd+Enter for shellscript — run only highlighted lines in reused "UnicDB Script" terminal (mirror SQL multi-selection shipped in v1.53.18 commit 3e33f0a). P0: reused terminal + line-at-cursor + shellscript-only.
 Base: main @ 86b034e (release: 1.53.18)
 Phase: done
-Cursor: Cycle SH shipped — main @ 1187b48 pushed to origin. Plan commit (ca3c86b) + wave-1 implementation (fa89923) + guard fix (d7f79e0) + handoff metadata (1187b48). All 3743 tests green. Both rows reviewed (unic-smart) and marked done.
-Next: Patch release — `node scripts/bump-version.mjs` then tag + GitHub release + Marketplace publish.
+Cursor: Cycle SH shipped — v1.53.20 published end-to-end. Main @ 16d6a20, tag v1.53.20, GitHub release https://github.com/lengockhoa/UnicDB/releases/tag/v1.53.20, Marketplace https://marketplace.visualstudio.com/items?itemName=lengockhoa.UnicDB. All 3743 tests green.
+Next: none — cycle finished. Run /compact before starting the next cycle.
