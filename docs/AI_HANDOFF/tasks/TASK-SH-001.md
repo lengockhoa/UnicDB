@@ -206,3 +206,21 @@ TASK-SH-002 owns those).
 
 Status: PASS
 Note: none
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npm run typecheck; npx vitest run src/scaffold.test.ts; npm test (wave net)
+  result: typecheck exit 0; scaffold 11/11 pass; full suite 250 files / 3743 tests pass, 0 failed (2 skipped)
+TEST_PLAN_COVERAGE: all-followed (#1-#5; #5 via unchanged pre-existing 7 tests, all green)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/adapters/__tests__/bq04SurfaceGuard.test.ts:87 and bqFollowupSurfaceGuard.test.ts:70 — alternation `key|keybinding|keybindings` relies on backtracking; empirically verified correct today (matches `"key":`/`"keybindings":`/`"keybinding":`; does NOT match `"keywords":`/`"keys":`/`"keyboard":`/`"key2":`/`"keybindingsFoo":`), but longest-first ordering (`keybindings|keybinding|key`) is the safer idiom for future edits.
+    - src/adapters/__tests__/bq04SurfaceGuard.test.ts:87 — filter is line-based/depth-agnostic: a hypothetical top-level package.json `key`/`keybindings` field would also be dropped from the deps guard (theoretical; not a real npm manifest field; same pre-existing limitation as `command`/`title`).
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: All 5 test-plan cases implemented with real RED evidence (4 assertion failures whose line refs match the final test locations). Diff is a pure manifest addition — no menus, no views, no version bump, no scope creep. Guard-fix is load-bearing: the BASE_REF (1ca64fa) package.json diff genuinely contains the new `"key":`/`"keybindings":` lines, and both guard tests pass in the full suite, proving the filter works.

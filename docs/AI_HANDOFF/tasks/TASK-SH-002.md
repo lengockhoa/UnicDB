@@ -182,3 +182,21 @@ Did not fork a second factory for shellscript — instead added the small
 `lineAt` extension to a focused new factory inside the TASK-SH-002 describe
 block. Did NOT touch package.json or src/scaffold.test.ts (those belong to
 TASK-SH-001).
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npm run typecheck && npx vitest run src/extension.test.ts
+  result: typecheck exit 0; vitest 171 passed / 0 failed (fresh, main @ d7f79e0)
+TEST_PLAN_COVERAGE: all-followed — 9/9 rows implemented (registration, 3 happy, whitespace/wrong-language/no-editor/dead-terminal edges, runScript + SQL-multi-selection regression); RED_OUTPUT is genuine failing output (8 fails with assertion messages, command unregistered), not a bare claim.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/extension.test.ts (Test #5) — plan row 4's "show NOT called" is only implied via createdTerminals.length===0; safe today because vi.resetModules() guarantees runScriptTerminal=null, but a direct spy assertion would pin the plan row literally.
+NOTES: Implementation matches the contract exactly: silent early-return on no-editor/wrong languageId, selections (plural) with legacy fallback, offsetAt substring for non-empty, lineAt + trailing-\r strip for cursor line, trim filter with no-terminal short-circuit, reuse guard byte-identical to commandRunScript (src/extension.ts:3235), per-piece sendText(piece+"\n") + single show(). Registration at src/extension.ts:903-911 directly after UnicDB.runScript; id matches TASK-SH-001 manifest (package.json:48 activation, :178 command, :454-465 cmd/ctrl+enter gated on editorTextFocus && resourceLangId == shellscript). Diff is purely additive — commandRunScript, runQueryFromEditor, statementAtCursor and all SQL paths untouched (only doc-comment mentions of runQueryFromEditor). Executor's dist/schemaForm.js failure does not reproduce on main (worktree had no compiled dist/) — confirmed unrelated. Executor report lacked a literal FILES_CHANGED label; file set was independently confirmed via git diff (only the two owned files).
