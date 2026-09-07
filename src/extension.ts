@@ -2063,6 +2063,14 @@ async function commandOpenAiChat(
     ompChatEngine: ompEngine,
     claudeCodeChatEngine: claudeEngine,
     codexChatEngine: codexEngine,
+    // R4.5 fix (round 3): the engines built above are gated on the RESOLVED
+    // `choice.engine` from `resolveEngine()`. Mirror the same value onto
+    // `options.engine` so the panel's `resolveEngineKind()` returns the
+    // same kind the engines were built against — otherwise the dispatch
+    // falls back to "builtin" and misses the wired seam. `configuredEngine`
+    // above stays raw on purpose: it is the AIX-07 input the policy
+    // resolver validates against the known vocabulary.
+    engine: choice.engine,
     engineVersion: choice.version,
     engineHint: choice.hint,
     engineOmpPath: choice.path,

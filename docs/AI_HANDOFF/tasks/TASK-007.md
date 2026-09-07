@@ -139,3 +139,24 @@ Note:
 - The 5 new tests were added as a new `describe` block in `engineChoice.test.ts`; the 6 prior AIX-05 reason→hint regression tests were kept (still green) to preserve the locked mapping documentation.
 - `engineChoice.ts` keeps `detection.reason === "version-too-old"` literal in the legacy branch so `aix05Scaffold.test.ts`'s source-string regex stays green.
 - `ClaudeCodeDetection` / `CodexDetection` types are imported and projected into the shared `AgentDetection` projection; legacy `{ detection, config }` callers with `engine==="omp"` still resolve exactly as before.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/__tests__/engineChoice.test.ts src/ai/__tests__/policy.test.ts && npm run typecheck
+  result: 22 pass / 0 fail; typecheck clean; wider sweep (aix05Scaffold, aiChatPanelPolicy, commitGenIntegration, commitGenCommand) 48 pass / 0 fail
+TEST_PLAN_COVERAGE: all-followed — all 6 §Test Cases implemented with real expects; RED_OUTPUT contains genuine failing output (TypeErrors + 5 failed / 17 passed); lint N/A documented, typecheck present
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ai/engineChoice.ts:205-208 — `export type _LegacyDetectionTypes` is a dead export; both types are already used in `projectAgent()`'s signature, and the tree-shaking rationale in the comment does not apply to a type-only export. Delete it.
+    - src/ai/policy.ts:133-135 — internal caller at policy.ts:154 still uses the old `isValidEngineChoice` alias, so the rename is only external-facing; the alias comment ("used by pre-TASK-007 callers inside this module") is self-referential. Either drop the alias and use `isEngineChoice` internally, or fix the comment.
+    - src/ai/policy.ts:16-18 — header comment still claims configuredEngine vocabulary is `("builtin" | "omp")`; CONFIGURED_ENGINE_VALUES is now four values. Update the stale comment to match the widened guard.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Explicit-mode authority, reason-keyed hint mapping (claude-code/codex have no update hints — install-hint reuse is correct and documented), four-engine AiEngine typing with no inline unions, and the legacy omp-first path (still used by extension.ts:2495 and commitGenCommand.ts:142) all verified. Safe to proceed; minors are cleanup-only and can ride along with TASK-012.

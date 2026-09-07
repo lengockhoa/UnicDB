@@ -132,6 +132,11 @@ export interface CodexChatEngine {
    * not spawn and emits `onError("disposed")`.
    */
   dispose(): void | Promise<void>;
+  /** TASK-011 R4.5 fix: cancel the in-flight turn (delegates to the
+   *  per-turn `CodexProcessHandle.cancel()`, which is idempotent and
+   *  sends a termination signal to the child). Safe to call when no
+   *  turn is in flight (no-op). */
+  cancel(): void;
 }
 
 export interface CodexChatEngineOptions {
@@ -259,6 +264,10 @@ export function createCodexChatEngine(
   // returns it verbatim instead of re-running hostMcp.stop().
   let disposed = false;
   let disposePromise: Promise<void> | null = null;
+  // TASK-011 R4.5 fix: track the in-flight per-turn process handle so
+  // `cancel()` can reach the subprocess. Cleared once the turn settles
+  // and on dispose — a cancel() with no live handle is a no-op.
+  let inFlightHandle: CodexProcessHandle | undefined;
 
   async function disposeOnce(): Promise<void> {
     const work: Array<Promise<unknown>> = [];
@@ -311,6 +320,10 @@ export function createCodexChatEngine(
         events.onError?.(`codex process start failed: ${message}`);
         return;
       }
+      // Publish the in-flight handle so cancel() can reach the subprocess
+      // (TASK-011 R4.5 fix). Cleared in the finally below once the turn
+      // settles, so a Stop after settle is a no-op.
+      inFlightHandle = process;
 
       // Acceptance: pass attachments as structured `{mime, base64}` blocks
       // in their original order. `undefined` (NOT `[]`) when no images —
@@ -330,9 +343,10 @@ export function createCodexChatEngine(
         emit(trace, state, events, "error", { message });
         events.onError?.(message);
       } finally {
-        // Always dispose the per-turn process handle. codex children are
-        // one-shot per turn — keeping them alive across turns wastes the
-        // session-id handshake.
+        // Always clear the in-flight handle, then dispose the per-turn
+        // process. codex children are one-shot per turn — keeping them
+        // alive across turns wastes the session-id handshake.
+        inFlightHandle = undefined;
         try {
           await process.dispose();
         } catch {
@@ -355,6 +369,21 @@ export function createCodexChatEngine(
       disposed = true;
       disposePromise = disposeOnce();
       return disposePromise;
+    },
+
+    cancel(): void {
+      // TASK-011 R4.5 fix: forward Stop to the in-flight subprocess. The
+      // handle is captured into `inFlightHandle` at the top of send() and
+      // cleared in its finally — a Stop after settle or before send
+      // resolves to no-op (no live handle). `process.cancel()` is itself
+      // idempotent and best-effort.
+      const handle = inFlightHandle;
+      if (handle === undefined) return;
+      try {
+        handle.cancel();
+      } catch {
+        /* best-effort */
+      }
     },
   };
 }

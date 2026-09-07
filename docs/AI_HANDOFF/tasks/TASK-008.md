@@ -128,3 +128,20 @@ should add `npm run compile` to its §Verification Commands, AND the
 orchestrator's wave-boundary gate must run `npm run compile` after
 copy-back before declaring the wave green. Captured here for the
 reviewer's awareness; no executor-side bug.
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npm run compile && npx vitest run webview/__tests__/aiSettingsFormMain.test.ts src/ui/__tests__/aiSettingsFormBundle.test.ts && npm run typecheck
+  result: 16 pass / 0 fail (webview 5 + bundle 11); typecheck exit 0; dist/aiSettingsForm.js re-emitted and matches committed bundle
+TEST_PLAN_COVERAGE: all-followed — §4 tests 1-4 implemented as real assertions (+ structural option-order test #5); RED_OUTPUT contains genuine assertion failures (4 failed | 1 passed) with file:line
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: R4 verified — global select (aiSettingsFormMain.ts:343-348) and lite select (:312-317) each carry exactly 4 options in order omp/claude-code/codex/builtin; `Engine` union (:23) mirrors `AiEngine` and both validator error strings are byte-for-byte identical to src/ai/settings.ts:135/144 (mechanically compared via node); defaults preserved global=builtin / lite=omp in state (:89,:91), HTML `selected` attrs, and applyInit fallbacks (:424,:436) with legacy-init test #4. The only shared-file edit (bundle test #6 expectation) is scoped to the error string and matches the TASK-001 authoritative string; no stale 2-engine references remain in source. Lint N/A is legitimate (no lint script in package.json; typecheck present and in Verification Commands).

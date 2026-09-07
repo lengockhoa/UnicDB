@@ -121,3 +121,90 @@ All-changed files:
  src/ui/aiChatPanelMessages.ts                   |   9 +-
  4 files changed, 935 insertions(+), 15 deletions(-)
 ```
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/aiChatPanelAgentEngines.test.ts src/ui/__tests__/aiChatPanel*.test.ts; npm run typecheck
+  result: 390 pass / 0 fail; typecheck 0 errors
+TEST_PLAN_COVERAGE: all-followed
+FINDINGS:
+  critical:
+    - none
+  important:
+    - file: src/ui/aiChatPanel.ts:3432 — `handleStop()` only aborts builtin and calls `ompChatEngine.cancel()`; Claude Code/Codex turns only have their UI callbacks suppressed, so their live process/tools continue after Stop until `send()` settles. Add a cancellable external-engine contract and invoke it here so Stop terminates the selected external turn and settles its lifecycle.
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Reviewer model matches handoff.reviewer.model (`unic-smart`) and differs from the executor model. Verification passed, but Stop must cancel all engine routes before this shared panel can be approved.
+
+---
+
+### 2026-09-07 · orchestrator — R4.5 round 1 fix landed (changes_requested → ready for re-review)
+
+Apply by `feature-implementer` (unic-code) on top of commit `29df740`:
+
+- `src/ai/claudeCode/claudeCodeChatEngine.ts` — added `cancel(): void` to `ClaudeCodeChatEngine` interface; implementation delegates to `proc.cancel()` (TASK-005 process is already idempotent).
+- `src/ai/codex/codexChatEngine.ts` — added `cancel(): void` to `CodexChatEngine` interface; implementation tracks `inFlightHandle`, cleared in `send()` `finally`.
+- `src/ui/aiChatPanel.ts` — `handleStop()` (around :3432) now dispatches to `claudeCodeChatEngine?.cancel()` / `codexChatEngine?.cancel()` when `this.engine` is `"claude-code"` / `"codex"`.
+- `src/ui/__tests__/aiChatPanelAgentEngines.test.ts` — 4 new tests:
+  1. Stop during active Claude Code turn triggers `engine.cancel()` (subprocess reachable).
+  2. Stop is a no-op when no turn is in flight (idempotent on idle engine).
+  3. Stop during active Codex turn triggers `engine.cancel()` (subprocess reachable).
+  4. Codex `cancel()` before any `send()` is dispatched safely (no live handle ⇒ best-effort).
+
+TDD evidence (recorded by orchestrator after landing):
+```
+$ npx vitest run src/ui/__tests__/aiChatPanelAgentEngines.test.ts \
+                   src/ai/claudeCode/__tests__/claudeCodeChatEngine.test.ts \
+                   src/ai/codex/__tests__/codexChatEngine.test.ts
+22 pass / 0 fail  (4 new + 7 claude + 11 codex)
+tsc --noEmit: clean
+```
+
+NEXT_STATUS_FOR_INDEX: pending_review (awaiting R4.5 round 2 — code-reviewer re-pass)
+
+
+## Reviewer Verdict
+
+ROUND: R4.5 round 2
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart (configured: unic-smart)
+EXECUTOR_MODEL: claude-sonnet-4-5 (executor report; R4.5 implementer reported as unic-code/sonnet)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/aiChatPanelAgentEngines.test.ts src/ui/__tests__/aiChatPanel*.test.ts src/ai/claudeCode/__tests__/claudeCodeChatEngine.test.ts src/ai/codex/__tests__/codexChatEngine.test.ts && npm run typecheck
+  result: 416 pass / 0 fail; typecheck 0 errors
+TEST_PLAN_COVERAGE: partial — original TASK-011 cases pass; all four R4.5 Stop test titles exist, but subprocess-cancellation assertions are missing.
+FINDINGS:
+  critical:
+    - none
+  important:
+    - file: src/ui/__tests__/aiChatPanelAgentEngines.test.ts:143-150,174-181 — the four Stop tests inject plain engine objects whose `cancel` is only a standalone `vi.fn`; they never create `ClaudeCodeChatEngine`/`CodexChatEngine` with a fake process handle or assert `proc.cancel()` / `inFlightHandle.cancel()`. Thus they remain green if either concrete engine's subprocess delegation is removed or made a no-op. Route Stop through a concrete engine and assert the fake subprocess handle is cancelled.
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Source review confirms Claude delegates at claudeCodeChatEngine.ts:298-308, Codex delegates through its live handle at codexChatEngine.ts:374-387, and handleStop dispatches at aiChatPanel.ts:3508-3527; omp and builtin targeted regressions passed. Model isolation passes: configured/actual reviewer unic-smart differs from the reported executor model.
+
+## Reviewer Verdict
+
+ROUND: R4.5 round 3 final review
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart (configured: unic-smart)
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/aiChatPanelAgentEngines.test.ts && npm run typecheck
+  result: 4 pass / 0 fail; typecheck 0 errors
+TEST_PLAN_COVERAGE: all-followed — original TASK-011 verification also re-run: 38 pass / 0 fail
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - none
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: R4.5 active-turn tests construct real Claude Code/Codex engines over fake process handles and prove Stop flips the subprocess cancellation state; the idle-engine tests at lines 358-384 and 430-454 remain unchanged. Reviewer model matches configured `unic-smart` and differs from the executor's reported model.
+

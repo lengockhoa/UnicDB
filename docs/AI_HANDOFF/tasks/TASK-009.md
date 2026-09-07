@@ -121,3 +121,25 @@ ResumeBehavior: explicit onError("Claude Code session resume is unavailable") wi
 Files changed:
   - src/ai/claudeCode/claudeCodeChatEngine.ts (new, ~230 lines) — factory + types + lifecycle
   - src/ai/claudeCode/__tests__/claudeCodeChatEngine.test.ts (new, ~330 lines) — 7 tests
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts src/ai/claudeCode/__tests__/claudeCodeChatEngine.test.ts && npm run typecheck
+  result: 15 pass / 0 fail (chatEngine 7 + process 8); typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed — 5/5 required cases implemented plus 2 bonus (resume contract #6, start-before-send ordering #7); RED_OUTPUT is a real failing vitest run (module-not-found, non-zero exit); lint N/A justified (no lint script in package.json, verified)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ai/claudeCode/claudeCodeChatEngine.ts:250-251 — stale comment: "process.send resolves (never throws) on crash" is no longer true; since R4.5 round 1 (9926866) failTurn REJECTS the send promise (claudeCodeProcess.ts:825-826, 852). The catch block is the live error path, not a "defensive last line". Behavior is correct (turnErrored suppresses the second bubble); reword the comment so future maintainers don't delete the catch.
+    - src/ai/claudeCode/claudeCodeChatEngine.ts:206-208 — stale rationale: dedupe comment cites "some process paths fire onError twice", but R4.5 made failTurn the single source of truth (claudeCodeProcess.ts:839-842) and the process now fires exactly once. Keep the dedupe as regression defense-in-depth; reword to say so.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Comment drift only — the R4.5 TASK-005 fix landed after this engine was written. R4 scope fully verified: 7-callback OmpChatEvents mirror is signature-exact (engine:48-57 vs omp:107-116); default-deny permissions live in the process layer (--permission-mode manual + --permission-prompts none, process:405-406) and are inherited, not bypassed; image base64 forwarded verbatim only when nonempty and provably absent from all trace/error sinks (test #3); lifecycle reuses one process handle + HostMcp with idempotent dispose and deterministic disposed/resume errors; concurrent send is guarded upstream (process:380-382 "turn already in flight") and surfaces as one clean onError.

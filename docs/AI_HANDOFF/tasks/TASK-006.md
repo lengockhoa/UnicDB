@@ -274,3 +274,25 @@ FILES_CHANGED:
 
 TESTS_ADDED:
   - src/ai/codex/__tests__/codexProcess.test.ts: R4.5 regression test for stale per-turn exit listeners
+
+---
+
+## Reviewer Verdict (R4.5 round 2)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/codex/__tests__/codexProcess.test.ts && npm run typecheck
+  result: 11 pass / 0 fail; tsc --noEmit exit 0
+TEST_PLAN_COVERAGE: all-followed — R4.5 regression test present with real assertions; RED_OUTPUT genuine (stale onExit fired "codex exited mid-turn (code=0)" on completed turn 1 pre-fix)
+FINDINGS:
+  critical:
+    - (none)
+  important:
+    - (none) — R4.5 important finding VERIFIED FIXED on disk: `ChildLike.off` overloads exist (codexProcess.ts:167-168); `send()` hoists `onExit` (line 429) and `settle()` calls `child.off("exit", onExit)` (line 445) on every settle path; spawnLike wrapper now forwards the SAME cb reference to on/off (lines 283-298) so removal actually matches registration. Regression test (codexProcess.test.ts:459-516) drives 2 sends → turn.completed → real emitChildExit(0) and asserts errors1/errors2 empty; FakeChildProcess extends EventEmitter so off() genuinely removes the listener.
+  minor:
+    - (carried from R3, intentionally out of R4.5 scope, non-blocking): dispose() after crash erases "crashed"/"fallback-builtin" state (codexProcess.ts ~638); version probe interpolates codexPath unquoted while spawn path is cmd.exe-quoted (~335); `{prompt, parts}` stdin frame is a UnicDB-defined translation, upstream parses stdin as a text block — image transport unproven until TASK-014 live smoke.
+    - commit hygiene — R4.5 test-file changes landed in 9926866 (TASK-005-titled commit) while the source fix is in 29df740; both are on HEAD and the tree is clean, non-blocking.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Fix is genuine, verified fresh (11/11 + tsc clean), and the regression test would fail without the off() wiring. Carry the three R3 minors plus the stdin-frame TASK-014 smoke dependency forward; none block handoff.

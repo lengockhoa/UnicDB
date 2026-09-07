@@ -11,8 +11,8 @@
 //
 // Derivation rules (PLAN_AIX07 §3, plan review Round 1 Finding 1):
 //   - `configuredEngine` is validated ONLY as known preference vocabulary
-//     ("builtin" | "omp" — src/ai/settings.ts `AiEngine`). It never decides
-//     the effective route by itself.
+//     (`AiEngine` = "builtin" | "omp" | "claude-code" | "codex" —
+//     src/ai/settings.ts). It never decides the effective route by itself.
 //   - The effective provider comes exclusively from a valid
 //     `resolveEngine()` choice (`EngineChoice.engine`). resolveEngine() is
 //     detection-first: a user-configured "builtin" default legitimately

@@ -184,3 +184,28 @@ NOTES: Flag claims independently verified against my own `claude --help` probe (
 ## R4.5 Fix Report
 
 R4.5 round addressed the three IMPORTANT reviewer findings in one executor pass. (1) Double-`onError` on error/result-error frames (`claudeCodeProcess.ts` lines 728/745 vs. `failTurn` at 830): removed the pre-fire at the two error frame sites (`type === "result"` with `subtype:"error"`/`is_error:true`, and top-level `type === "error"`); `failTurn` is now the single source of truth for `onError` on the failure path, and the stale "already saw onError" comment in `failTurn` was rewritten to document the new contract. (2) Test #4 strengthened per Test Plan §Test Cases #4: the 9 KiB stderr fixture was rebuilt so the secret + base64 markers land in the first ~1 KiB (the slice-drop window) and the test now asserts `handle.getStderrTail!().length <= 8 * 1024`, that `typeof tail === "string"`, and that neither marker survives in the tail. (3) EPIPE on early-child-death stdin write (`claudeCodeProcess.ts` lines 488-493): a `spawnLike.stdin.on("error", ...)` listener was attached BEFORE `write`/`end`; it routes through `failTurn(wrapError(err, this.stderrTail))` so the adapter never lets an unhandled stream 'error' escape. Test coverage: added two new RED tests — `result-error frame fires onError exactly once (no double-fire)`, `top-level error frame fires onError exactly once (no double-fire)`, and `EPIPE on stdin write (child died early) does not throw uncaught; routes through failTurn` (captures `process.on("unhandledRejection")` to assert zero escapees). TDD RED→GREEN verified: RED had 3 failures on the new tests (double onError x2, unhandled EPIPE), GREEN has all 8/8 pass. Verification: `npx vitest run src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts` → 8 passed (8), exit 0; `npm run typecheck` → `tsc --noEmit` exit 0, no errors. The minor findings (dead `ZERO_BASE64` const + `void ZERO_BASE64`, `setState("stopped")` clobber race in dispose-resolve, surrogate pair split at 8 KiB boundary) are out of R4.5 scope per the reviewer and remain for a later round.
+
+---
+
+## Reviewer Verdict (R4.5 round 2)
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts && npm run typecheck
+  result: 8 pass / 0 fail (fresh run); typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed — all 5 original cases plus 3 new R4.5 regression tests (result-error dedupe, top-level error dedupe, EPIPE no-uncaught), all with real expect assertions
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none — all 3 R4 blocking findings independently verified fixed on disk (not from report alone):
+      (1) onError dedupe — pre-fires removed at both frame sites; grep confirms failTurn (claudeCodeProcess.ts:845) is now the ONLY onError fire site; two new tests assert errors.length === 1 for both result-error and top-level error frames.
+      (2) Test #4 (claudeCodeProcess.test.ts:390-398) — now asserts getStderrTail() is string, length <= 8*1024, and secret+base64 markers truncated; fixture rebuilt with markers in the dropped head, matching the slice(-8KiB) direction at claudeCodeProcess.ts:455-457.
+      (3) EPIPE — stdin.on("error") attached BEFORE write/end (claudeCodeProcess.ts:497-500), routes through failTurn; new test captures process "unhandledRejection" and asserts zero escapees, so removing the listener would fail the test.
+  minor:
+    - src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts:477-484 — EPIPE test emits child exit before the stdin error, so the asserted onError may arrive via the exit path rather than the EPIPE path; the load-bearing no-uncaught-escape assertion is still genuine, but emitting the stdin error while turnInFlight is still true would pin the attribution.
+    - carried from R4 round 1 (explicitly out of R4.5 scope, non-blocking): dead ZERO_BASE64 const + void suppressor (claudeCodeProcess.ts:151,874), dispose-resolve setState("stopped") clobber view (568), surrogate-pair split at 8 KiB boundary (456-458).
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Verified fix commit 9926866 diff directly; 8/8 tests re-run fresh by reviewer, typecheck clean. Quality gate satisfied for TASK-005 handoff; remaining minors are cosmetic or deferred by agreed scope.

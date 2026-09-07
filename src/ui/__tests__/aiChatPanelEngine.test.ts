@@ -20,6 +20,8 @@ import type { AgentDeps, AgentRunResult } from "../../ai/agent";
 import type { ChatMessage } from "../../ai/provider";
 import type { AdapterFactory } from "../../ai/tools/types";
 import type { OmpChatEngine, OmpChatEvents } from "../../ai/omp/ompChatEngine";
+import type { ClaudeCodeChatEngine } from "../../ai/claudeCode/claudeCodeChatEngine";
+import type { CodexChatEngine } from "../../ai/codex/codexChatEngine";
 import type { AcpPanelDeps } from "../aiChatPanel";
 import type {
   AcpClient,
@@ -1022,5 +1024,140 @@ describe("AiChatPanel — TASK-011 engine-unavailable fallback", () => {
     expect(combined).toMatch(/codex/i);
     expect(combined).toMatch(/not configured/i);
     expect(agentState.runAgentMock).toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// TASK-012 R4.5 critical_block — engine dispose + MCP cleanup on panel teardown
+// ============================================================================
+// The R4.5 fix in `AiChatPanel.teardown()` MUST dispose every wired chat
+// engine exactly once so production chat-engine state (HostMcp loopback
+// listener, McpBridge bearer descriptor, AcpProcess child) does not leak for
+// the panel lifetime. Claude Code additionally writes an ephemeral MCP config
+// file at `.vscode/.unicdb-claude-mcp-<pid>-<ts>.json` (see extension.ts:
+// writeClaudeMcpConfigFile) — that file's lifecycle MUST be tied to the
+// panel teardown so secret-shaped artifacts cannot survive engine disposal.
+//
+// These tests pin:
+//   1. `claudeCodeChatEngine.dispose()` is called exactly once
+//   2. `claudeCodeChatEngine.disposeMcp?.()` is called exactly once when the
+//      engine exposes the named MCP-cleanup surface
+//   3. `codexChatEngine.dispose()` is called exactly once
+//   4. teardown remains idempotent — running the dispose path twice (panel
+//      dispose + webview close) must not double-dispose any engine.
+//
+// Mirror the production OMP teardown test above (line 691).
+// ============================================================================
+describe("AiChatPanel — TASK-012 R4.5: claude/codex engine dispose on teardown", () => {
+  it("claude-code: panel teardown calls claudeCodeChatEngine.dispose() exactly once", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const dispose = vi.fn(async () => undefined);
+    const engine = {
+      send: vi.fn(async () => undefined),
+      resume: vi.fn(async () => undefined),
+      dispose,
+      cancel: vi.fn(() => undefined),
+    } as unknown as ClaudeCodeChatEngine;
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      engine: "claude-code",
+      claudeCodeChatEngine: engine,
+    });
+    panel.show();
+    // Production teardown path: `panel.onDidDispose` → `teardown()`. Drop
+    // the panel tab to fire the close listener.
+    (panel as unknown as { panel: { dispose(): void } | undefined }).panel
+      ?.dispose();
+    await until(() => dispose.mock.calls.length >= 1);
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("codex: panel teardown calls codexChatEngine.dispose() exactly once", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const dispose = vi.fn(async () => undefined);
+    const engine = {
+      send: vi.fn(async () => undefined),
+      resume: vi.fn(async () => undefined),
+      dispose,
+      cancel: vi.fn(() => undefined),
+    } as unknown as CodexChatEngine;
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      engine: "codex",
+      codexChatEngine: engine,
+    });
+    panel.show();
+    (panel as unknown as { panel: { dispose(): void } | undefined }).panel
+      ?.dispose();
+    await until(() => dispose.mock.calls.length >= 1);
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("claude-code: panel teardown calls claudeCodeChatEngine.disposeMcp() so .unicdb-claude-mcp-*.json is unlinked", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const dispose = vi.fn(async () => undefined);
+    const disposeMcp = vi.fn(async () => undefined);
+    // The production ClaudeCodeChatEngine surface does not currently expose
+    // a `disposeMcp` method (MCP cleanup rides inside dispose() via the
+    // patched hostMcp.stop in extension.ts). The panel calls
+    // `?.disposeMcp?.()` defensively so any host-supplied engine that
+    // exposes the named seam gets an explicit unlink call for the ephemeral
+    // MCP config file. This test pins the defensive invocation.
+    const engine = {
+      send: vi.fn(async () => undefined),
+      resume: vi.fn(async () => undefined),
+      dispose,
+      disposeMcp,
+      cancel: vi.fn(() => undefined),
+    } as unknown as ClaudeCodeChatEngine;
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      engine: "claude-code",
+      claudeCodeChatEngine: engine,
+    });
+    panel.show();
+    (panel as unknown as { panel: { dispose(): void } | undefined }).panel
+      ?.dispose();
+    await until(() => dispose.mock.calls.length >= 1);
+    expect(disposeMcp).toHaveBeenCalledTimes(1);
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("claude-code: idempotent teardown — repeated dispose calls do NOT double-dispose the engine", async () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const dispose = vi.fn(async () => undefined);
+    const engine = {
+      send: vi.fn(async () => undefined),
+      resume: vi.fn(async () => undefined),
+      dispose,
+      cancel: vi.fn(() => undefined),
+    } as unknown as ClaudeCodeChatEngine;
+
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      engine: "claude-code",
+      claudeCodeChatEngine: engine,
+    });
+    panel.show();
+    // Production teardown path: explicit dispose() then a second close via
+    // panel.onDidDispose (this is the "panel.dispose() → re-entrant
+    // onDidDispose" race documented in the production dispose() comment).
+    // The teardown guard MUST collapse both paths into a single dispose.
+    panel.dispose();
+    (panel as unknown as { panel: { dispose(): void } | undefined }).panel
+      ?.dispose();
+    await until(() => dispose.mock.calls.length >= 1);
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 });

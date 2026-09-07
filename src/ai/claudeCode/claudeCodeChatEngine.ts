@@ -71,6 +71,10 @@ export interface ClaudeCodeChatEngine {
   resume(sessionId: string, events: ClaudeCodeChatEvents): Promise<void>;
   /** Best-effort shutdown. Idempotent. */
   dispose(): Promise<void>;
+  /** TASK-011 R4.5 fix: cancel the in-flight turn (delegates to the
+   *  process handle's `cancel()`, which is idempotent and sends SIGTERM).
+   *  Idempotent — safe to call when no turn is in flight or after dispose. */
+  cancel(): void;
 }
 
 export interface ClaudeCodeChatEngineOptions {
@@ -247,10 +251,12 @@ export function createClaudeCodeChatEngine(
       };
 
       try {
-        // process.send resolves (never throws) on crash; it fires onError
-        // and resolves. The catch below is a defensive last line — if a
-        // future change makes the process throw, the panel still sees a
-        // single onError bubble.
+        // process.send normally resolves on turn end (onError fires inside
+        // the forwarded callbacks). The catch below is a defensive last line
+        // — turnErrored guards against the rare case where process.send
+        // rejects synchronously AND the forwarded onError has already fired
+        // (which is what R4.5's failTurn guard prevents at the process layer);
+        // the panel should still see a single onError bubble.
         await proc.send(input, forwarded);
       } catch (err) {
         if (turnErrored) return;
@@ -284,6 +290,18 @@ export function createClaudeCodeChatEngine(
       }
       try {
         await proc.dispose();
+      } catch {
+        /* best-effort */
+      }
+    },
+
+    cancel(): void {
+      // TASK-011 R4.5 fix: wire Stop to the subprocess cancel path.
+      // `proc.cancel()` is idempotent at the process layer (no-op once the
+      // handle is disposed or no turn is in flight). We wrap in try/catch
+      // so a misbehaving handle cannot break the Stop pipeline.
+      try {
+        proc.cancel();
       } catch {
         /* best-effort */
       }

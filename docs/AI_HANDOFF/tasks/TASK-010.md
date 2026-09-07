@@ -92,3 +92,27 @@ Status: PASS
 Note: none
 ResumeBehavior: "explicit onError(\"Codex session resume is unavailable\") without spawn — TASK-006 noted Codex resume unverified"
 IndependenceNote: "no shared extraction with TASK-009; duplicated ompChatEngine-shape locally as instructed — local CodexHostMcp interface, local CodexProcessHandle surface, local bridgeProcessEvents dispatcher"
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/codex/__tests__/codexChatEngine.test.ts + npm run typecheck (plus full task pair codexProcess+codexChatEngine)
+  result: 11/11 pass; full pair 22/22 pass; tsc --noEmit clean
+TEST_PLAN_COVERAGE: all-followed — §4 cases 1-5 implemented with real assertions (11 tests incl. omitted-attachments, base64-not-in-trace, redact scrub, dispose-twice, resume-without-spawn); RED_OUTPUT is real module-not-found failure output, not a claim
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ai/codex/codexChatEngine.ts:81-102 — local CodexProcessHandle/event shape re-declares TASK-006's exported types; `import type` would remove silent-drift risk (a new CodexProcessEvents callback would be dropped here) with zero runtime coupling and no violation of the TASK-009 independence rule. Type-compat verified: real handle structurally assignable; TASK-012 already wires it, typecheck clean.
+    - docs/AI_HANDOFF/tasks/TASK-010.md — lacks the Codex CLI docs citation for best-effort image handling; citation lives at src/ai/codex/codexProcess.ts:723-731 ("verified from openai/codex noninteractive doc"). Add one line here so upstream image-part degradation is explicit for future readers.
+    - src/ai/codex/codexChatEngine.ts:105-135 — no cancel() surface (OmpChatEngine has one, AIX-05); task contract specifies only send/resume/dispose so this is in-scope-correct — flag it for the TASK-004 audit parity list.
+R4 CHECKLIST: OmpChatEvents mirror is 1:1 (onDelta/onThought/onToolStart/onToolEnd(name,result,isError)/onError/onDone/onTrace vs ompChatEngine.ts:107-116); default-deny holds by construction (spawn args fixed to ["exec","--json","-"], no --full-auto/--dangerously bypass, host tools unreachable from codex exec per TASK-006/TASK-012, DbToolPermissionGate never bypassed); image {mime,base64} blocks forwarded verbatim in order, never appended to text; six-literal lifecycle machine stays in TASK-006, engine layers only a disposed flag, hostMcp stopped exactly once via cached disposePromise (real hostMcp.start idempotent at hostMcp.ts:384); error envelope maps hostMcp-start/createProcess/send-reject each to exactly one onError + resolved promise with redacted trace copies.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Lint N/A verified — package.json has no lint script; typecheck is the static gate and is present in Verification Commands. Codex JSON-protocol image handling remains best-effort per upstream CLI (see citation note above).

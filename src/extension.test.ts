@@ -2030,6 +2030,80 @@ describe("TASK-012 — Claude Code / Codex engine routing", () => {
     expect(opts.codexChatEngine).toBeUndefined();
     expect(opts.engineVersion).toBe("18.0.1");
   });
+
+  // ----- #8 R4.5 fix: dispatch targets the RESOLVED engine, not raw ---------
+  // The engines wired just above (lines 2026-2035 of extension.ts) are
+  // gated on the RESOLVED `choice.engine`. The panel's internal
+  // `resolveEngineKind()` prefers `options.engine` over the `acp` heuristic
+  // and over "builtin" — so if the host passes only `configuredEngine` (the
+  // raw `UnicDB.ai.engine` preference) but does NOT pass the resolved
+  // `engine`, the panel falls back to "builtin" and dispatch misses the
+  // wired claudeCodeChatEngine / codexChatEngine / ompChatEngine seam.
+  it("#8 R4.5 fix: raw=claude-code + healthy → AiChatPanel receives engine=\"claude-code\" (RESOLVED, not raw-only)", async () => {
+    state.aiEngine = "claude-code";
+    claudeCodeState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/local/bin/claude",
+      version: "2.0.1",
+    });
+    const ctx = makeCtx();
+    activate(ctx as never);
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(panelConstructorCalls.length).toBe(1);
+    const opts = panelConstructorCalls[0] as {
+      engine?: unknown;
+      configuredEngine?: unknown;
+      claudeCodeChatEngine?: unknown;
+      ompChatEngine?: unknown;
+      codexChatEngine?: unknown;
+      acp?: unknown;
+    };
+    // The fix: host passes the RESOLVED engine so the panel's dispatch
+    // routes to the same seam the engines were built against.
+    expect(opts.engine).toBe("claude-code");
+    // configuredEngine stays raw — that's the AIX-07 surface the policy
+    // resolver validates against the known vocabulary (resolvePolicy treats
+    // raw and resolvedEngine as separate inputs).
+    expect(opts.configuredEngine).toBe("claude-code");
+    expect(opts.claudeCodeChatEngine).toBeDefined();
+    expect(opts.ompChatEngine).toBeUndefined();
+    expect(opts.codexChatEngine).toBeUndefined();
+    expect(opts.acp).toBeUndefined();
+  });
+
+  // ----- #9 R4.5 fix: same contract for the codex branch --------------------
+  it("#9 R4.5 fix: raw=codex + healthy → AiChatPanel receives engine=\"codex\" (RESOLVED, not raw-only)", async () => {
+    state.aiEngine = "codex";
+    codexState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/local/bin/codex",
+      version: "0.42.0",
+    });
+    const ctx = makeCtx();
+    activate(ctx as never);
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(panelConstructorCalls.length).toBe(1);
+    const opts = panelConstructorCalls[0] as {
+      engine?: unknown;
+      configuredEngine?: unknown;
+      codexChatEngine?: unknown;
+      ompChatEngine?: unknown;
+      claudeCodeChatEngine?: unknown;
+    };
+    expect(opts.engine).toBe("codex");
+    expect(opts.configuredEngine).toBe("codex");
+    expect(opts.codexChatEngine).toBeDefined();
+    expect(opts.ompChatEngine).toBeUndefined();
+    expect(opts.claudeCodeChatEngine).toBeUndefined();
+  });
 });
 
 // =============================================================================
@@ -3269,7 +3343,17 @@ describe("TASK-AIX07-003 — UnicDB.ai.showPolicy / exportTrace / clearTrace hos
       path: "/usr/bin/omp",
       version: "18.0.1",
     });
-    state.aiEngine = "builtin";
+    // TASK-012 R4.5 critical_block regression: TASK-012 widened the engine
+    // vocabulary to {builtin, omp, claude-code, codex}. `engine === "builtin"`
+    // now routes through `resolveEngine({engine, detections, config})` which
+    // gates `requiresConfig` on a non-null config (was bypassed in the legacy
+    // single-detection resolver that implicitly fell back to omp). With no
+    // config in this describe block, the panel would never open and the
+    // export-trace test below would see a null panel (no showSaveDialog).
+    // Pick `omp` so the panel-open branch in commandOpenAiChat is taken —
+    // the happy-path coverage for the builtin engine is in test #2 (the
+    // locked-decision-#2 admission test, which only exercises showPolicy).
+    state.aiEngine = "omp";
     vi.resetModules();
   });
 

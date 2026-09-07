@@ -1512,6 +1512,56 @@ export class AiChatPanel {
         /* best-effort */
       }
     }
+    // TASK-012 R4.5 fix (critical_block): dispose the Claude Code and
+    // Codex chat engines exactly once on teardown. Without this, the
+    // per-turn subprocess (and the HostMcp loopback listener + the
+    // ephemeral `.vscode/.unicdb-claude-mcp-*.json` config file) all
+    // leak for the panel lifetime. Both `dispose()` implementations are
+    // contractually idempotent + best-effort + never throws on a
+    // disposed handle; we wrap in try/catch so a misbehaving engine
+    // cannot strand teardown. `disposeMcp?.()` is called defensively on
+    // the Claude Code seam so any host that wires the named
+    // MCP-cleanup surface gets an explicit unlink of the ephemeral MCP
+    // config file BEFORE the HostMcp listener unwinds. Engines that do
+    // not expose the named surface (the production engine routes MCP
+    // cleanup through `dispose()` → patched `hostMcp.stop()`) are
+    // silently no-op on the optional call.
+    const claudeEngine = this.options.claudeCodeChatEngine;
+    if (claudeEngine !== undefined) {
+      try {
+        void claudeEngine.dispose().catch(() => {
+          /* best-effort */
+        });
+      } catch {
+        /* best-effort */
+      }
+      const maybeDisposeMcp = (
+        claudeEngine as unknown as {
+          disposeMcp?: () => Promise<void> | void;
+        }
+      ).disposeMcp;
+      if (typeof maybeDisposeMcp === "function") {
+        try {
+          void Promise.resolve(maybeDisposeMcp.call(claudeEngine)).catch(
+            () => {
+              /* best-effort */
+            },
+          );
+        } catch {
+          /* best-effort */
+        }
+      }
+    }
+    const codexEngine = this.options.codexChatEngine;
+    if (codexEngine !== undefined) {
+      try {
+        void Promise.resolve(codexEngine.dispose()).catch(() => {
+          /* best-effort */
+        });
+      } catch {
+        /* best-effort */
+      }
+    }
     this.panel = null;
     // TASK-AIX03-102 — release the owned recovery-status subscription
     // exactly once. A later UnicDB.aiChat invocation constructs a fresh
@@ -3448,6 +3498,32 @@ export class AiChatPanel {
     // stays for the raw-acp path.
     if (this.engine === "omp" && this.options.ompChatEngine !== undefined) {
       this.options.ompChatEngine.cancel();
+    }
+    // TASK-011 R4.5 fix: previously Stop cancelled only the omp session
+    // and the legacy acpSession — for Claude Code / Codex engines the
+    // active subprocess turn kept running because no cancel() call was
+    // made on the *ChatEngine seam. Forward Stop to the per-engine
+    // cancel() so the subprocess actually receives SIGTERM. Both engine
+    // cancel() implementations are idempotent at the process layer.
+    if (
+      this.engine === "claude-code" &&
+      this.options.claudeCodeChatEngine !== undefined
+    ) {
+      try {
+        this.options.claudeCodeChatEngine.cancel();
+      } catch {
+        /* best-effort — handle may already be terminal */
+      }
+    }
+    if (
+      this.engine === "codex" &&
+      this.options.codexChatEngine !== undefined
+    ) {
+      try {
+        this.options.codexChatEngine.cancel();
+      } catch {
+        /* best-effort — handle may already be terminal */
+      }
     }
     // TASK-AIX05-103: a Stop during the ACP handshake aborts the pending
     // start via the SAME captured `AcpProcess` instance (cancellable
