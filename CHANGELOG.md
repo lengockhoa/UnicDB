@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.21] — 2026-09-07
+
+- Summary: DataGrip-parity active-schema selection for PostgreSQL — pin a schema per connection and every SQL run is wrapped with `SET search_path TO "<schema>", public;` so `CREATE FUNCTION`, unqualified `SELECT`, etc. land in the chosen schema instead of defaulting to `public`. Adds the `UnicDB.selectActiveSchema` command (single-select QuickPick over `listSchemas(true)`, current pin sticky, "no pinned schema" reset option), a dedicated `$(symbol-namespace)` status bar chip next to the connection chip, per-workspace persistence in `workspaceState` (key `unicDb.activeSchema.<connectionId>`), and a dynamic wrap (re-reads the pin on every `runQuery` so a picker switch takes effect on the very next run — no reconnect). `mysql`/`mssql`/`bigquery` drivers are untouched; probe adapters used by add/edit validation are skipped.
+- Files: src/core/activeSchemaStore.ts (new, 11 unit tests), src/core/schemaEnforce.ts (new, 10 unit tests), src/core/connectionManager.ts (5th constructor param + dynamic `wrapWithSchemaSearchPath` on every Postgres adapter), src/extension.ts (`UnicDB.selectActiveSchema` command + secondary status bar item subscribed to `onDidChangeActive` + `ActiveSchemaStore.onDidChange`), src/core/__tests__/connectionManagerActiveSchema.test.ts (new, 6 integration tests), package.json (`UnicDB.selectActiveSchema` contributes entry)
+- Verification: npm run typecheck ✅ · npm test ✅ (3769 passed / 2 skipped, 0 regressions) · UnicDB-1.53.21.vsix packaged
+
+---
+
 ## [1.53.20] — 2026-09-07
 
 - Summary: Extend multi-selection Cmd+Enter to shellscript files — add `UnicDB.runShellSelection` command + Cmd/Ctrl+Enter keybindings for `resourceLangId == shellscript`, plus `commandRunShellSelection()` in src/extension.ts that iterates `editor.selections`, takes range text for non-empty selections, takes the cursor's current line for empty selections, and sends each piece to the reused "UnicDB Script" terminal. Mirrors the SQL multi-selection pattern shipped in 1.53.17 (commit 3e33f0a). Also fix the bq04 + bqFollowup frozen-surface guards to filter the `key` and `keybindings` keys as legitimate contributes changes (the previous regex missed them and would trip on any new keybinding).
