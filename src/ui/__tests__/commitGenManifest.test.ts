@@ -8,10 +8,16 @@
 //   - `contributes.menus["scm/title"]` contains
 //     { command: "UnicDB.generateCommitMessage", group: "navigation",
 //       when: "scmProvider == git && scmProviderHasChanges" }
-//   - The pre-existing 54 command ids are still fully present (superset guard, not a
-//     frozen count of 55/54 — unrelated command churn must not false-fail).
+//   - The pre-existing 56 command ids are still fully present (superset guard, not a
+//     frozen count — unrelated command churn must not false-fail).
 //   - The new command id appears exactly once.
 //   - Every command referenced in any `menus` block resolves to a declared command id.
+//
+// TASK-013 — manifest contribution: four engines and two agent commands.
+//   - `UnicDB.ai.engine` enum exposes builtin, omp, claude-code, codex (default builtin).
+//   - `UnicDB.ai.useWithClaudeCode` and `UnicDB.ai.useWithCodex` commands are
+//     contributed and activated exactly once each, with no duplicates creeping into
+//     activationEvents.
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
@@ -21,7 +27,11 @@ type Manifest = {
   contributes: {
     commands?: Array<Record<string, unknown>>;
     menus?: Record<string, Array<Record<string, unknown>> | undefined>;
+    configuration?: {
+      properties?: Record<string, Record<string, unknown> | undefined>;
+    };
   };
+  activationEvents?: string[];
 };
 
 const PRE_EXISTING_COMMAND_IDS: ReadonlyArray<string> = [
@@ -79,6 +89,8 @@ const PRE_EXISTING_COMMAND_IDS: ReadonlyArray<string> = [
   "UnicDB.generateViewDdl",
   "UnicDB.generateFunctionDdl",
   "UnicDB.openSettings",
+  "UnicDB.ai.useWithClaudeCode",
+  "UnicDB.ai.useWithCodex",
 ];
 
 const NEW_COMMAND_ID = "UnicDB.generateCommitMessage";
@@ -149,6 +161,63 @@ describe("TASK-GC-004 — package.json manifest guards for the Generate Commit M
         if (typeof entry.command !== "string") continue;
         expect(declared.has(entry.command)).toBe(true);
       }
+    }
+  });
+
+  // ===== TASK-013: four engines and two agent commands ====================
+
+  // ---- Case 1 (TASK-013) — happy ------------------------------------------
+  it("TASK-013 case 1: UnicDB.ai.engine enum exposes four values (builtin, omp, claude-code, codex) and default remains builtin", () => {
+    const json = loadManifest();
+    const properties = json.contributes.configuration?.properties ?? {};
+    const engine = properties["UnicDB.ai.engine"];
+    expect(engine, "UnicDB.ai.engine phải tồn tại trong configuration.properties").toBeDefined();
+    expect(engine!.type).toBe("string");
+    expect(engine!.enum).toEqual(["builtin", "omp", "claude-code", "codex"]);
+    expect(engine!.default).toBe("builtin");
+  });
+
+  // ---- Case 2 (TASK-013) — happy ------------------------------------------
+  it("TASK-013 case 2: UnicDB.ai.useWithClaudeCode & useWithCodex are contributed and activated", () => {
+    const json = loadManifest();
+
+    const commands = json.contributes.commands ?? [];
+    const ids = commands.map((c) => c.command as string);
+
+    expect(ids).toContain("UnicDB.ai.useWithClaudeCode");
+    expect(ids).toContain("UnicDB.ai.useWithCodex");
+
+    const claudeEntry = commands.find((c) => c.command === "UnicDB.ai.useWithClaudeCode");
+    const codexEntry = commands.find((c) => c.command === "UnicDB.ai.useWithCodex");
+    expect(claudeEntry).toBeDefined();
+    expect(claudeEntry!.title).toBe("Use with Claude Code");
+    expect(codexEntry).toBeDefined();
+    expect(codexEntry!.title).toBe("Use with Codex");
+
+    const events: string[] = Array.isArray(json.activationEvents) ? json.activationEvents : [];
+    expect(events).toContain("onCommand:UnicDB.ai.useWithClaudeCode");
+    expect(events).toContain("onCommand:UnicDB.ai.useWithCodex");
+  });
+
+  // ---- Case 3 (TASK-013) — edge (duplicate) -------------------------------
+  it("TASK-013 case 3: new activation events appear exactly once; no preexisting events get duplicated", () => {
+    const json = loadManifest();
+    const events: string[] = Array.isArray(json.activationEvents) ? json.activationEvents : [];
+
+    const newEvents = [
+      "onCommand:UnicDB.ai.useWithClaudeCode",
+      "onCommand:UnicDB.ai.useWithCodex",
+    ];
+    for (const e of newEvents) {
+      const count = events.filter((x) => x === e).length;
+      expect(count, `${e} phải xuất hiện đúng 1 lần`).toBe(1);
+    }
+
+    // Sanity: a few preexisting activation events keep their original single count.
+    const preexisting = ["onLanguage:sql", "onCommand:UnicDB.aiChat", "onCommand:UnicDB.ai.useWithOmp"];
+    for (const e of preexisting) {
+      const count = events.filter((x) => x === e).length;
+      expect(count, `${e} phải giữ nguyên count = 1`).toBe(1);
     }
   });
 });

@@ -286,4 +286,25 @@ describe("scaffold", () => {
       expect(k.when).not.toMatch(/resourceLangId == sql/);
     }
   });
+
+  // ===== TASK-013: UnicDB.ai.engine description copy =======================
+
+  it("Test (TASK-013) — UnicDB.ai.engine description names claude-code/codex + builtin fallback; default unchanged; JSON still valid", () => {
+    const pkgPath = path.resolve(__dirname, "..", "package.json");
+    // Parsing again must succeed — guards against malformed contribution JSON.
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+
+    const engine = pkg.contributes.configuration?.properties?.["UnicDB.ai.engine"];
+    expect(engine, "UnicDB.ai.engine phải tồn tại").toBeTruthy();
+    expect(engine.type).toBe("string");
+    expect(engine.default).toBe("builtin");
+
+    const desc: string = String(engine.description ?? "");
+    // Both new engine ids are named in the description (P0.3 visibility).
+    expect(desc, "description phải nhắc tới claude-code").toMatch(/claude-code/);
+    expect(desc, "description phải nhắc tới codex").toMatch(/codex/);
+    // Builtin fallback semantics must be mentioned (user-chosen unavailable
+    // agent falls back to builtin with hint).
+    expect(desc, "description phải đề cập builtin fallback").toMatch(/builtin/);
+  });
 });

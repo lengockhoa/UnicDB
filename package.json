@@ -57,6 +57,8 @@
     "onCommand:UnicDB.openUserGuide",
     "onCommand:UnicDB.aiChat",
     "onCommand:UnicDB.ai.useWithOmp",
+    "onCommand:UnicDB.ai.useWithClaudeCode",
+    "onCommand:UnicDB.ai.useWithCodex",
     "onCommand:UnicDB.ai.refreshDbContext",
     "onCommand:UnicDB.ai.showPolicy",
     "onCommand:UnicDB.ai.exportTrace",
@@ -249,6 +251,18 @@
       {
         "command": "UnicDB.ai.useWithOmp",
         "title": "UnicDB: Use AI with OMP",
+        "category": "UnicDB",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "UnicDB.ai.useWithClaudeCode",
+        "title": "Use with Claude Code",
+        "category": "UnicDB",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "UnicDB.ai.useWithCodex",
+        "title": "Use with Codex",
         "category": "UnicDB",
         "icon": "$(terminal)"
       },
@@ -760,10 +774,12 @@
           "type": "string",
           "enum": [
             "builtin",
-            "omp"
+            "omp",
+            "claude-code",
+            "codex"
           ],
           "default": "builtin",
-          "description": "Cycle AE — chat engine selection. \"omp\" routes the AI Chat panel through the in-process OmpChatEngine (requires the `omp` CLI installed and >= 17.0.0). \"builtin\" runs runAgent against the configured OpenAI-compatible provider. When \"omp\" is selected but the binary is missing or too old, UnicDB silently degrades to \"builtin\" and shows a one-time install/update notice."
+          "description": "Cycle AE — chat engine selection. \"omp\" routes the AI Chat panel through the in-process OmpChatEngine (requires the `omp` CLI installed and >= 17.0.0). \"claude-code\" and \"codex\" delegate to the matching external AI assistant when the corresponding CLI/skill is available. \"builtin\" runs runAgent against the configured OpenAI-compatible provider. When the chosen agent (omp / claude-code / codex) is selected but is not installed, too old, or unavailable in this workspace, UnicDB silently falls back to \"builtin\" and shows a one-time install/update notice."
         }
       }
     },

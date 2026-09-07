@@ -66,3 +66,63 @@ No lint script exists in this project — lint is N/A; typecheck is the static g
 ---
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->
+
+## Executor Report
+EXECUTOR_TOOL: Claude Code (Agent tool)
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+```
+ FAIL  src/scaffold.test.ts > scaffold > Test (TASK-013) — UnicDB.ai.engine description names claude-code/codex + builtin fallback; default unchanged; JSON still valid
+AssertionError: description phải nhắc tới claude-code: expected 'Cycle AE — chat engine selection. "om…' to match /claude-code/
+
+ FAIL  src/ui/__tests__/commitGenManifest.test.ts > ... > case 4: no duplicate command ids and the pre-existing 54 ids remain (superset)
+AssertionError: expected [ 'UnicDB.addConnection', …(58) ] to include 'UnicDB.ai.useWithClaudeCode'
+
+ FAIL  src/ui/__tests__/commitGenManifest.test.ts > ... > TASK-013 case 1: UnicDB.ai.engine enum exposes four values (builtin, omp, claude-code, codex) and default remains builtin
+AssertionError: expected [ 'builtin', 'omp' ] to deeply equal [ 'builtin', 'omp', …(2) ]
+  Array [
+    "builtin",
+    "omp",
+-   "claude-code",
+-   "codex",
+  ]
+
+ FAIL  src/ui/__tests__/commitGenManifest.test.ts > ... > TASK-013 case 2: UnicDB.ai.useWithClaudeCode & useWithCodex are contributed and activated
+AssertionError: expected [ 'UnicDB.addConnection', …(58) ] to include 'UnicDB.ai.useWithClaudeCode'
+
+ FAIL  src/ui/__tests__/commitGenManifest.test.ts > ... > TASK-013 case 3: new activation events appear exactly once; no preexisting events get duplicated
+AssertionError: onCommand:UnicDB.ai.useWithClaudeCode phải xuất hiện đúng 1 lần: expected +0 to be 1
+
+ Test Files  2 failed (2)
+      Tests  5 failed | 14 passed (19)
+```
+
+Verification Output:
+```
+$ npx vitest run src/ui/__tests__/commitGenManifest.test.ts src/scaffold.test.ts
+ ✓ src/ui/__tests__/commitGenManifest.test.ts  (7 tests) 4ms
+ ✓ src/scaffold.test.ts  (12 tests) 690ms
+ Test Files  2 passed (2)
+      Tests  19 passed (19)
+
+$ npm run typecheck
+> UnicDB@1.53.23 typecheck
+> tsc --noEmit
+(no errors)
+
+$ npm run compile
+> UnicDB@1.53.23 compile
+> node esbuild.js
+esbuild: build complete
+  dist/extension.js       6.4mb ⚠️
+  dist/extension.js.map  11.5mb
+  dist/webview.js        2.3mb ⚠️
+  dist/webview.js.map    4.1mb
+  ... (all bundles built, no errors)
+```
+
+Status: PASS
+Note: All 5 failing tests RED-state-confirmed before package.json edit; GREEN after. JSON valid via `JSON.parse` + esbuild packaging-facing compile step. No version/publisher/other-contribution sections touched.
+Test-4 home: (a) src/scaffold.test.ts — pattern matches its existing `UnicDB.hideSystemSchemas` test (configuration property shape: type + default + description). Keeps the AI-engine engine description check next to the other configuration-shape guard, and avoids mixing TASK-013 description-copy checks into the TASK-GC-004 file.
