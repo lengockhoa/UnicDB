@@ -1,8 +1,8 @@
 # TASK-001 — Engine vocabulary: AiEngine union widens to 4 values (settings + persistence)
 
-- Status: `ready`
+- Status: `done (approved_minor)`
 - Owner: `-`
-- Reviewer: `-`
+- Reviewer: `unic-smart`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §1/§3(4), §7
 
 ## Goal
@@ -201,3 +201,23 @@ should still teach commit-gen to reject claude-code/codex explicitly at
 runtime; current behavior is "fall through to builtin path silently",
 which is acceptable for this cycle but is not the long-term contract).
 
+
+## Reviewer Verdict
+
+VERDICT: approved_minor
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN: PASS
+  - npx vitest run src/ai/__tests__/settings.test.ts src/ai/__tests__/config.test.ts → 36 passed (36), 0 failed
+  - npm run typecheck → exit 0 (tsc --noEmit, no output)
+  - regression (shared settings.ts): npx vitest run src/ai → 701 passed / 4 skipped (live smokes), 0 failed
+TEST_PLAN_COVERAGE: all-followed — rows 1-5 implemented; row 3 (legacy no-engine → builtin) covered by pre-existing AE test (src/ai/__tests__/config.test.ts:202-223); RED_OUTPUT is real failing output (10 failed | 26 passed), not a bare claim.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ai/commitGenCommand.ts:157 — lite.engine "claude-code"/"codex" silently takes the builtin else-branch; type-only change (runtime value was never coerced by the old annotation) and documented at :125-128, but TASK-005/006/007 must add an explicit runtime rejection.
+    - src/ai/__tests__/config.test.ts:306 — no GLOBAL engine "omp" save→load round-trip (builtin/claude-code/codex covered globally; "omp" only via per-model lite in GC#9). Save whitelist is engine-agnostic, so the gap is theoretical only.
+    - src/ai/settings.ts:134,143 — legal-engine membership duplicated as two long `!==` chains plus the normative message string in both branches; a shared frozen list/const would prevent drift (message is normative for TASK-008's webview validator).
+NEXT_STATUS_FOR_INDEX: done (approved_minor)
+NOTES: Out-of-scope commitGenCommand.ts fix is minimal (import + type widening + comment) and behavior-preserving for omp/builtin as claimed. redactAiConfig verbatim passthrough (settings.ts:161) has no production caller today; its typed AiConfig input requires engine, and undefined engine still fails closed via aiSettingsErrors — no regression path found. No new secrets surface: redaction still omits apiKey; test fixtures use fake keys only.

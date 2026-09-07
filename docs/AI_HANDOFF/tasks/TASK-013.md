@@ -126,3 +126,20 @@ esbuild: build complete
 Status: PASS
 Note: All 5 failing tests RED-state-confirmed before package.json edit; GREEN after. JSON valid via `JSON.parse` + esbuild packaging-facing compile step. No version/publisher/other-contribution sections touched.
 Test-4 home: (a) src/scaffold.test.ts — pattern matches its existing `UnicDB.hideSystemSchemas` test (configuration property shape: type + default + description). Keeps the AI-engine engine description check next to the other configuration-shape guard, and avoids mixing TASK-013 description-copy checks into the TASK-GC-004 file.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npx vitest run src/ui/__tests__/commitGenManifest.test.ts src/scaffold.test.ts && npm run typecheck && npm run compile
+  result: PASS — 19/19 tests pass; tsc --noEmit clean; esbuild build complete. Cross-check: bqFollowupSurfaceGuard 5/5 pass (ab02ab9 enum carve-out holds).
+TEST_PLAN_COVERAGE: all-followed — cases 1-3 in commitGenManifest.test.ts, case 4 home = (a) src/scaffold.test.ts with recorded rationale; RED_OUTPUT genuine (5 failed / 14 passed before fix).
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ui/__tests__/commitGenManifest.test.ts:37,92-93 — constant named PRE_EXISTING_COMMAND_IDS now contains the 2 NEW command ids (and the :11 comment says "pre-existing 56", counting new ids). Locked-superset mechanism itself is correct; consider renaming to LOCKED_COMMAND_IDS in a follow-up cleanup. Non-blocking.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Manifest slice is exactly scoped (2 activationEvents + 2 commands + enum/description); ids/copy match PLAN §1 P0.3 and the TASK-012 interface contract; no version/publisher/unrelated contribution changes.

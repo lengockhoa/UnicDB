@@ -1,6 +1,4 @@
 Command: handoff-fullstack
-Goal: Add Claude Code + Codex as first-class agents (ACP-based wrapper), parallel omp UKit audit, AIChat panel image+text support across all engines.
-Base: main @ d60b743 (release 1.53.23)
-Phase: I3 → awaiting Phase 4
-Cursor: Cycle AGT implementation_complete at 7db... — all 14 tasks across 6 waves shipped, INDEX synced (all `pending_review`), 8 wave/checkpoint commits on main, working tree clean.
-Next: Phase 4 Review (R1 setup + R2 model-isolation + R3 verification re-run + R4 unified-diff review across all 14 tasks + R5 push) — NOT YET EXECUTED by orchestrator. See Final Report for executor integrity findings + recommended R1-R5 path.
+Phase: R4.5 round 1 | Final HEAD: ab02ab9
+Cursor: 4/14 reviewed (TASK-001/002/003/013 done). 2/14 changes_requested (TASK-005 + TASK-006). R4.5 fixers in flight (parallel).
+Plan: R4.5 close → B4=TASK-007/008 → B5=TASK-009/010 → B6=TASK-011/012 → B7=TASK-014/004 → R5 push.

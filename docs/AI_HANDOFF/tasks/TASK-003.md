@@ -105,3 +105,21 @@ Verification Output: |
   (exit 0, no errors)
 Status: PASS
 Note: none
+
+## Reviewer Verdict
+
+VERDICT: approved
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN: PASS
+  command: npx vitest run src/ai/codex/__tests__/detect.test.ts && npm run typecheck
+  result: 12 pass / 0 fail; tsc --noEmit exit 0
+TEST_PLAN_COVERAGE: all-followed — cases 1-5 implemented + 3 platform/quoting + 2 constant-freeze tests; RED_OUTPUT contains real pre-implementation failure (module-not-found for ../detect)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ai/codex/detect.ts:69-76 — quoteForShell/locateCommand/defaultExecFn are byte-identical copies of src/ai/omp/detect.ts:52-76; acceptable here (mirroring was the acceptance criterion) but worth hoisting to a shared detect-util in a follow-up if a third engine repeats it
+    - src/ai/codex/detect.ts:26 — parseVersion regex `(\d+(?:\.\d+)+)` matches the first dotted token anywhere (vs omp's anchored `omp/` prefix); this matches the planner's Discussion note ("parse the first numeric token") so no change required
+NEXT_STATUS_FOR_INDEX: done
+NOTES: TASK-002 reviewer's flagged gap does NOT recur here — spawn-failed probe branch is tested (detect.test.ts:86-101) with full shape assertions (available=false, path set, reason=spawn-failed). Reason taxonomy and control flow are line-for-line mirrors of omp/detect.ts:87-133; only omp import is compareVersions (detect.ts:5); no claudeCode/TASK-005 imports.

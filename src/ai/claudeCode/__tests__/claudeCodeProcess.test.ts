@@ -92,6 +92,15 @@ class FakeChildProcess extends EventEmitter {
   emitChildExit(code: number | null): void {
     this.emit("exit", code);
   }
+
+  /**
+   * Surface a stdin-stream error (e.g. EPIPE) as the real Node stdio
+   * would — by emitting `error` on the stdin PassThrough. The adapter's
+   * stdin error listener should catch this and route through failTurn.
+   */
+  emitStdinError(err: Error): void {
+    (this.stdin as PassThrough).emit("error", err);
+  }
 }
 
 function captureSpawn(
@@ -342,11 +351,16 @@ describe("createClaudeCodeProcess — TASK-005", () => {
 
     await drainMicrotasks();
 
-    // 9 KiB of stderr — the secret/base64 markers are buried in the middle.
-    const filler = "x".repeat(9 * 1024);
-    child.feedStderr(
-      `${filler.slice(0, 4500)}${secretMarker}${base64Marker}${filler.slice(4500)}\n`,
-    );
+    // 9 KiB of stderr — the secret/base64 markers are placed in the
+    // head (first ~1 KiB) so the bounded slice window DROPS them. After
+    // truncation, the retained 8 KiB tail contains ONLY the post-head
+    // filler bytes; this is what makes the test actually exercise the
+    // bounded tail (rather than just checking the markers survived).
+    const headLen = 1024;
+    const markers = `${secretMarker}${base64Marker}`; // 77 chars
+    const head = `${markers}${"x".repeat(headLen - markers.length)}`;
+    const rest = "x".repeat(9 * 1024 - headLen);
+    child.feedStderr(`${head}${rest}\n`);
     child.emitSpawnError(new Error("claude exited unexpectedly"));
     child.emitChildExit(2);
 
@@ -373,8 +387,124 @@ describe("createClaudeCodeProcess — TASK-005", () => {
     // A full base64 string (the marker) must NEVER appear in error/log.
     expect(errText).not.toContain(base64Marker);
 
+    // Mandated by Test Plan §Test Cases #4: the retained stderr tail MUST
+    // be bounded (≤ 8 KiB) and exposed via getStderrTail(). The 9 KiB
+    // fixture's head bytes — including the secret marker — were truncated
+    // by the slice window, so neither marker survives in the tail.
+    const tail = handle.getStderrTail?.() ?? "";
+    expect(typeof tail).toBe("string");
+    expect(tail.length).toBeLessThanOrEqual(8 * 1024);
+    expect(tail).not.toContain(secretMarker);
+    expect(tail).not.toContain(base64Marker);
+
     // Final state: crashed → fallback-builtin (terminal).
     expect(handle.state()).toBe("fallback-builtin");
+  });
+
+  // Case #6 (R4.5 important #1) — error / result-error frames fire onError
+  // exactly ONCE. The pre-fire at lines 728/745 plus the fire inside
+  // failTurn() would otherwise double-fire for the same failure.
+  it("result-error frame fires onError exactly once (no double-fire)", async () => {
+    const handle = createClaudeCodeProcess(
+      withSpawn(makeOptions(), child, captured),
+    );
+
+    const errors: string[] = [];
+
+    const sendPromise = handle.send({ text: "go" }, {
+      onError: (m) => errors.push(m),
+    });
+
+    await drainMicrotasks();
+
+    // Drive a result frame with subtype:"error" — the path under test.
+    child.feedStdout(
+      resultChunk("error", {
+        error: { message: "model refused" },
+      }),
+    );
+    await sendPromise.catch(() => {
+      /* expected rejection */
+    });
+    await drainMicrotasks();
+
+    // Dedup contract: exactly one onError regardless of which path
+    // (result-error frame vs. failTurn) originally fired.
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toBe("model refused");
+    expect(handle.state()).toBe("fallback-builtin");
+  });
+
+  // Case #7 (R4.5 important #1) — top-level "error" frames also dedupe.
+  it("top-level error frame fires onError exactly once (no double-fire)", async () => {
+    const handle = createClaudeCodeProcess(
+      withSpawn(makeOptions(), child, captured),
+    );
+
+    const errors: string[] = [];
+
+    const sendPromise = handle.send({ text: "go" }, {
+      onError: (m) => errors.push(m),
+    });
+
+    await drainMicrotasks();
+
+    child.feedStdout(
+      JSON.stringify({ type: "error", message: "stream blew up" }) + "\n",
+    );
+    await sendPromise.catch(() => {
+      /* expected rejection */
+    });
+    await drainMicrotasks();
+
+    expect(errors.length).toBe(1);
+    expect(errors[0]).toBe("stream blew up");
+    expect(handle.state()).toBe("fallback-builtin");
+  });
+
+  // Case #8 (R4.5 important #3) — child exits before we can write stdin;
+  // EPIPE on the subsequent stdin.write/end must NOT become an uncaught
+  // exception. The adapter must route it through failTurn.
+  it("EPIPE on stdin write (child died early) does not throw uncaught; routes through failTurn", async () => {
+    const handle = createClaudeCodeProcess(
+      withSpawn(makeOptions(), child, captured),
+    );
+
+    const errors: string[] = [];
+    // Capture any unhandled rejections that escape the adapter — those
+    // would crash the extension host in production.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    try {
+      const sendPromise = handle.send({ text: "go" }, {
+        onError: (m) => errors.push(m),
+      });
+
+      await drainMicrotasks();
+
+      // Make the child die BEFORE consuming stdin — simulates a child
+      // that crashed before reading. Then surface an EPIPE error on
+      // stdin like Node would.
+      child.emitChildExit(1);
+      child.emitStdinError(new Error("EPIPE"));
+
+      await sendPromise.catch(() => {
+        /* expected rejection */
+      });
+      await drainMicrotasks();
+
+      // No unhandled rejection escaped to the process — the adapter
+      // owns the EPIPE and routes it through failTurn / onError.
+      expect(unhandled.length).toBe(0);
+      expect(errors.length).toBeGreaterThanOrEqual(1);
+      expect(handle.state()).toBe("fallback-builtin");
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 
   // Case #5 — edge: image + text boundary in stream-json input

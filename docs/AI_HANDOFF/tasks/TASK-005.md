@@ -153,3 +153,34 @@ $ npm run typecheck
 Status: PASS
 Note: Implementation required two fix iterations beyond the initial RED→GREEN pass: (1) `dispose()` was `async`, which wrapped the cached promise in a new Promise on each call and broke the identity contract that second `dispose()` returns the same instance — switched to non-async and now caches the resolved Promise explicitly; (2) when the SIGKILL escalation timer fired before the child actually exited, the pending `send()` promise was never resolved (the exit handler later saw `turnInFlight === false` and bailed) — added `settleInFlightTurn()` to the dispose resolve callback so a turn-in-flight always settles, even when the timer path wins the race.
 ProtocolSource: `claude --help` 2.1.261 (local) — `--print`, `--input-format stream-json`, `--output-format stream-json`, `--verbose`, `--mcp-config`, `--permission-mode` (choices: acceptEdits/auto/bypassPermissions/manual/dontAsk/plan; we pick `manual`), `--permission-prompts` (choices: host/none; we pick `none`). Never `--dangerously-skip-permissions`.
+
+---
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts && npm run typecheck
+  result: 5 pass / 0 fail; typecheck exit 0
+TEST_PLAN_COVERAGE: partial — all 5 cases implemented with real assertions and genuine RED output; gaps: error-frame `onError`-once behavior untested, bounded ≤8 KiB stderr tail never asserted (case #4 checks only the short message string, not `getStderrTail()`)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - src/ai/claudeCode/claudeCodeProcess.ts:728-729 and 745-746 — double `onError`: error/result-error frames fire `events.onError(message)` then call `failTurn()`, which fires `events.onError` AGAIN at line 830 on the same events object. Comment at 825-827 claims dedupe but none exists. Fix: pass an `alreadyReported` flag to failTurn (or drop the pre-fire so failTurn is the single source) and add a test driving a `subtype:"error"` result frame asserting exactly one onError.
+    - src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts:330-378 — test #4 does not verify the ≤8 KiB bounded tail that Test Case #4 mandates: it asserts only the short `onError` message; the retained tail (`handle.getStderrTail()`) is never checked for length or truncation of the 9 KiB fixture. Fix: assert `handle.getStderrTail!().length <= 8*1024` and that fixture head bytes are gone.
+    - src/ai/claudeCode/claudeCodeProcess.ts:488-493 — `spawnLike.stdin.write(frame)`/`end()` has no `stdin.on("error", ...)` listener; a child that dies before consuming stdin emits EPIPE and an unhandled stream 'error' becomes an uncaught exception in the extension host, violating the adapter's own "never throws on mid-turn crash" contract. Fix: attach an error listener that routes to failTurn before writing.
+  minor:
+    - src/ai/claudeCode/claudeCodeProcess.ts:151,874 — dead `ZERO_BASE64` const + `void ZERO_BASE64` lint-suppressor; delete both.
+    - src/ai/claudeCode/claudeCodeProcess.ts:568 — dispose-resolve callback `setState("stopped")` can clobber a `fallback-builtin` landed by failTurn during a crash-in-dispose race; handle is locked but the read view is misleading.
+    - src/ai/claudeCode/claudeCodeProcess.ts:456-458 — stderr tail slice can split a surrogate pair at the 8 KiB boundary (cosmetic).
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Flag claims independently verified against my own `claude --help` probe (2.1.261): `--permission-mode manual` + `--permission-prompts none` are valid choices and default-deny; no bypass flag anywhere. R4 checklist (path, cwd, 4 CLI flags, 6-state union, 2000ms dispose, 8 KiB stderr, ProtocolSource) all pass. The three important findings are narrow and fixable in one executor round.
+
+---
+
+## R4.5 Fix Report
+
+R4.5 round addressed the three IMPORTANT reviewer findings in one executor pass. (1) Double-`onError` on error/result-error frames (`claudeCodeProcess.ts` lines 728/745 vs. `failTurn` at 830): removed the pre-fire at the two error frame sites (`type === "result"` with `subtype:"error"`/`is_error:true`, and top-level `type === "error"`); `failTurn` is now the single source of truth for `onError` on the failure path, and the stale "already saw onError" comment in `failTurn` was rewritten to document the new contract. (2) Test #4 strengthened per Test Plan §Test Cases #4: the 9 KiB stderr fixture was rebuilt so the secret + base64 markers land in the first ~1 KiB (the slice-drop window) and the test now asserts `handle.getStderrTail!().length <= 8 * 1024`, that `typeof tail === "string"`, and that neither marker survives in the tail. (3) EPIPE on early-child-death stdin write (`claudeCodeProcess.ts` lines 488-493): a `spawnLike.stdin.on("error", ...)` listener was attached BEFORE `write`/`end`; it routes through `failTurn(wrapError(err, this.stderrTail))` so the adapter never lets an unhandled stream 'error' escape. Test coverage: added two new RED tests — `result-error frame fires onError exactly once (no double-fire)`, `top-level error frame fires onError exactly once (no double-fire)`, and `EPIPE on stdin write (child died early) does not throw uncaught; routes through failTurn` (captures `process.on("unhandledRejection")` to assert zero escapees). TDD RED→GREEN verified: RED had 3 failures on the new tests (double onError x2, unhandled EPIPE), GREEN has all 8/8 pass. Verification: `npx vitest run src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts` → 8 passed (8), exit 0; `npm run typecheck` → `tsc --noEmit` exit 0, no errors. The minor findings (dead `ZERO_BASE64` const + `void ZERO_BASE64`, `setState("stopped")` clobber race in dispose-resolve, surrogate pair split at 8 KiB boundary) are out of R4.5 scope per the reviewer and remain for a later round.

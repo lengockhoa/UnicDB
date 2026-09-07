@@ -158,6 +158,14 @@ interface ChildLike {
   stderr: NodeJS.ReadableStream;
   on(ev: "exit", cb: (code: number | null) => void): void;
   on(ev: "error", cb: (err: Error) => void): void;
+  /**
+   * R4.5: detach a previously-registered listener. Required so settle() in
+   * send() can remove the per-turn `onExit` closure; otherwise every send()
+   * permanently accumulates one stale listener and the next real exit fires
+   * N stale onError("codex exited mid-turn ...") on N already-completed turns.
+   */
+  off(ev: "exit", cb: (code: number | null) => void): void;
+  off(ev: "error", cb: (err: Error) => void): void;
   kill(signal?: NodeJS.Signals | string): void;
 }
 
@@ -279,6 +287,13 @@ export class CodexProcess {
           }
         });
       }) as ChildLike["on"],
+      // R4.5: forward off() to the underlying ChildProcess. settle() in send()
+      // calls this to drop the per-turn `onExit` listener — without it, every
+      // prior onExit closure stays attached and fires onError on the NEXT real
+      // child exit, polluting every already-completed turn.
+      off: ((ev: string, cb: (...a: unknown[]) => void): void => {
+        child.off(ev as "exit", cb as never);
+      }) as ChildLike["off"],
       kill: (signal?: NodeJS.Signals | string) => {
         child.kill(signal as NodeJS.Signals | undefined);
       },
@@ -404,10 +419,30 @@ export class CodexProcess {
       // (e.g. after the stdin write). `const settle = () => ...` would
       // otherwise crash on reassignment.
       const holder: { fn: (() => void) | null } = { fn: null };
+      // R4.5: hoist `onExit` so settle() can detach it. If we left it as a
+      // per-call closure inside the child.on("exit", ...) call below, settle()
+      // could never remove the listener — and after N sends, the child would
+      // have N stale onExit closures all firing onError on the next real exit.
+      const onExit = (code: number | null): void => {
+        events.onError?.(
+          `codex exited mid-turn (code=${code ?? "null"})\n--- codex stderr (tail) ---\n${this.stderrTail}`,
+        );
+        settle();
+      };
       const settle = (): void => {
         if (settled) return;
         settled = true;
         detach();
+        // R4.5: drop the per-turn onExit listener so it cannot fire onError
+        // on subsequent sends or on the eventual child exit. settle() runs
+        // once per turn (turn.completed, turn.failed, error frame, stdin
+        // failure, or a real mid-turn exit) — the off() call is idempotent
+        // because EventEmitter.removeListener is a no-op for unknown pairs.
+        try {
+          child.off("exit", onExit);
+        } catch {
+          /* best-effort */
+        }
         resolve();
       };
       holder.fn = settle;
@@ -485,13 +520,9 @@ export class CodexProcess {
       }
 
       // Crash / dispose mid-turn: resolve the promise; onError fires with the
-      // bounded stderr tail. settle() is idempotent.
-      const onExit = (code: number | null): void => {
-        events.onError?.(
-          `codex exited mid-turn (code=${code ?? "null"})\n--- codex stderr (tail) ---\n${this.stderrTail}`,
-        );
-        settle();
-      };
+      // bounded stderr tail. settle() is idempotent. The `onExit` reference
+      // is the hoisted one above so settle() can call child.off("exit", ...)
+      // to detach it (R4.5).
       child.on("exit", onExit);
       // Touch `holder` so the unused-binding lint stays quiet — it documents
       // the original intent (re-bindable settle), now resolved through

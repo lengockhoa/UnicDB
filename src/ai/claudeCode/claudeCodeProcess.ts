@@ -485,6 +485,19 @@ class ClaudeCodeProcessImpl {
 
     // Build and write the input frame to stdin. Base64 payload stays in
     // the JSON envelope — it never crosses a shell boundary.
+    //
+    // Attach an error listener BEFORE writing: if the child has already
+    // died (early crash) and we try to write/end stdin, Node raises
+    // EPIPE asynchronously. Without a listener this becomes an
+    // unhandled 'error' event on the stream — which on extension host
+    // surfaces as an uncaught exception and violates the adapter's
+    // "never throws on mid-turn crash" contract. Routing EPIPE through
+    // failTurn() lets onError carry the message and the send() promise
+    // settles cleanly.
+    spawnLike.stdin.on("error", (err: Error) => {
+      if (!this.turnInFlight) return;
+      this.failTurn(wrapError(err, this.stderrTail));
+    });
     try {
       const frame = buildUserFrame(input);
       spawnLike.stdin.write(frame);
@@ -725,7 +738,8 @@ class ClaudeCodeProcessImpl {
             : typeof frame["result"] === "string"
               ? (frame["result"] as string)
               : "claude turn failed";
-        events.onError?.(message);
+        // Single source of truth for onError on the failure path —
+        // failTurn() will fire onError(message) exactly once.
         this.failTurn(new Error(message));
         return;
       }
@@ -742,7 +756,7 @@ class ClaudeCodeProcessImpl {
         typeof frame["message"] === "string"
           ? (frame["message"] as string)
           : "claude stream error";
-      events.onError?.(message);
+      // Single source of truth — failTurn() fires onError(message) once.
       this.failTurn(new Error(message));
       return;
     }
@@ -822,9 +836,10 @@ class ClaudeCodeProcessImpl {
     this.turnResolve = null;
     this.turnReject = null;
 
-    // Surface via onError (unless the events object already saw an
-    // onError from a result-error / stream-error frame — those paths
-    // call failTurn() AFTER firing onError, so we must dedupe here).
+    // Surface via onError. This is the SINGLE source of truth for
+    // onError on a failure path: result-error and top-level error
+    // frames route here WITHOUT pre-firing onError themselves, so
+    // exactly one onError(message) lands per failed turn.
     if (events !== null) {
       const message = err.message;
       events.onError?.(message);

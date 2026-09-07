@@ -59,7 +59,12 @@ class FakeChildProcess extends EventEmitter {
 
   constructor() {
     super();
-    this.stdin = new PassThrough();
+    // Tolerate multiple send() cycles on the same child: a real codex child
+    // can read one frame per `codex exec -` invocation (one end() per turn),
+    // but the FakeChildProcess is reused across many sends. We swallow writes
+    // after end() so the regression test for stale exit listeners can drive
+    // two consecutive turns without surfacing an unrelated stdin side-effect.
+    this.stdin = new TolerablePassThrough();
     this.stdout = new PassThrough();
     this.stderr = new PassThrough();
     this.stdout.setEncoding("utf8");
@@ -112,6 +117,25 @@ function captureSpawn(
 async function drainMicrotasks(times = 16): Promise<void> {
   for (let i = 0; i < times; i++) {
     await Promise.resolve();
+  }
+}
+
+/**
+ * A PassThrough-like Writable that tolerates writes after end(). The real
+ * codex child accepts one frame per `codex exec -` invocation; our fake is
+ * reused across multiple turns within a single test, so we must NOT throw
+ * on a second `write()` after the first `end()`. This isolates the exit-
+ * listener regression test from an unrelated stdin side-effect.
+ */
+class TolerablePassThrough extends PassThrough {
+  private ended = false;
+  override write(chunk: unknown, ...rest: unknown[]): boolean {
+    if (this.ended) return true;
+    return super.write(chunk as never, ...(rest as []));
+  }
+  override end(..._args: unknown[]): this {
+    this.ended = true;
+    return this;
   }
 }
 
@@ -415,6 +439,78 @@ describe("CodexProcess", () => {
     // The prompt field (top-level summary) is the text so callers that ignore
     // `parts` still see the user text.
     expect(parsed.prompt).toBe("describe this");
+
+    handle.dispose();
+  });
+
+  // ---- R4.5 regression: stale per-turn exit listeners (Reviewer Finding) -------
+  //
+  // Reviewer Verdict §important:
+  //   `child.on("exit", onExit)` in send() was never removed; settle() only
+  //   detached the stdout JSONL pump. After N sends, every prior `onExit`
+  //   closure stayed attached; when the child finally exited, ALL N stale
+  //   closures fired `events.onError("codex exited mid-turn ...")` on turns
+  //   that already completed with onDone — TASK-010 would observe spurious
+  //   post-success failures on every dispose.
+  //
+  // Regression: 2 sends, both complete normally, then a real child exit.
+  // Only the actual exit must produce ONE onError; prior completed turns
+  // must NOT receive a stale onError from the late child exit.
+  it("R4.5: stale per-turn exit listeners must NOT fire onError on completed turns after child exit", async () => {
+    const proc = new CodexProcess(
+      {
+        codexPath: "codex",
+        cwd: "/tmp/proj",
+      },
+      captureSpawn(child, captured),
+    );
+
+    const startPromise = proc.start();
+    queueMicrotask(() => driveStartReady(child, "t-r45"));
+    const handle = await startPromise;
+
+    // ---- Turn 1: completes successfully via turn.completed.
+    const errors1: string[] = [];
+    const dones1: number[] = [];
+    const events1: CodexProcessEvents = {
+      onDelta: () => { /* no-op */ },
+      onDone: () => dones1.push(1),
+      onError: (m) => errors1.push(m),
+    };
+    const send1 = handle.send({ text: "first" }, events1);
+    queueMicrotask(() => driveAgentTurn(child, "first-response"));
+    await send1;
+    await drainMicrotasks(8);
+    expect(dones1.length).toBe(1);
+    expect(errors1).toEqual([]);
+
+    // ---- Turn 2: completes successfully via turn.completed.
+    const errors2: string[] = [];
+    const dones2: number[] = [];
+    const events2: CodexProcessEvents = {
+      onDelta: () => { /* no-op */ },
+      onDone: () => dones2.push(1),
+      onError: (m) => errors2.push(m),
+    };
+    const send2 = handle.send({ text: "second" }, events2);
+    queueMicrotask(() => driveAgentTurn(child, "second-response"));
+    await send2;
+    await drainMicrotasks(8);
+    expect(dones2.length).toBe(1);
+    expect(errors2).toEqual([]);
+
+    // ---- Real child exit fires AFTER both turns have already completed.
+    // The exit handler in send() is what was leaving stale listeners behind.
+    // Only THIS exit should fire onError; turns 1 and 2 must NOT receive a
+    // stale onError from the late exit.
+    child.emitChildExit(0);
+    await drainMicrotasks(16);
+
+    // Critical regression assertions:
+    expect(errors1).toEqual([]); // turn 1 already completed; no stale onError
+    expect(errors2).toEqual([]); // turn 2 already completed; no stale onError
+    expect(dones1.length).toBe(1);
+    expect(dones2.length).toBe(1);
 
     handle.dispose();
   });

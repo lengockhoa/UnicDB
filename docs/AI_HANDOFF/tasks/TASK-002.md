@@ -90,3 +90,25 @@ VERIFICATION_OUTPUT: |
    (exit 0, no errors)
 STATUS: PASS
 NOTE: compareVersions is imported and reused from src/ai/omp/detect.ts. MIN_CLAUDE_CODE_VERSION = "1.0.0" and CLAUDE_CODE_INSTALL_HINT = "npm install -g @anthropic-ai/claude-code" exported. Win32 uses `where claude`; multi-line output → first non-empty path. quoteForShell applied for paths with spaces.
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/claudeCode/__tests__/detect.test.ts && npm run typecheck
+  result: 11 pass / 0 fail; tsc --noEmit exit 0 (both re-run fresh by reviewer, PASS)
+TEST_PLAN_COVERAGE: all-followed — table cases 1-5 all present (happy test.ts:12, not-installed :31, boundary :46-69 with exact-MIN 1.0.0 ok + 0.9.9/0.9.0 too-old, malformed :72, win32 :100) plus extras (non-win32 :118, quoted path :133, constants :152). RED_OUTPUT is a genuine pre-implementation module-load failure (non-zero exit), not a bare claim.
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ai/claudeCode/detect.ts:111 + src/ai/claudeCode/__tests__/detect.test.ts:161 — files end without a trailing newline; omp mirrors (omp/detect.ts, omp/__tests__/detect.test.ts) both end with \n. Add newline on next touch.
+    - src/ai/claudeCode/detect.ts:82-89 — spawn-failed branch (--version probe rejects) has no test; parity gap inherited from src/ai/omp/__tests__/detect.test.ts (same gap there). Suggest one probe-rejection test in a follow-up; TASK-003 reviewer should check codex for the same gap.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Contract verified: detectClaudeCode mirrors omp/detect.ts reason taxonomy exactly (not-installed :75, spawn-failed :87, version-unknown :96, version-too-old :106); compareVersions reused from ../omp/detect (detect.ts:5, no duplicate); win32 `where claude` (:41) + quoteForShell (:51-54) byte-identical to omp detect.ts:73-76; no codex/ or TASK-005 imports. Exported constant names follow the task file's Acceptance Criteria (MIN_CLAUDE_CODE_VERSION / CLAUDE_CODE_INSTALL_HINT); the orchestrator prompt's shorthand MIN_CLAUDE_VERSION / CLAUDE_INSTALL_HINT is not the contract.

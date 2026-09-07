@@ -182,3 +182,26 @@ ProtocolSource:
 - https://github.com/openai/codex/blob/main/codex-rs/exec/src/exec_events.rs (wire-level `#[serde(tag = "type")]` enum: `thread.started`, `turn.started`, `turn.completed`, `turn.failed`, `item.started`, `item.updated`, `item.completed`, `error`; item.tagged `type` w/ `agent_message.text` / `reasoning.text`)
 - https://github.com/openai/codex/blob/main/codex-rs/exec/src/event_processor_with_jsonl_output.rs (confirms `agent_message.text` is the delta field and `item.completed` is the terminal shape)
 - https://developers.openai.com/codex/developer-commands.md (cross-reference for `--cd` scope on `resume`/`fork` only, and `--image` scope on `exec resume`/`exec fork` only — neither applies to a fresh `codex exec` invocation)
+
+---
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: unic-smart (claude-opus)
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/codex/__tests__/codexProcess.test.ts && npm run typecheck
+  result: 10 pass / 0 fail; tsc --noEmit exit 0
+TEST_PLAN_COVERAGE: all-followed — §4 cases #1-#5 all present with real assertions; RED_OUTPUT is genuine module-not-found failure; 4 edge cases (>2 required)
+FINDINGS:
+  critical:
+    - (none)
+  important:
+    - src/ai/codex/codexProcess.ts:495 — per-turn `child.on("exit", onExit)` is never removed: `settle()`/`detach()` (lines 407-417) removes only the stdout JSONL pump and `ChildLike` (lines 155-162) has no `off`/`removeListener`. Each send() on a long-lived handle permanently accumulates one exit listener (Node MaxListenersExceededWarning at 11 sends); when the child finally exits (dispose/crash after N completed turns), ALL N stale closures fire `events.onError("codex exited mid-turn ...")` on turns that already completed with onDone — TASK-010 will observe spurious post-success failures on every dispose. Fix: add `off(ev, cb)` to ChildLike and call it on onExit inside settle(); add a test with 2+ sends followed by emitChildExit asserting no stale onError.
+  minor:
+    - src/ai/codex/codexProcess.ts:638 — dispose() after a crash sets state "stopped", erasing the observed "crashed"/"fallback-builtin" terminal state for state observers.
+    - src/ai/codex/codexProcess.ts:335 — version probe interpolates codexPath into an unquoted shell string while the spawn path is carefully cmd.exe-quoted (lines 250-257); a Windows install path with spaces breaks the probe (falls back to "unknown" — cosmetic) and bypasses the quoting discipline. Reuse quoteForCmdExe.
+    - src/ai/codex/codexProcess.ts:703-721 — the `{prompt, parts}` stdin frame is a UnicDB-defined translation; upstream Codex treats stdin as a `<stdin>` text block per the cited noninteractive doc. Honestly disclosed in Discussion and gated by TASK-014 live smoke, but TASK-010 must not assume upstream parses `parts` (image transport unproven until smoke).
+NEXT_STATUS_FOR_INDEX: changes_requested
+NOTES: Implementation, protocol citations, and tests are solid; the single important defect is the un-removed per-turn exit listener that misreports completed turns as failed once the child exits. Scope fix to ChildLike.off + settle() + one regression test, then re-verify.
