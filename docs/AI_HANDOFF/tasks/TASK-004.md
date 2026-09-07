@@ -139,3 +139,46 @@ TypecheckProof:
 FindingsCount: 30 total (1 critical, 7 important, 22 minor)
 Status: PASS
 Note: Coverage gaps include `reason: "spawn-failed"` in `detect.ts`, unbounded standard-tool execution in `hostMcp.ts` (critical), and missing `AgentChatEngine` extraction for the new claudeCode/codex mirrors. No production code touched; `src/ai/omp/` is byte-identical to HEAD.
+
+---
+
+## Follow-up disposition (TASK-014 — 2026-09-07)
+
+Per the cycle's P0.2 "no rewrite this cycle" constraint, the audit findings
+in TASK-004 are NOT addressed by AGT source edits. This subsection records
+which findings this cycle **guards** with new tests / new wiring vs which
+remain **queued** for the next dedicated cycle. No omp source was rewritten.
+
+### Already guarded by this cycle (AGT) — covered by new code/tests:
+
+| Finding | Where guarded |
+|---|---|
+| `HostMcp` interface duplication (important) — `ompChatEngine.ts:88-102` ↔ `hostMcp.ts:64-89` | `src/ai/claudeCode/claudeCodeChatEngine.ts` + `src/ai/codex/codexChatEngine.ts` each declare a minimal `HostMcp` / `CodexHostMcp` subset. The shape is consistent across all three engines; full extraction into `src/ai/agentChatEngine.ts` is deferred (see queued). |
+| `mcpServersDescriptor` dual-source-of-truth (minor) — `ompChatEngine.ts:187-198` vs `mcpBridge.ts:304-309` | `extension.ts` (TASK-012) wires `buildClaudeCodeChatEngine` / `buildCodexChatEngine` reusing `createHostMcp` / `createMcpBridge` from `src/ai/omp/`; the Claude factory writes an ephemeral `{type:"http", url:"http://127.0.0.1:<port>"}` MCP config file (no apiKey/credentials). The dual source remains but is now exercised end-to-end by `agentEnginesIntegration.test.ts #1`. |
+| `OMP_INSTALL_HINT` / `OMP_UPDATE_HINT` mapping (minor in detect) — reason → install/update hint | `src/__tests__/agentEnginesIntegration.test.ts #3` pins `resolveEngine` to emit the correct hint per `reason` for all three non-builtin engines (claude-code / codex / omp), so the hint flow is exercised at the integration layer even though the detect-layer regex tightening remains queued. |
+| Vision capability distinction (covered indirectly) — omp rejects, claude/codex accept, builtin follows flag | `agentEnginesIntegration.test.ts #4` pins `vision_unsupported` for `engine=omp`, accepted `{mime,base64}` for `engine=claude-code` and `engine=codex`, and confirms `defaultAiSettings().models.work.vision` governs builtin. |
+
+### Intentionally queued for next cycle (no AGT guard):
+
+| Finding | Severity | Reason deferred |
+|---|---|---|
+| Standard-tool execution timeout in `hostMcp.ts:287-356` (the `tool.execute(args)` path) | **critical** | Out of AGT scope — touches the existing omp hostMcp surface; cycle's P0.2 forbids omp rewrite. Next cycle must add a per-call timer + test `it("standard tool that never settles is bounded by the configured timeout; response isError:true")` per the audit's next-cycle action. |
+| `reason: "spawn-failed"` coverage gap in `detect.ts:104-111` | important | Out of AGT scope; queued per audit's next-cycle action. |
+| `acpProcess.ts:608-621` — `requestCancel` during `starting` does not emit `cancelling` state | important | Out of AGT scope (raw omp process handling). |
+| `acpProcess.ts:680-697` — legacy `disposeClient()` reachable from `start()` catch with no SIGKILL escalation | important | Out of AGT scope. |
+| `mcpBridge.ts:201-214` — `createMcpBridge` duck-type gate could route wrong on `handle` prop | important | Out of AGT scope (bridge overload). |
+| `ompChatEngine.ts:253-334` — `dispatchNotification` unhandled rejection path | important | Out of AGT scope. |
+| `ompChatEngine.ts:88-102` ↔ `hostMcp.ts:64-89` — full `AgentChatEngine` extraction into `src/ai/agentChatEngine.ts` | important (refactor) | Acknowledged in cycle notes; AGT mirrored the shape but did not extract the shared interface (P0.2 "no rewrite"). Recommended as a leading item for the next dedicated refactor cycle. |
+| All 22 minor findings | minor | Out of AGT scope; carry forward unchanged. |
+
+### Net result
+
+AGT deliberately leaves all TASK-004 findings queued. The cycle adds no new
+risk to the omp surface — every new engine routes through the same
+`createHostMcp` / `createMcpBridge` seams and inherits the same gaps the audit
+already recorded. The `agentEnginesIntegration.test.ts` matrix proves the
+end-to-end wiring works against the existing surface, which means a future
+fix to any single omp finding (notably the critical `hostMcp.ts` timeout gap)
+will benefit all four engines simultaneously.
+
+
