@@ -26,3 +26,12 @@ dist/
 *.tsbuildinfo
 
 .worktrees/
+
+# Cycle AGT (TASK-012) — ephemeral MCP config files written by the extension
+# when launching Claude Code / Codex sessions. Must NOT be committed: the
+# files contain only `127.0.0.1:<port>` endpoint metadata, but they leak
+# ephemeral port numbers and are intended to be cleaned up on engine
+# dispose. Delete on dispose is the contract; this gitignore entry is a
+# safety net for any race where the dispose path didn't run.
+.vscode/.unicdb-claude-mcp-*.json
+.vscode/.unicdb-codex-mcp-*.json
