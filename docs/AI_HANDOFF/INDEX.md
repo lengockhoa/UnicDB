@@ -34,7 +34,7 @@ Base: main @ d60b743 (release 1.53.23). Plan approved by unic-smart (P2.5 Round 
 | TASK-009 | Claude Code chat engine (mirror OmpChatEngine; image-capable path) | ready | TASK-005, TASK-007 | src/ai/claudeCode/claudeCodeChatEngine.ts, src/ai/claudeCode/__tests__/claudeCodeChatEngine.test.ts | unic-smart |
 | TASK-010 | Codex chat engine (mirror OmpChatEngine; image-capable path) | ready | TASK-006, TASK-007 | src/ai/codex/codexChatEngine.ts, src/ai/codex/__tests__/codexChatEngine.test.ts | unic-smart |
 | TASK-011 | Panel dispatch + image pipeline: per-engine `runXEngineTurn`; un-block image-capable engines | ready | TASK-002, TASK-003, TASK-007, TASK-009, TASK-010 | src/ui/aiChatPanel.ts, src/ui/__tests__/aiChatPanelAgentEngines.test.ts | unic-smart |
-| TASK-012 | Extension wiring + chat webview switcher: `buildClaudeCodeChatEngine` / `buildCodexChatEngine` factories; migrate legacy call sites | ready | TASK-011 | src/extension.ts, src/extension.test.ts, webview/aiChatPanelMain.ts | unic-smart |
+| TASK-012 | Extension wiring + chat webview switcher: `buildClaudeCodeChatEngine` / `buildCodexChatEngine` factories; migrate legacy call sites | pending_review | TASK-011 | src/extension.ts, src/extension.test.ts, webview/aiChatPanelMain.ts | unic-smart |
 | TASK-014 | Integration + env-gated live smokes (UnicDB_CLAUDE_SMOKE=1 / UnicDB_CODEX_SMOKE=1) | ready | TASK-012 | src/ai/**/__tests__/liveSmoke.test.ts, src/ui/__tests__/aiChatPanelEngine.test.ts | unic-smart |
 
 Wave plan (inferred from `Dependencies`):
