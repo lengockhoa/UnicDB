@@ -78,8 +78,12 @@ function packageJsonDepsDiff(ref: string): string {
   // contributes change and dropped. The dependency manifest (deps,
   // devDependencies, peerDependencies, engines) uses different keys and
   // is never matched here.
+  // TASK-SH cycle (cycle 2026-09-07): added `key` + `keybindings` to the
+  // contributes-safe keys. Without this, adding a new entry under
+  // `contributes.keybindings` (e.g. cmd+enter for shellscript) trips the
+  // frozen-surface guard even though it is a legitimate contributes change.
   const contributesKeyPattern =
-    /^[+-]\s+"(command|title|category|icon|when|group|order|keybinding|mac|win|linux|light|dark)":/;
+    /^[+-]\s+"(command|title|category|icon|when|group|order|key|keybinding|keybindings|mac|win|linux|light|dark)":/;
   // Menu block headers (`"webview/<id>/context":`, `"view/title":`,
   // `"editor/title":`, ...) appear on their own lines as the JSON key of
   // the contributes.menus map. Drop them too — they are part of the

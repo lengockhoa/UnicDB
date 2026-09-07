@@ -61,8 +61,12 @@ function gitDiff(ref: string, paths: readonly string[]): string {
  */
 function packageJsonDepsDiff(ref: string): string {
   const raw = gitDiff(ref, ["package.json"]);
+  // TASK-SH cycle (cycle 2026-09-07): added `key` + `keybindings` to the
+  // contributes-safe keys. Without this, adding a new entry under
+  // `contributes.keybindings` (e.g. cmd+enter for shellscript) trips the
+  // frozen-surface guard even though it is a legitimate contributes change.
   const contributesKeyPattern =
-    /^[+-]\s+"(command|title|category|icon|when|group|order|keybinding|mac|win|linux|light|dark)":/;
+    /^[+-]\s+"(command|title|category|icon|when|group|order|key|keybinding|keybindings|mac|win|linux|light|dark)":/;
   const contributesMenuKeyPattern =
     /^[+-]\s+"(webview\/[a-zA-Z0-9/._-]+|view\/[a-zA-Z0-9/._-]+|editor\/[a-zA-Z0-9/._-]+|scm\/[a-zA-Z0-9/._-]+|file\/[a-zA-Z0-9/._-]+|commandPalette|menus)":\s*[?[{]?\s*$/;
   const onCommandLinePattern = /^[+-]\s+"onCommand:[a-zA-Z0-9.]+",?\s*$/;
