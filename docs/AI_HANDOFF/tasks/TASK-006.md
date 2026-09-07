@@ -205,3 +205,72 @@ FINDINGS:
     - src/ai/codex/codexProcess.ts:703-721 — the `{prompt, parts}` stdin frame is a UnicDB-defined translation; upstream Codex treats stdin as a `<stdin>` text block per the cited noninteractive doc. Honestly disclosed in Discussion and gated by TASK-014 live smoke, but TASK-010 must not assume upstream parses `parts` (image transport unproven until smoke).
 NEXT_STATUS_FOR_INDEX: changes_requested
 NOTES: Implementation, protocol citations, and tests are solid; the single important defect is the un-removed per-turn exit listener that misreports completed turns as failed once the child exits. Scope fix to ChildLike.off + settle() + one regression test, then re-verify.
+
+---
+
+## R4.5 Fix Report
+
+EXECUTOR_TOOL: Claude Code (Agent tool)
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+EXECUTOR_SUBAGENT: feature-implementer
+
+### Reviewer Finding Addressed
+
+`important` finding — `src/ai/codex/codexProcess.ts:495` per-turn `child.on("exit", onExit)` was never removed; `settle()` only detached the stdout JSONL pump and `ChildLike` had no `off`. After N sends, every prior `onExit` closure stayed attached and ALL N stale closures fired `events.onError("codex exited mid-turn ...")` on turns that already completed with `onDone` once the child finally terminated.
+
+### Changes
+
+1. `src/ai/codex/codexProcess.ts` — `ChildLike` interface gains `off(ev, cb)` overloads (exit / error).
+2. `src/ai/codex/codexProcess.ts` — `spawnLike` wrapper forwards `on` and `off` directly to the underlying `ChildProcess` while preserving callback identity. The previous wrapper re-wrapped `cb` into a fresh dispatcher closure on every `on()` call, which silently broke `off()` — replaced with an identity-preserving dispatch that uses the same closure instance for register and deregister.
+3. `src/ai/codex/codexProcess.ts` — `send()` hoists `onExit` above `settle()` (so settle can pass the same reference to `child.off("exit", onExit)`) and `settle()` now calls `child.off("exit", onExit)` after detaching the JSONL pump. `try/catch` swallows any removal exception since `EventEmitter.removeListener` is a no-op for unknown pairs on real Node emitters but the wrapper itself is internal.
+4. `src/ai/codex/__tests__/codexProcess.test.ts` — new regression test "R4.5: stale per-turn exit listeners must NOT fire onError on completed turns after child exit" drives 2 sends, both complete via `turn.completed`, then `emitChildExit(0)` fires the actual exit; asserts `errors1` and `errors2` are empty (no stale onError on already-completed turns).
+5. `src/ai/codex/__tests__/codexProcess.test.ts` — added `TolerablePassThrough` helper so the fake child's stdin tolerates writes after end() (real `codex` accepts one frame per `exec -` invocation but the fake is reused across multiple sends within the same test; the wrapper prevents an unrelated `write after end` stderr noise that would have obscured the regression assertion).
+
+### RED Output (before fix)
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
+
+ ❯ src/ai/codex/__tests__/codexProcess.test.ts > CodexProcess > R4.5: stale per-turn exit listeners must NOT fire onError on completed turns after child exit
+AssertionError: expected [ Array(1) ] to deeply equal []
+
+- Expected
++ Received
+
+- Array []
++ Array [
++   "codex exited mid-turn (code=0)
++ --- codex stderr (tail) ---
++ ",
++ ]
+```
+
+RED confirmed: stale `onExit` from turn 1 fired onError on the actual child exit even though turn 1 already completed with `onDone`.
+
+### Verification (after fix)
+
+```
+> UnicDB@1.53.23 typecheck
+> tsc --noEmit
+
+(exit 0, no output)
+
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB
+
+ ✓ src/ai/codex/__tests__/codexProcess.test.ts  (11 tests) 2063ms
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  20:02:16
+   Duration  2.28s
+```
+
+Status: PASS
+Note: 11/11 tests pass (10 pre-existing + 1 new R4.5 regression); `tsc --noEmit` exits 0. The R4.5 reviewer finding is fully resolved; the minor findings (dispose-after-crash state erasure, version-probe unquoted interpolation, stdin frame upstream assumption) are out of scope for this fix and were intentionally not touched per the reviewer-scope instruction.
+
+FILES_CHANGED:
+  - src/ai/codex/codexProcess.ts
+  - src/ai/codex/__tests__/codexProcess.test.ts
+
+TESTS_ADDED:
+  - src/ai/codex/__tests__/codexProcess.test.ts: R4.5 regression test for stale per-turn exit listeners

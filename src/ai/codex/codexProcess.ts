@@ -278,21 +278,24 @@ export class CodexProcess {
       stdin: child.stdin,
       stdout: child.stdout,
       stderr: child.stderr,
-      on: ((ev: string, cb: (...a: unknown[]) => void): void => {
-        child.on(ev as "exit", (...a: unknown[]) => {
-          if (ev === "exit") {
-            (cb as (code: number | null) => void)(a[0] as number | null);
-          } else if (ev === "error") {
-            (cb as (err: Error) => void)(a[0] as Error);
-          }
-        });
+      // R4.5: preserve callback identity so off(ev, cb) can find the exact
+      // listener previously registered with on(ev, cb). The previous wrapper
+      // wrapped cb in a fresh dispatcher closure on every on() call, which
+      // made off() a no-op and turned settle()'s listener cleanup into dead
+      // code — every send() leaked one stale onExit closure.
+      on: ((ev: "exit" | "error", cb: unknown): void => {
+        if (ev === "exit") {
+          child.on("exit", cb as (code: number | null) => void);
+        } else {
+          child.on("error", cb as (err: Error) => void);
+        }
       }) as ChildLike["on"],
-      // R4.5: forward off() to the underlying ChildProcess. settle() in send()
-      // calls this to drop the per-turn `onExit` listener — without it, every
-      // prior onExit closure stays attached and fires onError on the NEXT real
-      // child exit, polluting every already-completed turn.
-      off: ((ev: string, cb: (...a: unknown[]) => void): void => {
-        child.off(ev as "exit", cb as never);
+      off: ((ev: "exit" | "error", cb: unknown): void => {
+        if (ev === "exit") {
+          child.off("exit", cb as (code: number | null) => void);
+        } else {
+          child.off("error", cb as (err: Error) => void);
+        }
       }) as ChildLike["off"],
       kill: (signal?: NodeJS.Signals | string) => {
         child.kill(signal as NodeJS.Signals | undefined);
