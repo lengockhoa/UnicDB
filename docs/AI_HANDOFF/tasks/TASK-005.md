@@ -1,127 +1,71 @@
-# TASK-005 (cycle AB) — Pure helpers for attachment validation + log redaction
+# TASK-005 — Claude Code stream-json process/session adapter
 
-Wave: 1 (parallel with TASK-001 host + TASK-003 CSS).
-Owner files: `src/ui/aiChatAttachments.ts` (new) + new test file.
-Constraint: no same-wave file overlap (T-001 owns .ts host modifications; T-003 owns CSS).
+- Status: `ready`
+- Owner: `-`
+- Reviewer: `-`
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3(2), §7
 
-## §Spec
+## Goal
 
-Pure, unit-testable helpers. NO `vscode` import. NO network. NO filesystem. All exported for use by TASK-001 and TASK-002 (webview mirror subset).
+Wrap the real Claude Code CLI JSON streaming protocol behind an injectable, bounded process adapter. It must run CLI prompt turns with workspace `cwd`, preserve its process lifecycle, translate stream-json output into normalized agent events, and provide the seam TASK-009 needs.
 
-### `validateImageAttachment(input, existing): { ok: true } | { ok: false, reason, message }`
+## Target Files
 
-Pure function. Validates a single attachment against:
-- `existing.length + 1 <= MAX_ATTACHMENTS_PER_TURN` (else `count_cap`).
-- `input.bytes <= MAX_ATTACH_BYTES` (else `oversize`).
-- `ATTACH_ALLOWED_MIME.has(input.mime)` (else `unsupported_type`).
-- Magic-byte sniff matches declared mime (else `mime_mismatch`).
+- `src/ai/claudeCode/claudeCodeProcess.ts` (new) — spawn/lifecycle/frame translation adapter.
+- `src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts` (new) — fake-child process/unit fixtures.
 
-Returns a discriminated union. The host's `handleSend` loops over attachments, calling this once per item, accumulating the kept list + the dropped list (each drop fires `attach_error`).
+## Test Cases (REQUIRED — TDD)
 
-### `validateAttachmentsForVision(attachments, visionCapable)`
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|----------|----------|---------------------|
+| 1 | happy | spawns a text prompt turn and maps a valid assistant stream event | `spawnFn` receives detected `claudePath`, `cwd`, `stdio: "pipe"`, and flags `--print --input-format stream-json --output-format stream-json --verbose`; normalized `onDelta("hello")` occurs | fake child emits newline-delimited known Claude assistant event |
+| 2 | edge (malformed input) | malformed JSON line from stdout | line is ignored or produces one `onError`; adapter does not throw, kill child, or hang | fake stdout line `{bad-json}\n` then valid completion |
+| 3 | edge (lifecycle) | dispose while a turn is in flight | sends SIGTERM, resolves no later than `CLAUDE_CODE_DISPOSE_TIMEOUT_MS` (= 2000); second dispose no-ops | fake child does not exit until timer escalation |
+| 4 | edge (process failure) | child emits error / nonzero exit with stderr | returned promise rejects or invokes normalized `onError` including bounded (≤8 KiB) stderr tail, never secret-bearing config content | fake child error + >8KiB stderr fixture |
+| 5 | edge (boundary) | prompt contains image data URL plus text in stream-json input | one valid JSON stdin frame has text and image blocks intact; no base64 appears in error/log callback | 1 PNG attachment fixture + prompt text |
 
-If `visionCapable === false` and `attachments.length > 0`, returns `{ok: false, reason:"vision_unsupported", message:"Current model does not support images"}`. Else `{ok: true}`.
+## Test Files
 
-### `summarizeAttachmentsForLog(attachments)`
+- `src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts` — all tests above.
 
-Returns `{count: number, totalBytes: number, mimes: string[]}`. Never includes base64. NEVER logs the returned object as a single concatenation with bytes — only count + names. Used at every log site that would otherwise dump `attachments`.
-
-### `imageBytesToDataUrl(bytes, mime)`
-
-Pure: `Uint8Array` + mime string → `data:${mime};base64,${base64}`. Throws `TypeError` if mime is not in `ATTACH_ALLOWED_MIME`. Used by TASK-001 host to build `ChatContentPart.image_url.url`.
-
-### `attachmentBytesFromBase64(base64)`
-
-Pure: base64 string → byte length (using `Buffer.byteLength(base64, "base64")`). The webview mirror computes bytes independently to cross-check the host's count.
-
-## §Exports
-
-```ts
-// src/ui/aiChatAttachments.ts
-export const MAX_ATTACH_BYTES = 5 * 1024 * 1024;
-export const MAX_ATTACHMENTS_PER_TURN = 4;
-export const ATTACH_ALLOWED_MIME: ReadonlySet<string> = new Set([
-  "image/png", "image/jpeg", "image/webp", "image/gif",
-]);
-export type AttachRejectReason =
-  | "oversize" | "count_cap" | "unsupported_type"
-  | "mime_mismatch" | "vision_unsupported";
-
-export interface AttachmentValidationOk { ok: true }
-export interface AttachmentValidationErr {
-  ok: false;
-  reason: AttachRejectReason;
-  message: string;
-}
-
-export interface MinimalAttachment {
-  id: string;
-  mime: string;
-  base64: string;
-  bytes: number;
-}
-
-export function validateImageAttachment(
-  input: MinimalAttachment,
-  existing: readonly MinimalAttachment[],
-): AttachmentValidationOk | AttachmentValidationErr;
-
-export function validateAttachmentsForVision(
-  attachments: readonly MinimalAttachment[],
-  visionCapable: boolean,
-): AttachmentValidationOk | AttachmentValidationErr;
-
-export function summarizeAttachmentsForLog(
-  attachments: readonly MinimalAttachment[],
-): { count: number; totalBytes: number; mimes: string[] };
-
-export function imageBytesToDataUrl(
-  bytes: Uint8Array,
-  mime: string,
-): string;
-
-export function attachmentBytesFromBase64(base64: string): number;
-```
-
-## §Verification Commands
+## Verification Commands
 
 ```bash
-cd .worktrees/task-005
-npx vitest run src/ui/__tests__/aiChatPanelAttachments.test.ts
+npx vitest run src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts
 npm run typecheck
 ```
 
-## §Acceptance Criteria
+No lint script exists in this project — lint is N/A; typecheck is the static gate.
 
-1. `validateImageAttachment` happy path: 1 valid PNG, 1 valid JPEG, 1 valid WEBP, 1 valid GIF → all pass.
-2. Edge oversize: 6 MB blob → returns `{ok:false, reason:"oversize"}`.
-3. Edge count cap: passing 5 attachments where 1 is being validated with 4 existing → `{ok:false, reason:"count_cap"}`.
-4. Edge unsupported mime: `image/svg+xml` → `{ok:false, reason:"unsupported_type"}`.
-5. Edge mime mismatch: `image/jpeg` declared + PDF magic bytes → `{ok:false, reason:"mime_mismatch"}`.
-6. `validateAttachmentsForVision`: visionCapable=false + non-empty → `{ok:false, reason:"vision_unsupported"}`; visionCapable=true → `{ok:true}`.
-7. `summarizeAttachmentsForLog`: never returns base64; returns `{count, totalBytes, mimes}` (test inspects the object's keys).
-8. `imageBytesToDataUrl`: `Uint8Array([0x89,0x50,0x4E,…])` + `"image/png"` → `"data:image/png;base64,iVBORw0KGgo…"`.
-9. `attachmentBytesFromBase64`: known base64 strings produce the right byte count (cross-check with `Buffer.byteLength`).
-10. No `vscode` import in this file (grep test).
-11. Constants exported match TASK-001 host's local copies and TASK-002 webview mirror exactly (test asserts equality by reading the import sites).
+## Acceptance Criteria
 
-## §Out of scope
-- Host wire handling (TASK-001)
-- Webview DOM construction (TASK-002)
-- CSS (TASK-003)
+- [ ] Adapter uses the resolved `ClaudeCodeDetection.path`, never bare `"claude"` when a path is supplied (Windows `.cmd` compatibility).
+- [ ] Every `spawn()` has mandatory workspace `cwd`; no shell interpolation of prompt/image data.
+- [ ] Process invocation is grounded in locally verified Claude 2.1.261 help: `--print`, `--input-format stream-json`, `--output-format stream-json`, `--verbose`, and `--mcp-config` (when descriptor config is supplied).
+- [ ] `--permission-mode` must NOT enable automatic bypass; use host/default-deny semantics and record exact compatible flag selection in Discussion.
+- [ ] State union is closed and lifecycle is idempotent/bounded; all test cases green.
 
-## Reviewer Verdict — R3 [TASK-005] (unic-smart)
-- TASK: TASK-005
-- VERDICT: APPROVED-WITH-MINOR
-- VERIFICATION_RERUN: `npx vitest run src/ui/__tests__/aiChatAttachments.test.ts` → 23/23 pass; `npx vitest run src/ui/__tests__/aiChatPanelAttachments.test.ts` (spec §Verification) → 10/10 pass; `npm run typecheck` → exit 0. Hygiene grep: zero imports (no vscode/fs/net/http) in aiChatAttachments.ts. Constants (5MB/4-cap/4-mime Set), all 5 AttachRejectReason reasons, check order count_cap→oversize→unsupported_type→mime_mismatch, PNG-8B/JPEG-3B/GIF-4B-prefix/WEBP RIFF+marker@8-11 sniff, exact-keys `{count,totalBytes,mimes}`, and `imageBytesToDataUrl` TypeError throw all verified in source + tests. Cycle-AA intact: buildMessages(factory,history,userMsg) @ aiChatPanel.ts:556, CSP default-src 'none'/style-src/script-src @ aiChatPanel.ts:2212-2219.
-- BLOCKING: none
-- NOTES: (1) src/ui/__tests__/aiChatPanelAttachments.test.ts:106 imports `type { ImageAttachment }` from ../aiChatAttachments but no such export exists anywhere — latent only, because tsconfig excludes **/*.test.ts and vitest erases type imports; fix: import `MinimalAttachment` instead (TASK-001 territory, logged for owner). (2) Comment at aiChatAttachments.ts:74 "Throws on malformed base64" is inaccurate — Buffer.from never throws; the try/catch at :157 is dead but harmless.
+## Dependencies
 
+- TASK-002 — consumes the detected Claude binary path + version-gated contract.
 
-## Executor Metadata (cycle AB)
-- EXECUTOR_MODEL: unic-code
-- EXECUTOR_TOOL: task agent (general-purpose)
+## Interfaces
 
-## Reviewer Metadata (cycle AB)
-- REVIEWER_MODEL: unic-smart
-- REVIEWER_TOOL: code-reviewer (agent type)
+- Consumes: `ClaudeCodeDetection` and detected `path?: string` from `src/ai/claudeCode/detect.ts` (TASK-002); `HostMcp` descriptor URL shape via `src/ai/omp/hostMcp.ts:64` / `src/ai/omp/mcpBridge.ts:40` (existing).
+- Produces:
+  - `export type ClaudeCodeEngineState = "stopped" | "starting" | "ready" | "cancelling" | "crashed" | "fallback-builtin"`
+  - `export interface ClaudeCodeProcessHandle { state(): ClaudeCodeEngineState; send(input: ClaudeCodeTurnInput, events: ClaudeCodeProcessEvents): Promise<void>; cancel(): void; dispose(): Promise<void>; getStderrTail?(): string }`
+  - `export interface ClaudeCodeTurnInput { text: string; attachments?: ReadonlyArray<{ mime: string; base64: string }>; mcpConfigPath?: string }`
+  - `export function createClaudeCodeProcess(options: ClaudeCodeProcessOptions): ClaudeCodeProcessHandle`
+  — TASK-009 must use these exact exports; TASK-012 supplies the live mcp config path/host bridge.
+
+---
+
+## Discussion
+
+### 2026-09-07 · planner · unic-smart
+Local evidence: `claude --version` = `2.1.261`; `claude --help` explicitly supports `--print`, `--input-format stream-json`, `--output-format stream-json`, `--verbose`, `--mcp-config`, and `--permission-prompts host|none`. The exact JSON frame/event field mapping is NOT verified by local help output: establish it from `claude --help`/a no-network probe or public CLI protocol docs, pin recorded fixtures, and state the source here. Never use `--dangerously-skip-permissions`.
+
+---
+
+<!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->

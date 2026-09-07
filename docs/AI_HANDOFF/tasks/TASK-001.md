@@ -1,293 +1,68 @@
-# TASK-001 (cycle AB) — Host message contract + buildMessages image-parts path
+# TASK-001 — Engine vocabulary: AiEngine union widens to 4 values (settings + persistence)
 
-Wave: 1 (parallel with TASK-003 styles + TASK-005 pure helpers).
-Owner files: `src/ui/aiChatPanelMessages.ts` + `src/ui/aiChatPanel.ts` + new test file.
-Constraint: no same-wave file overlap (T-003 owns `webview/styles.css`; T-005 owns a new test only).
+- Status: `ready`
+- Owner: `-`
+- Reviewer: `-`
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §1/§3(4), §7
 
-## §Spec
+## Goal
 
-### Wire contract extensions (additive — backward compatible)
+Widen the chat-engine vocabulary from `"builtin" | "omp"` to `"builtin" | "omp" | "claude-code" | "codex"` in the pure settings module and keep persistence + redaction consistent, so later tasks can type engine ids against one union.
 
-1. `AiChatPanelInit` (host → webview) gains `visionCapable: boolean`:
-   - True iff the active AI role's `models.<role>.vision === true` at panel-ready time.
-   - Source: `AiConfigStore.loadSettings()` → `settings.models[activeRole].vision`.
-   - The webview reads this to (a) enable/disable the attach button and (b) accept/reject paste-image.
+## Target Files
 
-2. `AiChatPanelWebviewMessage["send"]` gains `attachments?: ImageAttachment[]`:
-   - `ImageAttachment { id: string; mime: string; base64: string; bytes: number; }`
-   - When present and length > 0, the host forwards them as `ChatContentPart[]` (image_url parts with `dataUrl`) attached to the user message constructed in `handleSend`.
-   - When absent OR empty array, legacy text-only path runs (cycle AA baseline).
+- `src/ai/settings.ts` — extend `AiEngine` (:20); update `aiSettingsErrors` messages (:132-134 per-model, :141-143 global); fix `redactAiConfig` engine mapping (:159); update the `AiEngine` doc comment.
+- `src/ai/config.ts` — no structural migration needed (unknown engine already fails closed via `loadSettings` → null); verify + comment only if a change is required.
+- `src/ai/__tests__/settings.test.ts` — extend engine-value coverage.
+- `src/ai/__tests__/config.test.ts` — extend persistence round-trip coverage.
 
-3. New host → webview message kind `AiChatPanelAttachError`:
-   - `{ type: "attach_error"; id: string; reason: "oversize"|"count_cap"|"unsupported_type"|"mime_mismatch"|"vision_unsupported"; message: string }`
-   - Fires per-attachment rejection so the webview can name the offending file in its warning bubble.
+## Test Cases (REQUIRED — TDD)
 
-### Host validation (in `handleSend`)
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|----------|----------|---------------------|
+| 1 | happy | saves and reloads engine "claude-code" (and "codex") | `save()` persists; `loadSettings()` returns the same engine; `aiSettingsErrors` = `[]` | valid AiSettings with `engine: "claude-code"` |
+| 2 | edge (invalid value) | rejects stored engine "vscode-copilot" | `aiSettingsErrors` returns exactly `"Engine must be builtin, omp, claude-code, or codex"`; `loadSettings()` → null | settings object with unknown engine |
+| 3 | edge (empty/legacy) | pre-AE config without engine key still migrates to "builtin" | `loadSettings()` returns settings with `engine: "builtin"` | stored object lacking `engine` |
+| 4 | regression | redactAiConfig no longer coerces non-builtin engines | `redactAiConfig({...engine:"omp"...}).engine === "omp"` and same for `"claude-code"` — RED on today's `cfg.engine === "omp" ? "omp" : "builtin"` (settings.ts:159) for the claude-code case | AiConfig with each engine value |
+| 5 | edge (per-model override) | per-model engine override accepts all 4 values, rejects others | `models.lite.engine: "codex"` valid; `"omp2"` → per-model error message | lite role override variants |
 
-Before invoking `runAgent`:
-- Count: `attachments.length > MAX_ATTACHMENTS_PER_TURN` (4) → emit one `attach_error` per overflowing item with `reason:"count_cap"`, drop them, proceed with the kept prefix. If ALL drop → return early (no runAgent call).
-- Per-item bytes: `attachment.bytes > MAX_ATTACH_BYTES` (5 * 1024 * 1024) → emit `attach_error` with `reason:"oversize"`, drop.
-- Per-item MIME: not in `{image/png, image/jpeg, image/webp, image/gif}` → emit `attach_error` with `reason:"unsupported_type"`, drop.
-- Per-item MIME sniff (magic bytes): decode the first 12 bytes of base64 and compare against expected magic.
-  - PNG: `89 50 4E 47 0D 0A 1A 0A` → image/png
-  - JPEG: `FF D8 FF` → image/jpeg
-  - GIF: `47 49 46 38` (37|39) → image/gif
-  - WEBP: `52 49 46 46 ?? ?? ?? ?? 57 45 42 50` → image/webp
-  - Mismatch (e.g. `25 50 44 46` = `%PDF`) → emit `attach_error` with `reason:"mime_mismatch"`, drop.
-- Vision gating: if `currentRole.vision === false` AND `attachments.length > 0` after the above passes → emit ONE `attach_error` with `reason:"vision_unsupported"` PER attachment, drop ALL attachments, proceed with text-only turn. (User can still send the text prompt; image bytes are explicitly rejected, not silently dropped.)
+## Test Files
 
-### buildMessages image-parts path (the privacy-critical bit)
+- `src/ai/__tests__/settings.test.ts` — tests 1, 2, 4, 5.
+- `src/ai/__tests__/config.test.ts` — tests 1, 3.
 
-No new parameter needed — `buildMessages(factory, history, userMsg, …)` already accepts a `userMsg: ChatMessage` whose `content` field is typed `string | ChatContentPart[]` (`src/ai/provider.ts:24`). The handler constructs the user message directly:
-```ts
-const textPart: ChatContentPart = { type: "text", text };
-const imageParts: ChatContentPart[] = validAttachments.map((a) => ({
-  type: "image_url",
-  imageUrl: `data:${a.mime};base64,${a.base64}`,
-}));
-const userMsg: ChatMessage = {
-  role: "user",
-  content: [textPart, ...imageParts],
-};
-```
-Then call `buildMessages(factory, history, userMsg)`. The legacy string-content path stays byte-identical (no code change to `buildMessages` itself).
-
-**Mention × attachment interaction:** when an `@-mention` block already adds a "Referenced context" section, it appends to the text part (so the text part becomes "user prompt + referenced-context block"). Image parts stay as siblings — never replaced.
-
-### CSP posture (BLOCKING — required for thumbnails)
-
-`buildHtml` (`src/ui/aiChatPanel.ts:2091-2095`) currently sets:
-```
-"default-src 'none'", "style-src ${webview.cspSource} 'unsafe-inline'", "script-src ${webview.cspSource}"
-```
-No `img-src` directive → falls back to `default-src 'none'` → every `<img src="data:image/png;base64,…">` thumbnail is BLOCKED. The attachments strip renders empty images.
-
-**Fix:** add `img-src 'self' data:` to the CSP array. Test pins the exact CSP string so a future regression re-tightening cannot strip it silently.
-
-### omp / ACP engine gate
-
-`handleSend` ACP branch (`src/ui/aiChatPanel.ts:1039-1043`) currently coerces `userMsg.content` to a string prompt. If the user attaches images in omp mode, this would silently drop the image parts — violating §1's "never silently drops the image".
-
-**Fix:** when `this.engine === "omp"`, run the SAME vision_unsupported gate as a non-vision model: emit ONE `attach_error` per attachment, drop ALL images, proceed with text-only turn. The user sees the same amber warning. ACP's `streamComplete` is not called with image parts.
-
-The work role (default `agent.ts:204 — "work"`) is the assumed vision lane; `agent.ts:216-218` already throws if the role lacks vision capability — that's the final belt.
-
-### Logging hygiene
-
-`console.log` / `console.warn` MUST NEVER receive base64 bytes. A `summarizeAttachmentsForLog(attachments)` helper returns `{count, totalBytes, mimes:[…]}` — this is the only log shape allowed. Pure helper lives in `src/ui/aiChatAttachments.ts` (new file, task-005 actually owns the helper file; task-001 imports it).
-
-## §Interfaces (downstream contract)
-
-```ts
-// src/ui/aiChatPanelMessages.ts — additive extensions
-export interface ImageAttachment {
-  id: string;
-  mime: string;
-  base64: string;
-  bytes: number;
-}
-export interface AiChatPanelInit {
-  type: "init";
-  hasHistory: boolean;
-  visionCapable: boolean; // NEW — task-001
-}
-export interface AiChatPanelAttachError {
-  type: "attach_error";
-  id: string;
-  reason: "oversize" | "count_cap" | "unsupported_type" | "mime_mismatch" | "vision_unsupported";
-  message: string;
-}
-// union AiChatPanelHostMessage gains AiChatPanelAttachError
-
-// WebviewMessage.send extension (additive):
-export interface AiChatPanelWebviewSend {
-  type: "send";
-  text: string;
-  attachments?: ImageAttachment[]; // NEW — task-001
-}
-```
-
-```ts
-// caps (export for tests + webview mirror)
-export const MAX_ATTACH_BYTES = 5 * 1024 * 1024; // 5 MB
-export const MAX_ATTACHMENTS_PER_TURN = 4;
-export const ATTACH_ALLOWED_MIME = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/webp",
-  "image/gif",
-]);
-```
-
-## §Verification Commands
+## Verification Commands
 
 ```bash
-cd .worktrees/task-001
-npx vitest run src/ui/__tests__/aiChatPanelAttachments.test.ts
-npx vitest run src/ui/__tests__/aiChatPanelPrivacy.test.ts
+npx vitest run src/ai/__tests__/settings.test.ts src/ai/__tests__/config.test.ts
 npm run typecheck
 ```
 
-## §Acceptance Criteria (revised round 2)
+No lint script exists in this project (package.json verified) — lint is N/A; typecheck is the static gate.
 
-0. **CSP img-src**: `buildHtml` output's `<meta http-equiv="Content-Security-Policy">` contains `img-src 'self' data:`. Source-text test against `src/ui/aiChatPanel.ts`.
+## Acceptance Criteria
 
-0a. **omp/ACP gate**: when `this.engine === "omp"` AND `attachments.length > 0` after per-item validation → emit `attach_error { reason: "vision_unsupported" }` per attachment, drop ALL images, proceed with text-only turn (NOT a silent drop). BuildMessages never receives image parts in omp mode.
+- [ ] `AiEngine` = `"builtin" | "omp" | "claude-code" | "codex"`; error message updated in BOTH the global and per-model checks.
+- [ ] `redactAiConfig` returns the stored engine verbatim for all 4 values (test 4 green).
+- [ ] Existing defaults unchanged (`defaultAiSettings().engine === "builtin"`, `models.lite.engine === "omp"`).
+- [ ] All listed tests pass; full existing assertions in both test files still pass.
 
-0b. **Mention × attachment**: when user sends `@schema.table` + 2 valid images → user message has 1 text part (containing prompt + referenced-context block) + 2 image_url parts. The text part is augmented, the image parts are siblings.
+## Dependencies
 
-1. `handleSend({text, attachments:[…valid]})` constructs a user message with text + image_url parts and forwards to `runAgent` (RED first against current code that has no `attachments` field, GREEN after).
-2. `handleReady()` reads `loadSettings()` and posts `{type:"init", hasHistory, visionCapable}` matching the active role's vision flag.
-3. `AiChatPanelAttachError` posted per rejected attachment with the named `reason` (oversize / count_cap / unsupported_type / mime_mismatch / vision_unsupported).
-4. `handleSend` produces a user message carrying text + image_url parts; system message still DDL-only.
-5. Text-only path (attachments absent or empty) is byte-identical to cycle AA baseline.
-6. Privacy sentinel test (cycle-AA `aiChatPanelPrivacy.test.ts`) extended: seed sentinel + 2 valid attachments → sentinel absent from system AND user parts; `runQuery` spy still 0.
-7. `MAX_ATTACH_BYTES = 5 MB`, `MAX_ATTACHMENTS_PER_TURN = 4`, `ATTACH_ALLOWED_MIME` exactly the four MIMEs — exported and unit-tested.
-8. No apiKey string appears anywhere in the new message shapes (grep test on the host file).
-9. Image bytes NEVER enter the system prompt, the auto-context, or resume replay (TASK-001 regression row).
-10. `summarizeAttachmentsForLog` is the ONLY function allowed to receive `attachments` for logging; all log call sites use it (static check).
+- (none)
 
-## §Out of scope
-- Webview UX (TASK-002)
-- CSS (TASK-003)
-- Pure helpers (TASK-005 — note: `summarizeAttachmentsForLog` is task-005, task-001 imports it)
+## Interfaces
 
+- Consumes: (none)
+- Produces: `export type AiEngine = "builtin" | "omp" | "claude-code" | "codex"` from `src/ai/settings.ts` — TASK-007/008/009/010/011/012 type against this union. Error message string `"Engine must be builtin, omp, claude-code, or codex"` is normative (TASK-008 mirrors it in the webview validator).
 
-## Executor Report (cycle AB) — TASK-001
-- **EXECUTOR_MODEL**: unic-code
-- **EXECUTOR_TOOL**: task agent (general-purpose), worktree `.worktrees/task-001` (branch `handoff/ab-task-001`)
-- **FILES_CHANGED**:
-  - `src/ui/aiChatPanelMessages.ts` — additive: `ImageAttachment`, `AiChatPanelInit.visionCapable`, `AiChatPanelAttachError`, `AiChatPanelWebviewSend.attachments?`
-  - `src/ui/aiChatPanel.ts` — CSP `img-src 'self' data:` (line 2096), `prepareAttachments` host validation + `omp` engine gate, `handleSend` builds `userMsg.content = [textPart, ...imageParts]`
-  - `src/ui/__tests__/aiChatPanelAttachments.test.ts` — new file (313 lines, 10 cases a-j)
-- **RED_OUTPUT (baseline, before any implementation)**:
-  ```
-  $ npx vitest run src/ui/__tests__/aiChatPanelAttachments.test.ts
-  FAIL  src/ui/__tests__/aiChatPanelAttachments.test.ts > AiChatPanel — image attach (TASK-001 cycle AB) > #a happy: handleSend forwards {text, attachments:[valid]} as ChatContentPart[] (1 text + 1 image_url)
-  FAIL  #b oversize (6 MB png): attach_error{reason:oversize}
-  FAIL  #c count cap: 5 attachments → 5th rejected
-  FAIL  #d mime text/plain → reason:unsupported_type
-  FAIL  #e mime mismatch (jpeg + PDF magic)
-  FAIL  #f engine='omp' + 2 valid → 2×{reason:vision_unsupported}
-  FAIL  #g buildMessages with image parts → DDL-only sentinel
-  ... 7 failed / 3 passed
-  ```
-- **GREEN_CONFIRMED**: 10/10 in aiChatPanelAttachments.test.ts; 164/164 across 8 chat-panel suites; `npm run typecheck` exit 0.
-- **COMMIT**: `ad87300` (`handoff: cycle AB task-001 — host image attach (CSP fix, omp gate, buildMessages parts)`)
+---
 
-## Reviewer Verdict — R1 [TASK-001] (unic-smart)
-- TASK: TASK-001
-- VERDICT: CHANGES-REQUESTED
-- VERIFICATION_RERUN: npx vitest run aiChatPanelAttachments/aiChatAttachments/aiChatPanelPrivacy/chatLayoutCss → 4 files, 64 pass / 0 fail (10+23+6+25); regression sweep aiChatPanelAcp+Messages+Mentions+ThoughtRegen → 104 pass / 0 fail; npm run typecheck → exit 0. Code substance verified: CSP at src/ui/aiChatPanel.ts:2211-2219 has img-src 'self' data: AND retains default-src 'none'/style-src/script-src; omp vision gate runs in prepareAttachments (aiChatPanel.ts:1055-1067) BEFORE the acpPrompt coercion (aiChatPanel.ts:1031-1033), so image parts can never reach ACP; prepareAttachments covers all 5 reasons (vision_unsupported :1055, count_cap :1075, oversize/unsupported_type/mime_mismatch via validateImageAttachment :1084-1092); only log shaper is summarizeAttachmentsForLog (aiChatPanel.ts:966-975), no raw base64 in any console call; no apiKey in message shapes (test #j green); text-only path byte-identity pinned by test #i; aiChatPanelPrivacy 6/6 green.
-- BLOCKING:
-  - docs/AI_HANDOFF/tasks/TASK-001.md (current revision @ 7db7faf) — no cycle-AB `## Executor Report`: EXECUTOR_MODEL / EXECUTOR_TOOL / RED_OUTPUT absent, so reviewer-vs-executor model isolation is unverifiable (the report visible in commit ad87300's tree is stale cycle-AA thought/regenerate text, never rewritten for AB). Fix: executor appends the AB report to this file — EXECUTOR_MODEL, FILES_CHANGED, VERIFICATION, and real RED output (failing vitest run of aiChatPanelAttachments.test.ts against pre-attachment host code) — then resubmit for re-review.
-  - src/ui/__tests__/aiChatPanelPrivacy.test.ts (acceptance criterion 6) — required extension missing: file still contains only the 6 cycle-AA tests; no sentinel-seeded case with 2 valid attachments exists (grep "attachment|image" → 0 fixtures). Fix: add test [#7] seeding sentinelRows + driving the turn with 2 valid PNG attachments; assert SENTINEL_ROW/SENTINEL_VIEW absent from the system message AND every user part (stringified) and adapter runQuery spy still 0.
-  - (minor→fix in same round) acceptance criterion 0b has no dedicated test: no suite combines @-mention + attachments (aiChatPanelMentions.test.ts has no attach cases; aiChatPanelAttachments.test.ts has no mention cases) even though the code path exists at src/ui/aiChatPanel.ts:1003-1014. Fix: one test sending "@public.users" + 2 valid attachments → user message has exactly 1 text part containing "--- Referenced context ---" + 2 sibling image_url parts.
-- NOTES: No functional defect found in the diff (ba08bb7/8db1482 lineage); blockers are Quality-Gate paperwork (model self-report, per contract "executor did not self-report model") plus one named missing acceptance test. Minor drift noted, non-blocking: host vision gate is engine-only (aiChatPanel.ts:1057 passes engine==="builtin" as capability) — model-flag enforcement lives in init.visionCapable → webview (TASK-002) + agent.ts final belt, consistent with revised criterion 0a but diverging from the §Spec "Vision gating" bullet. package.json has no lint script; typecheck is the declared static gate and passed. Suggest INDEX_AB.md Status: done → changes_requested for this row after orchestrator reconciles (left untouched to avoid concurrent-writer conflict with R2/R3).
+## Discussion
 
-## Reviewer Verdict — R1.5 [TASK-001] (unic-smart)
-- TASK: TASK-001
-- VERDICT: APPROVED
-- VERIFICATION_RERUN: aiChatPanelPrivacy.test.ts 7/7 (incl. [#7 cycle AB] sentinel + 2 attachments, :425); aiChatPanelAttachments.test.ts 11/11 (incl. #0b @public.users + 2 PNGs → 1 text part w/ Referenced context + 2 sibling image_url parts, :671); npm run typecheck exit 0; full sweep src/ui/__tests__/ 75 files, 1139/1139 pass @ 8db1482.
-- BLOCKING: none — all 3 R1 blockers resolved: (1) `## Executor Report (cycle AB)` present before Reviewer Verdict with EXECUTOR_MODEL=unic-code (≠ reviewer unic-smart), FILES_CHANGED, real RED_OUTPUT ("7 failed / 3 passed" failing vitest run), GREEN_CONFIRMED, COMMIT ad87300; (2) privacy test #7 asserts SENTINEL_* absent from system AND user parts; (3) acceptance #0b dedicated mention×attachment test present.
-- NOTES: Regression re-checks clean — CSP (src/ui/aiChatPanel.ts:2211-2219) retains default-src 'none'/style-src/script-src and adds img-src 'self' data:; prepareAttachments still emits all 5 reject reasons (vision_unsupported :1064, count_cap :1079, oversize/unsupported_type/mime_mismatch via validateImageAttachment src/ui/aiChatAttachments.ts:144-161 with PNG/JPEG/GIF/WEBP magic sniff). Non-blocking: executor RED_OUTPUT predates the two R1.5 tests (7 failed/3 passed = original 10-case cycle) — acceptable since c6000c7 is the R1.5 fix commit, not the executor's TDD cycle.
+### 2026-09-07 · planner · unic-smart
+Note for @executor: `config.ts` `save()` whitelists fields by construction, so no save-path change is expected — if you find otherwise, record it here before deviating.
 
+---
 
-## Executor Metadata (cycle AB)
-- EXECUTOR_MODEL: unic-code
-- EXECUTOR_TOOL: task agent (general-purpose)
-
-## Reviewer Metadata (cycle AB)
-- REVIEWER_MODEL: unic-smart
-- REVIEWER_TOOL: code-reviewer (agent type)
-
-## Reviewer Verdict — cycle AD R1 [TASK-001 / T1] (unic-smart)
-
-TASK: TASK-001 (cycle AD wave 1) — readonly SQL parser + 5 DB-aware tools + host permission gate
-REVIEWER_MODEL: unic-smart
-COMMIT_SHA: 9bdad5f716013072b31b75c5043877aebef81772
-EXECUTOR_MODEL: unic-code (commit trailer; ≠ reviewer — isolation OK)
-SCOPE: src/ai/tools/readonlySqlParser.ts (NEW), src/ai/tools/dbAwareTools.ts (NEW), src/ai/tools/__tests__/readonlySqlParser.test.ts (NEW, 33), src/ai/tools/__tests__/dbAwareTools.test.ts (NEW, 23), src/ui/aiChatPanel.ts (DbToolPermissionGate :558-693 + wiring), src/ui/__tests__/aiChatPanelDbAware.test.ts (NEW, 12)
-VERIFICATION_RERUN:
-  npx vitest run readonlySqlParser/dbAwareTools/aiChatPanelDbAware → 68 pass / 0 fail
-  npx vitest run aiChatPanelPrivacy (7) + aiChatPanelAttachments (11) + aiChatPanelWebview (24) + aiChatPanelThoughtRegen (18) → 60 pass / 0 fail (criterion 11 anchors green)
-  npm run typecheck → exit 0
-TEST_PLAN_COVERAGE: all-followed — parser accepts SELECT/WITH/case/trailing-;/comments, rejects all 13 FORBIDDEN + semicolon-stacked + identifier-embedded; tools cover limit default/cap/floor, count with/without WHERE, reject-before-adapter (spy length 0), EXPLAIN ANALYZE, FK+reverse-FK with runQuery-spy-0; gate covers card post, allow-once non-persist, allow-session, deny, unknown optionId, missing optionId, fake-timer timeout, cancelAll, duplicate/late response, DDL-only sentinel with tools registered.
-FINDING_SUMMARY:
-  important:
-    - src/ai/tools/readonlySqlParser.ts:23 (FORBIDDEN_RE) — `SELECT * INTO newt FROM users` and `SELECT * INTO OUTFILE '/tmp/x' FROM users` parse ok:true (probe-verified). Postgres SELECT…INTO creates a table; MySQL INTO OUTFILE/DUMPFILE writes a server-side file. This breaks run_readonly_query's read-only contract (criterion 4) — the "SELECT/WITH only" letter is met but the write-escape the parser exists to prevent is reachable; module header claims "parser-bypass impossible", contradicted. `into` is syntax, not a function name — one word in FORBIDDEN_RE + a test fixes it.
-  minor:
-    - src/ai/tools/readonlySqlParser.ts:20-24 — doc/comment (and criterion 1 wording) say "substrings", but FORBIDDEN_RE has no trailing pattern, so mid-token insertions like `myinsertcol` pass (prefix/suffix forms like inserted_at/created_at are caught as designed). Harmless for writes; align doc or note the boundary rule.
-    - src/ai/tools/dbAwareTools.ts (count_rows/guardSql) — mutating scalar functions (`setval(...)`, `pg_terminate_backend(...)`) pass the guard by design of a keyword blocklist; accepted-risk per module header, but worth listing in the tool description or PLAN for the next cycle.
-    - src/ui/aiChatPanel.ts:686-693 summarizeDbToolArgs — 200-char truncation can hide the tail of a long generated SQL on the permission card; a user may approve SQL whose `INTO OUTFILE` clause is invisible. Consider truncating head+tail.
-    - src/ui/aiChatPanel.ts:624-629 / DB_TOOL_DENIED_MESSAGE — timeout and cancelAll (no user action) bubble "Permission denied by user"; mildly misleading to the model. Non-blocking.
-    - src/ui/aiChatPanel.ts:1261-1266 / 1585-1590 — identical 5-line DB-aware registration block duplicated in builtin and omp/mcp paths; extract a helper on the next touch.
-    - src/ai/tools/dbAwareTools.ts (get_table_relationships) — reverse-FK scans listTableDetail per sibling table (N+1 over schema tables); user-gated introspection, bounded, acceptable — noted for scale.
-  verified-clean: gate default-deny matrix (unknown/duplicate/late/missing optionId, timeout, cancelAll, stop :1871, dispose :1001); dbtool-/req- id namespaces cannot collide, unowned ids fall through to the ACP bridge unchanged (cycle AB seam intact); explain_query composes `EXPLAIN ` + validated SELECT so EXPLAIN(ANALYZE-option) escapes are unreachable; identifiers regex-validated before interpolation (no quote injection); no row bytes in system prompt (sentinel test green); no ACP permission_request behavior change (aiChatPanelAttachments/Acp suites green).
-VERDICT: CHANGES-REQUESTED
-SUGGESTED_FIXES:
-  1. Add `into` to FORBIDDEN_RE in src/ai/tools/readonlySqlParser.ts + parser test `expect(parseReadonly("SELECT * INTO t2 FROM t1").ok).toBe(false)`; keep the comment explaining the boundary rule.
-  2. Re-run: npx vitest run src/ai/tools/__tests__/ src/ui/__tests__/aiChatPanelDbAware.test.ts && npm run typecheck; append RED/GREEN evidence to this file.
-NOTES: Cycle AD tracks executor reports as commit trailers (9bdad5f/8525ece both carry EXECUTOR_MODEL: unic-code) instead of per-task Executor Report sections; TDD RED evidence for AD is therefore not on file — non-blocking here (model isolation verified via trailer), but the AD flow should paste RED output in fix rounds. INDEX not updated: no INDEX_AD exists; INDEX.md is cycle-AA's approved record.
-
-## Executor Report (cycle AD fix round) — TASK-001
-- **EXECUTOR_MODEL**: unic-code
-- **FILES_CHANGED**: `src/ai/tools/readonlySqlParser.ts`, `src/ai/tools/__tests__/readonlySqlParser.test.ts`
-- **RED_OUTPUT**: Added regression initially failed: `SELECT * INTO t2 FROM t1` parsed `ok:true` (1 failed / 33 passed).
-- **GREEN_CONFIRMED**: `readonlySqlParser.test.ts` + `dbAwareTools.test.ts`: 57/57; `npm run typecheck`: exit 0.
-- **FIX**: Added `into` to the forbidden-token guard, blocking PostgreSQL `SELECT INTO` and MySQL `INTO OUTFILE`/`INTO DUMPFILE` escape paths.
-- **COMMIT**: `247471e` (shared review-fix commit).
-
-
-## Reviewer Verdict — cycle AD R2 [TASK-001] (unic-smart)
-
-TASK: TASK-001 (cycle AD R2 — re-review of fix commit 247471e against R1 CHANGES-REQUESTED)
-REVIEWER_MODEL: unic-smart
-EXECUTOR_MODEL: unic-code (fix-round executor report; ≠ reviewer — isolation OK)
-COMMIT_SHA: 247471e — T1 scope touches only src/ai/tools/readonlySqlParser.ts (1-line FORBIDDEN_RE change) + src/ai/tools/__tests__/readonlySqlParser.test.ts (+3 lines); other files in this commit belong to T2/T3 scope.
-SCOPE: verify only the R1 fix (`SELECT * INTO/OUTFILE/DUMPFILE` bypass) + regression re-check of 5 db-aware tools, host permission gate, privacy anchors.
-VERIFICATION_RERUN:
-  npx vitest run src/ai/tools/__tests__/readonlySqlParser.test.ts src/ai/tools/__tests__/dbAwareTools.test.ts src/ui/__tests__/aiChatPanelDbAware.test.ts src/ui/__tests__/aiChatPanelPrivacy.test.ts → 4 files, 76 pass / 0 fail (34+23+12+7)
-  npm run typecheck → exit 0
-FINDINGS:
-  critical: none
-  important: none — R1 blocker CLOSED: `into` present in FORBIDDEN_RE (readonlySqlParser.ts:23); new test readonlySqlParser.test.ts:118-119 asserts `SELECT * INTO t2 FROM t1` → ok:false. Test is meaningful, not vacuous: pre-fix the RE had no `into`, the statement started with SELECT, parens balanced → parseReadonly returned ok:true (executor RED: 1 failed / 33 passed confirms). `\binto` prefix match catches INTO as a standalone token, covering INTO t2 / INTO OUTFILE / INTO DUMPFILE; over-rejection of e.g. an `introduce` column is the documented strict-overreject posture, not a write escape.
-  minor: none new. R1 minor notes remain open, non-blocking, for a future cycle: doc wording "substrings" vs word-boundary rule (readonlySqlParser.ts:20-24), 200-char tail truncation on permission card SQL (aiChatPanel.ts:686-693), deny-message phrasing for timeout/cancelAll, duplicated 5-line tool-registration block (aiChatPanel.ts:1261/1585).
-REGRESSION_RECHECK: 5 db-aware tools — dbAwareTools.test.ts 23/23 (limit default/cap/floor, count ±WHERE, reject-before-adapter spy-0, EXPLAIN ANALYZE, FK + reverse-FK) green; gate — aiChatPanelDbAware.test.ts 12/12 (default-deny, allow-once/allow-session, deny, unknown/missing/late optionId, timeout, cancelAll, sentinel isolation) green; privacy — aiChatPanelPrivacy.test.ts 7/7 (SENTINEL absent from system + user parts, runQuery spy 0) green.
-VERDICT: APPROVED
-SUGGESTED_FIXES: none required. Carry the R1 minor notes listed above into the next planning cycle.
-NOTES: Model isolation per contract (executor unic-code ≠ reviewer unic-smart). Minimal, correctly-scoped fix; INDEX_AD does not exist, so no index row updated — orchestrator to reconcile INDEX status.
-
-## Reviewer Verdict — cycle AE R1 [TASK-001]
-
-- **REVIEWER_MODEL**: unic-smart (runtime: unic/unic-smart; configured `handoff.reviewer.model=unic-smart`)
-- **COMMIT**: `d356553` (`handoff/ae-task-001`)
-- **SCOPE**: `src/ai/omp/hostMcp.ts`, `src/ai/omp/__tests__/hostMcp.test.ts`
-- **MODEL ISOLATION**: OK — executor `unic-code` ≠ reviewer `unic-smart`.
-- **VERIFICATION_RERUN**: exact detached `d356553`: `npx vitest run src/ai/omp/__tests__/hostMcp.test.ts` → 9 passed / 0 failed; `npm run typecheck` → exit 0.
-- **FINDING (important)**: `src/ai/omp/hostMcp.ts:378-401` latches `stopped=true` permanently. After a valid `start() → stop() → start()` sequence, the final `stop()` returns at :379 and leaves the restarted listener open. `src/ai/omp/__tests__/hostMcp.test.ts:440-456` claims start/stop idempotence but never calls `start()` twice or restarts the same host, so it cannot detect this lifecycle leak. Reset the stopped state when a new listener starts (or make restart explicitly rejected), and add a same-instance start→stop→start→stop probe that observes `ECONNREFUSED` after the final stop.
-- **VERDICT**: CHANGES-REQUESTED
-- **SUGGESTED FIXES**: repair the restart/stop lifecycle state and add the missing same-instance lifecycle regression; re-run the targeted Vitest file and typecheck.
-
-## Reviewer Verdict — cycle AE R2 [TASK-001]
-
-- **REVIEWER_MODEL**: unic-smart (configured `handoff.reviewer.model=unic-smart`; ≠ executor)
-- **EXECUTOR_MODEL**: unic-code (fix commit `4503e2e` metadata; ≠ reviewer — isolation OK)
-- **COMMIT**: `4503e2e` (wave 2 fix, AE R4.5), reviewed at HEAD `6ecf4bc`
-- **SCOPE**: `src/ai/omp/hostMcp.ts`, `src/ai/omp/__tests__/hostMcp.test.ts` (T1 lifecycle only)
-- **R1 FINDING RECHECK (start/stop/start-again leak, hostMcp.ts:378-401 → now :288-403)**: CLOSED.
-  Reset branch present at `hostMcp.ts:291-299`: `start()` clears `stopped` and defensively resets
-  `port=0` before the `if (server !== undefined) return` guard, so a second `start()` actually
-  rebinds. `stop()` (:400-426) closes the current `server`, tears down sockets, nulls the handle,
-  and zeroes `port` — no state carries across the cycle.
-- **NEW TEST VERIFIED**: `"stop then start again works on the same instance"`
-  (`hostMcp.test.ts:459-508`) exercises the exact R1 failure shape: same instance → stop → probe
-  `originalUrl` → Error; restart → new port >0, new URL ≠ original; wire `initialize` on the
-  restarted listener → 200; second stop (×2, idempotent) → port 0 and probe → Error. Meaningful,
-  not vacuous — pre-fix this fails at `restartedPort > 0` because start() early-returned on the
-  latched flag.
-- **VERIFICATION_RERUN**: `npx vitest run src/ai/omp/__tests__/hostMcp.test.ts` → 13 passed /
-  0 failed (9 pre-R1 + 4 new: idempotent lifecycle, same-instance restart, 2× call() wrapper);
-  `npm run typecheck` → exit 0.
-- **FINDINGS**: critical: none. important: none. minor: none new.
-- **VERDICT: APPROVED**
+<!-- Phase 3 executor appends `## Executor Report` BELOW this separator. -->

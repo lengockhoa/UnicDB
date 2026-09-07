@@ -1,4 +1,4 @@
-Cycle: SH    Date: 2026-09-07    Base: main @ 86b034e (release: 1.53.18)
-Goal: Cmd+Enter in a shellscript editor runs only the highlighted lines (or cursor line) in the reused "UnicDB Script" terminal — mirroring the SQL multi-selection pattern (commit 3e33f0a).
-Tasks: 2 total (TASK-SH-001 manifest, TASK-SH-002 command)
-Status: cycle_done — R5 ready. Both rows reviewed (unic-smart) and marked done. Push + optional patch release pending.
+Cycle: AGT    Date: 2026-09-07    Base: main @ d60b743 (release 1.53.23)
+Goal: Add Claude Code + Codex as first-class ACP-based agents, parallel omp UKit audit, AIChat panel image+text support across all engines.
+Tasks: 14 total (TASK-001..TASK-014) across 6 waves
+Status: planning_done — ready for executor (Plan P2.5 Round 2 APPROVED by unic-smart; P3 commit in flight)
