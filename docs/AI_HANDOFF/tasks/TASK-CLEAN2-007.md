@@ -98,3 +98,60 @@ esbuild.js already bundles `webview/aiChatPanelMain.ts` as an entry point and re
 imports. Do not move wireCopyButtons. Although `unescapeHtml` is also duplicated (thread
 :106-113; main :1511), leave it untouched: the caller fixed scope to the named
 renderMarkdown/escapeHtml pair (12 items exactly); queue inverse-helper dedup separately.
+
+---
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/clean2-007
+
+ FAIL  webview/__tests__/markdownSafe.test.ts [ webview/__tests__/markdownSafe.test.ts ]
+Error: Failed to load url ../markdownSafe (resolved id: ../markdownSafe) in /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/clean2-007/webview/__tests__/markdownSafe.test.ts. Does the file exist?
+ ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:51969:17
+
+Test Files  1 failed (1)
+     Tests  no tests
+```
+
+Module does not exist yet → RED confirmed.
+
+Verification Output:
+
+```
+$ npx vitest run webview/__tests__/markdownSafe.test.ts webview/__tests__/aiChatPanelThread.test.ts src/ui/__tests__/aiChatPanel.test.ts
+
+ ✓ webview/__tests__/markdownSafe.test.ts  (8 tests) 2ms
+ ✓ webview/__tests__/aiChatPanelThread.test.ts  (25 tests) 21ms
+ ✓ src/ui/__tests__/aiChatPanel.test.ts  (35 tests) 16ms
+
+ Test Files  3 passed (3)
+      Tests  68 passed (68)
+
+$ npm run typecheck
+> UnicDB@1.53.25 typecheck
+> tsc --noEmit
+(exit 0, no output)
+
+$ npm run compile
+> UnicDB@1.53.25 compile
+> node esbuild.js
+  dist/aiChatPanel.js       69.2kb
+  dist/aiChatPanel.js.map  172.2kb
+  dist/webview.js        2.3mb
+  dist/webview.css      47.8kb
+  dist/extension.js       6.5mb
+esbuild: build complete
+(exit 0)
+```
+
+Bundle sanity (`grep` on `dist/aiChatPanel.js`): 3 occurrences of `UnicDB-md-copy` confirm the canonical fenced-code contract survived bundling.
+
+Status: PASS
+Note: 5 unrelated full-suite test files (`aiChatPanelWebviewTask*.test.ts` etc.) failed because the worktree has no `node_modules/.bin/esbuild` (env-only, pre-existing) — the focused 3-file vitest command, typecheck, and compile all exit 0.

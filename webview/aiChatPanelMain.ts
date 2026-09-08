@@ -458,75 +458,14 @@ function selectMentionToken(token: string): void {
   disposeMentionDropdown();
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => {
-    switch (c) {
-      case "&":
-        return "&amp;";
-      case "<":
-        return "&lt;";
-      case ">":
-        return "&gt;";
-      case '"':
-        return "&quot;";
-      case "'":
-        return "&#39;";
-      default:
-        return c;
-    }
-  });
-}
-
-/**
- * Minimal markdown — only what the agent is expected to emit:
- *  - ## / ### headings
- *  - fenced code ```…```
- *  - inline `code`
- *  - **bold**
- *  - line breaks (blank line → new paragraph)
- * Returns HTML with all user content escaped first, then markdown syntax
- * re-introduced through the controlled replacement set above.
- *
- * for permission tool/option labels.
- */
-function renderMarkdown(text: string): string {
-  const escaped = escapeHtml(text);
-  // Fenced blocks: capture each (lang, escaped-code) pair into a parallel
-  // array, replace with an opaque placeholder, then re-substitute the
-  // final HTML (with a data-raw attribute holding the un-escaped code so
-  // the Copy button can grab it later without re-parsing). Double-escape
-  // on the attribute is intentional: the browser decodes the HTML entities
-  // once, leaving the original escaped form in the attribute — we then
-  // un-escape at click time to recover the raw code.
-  const fences: Array<{ lang: string; code: string }> = [];
-  let html = escaped.replace(
-    /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g,
-    (_m, lang: string, code: string) => {
-      const idx = fences.length;
-      fences.push({ lang, code: code.replace(/\n$/, "") });
-      return `\u0000FENCE${idx}\u0000`;
-    },
-  );
-  html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
-  html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
-  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  const blocks = html.split(/\n{2,}/);
-  const joined = blocks
-    .map((b) => (b.startsWith("<") ? b : `<p>${b.replace(/\n/g, "<br>")}</p>`))
-    .join("\n");
-  return joined.replace(
-    /\u0000FENCE(\d+)\u0000/g,
-    (_m, idxStr: string) => {
-      const idx = Number(idxStr);
-      const f = fences[idx]!;
-      // data-raw carries the ORIGINAL escaped code so the click handler
-      // can grab it via getAttribute and un-escape to recover the raw
-      // string the user wants to copy.
-      return `<pre class="UnicDB-md-code" data-raw="${escapeHtml(f.code)}"><code class="UnicDB-md-code-lang-${escapeHtml(f.lang)}">${f.code}</code><button type="button" class="UnicDB-md-copy">Copy</button></pre>`;
-    },
-  );
-}
+// ------------------------------------------------------------------
+// Helpers (escaped text + a tiny markdown → safe-HTML string helper).
+// The canonical implementation lives in `./markdownSafe` (TASK-CLEAN2-007);
+// both `aiChatPanelMain.ts` and `aiChatPanelThread.ts` import from there.
+// `unescapeHtml` / `wireCopyButtons` stay local — they belong to the
+// Copy-button wire-up (the host-side clone layout), not the render pass.
+// ------------------------------------------------------------------
+import { escapeHtml, renderMarkdown } from "./markdownSafe";
 function setBusy(busy: boolean): void {
   state.busy = busy;
   // The composer module (TASK-AGTUI-004) owns the action buttons + the

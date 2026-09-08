@@ -32,8 +32,8 @@ import {
   appendErrorBubble,
   appendNoticeBubble,
   renderUsageChip,
-  renderMarkdown,
 } from "../aiChatPanelThread";
+import { renderMarkdown } from "../markdownSafe";
 
 function freshThread(): HTMLDivElement {
   const t = document.createElement("div");
