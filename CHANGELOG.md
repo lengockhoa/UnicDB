@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.25] — 2026-09-08
+
+- Summary: AI Chat panel = Claude Code VS Code extension clone — BLUE accent (#3b82f6) replacing orange, big 'U' character brand mark, red-square stop button, composer row (model chip / bypass-permissions toggle / mic / slash hint), dark theme + animation polish. Engine dispatch from cycle AGT (TASK-011/012) preserved unchanged.
+- Files: webview/styles.css, webview/aiChatPanelHeader.ts (new), webview/aiChatPanelComposer.ts (new), webview/aiChatPanelThread.ts (new), webview/aiChatPanelMain.ts, src/ui/aiChatPanelMessages.ts, src/ui/aiChatPanel.ts, src/ui/__tests__/aiChatPanelCloneCss.test.ts (new), src/ui/__tests__/aiChatPanelMessagesClone.test.ts (new), src/ui/__tests__/aiChatPanelCloneHost.test.ts (new), src/ui/__tests__/aiChatPanelCloneWebview.test.ts (new), src/ui/__tests__/aiChatPanelClonePolish.test.ts (new), webview/__tests__/aiChatPanelHeader.test.ts (new), webview/__tests__/aiChatPanelComposer.test.ts (new), webview/__tests__/aiChatPanelThread.test.ts (new)
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.25.vsix packaged
+
+---
+
 ## [1.53.24] — 2026-09-08
 
 - Summary: Cycle AGT — Claude Code + Codex as first-class agents; AIChat panel becomes the universal interface for all 4 engines (builtin/omp/claude-code/codex); image+text attachments enabled for Claude/Codex while omp keeps its deliberate text-only gate and builtin keeps its work.vision gate. Adds 4-engine AiEngine union, resolveEngine() policy (settings-driven, detection-first, default-deny), stream-json subprocess adapter for Claude Code (with HostMcp MCP HTTP bridge) and JSON-protocol subprocess adapter for Codex (same MCP seam), 4-option engine dropdown in AI Settings, env-gated live smokes (UnicDB_CLAUDE_CODE_SMOKE=1 / UnicDB_CODEX_SMOKE=1), and Stop now reaches each engine's subprocess cancellation path (not just the panel surface). omp code path unchanged (TASK-004 zero-diff audit). No new commands use --dangerously-skip-permissions; apiKey / DB credentials / HostMcp descriptor never cross the wire.
