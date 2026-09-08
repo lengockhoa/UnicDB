@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.32] — 2026-09-08
+
+- Summary: Activity bar icon: convert PNG to RGBA + auto-move container to Primary Sidebar on first activation. Adds UnicDB.preferPrimarySidebar setting (default true) and UnicDB.moveToPrimarySidebar manual command.
+- Files: package.json,src/extension.ts,src/__tests__/manifestAssetRefs.test.ts,src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts,src/extension.test.ts,media/icon.png
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.32.vsix packaged
+
+---
+
 ## [1.53.30] — 2026-09-08
 
 - Summary: **Activity-bar icon defensive patch** — `viewsContainers.activitybar[].icon` and `viewsContainers.panel[].icon` switched from `media/UnicDB.svg` to `media/icon.png` because VS Code's activity-bar icon masker silently refused to render the monochrome `currentColor` SVG for some installed users (the Workbench visibility menu had no "UnicDB" entry, so the container never registered on the activity bar — even after Reload / Disable+Re-enable / full uninstall+reinstall). The PNG (128×128) is the same icon already used by the top-level `icon` field; it's visible everywhere the SVG was visible (Extensions panel, extension detail page) AND additionally visible on the activity bar for every installed user. **Install v1.53.30 to restore the activity-bar icon.**
