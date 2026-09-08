@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.26] — 2026-09-08
+
+- Summary: Cycle AGT-CLEANUP-2 (12 minor cleanups: 6 stale comments, 2 dead exports, 3 smoke-helper improvements, 1 renderMarkdown dedup) + activity-bar icon defensive fix. No user-visible behavior changes from the cleanups; the icon fix restores the UnicDB "U" badge in VS Code's left activity bar after install.
+- Files: src/ai/policy.ts, src/ai/engineChoice.ts, src/ai/claudeCode/claudeCodeChatEngine.ts, src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts, src/ai/codex/__tests__/codexLiveSmoke.test.ts, src/ui/__tests__/commitGenManifest.test.ts, webview/markdownSafe.ts (new), webview/aiChatPanelMain.ts, webview/aiChatPanelThread.ts, webview/__tests__/markdownSafe.test.ts (new), media/UnicDB.svg, media/commit-spark.svg, src/__tests__/manifestAssetRefs.test.ts (new), docs/AI_HANDOFF/tasks/TASK-004.md, docs/AI_HANDOFF/INDEX_AGTUI.md (archived), docs/AI_HANDOFF/PLAN_AGTUI.md (archived)
+- Verification: npm run typecheck exit 0 · npm test 4042 passed | 4 skipped | 0 failed (275 files) · npm run compile clean (re-run during bump)
+
+---
+
 ## [1.53.25] — 2026-09-08
 
 - Summary: AI Chat panel = Claude Code VS Code extension clone — BLUE accent (#3b82f6) replacing orange, big 'U' character brand mark, red-square stop button, composer row (model chip / bypass-permissions toggle / mic / slash hint), dark theme + animation polish. Engine dispatch from cycle AGT (TASK-011/012) preserved unchanged.
