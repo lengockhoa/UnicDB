@@ -1090,6 +1090,10 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  /* TASK-AGTUI-008: gentle scroll on auto-scroll / jump-to-latest. The
+   * reduced-motion block below overrides this back to `auto` so users
+   * who opt out of motion don't get yanked. */
+  scroll-behavior: smooth;
 }
 .UnicDB-chat-bubble {
   padding: 6px 10px;
@@ -2007,6 +2011,73 @@ body.UnicDB-chat-body {
   border-color: var(--UnicDB-chat-warn, #f59e0b);
   background: var(--vscode-inputValidation-warningBackground, #5a4a1a);
 }
+
+/* TASK-AGTUI-008: legacy tool-result card expand/collapse polish. The
+ * clickable header + collapsible body comes from webview/aiChatPanelMain.ts
+ * (#appendToolResult). The body transitions with 150ms ease, matching
+ * the Claude Code card affordance. The card itself stays in the DOM in
+ * both states — collapsed only hides the body. */
+.UnicDB-chat-tool-collapsible {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 6px;
+  background: var(--vscode-editorWidget-background, #252526);
+  margin: 4px 0;
+  overflow: hidden;
+  transition: max-height 0.15s ease, opacity 0.15s ease;
+}
+.UnicDB-chat-tool-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-foreground, #cccccc);
+  user-select: none;
+  /* Glyph delivered via ::before (CSS pseudo-element) so the card's
+   * textContent remains exactly the original summary string. The
+   * DbAwareWebview test pins that invariant. */
+}
+.UnicDB-chat-tool-header::before {
+  content: "▾";
+  display: inline-block;
+  width: 12px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #8c8c8c);
+  transition: transform 0.15s ease;
+}
+.UnicDB-chat-tool-collapsed > .UnicDB-chat-tool-header::before {
+  transform: rotate(-90deg);
+}
+.UnicDB-chat-tool-header:hover {
+  background: var(--vscode-list-hoverBackground, #2a2d2e);
+}
+.UnicDB-chat-tool-header:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007acc);
+  outline-offset: -1px;
+}
+.UnicDB-chat-tool-body {
+  padding: 6px 10px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--vscode-foreground, #cccccc);
+  max-height: 400px;
+  overflow: hidden;
+  /* 150ms ease matches the spec timing token for tool cards. */
+  transition: max-height 0.15s ease, opacity 0.15s ease;
+  opacity: 1;
+}
+.UnicDB-chat-tool-collapsed > .UnicDB-chat-tool-body {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+}
 .UnicDB-chat-plan {
   border: 1px dashed var(--UnicDB-chat-accent, #3b82f6);
   border-radius: 6px;
@@ -2070,7 +2141,9 @@ body.UnicDB-chat-body {
   height: 12px;
   border-radius: 50%;
   background: var(--UnicDB-chat-accent, #3b82f6);
-  transition: left 0.15s ease-in-out;
+  /* TASK-AGTUI-008: 100ms ease-in-out per spec — old token (0.15s) was
+   * too sluggish for a Claude Code–style toggle thumb. */
+  transition: left 0.1s ease-in-out;
 }
 .UnicDB-chat-toggle-on {
   background: var(--UnicDB-chat-warn, #f59e0b);
@@ -2121,5 +2194,13 @@ body.UnicDB-chat-body {
   .UnicDB-chat-toggle::after,
   .UnicDB-chat-toggle-on::after {
     transition: none !important;
+  }
+  /* TASK-AGTUI-008: cancel the gentle scroll the chat-thread declaration
+   * above opts into. The user explicitly opted out of motion — keep
+   * scroll position jumps out of the animation system. */
+  .UnicDB-chat-thread,
+  html,
+  body {
+    scroll-behavior: auto !important;
   }
 }

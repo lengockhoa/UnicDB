@@ -58,10 +58,75 @@ Typing animation must remain a CLASS toggle over real streamed text — never sy
 
 ## Executor Report
 
-(appended below by executor)
+EXECUTOR_TOOL: Claude Code (Agent tool)
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-agtui-008
 
----
+ ❯ src/ui/__tests__/aiChatPanelClonePolish.test.ts  (8 tests | 6 failed) 69ms
+ ❯ src/ui/__tests__/aiChatPanelClonePolish.test.ts > TASK-AGTUI-008 - polish CSS contract (easing + reduced-motion) > .UnicDB-chat-toggle::after uses 100ms ease-in-out for the thumb slide
+   → expected false to be true (transition: left 0.1s ease-in-out)
+ ❯ src/ui/__tests__/aiChatPanelClonePolish.test.ts > TASK-AGTUI-008 - polish CSS contract (easing + reduced-motion) > .UnicDB-chat-tool-collapsible transition timing token is 150ms ease
+   → expected false to be true (0.15s ease rule missing)
+ ❯ src/ui/__tests__/aiChatPanelClonePolish.test.ts > TASK-AGTUI-008 - polish CSS contract (easing + reduced-motion) > prefers-reduced-motion media query disables pulse / caret / smooth scroll
+   → mediaBlockBody returned '' (regex over-escaped); real cause: CSS lacked scroll-behavior: auto override
+ ❯ src/ui/__tests__/aiChatPanelClonePolish.test.ts > TASK-AGTUI-008 - polish CSS contract (easing + reduced-motion) > chat thread declares scroll-behavior:smooth OUTSIDE reduced-motion
+   → expected false to be true (scroll-behavior: smooth declaration missing)
+ ❯ src/ui/__tests__/aiChatPanelClonePolish.test.ts > TASK-AGTUI-008 - polish bundle behavior (caret / tool card / stop pulse) > #1 streaming caret lifecycle
+   → expected 'Hello▍, world!' to be 'Hello, world!' (ensureStreamingCaret was a no-op after delta #1, leaving caret stranded mid-bubble)
+ ❯ src/ui/__tests__/aiChatPanelClonePolish.test.ts > TASK-AGTUI-008 - polish bundle behavior (caret / tool card / stop pulse) > #2 tool card expand/collapse
+   → tool card must include a clickable .UnicDB-chat-tool-header: expected null not to be null
+
+ Test Files  1 failed (1)
+      Tests  6 failed | 2 passed (8)
+```
+
+Verification Output:
+```
+$ npx vitest run src/ui/__tests__/aiChatPanelClonePolish.test.ts
+ ✓ src/ui/__tests__/aiChatPanelClonePolish.test.ts  (8 tests) 118ms
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+
+$ npx vitest run   (full suite)
+ Test Files  272 passed | 1 skipped (273)
+      Tests  4026 passed | 4 skipped (4030)
+
+$ npx vitest run src/ui/__tests__/aiChatPanelBundle.test.ts src/ui/__tests__/chatLayoutCss.test.ts src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts src/adapters/__tests__/bq04SurfaceGuard.test.ts
+ Test Files  5 passed (5)
+      Tests  82 passed (82)
+
+$ npm run typecheck
+> UnicDB@1.53.24 typecheck
+> tsc --noEmit      (exit 0, no errors)
+```
+
+Status: PASS
+Note:
+
+- Changes are scoped to `webview/styles.css` (toggle transition to 100ms, new
+  `.UnicDB-chat-tool-collapsible` family with 150ms ease + glyph via
+  `::before`, `scroll-behavior: smooth` on `.UnicDB-chat-thread` +
+  reduced-motion override) and `webview/aiChatPanelMain.ts`
+  (`ensureStreamingCaret` now moves the caret to the end of the bubble every
+  delta; `appendToolResult` builds a collapsible `.UnicDB-chat-tool-header` +
+  `.UnicDB-chat-tool-body` pair where the glyph is delivered via CSS
+  pseudo-element so `card.textContent === summary` is preserved for the
+  DbAwareWebview suite).
+- Wave-1 frozen modules (Composer / Header / Thread) and the
+  `src/ui/aiChatPanelMessages.ts` (002) module were not touched.
+- The bubble's textContent caret-glyph regression was a real R8 polish bug
+  (the caret was appended exactly once after delta #1, leaving it stranded
+  between the first and second text nodes); the parity rule
+  (`done === concatenation`) still holds.
+- No API key / wire-credential surface introduced.
 
 ## Reviewer Verdict
 
 (appended below by reviewer)
+
+
+

@@ -1148,15 +1148,63 @@ function appendStep(label: string): void {
 }
 
 /** AIX-03: visible tool-call outcome card. DOM text only — the summary is
- * host-authored shape text, rendered via textContent (never innerHTML). */
+ * host-authored shape text, rendered via textContent (never innerHTML).
+ *
+ * TASK-AGTUI-008 polish: the card is now a collapsible container with a
+ * clickable header (.UnicDB-chat-tool-header → toggles
+ * .UnicDB-chat-tool-collapsed on the parent). The header carries NO
+ * visible text — its glyph is delivered via a CSS pseudo-element
+ * (::before) so the card's textContent remains EQUAL to the original
+ * summary string (DbAwareWebview test pins that invariant).
+ *
+ * The body hosts the existing summary text. The card STAYS in the DOM
+ * in both states; collapsed only hides the body via CSS (max-height → 0,
+ * opacity → 0, 150ms ease). The legacy
+ * `.UnicDB-chat-tool-result.UnicDB-chat-tool-result-<status>` class hook
+ * stays so the existing suite keeps passing. */
 function appendToolResult(tool: string, status: string, summary: string): void {
   const thread = document.getElementById("thread");
   if (!thread) return;
-  const div = document.createElement("div");
-  div.className = `UnicDB-chat-tool-result UnicDB-chat-tool-result-${status}`;
-  div.textContent = summary; // host already formats "✓ tool — shape"
-  thread.appendChild(div);
-  autoScroll(div);
+  const container = document.createElement("div");
+  container.className = `UnicDB-chat-tool-result UnicDB-chat-tool-result-${status} UnicDB-chat-tool-collapsible`;
+  container.dataset.toolResult = "true";
+
+  const header = document.createElement("div");
+  header.className = "UnicDB-chat-tool-header";
+  header.setAttribute("role", "button");
+  header.setAttribute("tabindex", "0");
+  header.setAttribute("aria-expanded", "true");
+  header.setAttribute(
+    "aria-label",
+    `Toggle tool result: ${tool} (${status})`,
+  );
+  header.title = `${tool} — ${status}`;
+
+  // Intentionally NO textContent on the header. The 12×12 caret glyph is
+  // delivered via the .UnicDB-chat-tool-glyph::before pseudo-element in
+  // styles.css so card.textContent remains exactly the summary string.
+
+  const body = document.createElement("div");
+  body.className = "UnicDB-chat-tool-body";
+  body.textContent = summary; // host already formats "✓ tool — shape"
+
+  const toggle = (): void => {
+    const collapsed = container.classList.toggle("UnicDB-chat-tool-collapsed");
+    header.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  };
+  header.addEventListener("click", toggle);
+  header.addEventListener("keydown", (ev: KeyboardEvent) => {
+    // Space / Enter also toggles (the ARIA `role="button"` contract).
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      toggle();
+    }
+  });
+
+  container.appendChild(header);
+  container.appendChild(body);
+  thread.appendChild(container);
+  autoScroll(container);
 }
 
 /** AIX-04: consent card for a reviewed change plan. DOM text only —
@@ -1392,7 +1440,11 @@ function wireJumpLatest(): void {
  * Idempotent — the bubble only carries one caret at a time. The caret is
  * removed when the bubble is de-streamed (done/error). */
 function ensureStreamingCaret(bubble: HTMLDivElement): void {
-  if (bubble.querySelector(".UnicDB-chat-caret")) return;
+  const existing = bubble.querySelector(".UnicDB-chat-caret");
+  if (existing) {
+    // Re-append (move) to the end so the caret trails the latest text.
+    bubble.removeChild(existing);
+  }
   const caret = document.createElement("span");
   caret.className = "UnicDB-chat-caret";
   caret.setAttribute("aria-hidden", "true");
