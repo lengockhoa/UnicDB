@@ -557,3 +557,24 @@ User asked mid-cycle AGT to clone the Claude Code VS Code extension UI/UX (marke
 - `applyEngine` builtin+hint branch (main.ts:1567-1581) skips `header.setEngine`, leaves `#engineBanner` classless on first frame carrying hint
 - `renderMarkdown`/`escapeHtml` duplicated between main.ts and aiChatPanelThread.ts (intentional per pinned-class rationale; consolidate in follow-up)
 - Pre-existing flaky failure in `webviewServerFilter` area (1 of 3 runs); worth future triage
+
+---
+
+## 2026-09-08 — Cleanup pass (post AGT-UI 1.53.25)
+
+User asked "vậy còn gì nữa không" → listed ~10 queued minor findings (4 AGT-UI + 6 AGT). User said "a dọn dẹp cho sạch sẽ trước" (clean it up first). Single commit `cbf277a` on `main`, pushed to `origin/main`.
+
+**Fixed (4 of 4 cleanup-pass items):**
+- `webview/aiChatPanelMain.ts` `applyEngine` builtin+hint branch: was writing `banner.textContent` without first calling `header.setEngine("builtin")` → banner carried no `.UnicDB-chat-engine`/`.UnicDB-chat-engine-builtin` className on first frame; hint path silently lost its styling. Set class first, then override body.
+- `src/ai/omp/hostMcp.ts`: curated containment lane had timeout; standard tools had none → hung standard tool could wedge the MCP request loop. Added `HOST_MCP_STANDARD_TOOL_TIMEOUT_MS = 30_000` constant (matches `DEFAULT_ACP_REQUEST_TIMEOUT_MS`), wired into standard-tool branch via `Promise.race` + `clearTimeout` + try/catch. Test ran clean on first attempt; my first edit attempt left a broken `Promise.withResolvers` + `settled`-flag dance (dead `race` variable, raceResolve never awaited) — refactored to clean `Promise.race([std.execute, timeoutPromise])` + sentinel-prefix detection.
+- `src/ai/omp/mcpBridge.ts:294-298`: reworded `server.unref()` comment to accurately describe what unref does (releases listening-socket reference so host can exit with zero active connections). Old wording understated the default behaviour.
+- `webview/styles.css`: removed the dead `transition: max-height, opacity` from `.UnicDB-chat-tool-collapsible` (collapse animates body only). Test broke (polish test enforces 150ms ease on that selector). **Restored** the rule with a comment explaining it's the contract-referenced timing token; moved `padding-top, padding-bottom` onto `.UnicDB-chat-tool-body` so collapse doesn't visually snap at zeroed padding. Lesson: the polish test's selector regex is a contract, not a coincidence — never remove a property just because it looks unused; check the tests first.
+
+**Skipped / deferred (out of cleanup-pass scope):**
+- AGT-UI minor #3 `renderMarkdown`/`escapeHtml` dedup between main.ts and thread.ts — too large for cleanup pass; needs its own planner cycle.
+- AGT-UI minor #4 pre-existing flaky test in `webviewServerFilter` — needs separate triage.
+- AGT vague minors (stale comments / dead export alias / smoke-helper docs) — descriptions too generic; needs a triage task to locate specific files/lines.
+
+**Verification:** `npm run typecheck` clean · `npm test` 4026 passed | 4 skipped | 0 failed (273 files) · `npm run compile` clean · pushed to origin. **Not released** — none of the fixes are user-visible or security; skipping the patch release unless user asks.
+
+**HEAD:** `cbf277a` on `main`, pushed.
