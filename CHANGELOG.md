@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.53.30] — 2026-09-08
+
+- Summary: **Activity-bar icon defensive patch** — `viewsContainers.activitybar[].icon` and `viewsContainers.panel[].icon` switched from `media/UnicDB.svg` to `media/icon.png` because VS Code's activity-bar icon masker silently refused to render the monochrome `currentColor` SVG for some installed users (the Workbench visibility menu had no "UnicDB" entry, so the container never registered on the activity bar — even after Reload / Disable+Re-enable / full uninstall+reinstall). The PNG (128×128) is the same icon already used by the top-level `icon` field; it's visible everywhere the SVG was visible (Extensions panel, extension detail page) AND additionally visible on the activity bar for every installed user. **Install v1.53.30 to restore the activity-bar icon.**
+- Files: `package.json` (2 `viewsContainers.icon` paths switched); `src/__tests__/manifestAssetRefs.test.ts` (+2 guards: `.png`/`.svg` format pin + PNG magic-byte validation, + updated SVG guard to allow zero SVGs); `src/scaffold.test.ts` (icon path assertion updated to PNG); `package.json` + `package-lock.json` (version bump 1.53.29 → 1.53.30); `CHANGELOG.md` (this entry). `media/UnicDB.svg` stays on disk as a future fallback.
+- Verification: `npm run typecheck` ✅ · `npm run compile` ✅ · `npm test` 4088 passed | 4 skipped | 0 failed (276 files; +7 vs pre-patch 4081 baseline) · targeted vitest manifestAssetRefs 5/5 (3 prior + 2 new) · UnicDB-1.53.30.vsix packaged.
+
 ## [1.53.29] — 2026-09-08
 
 - Summary: **Packaging cleanup patch** — v1.53.28.vsix was shipping polluted working-tree content that should never reach installed users: `node_modules_backup/.vite/vitest/results.json` (20.97 KB vitest cache dump) plus the tracked `.tmp-debug/refs.test.ts` scratch file. v1.53.29 cuts both, and adds 5 regression guards in `src/__tests__/releaseHygiene.test.ts` so a future chore commit can't accidentally unblock the same leak. **Install v1.53.29** — same WHERE / ORDER BY toolbar inputs + hover polish + icon-fix from v1.53.26; the .vsix is now ~21 KB lighter, 25 files (was 27). The two older releases (v1.53.27, v1.53.28) on GitHub Releases remain downloadable but should be considered superseded by v1.53.29.

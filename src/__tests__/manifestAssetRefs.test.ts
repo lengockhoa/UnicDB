@@ -68,9 +68,14 @@ describe("manifest asset references", () => {
   });
 
   it("every contributed media/*.svg asset has explicit width and height on the root <svg>", () => {
+    // v1.53.30: viewsContainers icons switched to PNG (defensive against
+    // VS Code's activity-bar icon masker silently refusing to render some
+    // SVGs). This guard now loops ONLY over any SVGs still contributed —
+    // it no longer asserts at least one SVG exists, since the defensive
+    // posture is PNG-only. If a future cycle reintroduces an SVG icon, the
+    // width/height checks below still apply.
     const pkg = readJson<Manifest>("package.json");
     const refs = collectMediaIconRefs(pkg).filter((r) => r.endsWith(".svg"));
-    expect(refs.length, "no media/*.svg contributed via viewsContainers").toBeGreaterThan(0);
     for (const rel of refs) {
       const svg = fs.readFileSync(path.join(repoRoot, rel), "utf-8");
       // Only assert the FIRST <svg ...> open tag — the root element. Inner
@@ -102,5 +107,42 @@ describe("manifest asset references", () => {
       fs.existsSync(path.join(repoRoot, pkg.icon!)),
       `top-level package.json 'icon' path '${pkg.icon}' does not resolve on disk`,
     ).toBe(true);
+  });
+
+  // v1.53.30 defensive guards — switched viewsContainers icons to PNG because
+  // VS Code's activity-bar icon masker silently refused to render the SVG for
+  // some installed users (icon missing from Workbench visibility menu even
+  // after Reload / Disable+Re-enable / full uninstall+reinstall). These two
+  // tests pin the PNG-only fallback so a future cycle cannot silently
+  // re-introduce a non-PNG icon asset.
+  it("every manifest icon path uses a vscode-supported image format (.png or .svg)", () => {
+    const pkg = readJson<Manifest>("package.json");
+    const refs: string[] = [];
+    if (pkg.icon) refs.push(pkg.icon);
+    refs.push(...collectMediaIconRefs(pkg));
+    expect(refs.length, "manifest must declare at least one icon").toBeGreaterThan(0);
+    for (const rel of refs) {
+      expect(
+        /\.(png|svg)$/i.test(rel),
+        `${rel} must end with .png or .svg — VS Code icon loaders reject other formats`,
+      ).toBe(true);
+    }
+  });
+
+  it("every contributed PNG asset has the PNG magic bytes (89 50 4E 47 0D 0A 1A 0A)", () => {
+    const pkg = readJson<Manifest>("package.json");
+    const refs = collectMediaIconRefs(pkg).filter((r) => r.toLowerCase().endsWith(".png"));
+    // This guard assumes the defensive PNG-fallback posture; it will fail if
+    // someone reintroduces a broken .png path or a non-PNG file renamed to .png.
+    expect(refs.length, "no PNG icons contributed — guard pinned to PNG fallback").toBeGreaterThan(0);
+    for (const rel of refs) {
+      const buf = fs.readFileSync(path.join(repoRoot, rel));
+      expect(
+        buf.length >= 8 &&
+          buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 &&
+          buf[4] === 0x0d && buf[5] === 0x0a && buf[6] === 0x1a && buf[7] === 0x0a,
+        `${rel} is not a valid PNG (magic bytes 89 50 4E 47 0D 0A 1A 0A mismatch)`,
+      ).toBe(true);
+    }
   });
 });

@@ -112,10 +112,16 @@ describe("scaffold", () => {
 
     // viewsContainers.activitybar PHẢI tồn tại — regression v1.2.1: mất key này
     // → mất icon UnicDB trên Activity Bar sau reload window.
+    // v1.53.30: icon chuyển từ media/UnicDB.svg → media/icon.png vì VS Code
+    // activity-bar icon masker âm thầm từ chối render SVG monochrome cho một
+    // số users (icon biến mất khỏi Workbench visibility menu ngay cả sau
+    // Reload / Disable+Re-enable / full uninstall+reinstall). PNG render
+    // universally — same icon đã được dùng cho top-level `icon` field (visible
+    // trong Extensions panel và extension detail page).
     const activitybar = pkg.contributes.viewsContainers?.activitybar;
     expect(activitybar, "viewsContainers.activitybar must exist").toBeTruthy();
     expect(activitybar[0].id).toBe("UnicDB");
-    expect(activitybar[0].icon).toBe("media/UnicDB.svg");
+    expect(activitybar[0].icon).toBe("media/icon.png");
 
     // views.UnicDB.schemaTree
     expect(pkg.contributes.views.UnicDB).toBeTruthy();
