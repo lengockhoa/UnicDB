@@ -58,3 +58,9 @@ Thumbs.db
 # Polluted working-tree dirs (added 2026-09-08 cycle RES-BAR post-publish cleanup)
 node_modules_backup/**
 .tmp-debug/**
+
+# v1.53.32 — local credentials cache (Marketplace publish PAT). MUST NOT
+# ship in the .vsix (vsce does NOT read .gitignore). If this directory is
+# ever packaged, the Azure DevOps PAT inside `.pat` leaks to every user
+# who installs the extension — full publisher-account compromise.
+.secrets/**
