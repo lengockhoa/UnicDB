@@ -35,3 +35,10 @@ dist/
 # safety net for any race where the dispose path didn't run.
 .vscode/.unicdb-claude-mcp-*.json
 .vscode/.unicdb-codex-mcp-*.json
+
+# bump-version.mjs (release pipeline) — temp notes file written to the repo
+# root during `gh release create` and removed in a `finally`. Always clean on
+# success, but the gitignore entry is a safety net for an aborted run that
+# leaves the file behind. Content is the multi-line CHANGELOG entry for the
+# version being released.
+.bump-notes-*.md

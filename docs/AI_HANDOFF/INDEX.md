@@ -47,11 +47,9 @@ Wave plan (inferred from `Dependencies`):
 
 Wave-boundary gate: after every wave, full `npm test` + `npm run typecheck` + `npm run compile`.
 
-Cycle AGT status: implementation_complete — 14 tasks implemented across 6 waves; INDEX updated; **Phase 4 Review (R1-R5) NOT yet executed** by orchestrator. R1-R4 reviewer agents are pending; R5 push is gated on verdicts.
+Cycle AGT status: shipped — 14/14 reviewed (1 approved · 13 approved_minor · 0 critical), released as v1.53.24 on 2026-09-08. HEAD: 10a26d1 release: 1.53.24 (pushed). GitHub Release: https://github.com/lengockhoa/UnicDB/releases/tag/v1.53.24 (.vsix attached). Marketplace: lengockhoa.UnicDB v1.53.24 published. omp code path unchanged (TASK-004 zero-diff audit held). Mid-cycle reopens (~6 non-blocking minors + cycle AGT-UI clone request) recorded in ACTIVE.md.
 
-⚠️ **Process note for reviewer (R2-R4) — see Final Report for executor integrity findings.**
-
-Mid-cycle user request (queued as NEXT cycle, NOT in current AGT scope): clone Claude Code VS Code extension UI/UX — references `anthropic.claude-code` (marketplace) + https://code.claude.com/docs/en/vs-code. To be planned as cycle AGT-UI after AGT ships. Cycle AGT stays scoped to backend agent wiring + image+text pipeline; TASK-011/012 panel work stays at backend-dispatch level only (no UI redesign), so AGT-UI can land cleanly on top without re-doing AGT's engine routing.
+Mid-cycle user request (queued as NEXT cycle, NOT in current AGT scope): clone Claude Code VS Code extension UI/UX — references `anthropic.claude-code` (marketplace) + https://code.claude.com/docs/en/vs-code. Plan as separate cycle AGT-UI now that AGT has shipped. AGT stayed scoped to backend agent wiring + image+text pipeline; TASK-011/012 panel work stayed at backend-dispatch level only (no UI redesign), so AGT-UI can land cleanly on top without re-doing AGT's engine routing.
 
 **AGT-UI user clarifications (2026-09-07, mid-cycle):**
 - **Color**: BLUE replaces Claude's orange — same accent placement, just blue palette.

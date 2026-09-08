@@ -28,7 +28,7 @@
 // changes that would be lost.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, statSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 
 
@@ -262,16 +262,44 @@ if (skipPublish) {
 
   // 6f. GitHub release (uses CHANGELOG entry as notes).
   const entry = readChangelogEntry(newVersion);
-  runNpx("gh", [
-    "release",
-    "create",
-    `v${newVersion}`,
-    `UnicDB-${newVersion}.vsix`,
-    "--title",
-    `v${newVersion}`,
-    "--notes",
-    entry || `Release v${newVersion}`,
-  ]);
+  const vsixAsset = `UnicDB-${newVersion}.vsix`;
+  // Sanity check: the .vsix must exist before `gh release create` runs.
+  // Doing this check inline here (not only at step 5) closes the race where a
+  // filesystem lag between `vsce package` and the next spawn caused a silent
+  // gh failure on the 1.53.24 run.
+  try {
+    const stat = statSync(vsixAsset);
+    if (!stat.isFile() || stat.size === 0) {
+      die(`asset missing or empty: ${vsixAsset}`);
+    }
+  } catch (err) {
+    die(`asset not found: ${vsixAsset} (${err instanceof Error ? err.message : String(err)})`);
+  }
+  // Write notes to a temp file and pass via --notes-file. The previous design
+  // used `--notes "<multi-line entry>"` inline, which `gh release create` could
+  // mis-parse (the entry contains backticks, bullet markers, parens). Using
+  // --notes-file is the canonical pattern for multi-line / large notes.
+  const notesPath = resolve(ROOT, `.bump-notes-${newVersion}.md`);
+  writeFileSync(notesPath, entry || `Release v${newVersion}\n`);
+  try {
+    runNpx("gh", [
+      "release",
+      "create",
+      `v${newVersion}`,
+      vsixAsset,
+      "--title",
+      `v${newVersion}`,
+      "--notes-file",
+      notesPath,
+    ]);
+  } finally {
+    // Always remove the temp notes file, even on abort.
+    try {
+      unlinkSync(notesPath);
+    } catch {
+      /* best-effort */
+    }
+  }
   console.log(`✓ GitHub release v${newVersion} created`);
 
   // 6g. Marketplace publish (PAT is in macOS Keychain).
