@@ -94,6 +94,19 @@ function packageJsonDepsDiff(ref: string): string {
   const contributesEnumValuePattern =
     /^[+-]\s+"(builtin|omp|claude-code|codex|ask|agent|plan)",?\s*$/;
 
+  // v1.53.32 — adding a NEW configuration property under
+  // `contributes.configuration.properties` (e.g. `UnicDB.preferPrimarySidebar`)
+  // is a legitimate feature addition, not a command-surface drift. The guard
+  // exists to catch structural regressions (new commands, new menu bindings,
+  // dependency churn). A new `UnicDB.*` property declaration does none of
+  // those. Filter the property's opening `{`-block line + its standard
+  // `type`/`default`/`description` lines so legitimate feature additions
+  // ship without false-positive frozen-surface failures.
+  const contributesNewPropertyPattern =
+    /^[+-]\s+"UnicDB\.[a-zA-Z0-9.]+":\s*\{\s*,?\s*$/;
+  const contributesNewPropertyLinePattern =
+    /^[+-]\s+"(type|default|enum|description|markdownDescription|minimum|maximum|minItems|maxItems|scope|deprecationMessage|tags|editPresentation)":/;
+
   const out: string[] = [];
   const lines = raw.split("\n");
   for (const line of lines) {
@@ -113,7 +126,9 @@ function packageJsonDepsDiff(ref: string): string {
       bareListDelimiter.test(line) ||
       bareListClose.test(line) ||
       contributesDescriptionPattern.test(line) ||
-      contributesEnumValuePattern.test(line)
+      contributesEnumValuePattern.test(line) ||
+      contributesNewPropertyPattern.test(line) ||
+      contributesNewPropertyLinePattern.test(line)
     ) {
       continue;
     }

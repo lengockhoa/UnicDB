@@ -401,10 +401,65 @@ async function safeFileExists(uri: vscode.Uri): Promise<boolean> {
   }
 }
 
+// v1.53.32 — ensure UnicDB container lives in Primary Sidebar (left activity
+// bar) on first activation. VS Code 1.85+ may auto-route a newly-registered
+// activity-bar container to the Secondary Sidebar (right) when one is open
+// — leaving the activity-bar slot empty even though the views are
+// registered. Calling a workbench move-command restores the Primary Sidebar
+// placement; older VS Code builds without these commands fail silently and
+// the user can fall back to View > Appearance > Primary Side Bar.
+//
+// The flag is stored in globalState per extension install so the move
+// happens once. Re-running the `UnicDB.moveToPrimarySidebar` command
+// clears the flag and re-tries (manual escape hatch if the first attempt
+// failed because the view was still mid-registration).
+async function ensurePrimarySidebar(context: vscode.ExtensionContext): Promise<void> {
+  const KEY = "UnicDB.primarySidebarEnsured";
+  if (context.globalState.get<boolean>(KEY)) return;
+  const cfg = vscode.workspace.getConfiguration("UnicDB");
+  if (cfg.get<boolean>("preferPrimarySidebar") === false) {
+    // User has explicitly opted out — remember so we never ask again.
+    await context.globalState.update(KEY, true);
+    return;
+  }
+  // Wait one microtask + a real tick so createTreeView has finished
+  // registering `UnicDB.schemaTree` / `UnicDB.adminTree`. Without this
+  // the move command runs before VS Code knows the views exist and the
+  // call is a no-op.
+  await new Promise<void>((r) => setTimeout(r, 50));
+  const viewIds = ["UnicDB.schemaTree", "UnicDB.adminTree"];
+  // Try every plausible workbench command name. Older VS Code builds
+  // expose different IDs; we accept the first one that succeeds.
+  const candidates: Array<{ cmd: string; args: unknown[] }> = [
+    { cmd: "workbench.action.moveViewsToPrimarySidebar", args: [viewIds] },
+    { cmd: "workbench.action.moveViewsToPrimarySidebar", args: [{ views: viewIds }] },
+    { cmd: "workbench.action.moveViewToPrimarySidebar", args: [viewIds[0]] },
+    { cmd: "_workbench.action.moveToPrimarySidebar", args: [viewIds[0]] },
+  ];
+  for (const { cmd, args } of candidates) {
+    try {
+      await vscode.commands.executeCommand(cmd, ...(args as []));
+      await context.globalState.update(KEY, true);
+      console.log(`UnicDB: container moved to Primary Sidebar via ${cmd}`);
+      return;
+    } catch {
+      // try next candidate
+    }
+  }
+  // All candidates unavailable — leave the flag unset so the next
+  // activation (reload, window reopen) retries. The user can also
+  // invoke `UnicDB.moveToPrimarySidebar` to force a retry.
+}
+
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
   disposables = [];
+  // v1.53.32 — fire-and-forget: move UnicDB container to Primary Sidebar
+  // on first activation. Runs in parallel with the rest of activate();
+  // the function itself waits a tick before issuing the move command so
+  // the views below have time to register.
+  void ensurePrimarySidebar(context);
   // TASK-ARP02-004 — a reload re-activates in the same JS realm: clear the
   // teardown sentinel set by the previous deactivate().
   deactivating = false;
@@ -751,6 +806,20 @@ export async function activate(
   // 1. UnicDB.runQuery — Cmd+Enter
   disposables.push(
     vscode.commands.registerCommand("UnicDB.runQuery", () => runQueryFromEditor(mgr, runner, panel, statusBar)),
+  );
+
+  // v1.53.32 — manual escape hatch: clear the primarySidebarEnsured flag
+  // and re-attempt the move. Useful if the auto-move on first activation
+  // fired before the views were registered, or if the user toggled VS
+  // Code's sidebar layout and wants UnicDB back on the Primary Sidebar.
+  disposables.push(
+    vscode.commands.registerCommand("UnicDB.moveToPrimarySidebar", async () => {
+      await context.globalState.update("UnicDB.primarySidebarEnsured", undefined);
+      await ensurePrimarySidebar(context);
+      void vscode.window.showInformationMessage(
+        "UnicDB: container moved to Primary Sidebar (if the workbench move command is available in this VS Code version).",
+      );
+    }),
   );
 
   // 2. UnicDB.runStatement — CodeLens click

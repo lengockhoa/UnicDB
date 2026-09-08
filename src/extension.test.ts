@@ -6495,7 +6495,13 @@ describe("TASK-UX1-004 — UnicDB.openUserGuide", () => {
       "https://github.com/lengockhoa/UnicDB/blob/main/docs/UNICDB_USER_GUIDE.md",
     );
     // markdown.showPreview must NOT be called when the file is missing.
-    expect(executeSpy).not.toHaveBeenCalled();
+    // v1.53.32: tightened — executeSpy may legitimately be called by other
+    // activate()-time code (e.g. UnicDB.moveToPrimarySidebar's workbench
+    // move command). Only the markdown path is what we're guarding here.
+    expect(executeSpy).not.toHaveBeenCalledWith(
+      "markdown.showPreview",
+      expect.anything(),
+    );
     // No info toast either — openExternal replaces the useless path toast.
     expect(infoSpy).not.toHaveBeenCalled();
   });

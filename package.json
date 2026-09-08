@@ -237,6 +237,12 @@
         "icon": "$(trash)"
       },
       {
+        "command": "UnicDB.moveToPrimarySidebar",
+        "title": "Move to Primary Sidebar",
+        "category": "UnicDB",
+        "icon": "$(arrow-left)"
+      },
+      {
         "command": "UnicDB.openAiSettings",
         "title": "Open AI Settings…",
         "category": "UnicDB",
@@ -769,6 +775,11 @@
           "type": "boolean",
           "default": true,
           "description": "Hide system schemas such as pg_catalog and information_schema in the Schema Explorer."
+        },
+        "UnicDB.preferPrimarySidebar": {
+          "type": "boolean",
+          "default": true,
+          "description": "v1.53.32 — when true (default), on first activation UnicDB moves its view container to the Primary Sidebar (left activity bar) instead of staying in the Secondary Sidebar (right). Set to false if you prefer the Secondary Sidebar placement. Re-run \"UnicDB: Move to Primary Sidebar\" from the command palette to apply after toggling."
         },
         "UnicDB.ai.engine": {
           "type": "string",
