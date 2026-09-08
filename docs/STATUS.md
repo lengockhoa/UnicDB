@@ -43,6 +43,15 @@
 
 **No patch release.** Cycle plan specified no version bump — these go out with the next feature cycle's release plumbing.
 
+## Active cycle — RES-BAR (SHIPPED → v1.53.28, 2026-09-08)
+
+Cycle RES-BAR fully shipped: **v1.53.27 LIVE on the VS Code Marketplace** (publish succeeded via Keychain grant mid-session). **v1.53.28** is the consolidated patch — same deliverable as v1.53.27 + the 3 cosmetic test-hygiene minors R4 reviewers (unic-smart) flagged, no user-visible behavior change. v1.53.28 `.vsix` is shipped + GitHub release live; Marketplace publish attempt re-blocked on Keychain re-prompt after the cached grant expired (~5min). User needs to grant the prompt once more (or run the `!` one-liner below).
+
+- **Base → HEAD**: accf1b5 → 460f79e (12 commits: plan, wave 1, cleanup, wave 2, R5 closure, v1.53.27 release, R4-minor fixes, v1.53.28 release).
+- **Marketplace**: v1.53.27 published ✓ · v1.53.28 pending user-side `!` command.
+- **GitHub releases**: v1.53.27 ✓ https://github.com/lengockhoa/UnicDB/releases/tag/v1.53.27 · v1.53.28 ✓ https://github.com/lengockhoa/UnicDB/releases/tag/v1.53.28
+- **Outstanding**: Run `! cd /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB && VSCE_PAT="$(security find-generic-password -s 'vscode-vsce' -w)" && npx --no-install vsce publish --no-git-tag-issue --no-update-package-json --pat "$VSCE_PAT"` to publish v1.53.28 to the Marketplace. v1.53.27 should already be live (Marketplace page fetched mid-session showed version 1.53.27 in the asset URL).
+
 ## Active cycle — RES-BAR (SHIPPED → v1.53.27, 2026-09-08)
 
 Cycle RES-BAR shipped as **v1.53.27** on 2026-09-08. v1.53.27 `.vsix` packaged (2.06 MB); GitHub release `v1.53.27` created with asset attached. Marketplace `vsce publish` is pending user-side Keychain unlock (same block as v1.53.26); release commit/tag pushed to origin.
