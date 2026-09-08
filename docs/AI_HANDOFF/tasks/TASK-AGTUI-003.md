@@ -103,3 +103,18 @@ Note: header module is pure-DOM, no vscode imports; safeEngineClassName whitelis
   childNodes.length===0 (text node from textContent counts as a child); corrected
   to querySelectorAll("*").length===0 to match the legacy
   aiChatPanelSessionStateWebview.test.ts:116 contract.
+
+## Reviewer Report
+REVIEWER_MODEL: unic-smart
+Verdict: APPROVED-WITH-MINOR
+Findings:
+  - minor (spec path drift): Task spec + Interfaces cite `webview/__tests__/aiChatPanelWebview.test.ts` and `aiChatPanelSessionStateWebview.test.ts`; the real fixture files live at `src/ui/__tests__/aiChatPanelWebview.test.ts` and `src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts`. Pinned line numbers (424-461, 880-935 / 85-118) match the real files exactly — only the directory is wrong. Fix the references before TASK-AGTUI-007 relies on them.
+  - minor (spec bug, per review scope #2): pinned fixture #5b (`src/ui/__tests__/aiChatPanelWebview.test.ts:433-443`) requires `Engine: builtin — <hint> — streaming`, but the spec's `setEngine(name, version?)` signature has no `hint` parameter, so this module alone cannot render the hint variant (legacy `applyEngine` at base 515d87e supported `msg.hint`). Fixture currently passes (43/43 at HEAD), so wave-2 integration must be serving hint via another path — flag to TASK-AGTUI-007's reviewer to confirm hint is still reachable.
+  - minor (test gap): new unit test never calls `setEngine("codex")`; the fourth closed-map label ("Codex") is only pinned indirectly by legacy fixture #T12-engine-3. Add one assertion to `webview/__tests__/aiChatPanelHeader.test.ts`.
+  - minor (type nit): `aiChatPanelHeader.ts:137` declares `name: HeaderEngine | null | unknown` — union collapses to `unknown`; write `unknown` alone.
+  - clean: engine label map verbatim vs legacy `ENGINE_LABELS` (base 515d87e aiChatPanelMain.ts:1437); format `Engine: <label>[ v<version>] — streaming` exact; unknown/hostile inputs closed-mapped to builtin (never raw wire string in className/textContent); chip reuses one node, legacy classes + additive `UnicDB-chat-sessionchip`, old suffix dropped, labels Connecting…/Running…/Done/Error, `querySelectorAll("*").length===0` + `innerHTML` contract matches legacy fixture line 116-118; null removes chip; brand "U" plain text, aria-hidden, title="UnicDB", blue 28px via `.UnicDB-chat-brand` (styles.css:1947-1956); no innerHTML, no vscode import, no foreign selectors touched (frozen-selector guard clean).
+  - clean: TDD RED genuine — RED_OUTPUT shows real module-resolution failure (file absent), not a bare claim.
+Verification rerun (this reviewer, HEAD 6324c43):
+  - `npx vitest run webview/__tests__/aiChatPanelHeader.test.ts` → 10 passed (10)
+  - `npm run typecheck` → clean
+  - Compatibility: `npx vitest run src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts src/ui/__tests__/aiChatPanelWebview.test.ts` → 52 passed (52), pinned fixtures unmodified

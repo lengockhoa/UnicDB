@@ -166,6 +166,27 @@ Note: none
 
 ---
 
-## Reviewer Verdict
+## Reviewer Report
+REVIEWER_MODEL: unic-smart (claude-opus-4-6 via UNIC gateway)
+Verdict: APPROVED-WITH-MINOR
 
-(appended below by reviewer)
+Verification rerun (fresh, this review):
+- `npx vitest run src/ui/__tests__/aiChatPanelCloneHost.test.ts` → 8 passed (8)
+- `npx vitest run src/ui/__tests__/aiChatPanelAgentEngines.test.ts src/ui/__tests__/aiChatPanelEngine.test.ts src/ui/__tests__/aiChatPanelAcp.test.ts src/ui/__tests__/aiChatPanel.test.ts` → 93 passed (unmodified, backward compat holds)
+- Full panel family (28 files, 441 tests) → 438 passed / 3 failed — all 3 failures are in `aiChatPanelClonePolish.test.ts` (wave-3 TASK-AGTUI-008 suite, added at 6324c43, does not exist at review base b9470dc; fails in isolation too — NOT a 006 regression, but see cross-task note)
+- `npm run typecheck` → exit 0
+
+Scope findings:
+- Completeness: all four host behaviors present and correct — `models` frame posted from `deps.loadConfig()` on ready before `init` (aiChatPanel.ts:1836-1843); `case "model_select"` (aiChatPanel.ts:1693) with closed-set guard + empty-modelId rejection + silent flip + fresh `models` frame; `case "bypass_permissions"` (aiChatPanel.ts:1702) on a panel-session field default false, zero persistence writes; public API purely additive.
+- Element-id contract (PLAN §3): untouched — host diff contains no DOM/id changes (ids live webview-side).
+- Wire protocol: `AiChatPanelModels` in host→webview union (aiChatPanelMessages.ts:231,283); `AiChatPanelModelSelect`/`AiChatPanelBypassPermissions` in webview→host union (aiChatPanelMessages.ts:420,431,447-448). Engine dispatch untouched — full diff read; no hunk falls inside `resolveEngineKind` (:1941), `runOmpEngineTurn` (:2504), `runClaudeCodeTurn` (:2669), `runCodexTurn` (:2690), `runImageCapableEngineTurn` (:2721).
+- Open item: executor's `isAllowKindOptionId` verified byte-for-byte against `optionIdGrants` at src/ai/omp/hostMcp.ts:122-124; closed option set [allow-once, allow-session, deny] confirmed at hostMcp.ts:113-120. Bypass ACP branch writes exactly one result per call and only allow-kind ids already listed in the request (no unlisted-id injection); deny fallback = `cancelled`, matching `handlePermissionResponse`'s settle contract (aiChatPanel.ts:3557-3587).
+- TDD: all 7 planned cases implemented with real `expect` assertions; bypass tests exercise the real ACP transport path, not mocks of the unit under test. RED evidence is a paraphrase ("until: condition not met") rather than raw pasted output — acceptable: the signature matches the actual `until()` helper (test line 126) and this review's fresh re-run is green.
+
+Findings:
+- minor: src/ui/aiChatPanel.ts:1905 (`handleModelSelect`) — indexes `cfg.models[role]` without the `cfg.models !== undefined` guard its sibling `buildModelsFrame` has; a hypothetically malformed loadConfig result would throw inside the webview-message handler instead of posting the error bubble. Low likelihood (loadConfig is typed `Promise<AiConfig>` with non-optional models); add the same guard for symmetry.
+- minor: docs/AI_HANDOFF/tasks/TASK-AGTUI-006.md:75-79 (Executor Report RED section) — RED output paraphrased, not pasted verbatim. For future tasks paste the raw vitest failure block per the handoff contract.
+- cross-task note (non-blocking for 006): `src/ui/__tests__/aiChatPanelClonePolish.test.ts` fails 3/8 at HEAD (caret lifecycle #1, tool card #2, stop pulse #5), also in isolation — TASK-AGTUI-008 is still `pending_review`; its reviewer must treat this as a blocking verification failure for 008.
+
+Cross-checks passed: models frame carries no apiKey/baseUrl/method (regex-asserted in test #1 and confirmed by reading `buildModelsFrame`); fail-closed posture preserved when bypass is ON but webview is gone (`requestHostPermission` resolves deny); Stop/cancel paths unaffected (bypass branch never registers pending entries).
+

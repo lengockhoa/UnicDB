@@ -100,10 +100,10 @@ describe("aiChatPanelThread — bubbles (case #1 happy)", () => {
     expect(card.textContent).toBe("ran 12 rows");
   });
 
-  it("appendErrorBubble produces .UnicDB-chat-msg-error with exact message", () => {
+  it("appendErrorBubble produces .UnicDB-chat-error with exact message", () => {
     const t = freshThread();
     const b = appendErrorBubble(t, "kaboom");
-    expect(b.classList.contains("UnicDB-chat-msg-error")).toBe(true);
+    expect(b.classList.contains("UnicDB-chat-error")).toBe(true);
     expect(b.textContent).toBe("kaboom");
   });
 
@@ -303,10 +303,10 @@ describe("aiChatPanelThread — empty payloads (case #4 empty strings)", () => {
     expect(card.textContent).toBe("");
   });
 
-  it("appendErrorBubble('') renders an empty .UnicDB-chat-msg-error", () => {
+  it("appendErrorBubble('') renders an empty .UnicDB-chat-error", () => {
     const t = freshThread();
     const b = appendErrorBubble(t, "");
-    expect(b.classList.contains("UnicDB-chat-msg-error")).toBe(true);
+    expect(b.classList.contains("UnicDB-chat-error")).toBe(true);
     expect(b.textContent).toBe("");
   });
 });

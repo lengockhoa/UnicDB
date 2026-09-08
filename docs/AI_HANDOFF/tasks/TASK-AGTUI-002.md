@@ -93,3 +93,21 @@ Note: Webview mirror of these literal shapes is intentionally NOT mirrored
 ## Reviewer Verdict
 
 (appended below by reviewer)
+
+## Reviewer Report
+
+REVIEWER_MODEL: unic-smart
+Verdict: APPROVED
+Findings: none blocking; scope walked 1-5, all clean.
+
+- Completeness — all three spec shapes present and unioned exactly per §Interfaces: `AiChatPanelModels` (src/ui/aiChatPanelMessages.ts:231, host union :283), `AiChatPanelModelSelect` (:420), `AiChatPanelBypassPermissions` (:431, webview union :447-448). Diff is purely additive; every pre-existing export preserved; existing `aiChatPanelMessages.test.ts` byte-identical (empty diff 515d87e..87ec6e2).
+- Wire contract — no type-literal collision with any existing member of either union; file-header "type discriminator, unknown ignored" pattern (aiChatPanelMessages.ts:2-4) keeps new frames round-trip safe with the legacy host/webview (unknown types are dropped, not mishandled). Whole-repo `tsc --noEmit` green proves no exhaustive switch elsewhere in src/ broke from the widened unions.
+- Backward compat — PLAN §3 additive-only contract (PLAN.md:106 "existing message shapes and element ids unchanged") satisfied: no element ids live in this file and no pinned shape was altered; `AiModelRole` re-export matches src/ai/settings.ts:13 exactly ("work" | "smart" | "autocomplete" | "lite").
+- Test quality — 8 tests with real `expect` assertions pinning union membership, empty-roles edge, frozen key sets (`Object.keys` equality), direction exclusivity, and roles[] entry shape. The `@ts-expect-error` tripwires (aiChatPanelMessagesClone.test.ts:111, 115) are proven live: my clean `tsc --noEmit` confirms they suppress real errors (unused directives would fail typecheck), so a regression to `role: string` re-trips RED. Fixtures are self-contained constants, independent of unrelated refactors.
+- TDD — RED_OUTPUT carries concrete TS diagnostics (TS2724 x2, TS2305, TS2367 x3, TS2339), consistent with PLAN.md:115's pre-declared type-level RED for this task. Genuine, not a bare claim.
+
+VERIFICATION_RERUN (independent, this review turn):
+  npm run typecheck -> exit 0, no errors
+  npx vitest run aiChatPanelMessagesClone.test.ts + aiChatPanelMessages.test.ts -> 28/28 pass (8 new + 20 regression, unmodified)
+
+Cosmetic (non-blocking, no action): one extra blank line added at src/ui/aiChatPanelMessages.ts:236 — mirrors the file's pre-existing double-blank precedent at :136-137; no lint script exists in package.json.

@@ -140,3 +140,12 @@ Note: Per the task's note that "JS tasks must not gate animations in code — ad
 ## Reviewer Verdict
 
 (appended below by reviewer)
+
+## Reviewer Report
+REVIEWER_MODEL: unic-smart
+Verdict: APPROVED-WITH-MINOR
+Findings:
+- [minor] src/ui/__tests__/aiChatPanelCloneCss.test.ts:159 — the "non-chat selectors untouched" isolation check uses `git show HEAD:webview/styles.css` as the pre-cycle baseline. Once this task was committed (87ec6e2), HEAD contains the chat selectors, so the "every new rule is chat-scoped" half of the check is tautological and will not catch future non-chat-selector additions. The declaration-level pins (toolbar flex-wrap, tab cursor, grid-host flex, btn var) and the direct diff evidence keep the property enforced for this task (wave-1 styles.css diff is 211 insertions / 0 deletions, verified). To keep the guard alive, pin the cycle base commit (`git show 515d87e:webview/styles.css`) or a hardcoded pre-cycle selector allowlist.
+- [minor] docs/AI_HANDOFF/tasks/TASK-AGTUI-001.md:27 vs webview/styles.css — spec names `@keyframes UnicDB-chat-caret`, but the file relies on the pre-existing `UnicDB-chat-caret-blink` (pinned by chatLayoutCss.test.ts "streaming caret"). Functionally satisfied; spec text only. No code change needed, or align the spec wording in a docs pass.
+- Clean: tokens byte-exact per PLAN §3 (`#3b82f6`/`#60a5fa`/`#2563eb`/`#dc2626`/`#f59e0b` on the existing `.UnicDB-chat` block); no Claude orange anywhere in chat rules; brand 28px/700/blue sans-serif; stop 16x16 square red with `UnicDB-chat-pulse`; toggle BLUE OFF / amber ON; reduced-motion block targets existing `.UnicDB-chat-stop-live`/`.UnicDB-chat-caret`/`.UnicDB-chat-queued`; all 19 newly added selectors are `.UnicDB-chat*`-scoped and match the test's pinned set; legacy element-id/class contract untouched (pure-additive CSS) and chatLayoutCss.test.ts passes unmodified.
+Verification (reviewer re-run): `npx vitest run src/ui/__tests__/aiChatPanelCloneCss.test.ts src/ui/__tests__/chatLayoutCss.test.ts` → 39/39 pass; `npm run typecheck` → exit 0.

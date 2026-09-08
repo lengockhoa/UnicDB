@@ -1,8 +1,8 @@
 # TASK-AGTUI-004 — Composer module: `+` / model chip / `/` affordance / bypass toggle / mic / send-stop
 
-- Status: `ready`
+- Status: `approved_minor`
 - Owner: `-`
-- Reviewer: `-`
+- Reviewer: `unic-smart`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2, §3, §4
 
 ## Goal
@@ -94,3 +94,18 @@ Note: Pre-existing webview/main.ts, newTableFormMain.ts, renameFormMain.ts, sche
 ## Reviewer Verdict
 
 (appended below by reviewer)
+## Reviewer Report
+REVIEWER_MODEL: unic-smart (config handoff.reviewer.model; differs from executor unic-code — isolation PASS)
+Verdict: APPROVED-WITH-MINOR
+VERIFICATION_RERUN:
+  - npx vitest run webview/__tests__/aiChatPanelComposer.test.ts → 8/8 PASS (fresh)
+  - npm run typecheck → clean, 0 errors
+  - regression (shared consumer): src/ui/__tests__ aiChatPanelWebview/CloneWebview/Task002/Task005 → 98/98 PASS (AG4 busy contract + §3 id contract intact)
+TEST_PLAN_COVERAGE: all-followed — 8/8 §Test Cases implemented with real assertions (6 edge kinds ≥ minTestsEdgeCase=2); RED genuine (module-resolution failure output, not a bare claim)
+Findings:
+  - minor (test gap) aiChatPanelComposer.ts:414-430 slash insert+focus, :228-234 mic disabled+title, :442-457 outside-click/Escape menu close are implemented but unpinned by tests — acceptance bullet 2 explicitly says "assertable via dispatched events"; add 2-3 small jsdom tests.
+  - minor (assertion) webview/__tests__/aiChatPanelComposer.test.ts:133 asserts background truthiness only; BLUE #3b82f6 OFF / amber #f59e0b ON inline hexes (aiChatPanelComposer.ts:335-336) are unpinned.
+  - minor (CSS, cross-task) 5 invented class hooks have no styles.css rule at HEAD: .UnicDB-chat-composer, .UnicDB-chat-slash-hint, .UnicDB-chat-mic, .UnicDB-chat-actions-sep, .UnicDB-chat-chipmenu-row — slash/mic buttons + dropdown rows render unstyled; all contract-listed classes from the task Interfaces section ARE styled. Belongs to CSS owner (001/008) follow-up.
+  - minor webview/aiChatPanelComposer.ts:187-194 — chipBtn starts enabled with 0 models (disabled set only in refreshChipLabel); click is a guarded no-op (:432-433) so harmless.
+  - info aiChatPanelComposer.ts:442-457 — permanent document-level click/keydown listeners, no teardown; fine for single-mount lifecycle, leaks only if a composer is ever re-created.
+NOTES: Caller scope memo listed #composerForm/#promptTextarea — PLAN §3 pins `prompt` (no #composerForm); implementation follows PLAN §3 and the pinned suites confirm. Model chip enumerates ALL setModels entries (renderChipMenu loops the full list, active row marked, onModelSelect fires once + closes). No frozen-selector leakage: diff touches no styles.css, all classes are .UnicDB-chat*-scoped, no id collisions (#attachFileInput stays owned by main on <body>).
