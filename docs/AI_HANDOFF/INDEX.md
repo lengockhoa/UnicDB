@@ -56,3 +56,25 @@ Mid-cycle user request (queued as NEXT cycle, NOT in current AGT scope): clone C
 - **Brand mark**: big letter "U" (UnicDB), blue, treated as the panel icon. Must be large + easy to see.
 - **Everything else**: position, layout, behavior, control placement, animations, dark theme — clone Claude Code extension as faithfully as possible.
 - Source design references: Claude Code VS Code extension marketplace page + https://code.claude.com/docs/en/vs-code + the screenshot the user pasted (red square stop button + input area with "+" / "/N" / model chip / bypass-permissions toggle / mic).
+
+---
+
+Cycle AGT-UI — AI Chat panel = Claude Code VS Code extension clone (BLUE accent `#3b82f6`, big "U" brand glyph, red-square stop, model chip / bypass toggle / mic composer row, dark theme + animations). Engine dispatch from AGT unchanged.
+
+| Task | Title | Status | Deps | Files | Reviewer |
+|------|-------|--------|------|-------|----------|
+| TASK-AGTUI-001 | Clone design tokens + chat-scoped CSS layer (BLUE palette, no JS) | ready | none | webview/styles.css, src/ui/__tests__/aiChatPanelCloneCss.test.ts (new) | - |
+| TASK-AGTUI-002 | Wire protocol: `models` frame + `model_select` / `bypass_permissions` | ready | none | src/ui/aiChatPanelMessages.ts, src/ui/__tests__/aiChatPanelMessagesClone.test.ts (new) | - |
+| TASK-AGTUI-003 | Header + brand module: big BLUE "U" glyph + engine-aware title | ready | none | webview/aiChatPanelHeader.ts (new), webview/__tests__/aiChatPanelHeader.test.ts (new) | - |
+| TASK-AGTUI-004 | Composer module: `+` / model chip / `/` affordance / bypass toggle / mic / send-stop | ready | none | webview/aiChatPanelComposer.ts (new), webview/__tests__/aiChatPanelComposer.test.ts (new) | - |
+| TASK-AGTUI-005 | Thread rendering module: bubbles, thinking blocks, tool cards, mentions | ready | none | webview/aiChatPanelThread.ts (new), webview/__tests__/aiChatPanelThread.test.ts (new) | - |
+| TASK-AGTUI-006 | Host wiring: `models` frame, `model_select`, bypass-permissions flag | ready | TASK-AGTUI-002 | src/ui/aiChatPanel.ts, src/ui/__tests__/aiChatPanelCloneHost.test.ts (new) | - |
+| TASK-AGTUI-007 | Webview integration: compose header + thread + composer into `aiChatPanelMain.ts` | ready | TASK-AGTUI-001..005 | webview/aiChatPanelMain.ts, src/ui/__tests__/aiChatPanelCloneWebview.test.ts (new) | - |
+| TASK-AGTUI-008 | Animation + dark-theme polish + full regression gate | ready | TASK-AGTUI-006, TASK-AGTUI-007 | webview/aiChatPanelMain.ts, webview/styles.css, src/ui/__tests__/aiChatPanelClonePolish.test.ts (new) | - |
+
+Wave plan (inferred from `Dependencies`):
+- Wave 1 (5 parallel — disjoint files): AGTUI-001 (styles.css) · 002 (messages.ts) · 003 (header.ts) · 004 (composer.ts) · 005 (thread.ts)
+- Wave 2 (2 parallel — disjoint files): AGTUI-006 (aiChatPanel.ts) · AGTUI-007 (aiChatPanelMain.ts)
+- Wave 3 (1): AGTUI-008 — final polish + full-suite release gate
+
+Wave-boundary gate: after every wave, full `npm test` + `npm run typecheck` + `npm run compile`.
