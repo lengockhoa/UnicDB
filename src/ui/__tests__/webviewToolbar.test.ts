@@ -215,7 +215,7 @@ const describeIfBundle = describe.runIf(bundleSrc !== null);
 
 describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", () => {
   itIfBundle(
-    "1. every toolbar .UnicDB-btn has an inline svg icon, currentColor stroke, non-empty title + aria-label, empty text",
+    "1. every toolbar .UnicDB-btn has an inline svg icon, currentColor stroke, non-empty aria-label, empty text",
     () => {
       const { root } = loadBundle();
       dispatchState(threeRowsState());

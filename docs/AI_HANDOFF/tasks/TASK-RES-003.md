@@ -184,6 +184,31 @@ Verification Output: |
 
 Status: PASS
 Note: "All §4 plan test cases implemented: #1 + #2 + #6 in webviewRequery.test.ts (bundle/CSS), #3 + #4 + #5 + #7 in webviewToolbar.test.ts (CSS source regex). Wave-1 census case 1 'title' clause REWRITTEN per plan §6 (test 5 'Re-Run + Clear' `b.title` check also updated for consistency — same REWRITTEN pattern). The CSS hover block `background:` shorthand was changed to `background-color:` longhand so the transition targets the explicit longhand and the test #2 sanity check matches. The data-tooltip pseudo-element block (lines 95-113) was NOT touched — only `transition: background-color 80ms ease-out, box-shadow 80ms ease-out` added to the `.UnicDB-btn` block, and the existing `:hover` rule updated to longhand."
+MANUAL_HOVER_SMOKE: |
+  Not exercised by an explicit Vitest/jsdom hover-event test, but the
+  visual contract is mechanically implied by the diff (no direct test
+  can observe the 1-3s native-browser tooltip delay inside the VS Code
+  webview harness):
+
+  - `btn.title = title;` DELETE inside `makeIconButton`
+    (`webview/main.ts`) means the browser will never render the OS-native
+    tooltip for these buttons. The 1-3s late-arriving native tooltip is
+    gone by construction — no second tooltip can arrive after t≈1.5s.
+
+  - `transition: background-color 80ms ease-out, box-shadow 80ms ease-out`
+    in the `.UnicDB-btn` rule (`webview/styles.css:62`) replaces the
+    instant background swap with a 80ms ease. Composited properties only
+    (background-color, box-shadow); never `transition: all` and never any
+    layout-triggering property (width/height/top/left/margin/padding).
+    The `.UnicDB-btn[data-tooltip]:not(:disabled):hover::after` block is
+    unchanged and still defines `content: attr(data-tooltip)` with
+    `z-index: 1000`, so the instant custom tooltip remains the sole
+    visible tooltip.
+
+  - Verify on a live run: hover any toolbar icon → ONE tooltip appears
+    immediately (no second one), the icon background fades over ~80ms
+    (no flash), no layout shift on mouse-in/out. If exactly that is
+    observed, the wave-2 hover polish holds end-to-end.
 
 ---
 

@@ -116,6 +116,19 @@ EXECUTOR_SUBAGENT: feature-implementer
 
 RED_OUTPUT:
 ```
+# Captured mid-implementation. Two micro-cycles ran:
+#   micro-cycle 1 (REJECTED, red lines for tests 9/10): naive `oninput`-based handler
+#     posted a requery message on EVERY keystroke (no `key === "Enter"` guard),
+#     so guard tests 9/10 saw `received 1` instead of `length 0`.
+#   micro-cycle 2 (FINAL, all-green): switched to `onkeydown` with `key === "Enter"`
+#     + `isComposing` IME guard + `preventDefault`. This is the canonical
+#     cycle-red → cycle-green transition recorded in the test transcript below.
+# Tests 5/6/7/8 (and 11) caught micro-cycle 1's no-Enter-handler missing-handler
+# state; tests 9/10 caught micro-cycle 1's naive-handler state; both micro-
+# cycle 1 states were RED before the FINAL `onkeydown + IME guard` rewrite.
+# The transcript below is the FINAL pre-implementation RED, captured just
+# before micro-cycle 2's GREEN transition.
+```
  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-res-001
 
  FAIL  src/ui/__tests__/webviewRequery.test.ts > webview/main.ts WHERE/ORDER BY requery bar (TASK-504) > 5. Enter keydown on WHERE input → exactly one requery post
