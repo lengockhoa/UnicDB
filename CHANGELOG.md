@@ -2,9 +2,46 @@
 
 ## [1.53.33] — 2026-09-08
 
-- Summary: Security fix: exclude .secrets/ from .vsix (vsce does not read .gitignore — PAT cache was leaking into v1.53.32 .vsix). Adds regression guard that runs real vsce package round-trip and asserts no .secrets/ entry in the produced archive. Also pins UnicDB.preferPrimarySidebar setting + UnicDB.moveToPrimarySidebar command from v1.53.32 (re-ship because v1.53.32 had the leaked PAT, must be superseded).
-- Files: .vscodeignore,src/__tests__/vsixSecretsExclusion.test.ts,package.json,src/extension.ts
-- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.33.vsix packaged
+- Summary: **CRITICAL SECURITY + activity-bar hardening.** v1.53.32 shipped with
+  `.secrets/.pat` (the Azure DevOps Marketplace publish PAT) embedded in the public
+  `.vsix` because `vsce package` reads `.vscodeignore` exclusively (NOT
+  `.gitignore`). The PAT was rotated in Azure DevOps and this release ships the
+  fix that prevents re-occurrence. Also supersedes the activity-bar icon work
+  from v1.53.30/1.53.32 — that work landed but couldn't be relied on while the
+  .vsix had to be re-cut for the security fix.
+- **Security fix:**
+  - `.vscodeignore`: added `.secrets/**` rule (vsce does NOT read `.gitignore`).
+  - Regression guard `src/__tests__/vsixSecretsExclusion.test.ts`: (a) static
+    pin on the `.vscodeignore` rule line; (b) real `vsce package` round-trip
+    in a tmp staging dir with a planted `.secrets/.pat` and assertion that
+    the produced archive contains no `.secrets/` or `.pat` entry. Test fails
+    loudly the next time anyone removes the rule.
+  - The Azure DevOps PAT was rotated by the user in Azure DevOps User Settings
+    (Personal Access Tokens → revoke `vscode-vsce` → generate new token with
+    `Marketplace (Manage)` scope) BEFORE re-publishing. The old PAT is
+    invalidated even if anyone extracted it from the leaked v1.53.32 .vsix.
+- **Activity-bar auto-move (re-shipped from v1.53.32):**
+  - New setting `UnicDB.preferPrimarySidebar` (boolean, default `true`).
+  - New command `UnicDB: Move to Primary Sidebar` (`UnicDB.moveToPrimarySidebar`)
+    for manual re-trigger if the auto-move didn't fire.
+  - `activate()` calls `ensurePrimarySidebar(context)` fire-and-forget on every
+    activation; it tries `workbench.action.moveViewsToPrimarySidebar` (and three
+    fallback command names for older VS Code builds) once per install, tracked
+    in `globalState` so it doesn't re-run on every reload.
+  - This addresses the screenshot-confirmed issue where v1.53.31/1.53.32's
+    container registered but VS Code 1.85+ routed it into the Secondary
+    Sidebar instead of the Primary Sidebar (Activity Bar).
+- **Files:** `.vscodeignore` (+1 line); `src/__tests__/vsixSecretsExclusion.test.ts`
+  (new, 2 tests); `package.json` (version 1.53.32→1.53.33, settings block, command
+  list — same as v1.53.32); `src/extension.ts` (same as v1.53.32, no new code
+  beyond what's already in `38e8f40`); `docs/MEMORY.md` (incident recorded).
+- **Verification:** `npm run typecheck` ✅ · `npm test` 4091 passed | 4 skipped
+  | 0 failed (+2 new tests in `vsixSecretsExclusion.test.ts`) · `UnicDB-1.53.33.vsix`
+  verified clean (26 entries, no `.secrets/`, no `.pat`) via `zipfile` ·
+  GitHub Release v1.53.33 ✅ · VS Code Marketplace v1.53.33 ✅
+- **Install note:** if you already installed v1.53.32, your PAT is compromised.
+  Rotate in Azure DevOps immediately. VS Code auto-update will surface v1.53.33
+  as the new latest.
 
 ---
 
