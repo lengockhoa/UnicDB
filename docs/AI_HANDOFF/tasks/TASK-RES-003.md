@@ -184,3 +184,28 @@ Verification Output: |
 
 Status: PASS
 Note: "All §4 plan test cases implemented: #1 + #2 + #6 in webviewRequery.test.ts (bundle/CSS), #3 + #4 + #5 + #7 in webviewToolbar.test.ts (CSS source regex). Wave-1 census case 1 'title' clause REWRITTEN per plan §6 (test 5 'Re-Run + Clear' `b.title` check also updated for consistency — same REWRITTEN pattern). The CSS hover block `background:` shorthand was changed to `background-color:` longhand so the transition targets the explicit longhand and the test #2 sanity check matches. The data-tooltip pseudo-element block (lines 95-113) was NOT touched — only `transition: background-color 80ms ease-out, box-shadow 80ms ease-out` added to the `.UnicDB-btn` block, and the existing `:hover` rule updated to longhand."
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+REVIEW_TARGET_TYPE: code
+REVIEW_SCOPE: f078391..59e9ae8 -- webview/main.ts, webview/styles.css, src/ui/__tests__/webviewRequery.test.ts, src/ui/__tests__/webviewToolbar.test.ts
+VERIFICATION_RECHECK:
+  - npm run typecheck: exit 0 (repo has no lint script; typecheck is the mandated lint-equivalent — confirmed in package.json)
+  - targeted vitest re-run: 69 passed | 0 failed (webviewRequery 17, webviewToolbar 9, resultsPanelRequery 17, requeryClauseNormalize 26) — matches Executor Report exactly
+  - full suite re-run: 4081 passed | 4 skipped | 0 failed (npm test, exit 0)
+CRITERIA_CHECK:
+  1. TDD gate (RED→GREEN): pass — RED_OUTPUT holds 4 real assertion failures (webviewRequery.test.ts:701 stack frame etc.) mapping to §Test Cases #1-#4, the only behavior-changing assertions; #5/#6/#7 are regression pins of untouched pre-existing behavior and correctly pass pre+post; counts reconcile (26 tests pre = 26 post). Note: plan's test #2 was specified as jsdom mouseover + getBoundingClientRect, implemented instead as a property-level CSS assertion — documented in-test ("jsdom cannot layout", a rect comparison would be vacuous); justified deviation.
+  2. Acceptance Criteria: pass — `grep btn.title = title` webview/main.ts → 0 matches; `transition:` at webview/styles.css:62 inside the `.UnicDB-btn` block (lines 41-63); data-tooltip pseudo block NOT in the wave-2 diff, z-index: 1000 intact at line 111; transition lists only background-color+box-shadow, hover switched to `background-color:` longhand, no `transition: all` added; diff touches exactly the 4 target files. One gap below.
+  3. Side effects / regressions: pass — `git diff --name-only f078391..59e9ae8` returns exactly the 4 target files; full suite 4081 green on fresh re-run.
+  4. Correctness (census rewrite): pass — webviewToolbar.test.ts 12-button census drops the `b.title` clause (aria-label non-empty asserted); Re-Run/Clear iconification test asserts data-tooltip non-null/non-empty; new test #1 asserts hasAttribute("title")===false AND data-tooltip===aria-label (both non-empty) across all 12 buttons in the real bundle.
+  5. Race-with-RES-001 (toolbar DOM intact): pass — main.ts hunk confined to makeIconButton (lines 686-694); RES-001's Re-Run/Clear buttons route through makeIconButton (main.ts:940,948) so they inherit no-title + data-tooltip + aria-label; both 12-button censuses green.
+ISSUES_FOUND:
+  - minor: Manual hover smoke (Acceptance Criteria item 5, "executor, from dev host or documented equivalent") is not documented in the Executor Report. Mitigation on record: with `btn.title` deleted the native tooltip physically cannot render, so the data-tooltip pseudo is provably the only tooltip source; still, paste a one-line smoke note for the checklist.
+SUGGESTIONS:
+  - `box-shadow 80ms` in the transition (webview/styles.css:62) targets a property no `.UnicDB-btn` rule currently sets — a harmless no-op the plan prescribed verbatim; drop it or add the intended hover elevation in a future task.
+  - Pre-existing `transition: all 0.15s ease` at webview/styles.css:2029 (chat tool-header block) predates this range and is out of scope — candidate for a future polish task, not this one.
+GATE: REVIEW_DONE — R4.5 auto-fix not required
