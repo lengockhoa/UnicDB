@@ -69,8 +69,8 @@ Cycle AGT-UI — AI Chat panel = Claude Code VS Code extension clone (BLUE accen
 | TASK-AGTUI-004 | Composer module: `+` / model chip / `/` affordance / bypass toggle / mic / send-stop | approved_minor | none | webview/aiChatPanelComposer.ts (new), webview/__tests__/aiChatPanelComposer.test.ts (new) | unic-smart |
 | TASK-AGTUI-005 | Thread rendering module: bubbles, thinking blocks, tool cards, mentions | done (changes_requested → resolved via fixup 960de27) | none | webview/aiChatPanelThread.ts (new), webview/__tests__/aiChatPanelThread.test.ts (new) | unic-smart |
 | TASK-AGTUI-006 | Host wiring: `models` frame, `model_select`, bypass-permissions flag | approved_minor | TASK-AGTUI-002 | src/ui/aiChatPanel.ts, src/ui/__tests__/aiChatPanelCloneHost.test.ts (new) | unic-smart |
-| TASK-AGTUI-007 | Webview integration: compose header + thread + composer into `aiChatPanelMain.ts` | approved_minor | TASK-AGTUI-001..005 | webview/aiChatPanelMain.ts, src/ui/__tests__/aiChatPanelCloneWebview.test.ts (new) | unic-smart |
-| TASK-AGTUI-008 | Animation + dark-theme polish + full regression gate | pending_review | TASK-AGTUI-006, TASK-AGTUI-007 | webview/aiChatPanelMain.ts, webview/styles.css, src/ui/__tests__/aiChatPanelClonePolish.test.ts (new) | unic-smart |
+| TASK-AGTUI-007 | Webview integration: compose header + thread + composer into `aiChatPanelMain.ts` | done (approved_minor) | TASK-AGTUI-001..005 | webview/aiChatPanelMain.ts, src/ui/__tests__/aiChatPanelCloneWebview.test.ts (new) | unic-smart |
+| TASK-AGTUI-008 | Animation + dark-theme polish + full regression gate | done (changes_requested → resolved via fixup fc778a2) | TASK-AGTUI-006, TASK-AGTUI-007 | webview/aiChatPanelMain.ts, webview/styles.css, src/ui/__tests__/aiChatPanelClonePolish.test.ts (new) | unic-smart |
 
 Wave plan (inferred from `Dependencies`):
 - Wave 1 (5 parallel — disjoint files): AGTUI-001 (styles.css) · 002 (messages.ts) · 003 (header.ts) · 004 (composer.ts) · 005 (thread.ts)
