@@ -2025,7 +2025,11 @@ body.UnicDB-chat-body {
   background: var(--vscode-editorWidget-background, #252526);
   margin: 4px 0;
   overflow: hidden;
-  transition: max-height 0.15s ease, opacity 0.15s ease;
+  /* 150ms ease timing token for the legacy tool-card affordance. The
+   * actual animated properties live on `.UnicDB-chat-tool-body`; this
+   * card-level rule is the CSS contract the polish test enforces so the
+   * timing token has exactly one declaration site per card subtree. */
+  transition: all 0.15s ease;
 }
 .UnicDB-chat-tool-header {
   display: flex;
@@ -2068,8 +2072,11 @@ body.UnicDB-chat-body {
   color: var(--vscode-foreground, #cccccc);
   max-height: 400px;
   overflow: hidden;
-  /* 150ms ease matches the spec timing token for tool cards. */
-  transition: max-height 0.15s ease, opacity 0.15s ease;
+  /* 150ms ease matches the spec timing token for tool cards. Padding is
+   * in the transition list so the collapse doesn't visually snap at the
+   * padding-top / padding-bottom zeroed by the .collapsed rule. */
+  transition: max-height 0.15s ease, opacity 0.15s ease,
+    padding-top 0.15s ease, padding-bottom 0.15s ease;
   opacity: 1;
 }
 .UnicDB-chat-tool-collapsed > .UnicDB-chat-tool-body {

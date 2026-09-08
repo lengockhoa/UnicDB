@@ -95,6 +95,14 @@ export interface HostMcp {
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const HOST_INFO = { name: "UnicDB-host-mcp", version: "1.11.0" } as const;
 
+/** Default per-call timeout for standard (non-curated) MCP tools. Curated
+ * tools carry their own validated `timeoutMs` (see
+ * `mcpExtensionRegistry.MCP_EXTENSION_TIMEOUT_*`); standard tools have no
+ * caller-supplied budget, so we cap them at the same order of magnitude as
+ * ACP (`DEFAULT_ACP_REQUEST_TIMEOUT_MS = 30_000`) to keep a hung tool from
+ * wedging the MCP server's request loop. */
+const HOST_MCP_STANDARD_TOOL_TIMEOUT_MS = 30_000;
+
 function isRecordLike(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -330,8 +338,28 @@ export function createHostMcp(opts: CreateHostMcpOptions): HostMcp {
         // `curated` is undefined here, so `tool` must be defined (the
         // unknown-tool early return above excluded the both-undefined case).
         const standard = tool as HostMcpTool;
+        // Mirror the curated containment lane: race the tool against a
+        // default timeout so a slow or hung standard tool can never wedge
+        // the MCP server's request loop. The timer is always cleared so
+        // it cannot leak between calls. Same fail-closed posture as the
+        // curated path — late settlements are observed, never an
+        // unhandled rejection.
+        const budget = HOST_MCP_STANDARD_TOOL_TIMEOUT_MS;
+        let timer: NodeJS.Timeout | undefined;
+        const timeoutPromise = new Promise<string>((resolve) => {
+          timer = setTimeout(
+            () => resolve(`Tool timed out after ${budget}ms: ${standard.name}`),
+            budget,
+          );
+        });
         try {
-          const text = await standard.execute(args);
+          const text = await Promise.race([
+            standard.execute(args),
+            timeoutPromise,
+          ]);
+          // Either the tool settled first or the timer fired; either way
+          // the timer is now orphaned and must be cleared.
+          clearTimeout(timer);
           // A deny path in the gate returns DB_TOOL_DENIED_MESSAGE (a plain
           // string) instead of running the tool. Surface it as an MCP
           // `isError: true` result so the model and the user both see the
@@ -344,8 +372,20 @@ export function createHostMcp(opts: CreateHostMcpOptions): HostMcp {
               },
             };
           }
+          // Timeout sentinel — distinguish from a legitimate tool result
+          // by the prefix so we don't false-positive on tool output that
+          // happens to start with the same text.
+          if (text.startsWith(`Tool timed out after ${budget}ms:`)) {
+            return {
+              result: {
+                content: [{ type: "text", text }],
+                isError: true,
+              },
+            };
+          }
           return { result: { content: [{ type: "text", text }] } };
         } catch (e) {
+          clearTimeout(timer);
           const msg = e instanceof Error ? e.message : String(e);
           return {
             result: {

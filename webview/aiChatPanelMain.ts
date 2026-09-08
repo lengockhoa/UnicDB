@@ -1573,6 +1573,11 @@ function applyEngine(msg: EngineMsg): void {
     // manually since the header doesn't expose a hint parameter.
     const banner = document.getElementById("engineBanner");
     if (banner) {
+      // Class the banner first so the hint path inherits the same
+      // `UnicDB-chat-engine UnicDB-chat-engine-builtin` styling as a
+      // plain builtin frame — the manual textContent rewrite
+      // below only overrides the body, never the className.
+      header.setEngine("builtin");
       const safeHint = String(msg.hint)
         .replace(/[\u0000-\u001F\u007F]/g, "")
         .slice(0, 120);
