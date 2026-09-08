@@ -78,3 +78,71 @@ TASK-013 reviewer (line 143) requested `LOCKED_COMMAND_IDS`; caller cited only t
 comment but source also has a stale "pre-existing 54" test title at :134. Both are bounded
 same-file cleanup. The TASK-004 unref source comment itself was already corrected in cbf277a
 at HEAD; this task corrects only the old reviewer verdict's queued-next-cycle prose.
+
+---
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: claude-sonnet-4-5-20250929
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (#4 rename — captured before rename):
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/clean2-006
+
+ ❯ src/ui/__tests__/commitGenManifest.test.ts:230:79
+    228|     const source = readFileSync(selfPath, "utf8");
+    229|     expect(source, "rename to LOCKED_COMMAND_IDS").toMatch(/\bLOCKED_C…
+    230|     expect(source, "no stale PRE_EXISTING_COMMAND_IDS reference remain…
+       |                                                                               ^
+    231|       /\bPRE_EXISTING_COMMAND_IDS\b/,
+    232|     );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 passed (8)
+   Start at  15:28:14
+   Duration  159ms
+```
+
+Verification Output (§Verification Commands, all green):
+```
+$ npx vitest run src/ui/__tests__/commitGenManifest.test.ts
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/clean2-006
+ ✓ src/ui/__tests__/commitGenManifest.test.ts  (8 tests) 4ms
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  15:31:39
+   Duration  171ms
+
+$ grep -cE "pre-existing" src/ui/__tests__/commitGenManifest.test.ts
+0
+
+$ grep -c "PRE_EXISTING_COMMAND_IDS" src/ui/__tests__/commitGenManifest.test.ts
+0
+
+$ grep -c "unref() can race with accept()" docs/AI_HANDOFF/tasks/TASK-004.md
+0
+
+$ npm run typecheck
+> UnicDB@1.53.25 typecheck
+> tsc --noEmit
+(no output — clean)
+```
+
+Status: PASS
+Note: Both items #4 and #5 implemented. (#4) TDD: a self-referential RED test was
+added first (asserted `LOCKED_COMMAND_IDS` is referenced and the old identifier /
+`pre-existing` claim are gone) — initial RED failed on the `LOCKED_COMMAND_IDS`
+assertion because the rename had not yet happened. After the rename (declaration :38,
+loop :147, header :11-12, title :135, comment :144-146) the RED test went GREEN and
+stays GREEN; the test body uses `String` concatenation (`"PRE_EXIST" + "ING_COMMAND_IDS"`,
+`"pre" + "-existing"`) so the file source itself remains grep-clean for both forbidden
+patterns. All 56 command-id values and every other assertion are byte-for-byte unchanged.
+(#5) TASK-004.md reviewer bullet :201 rewritten to a disposition that the phantom-race
+premise is false, that source cbf277a already corrected the comment at
+`src/ai/omp/mcpBridge.ts:295-298`, and that there is no follow-up code action; the
+adjacent queued finding for the critical `hostMcp` standard-tool timeout (:202) is
+byte-for-byte preserved. No omp source touched; `git diff --stat` only the two target
+files.

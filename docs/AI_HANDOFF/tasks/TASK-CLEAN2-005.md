@@ -78,3 +78,102 @@ shared helper would create an unnecessary dependency/same-file collision. Delibe
 boundaries: do NOT alter Codex's header prompt wording (caller #6 names Claude only), and
 do NOT clear the 30s success timer (separate TASK-014 sub-finding), both deferred to the
 next cleanup pass.
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+```text
+▲ [WARNING] Unrecognized target environment "ES2024" [tsconfig.json]
+
+    ../../tsconfig.json:3:14:
+      3 │     "target": "ES2024",
+      ╵               ^^^^^^^^^
+
+▲ [WARNING] Unrecognized target environment "ES2024" [tsconfig.json]
+
+    tsconfig.json:3:14:
+      3 │     "target": "ES2024",
+      ╵               ^^^^^^^^^
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/clean2-005
+
+ ❯ src/ai/codex/__tests__/codexLiveSmoke.test.ts  (4 tests | 2 failed | 1 skipped) 4ms
+   ❯ src/ai/codex/__tests__/codexLiveSmoke.test.ts > codex CLI live smoke — pins the gate env-var name > GATE_ENV === 'UnicDB_CODEX_SMOKE'
+     → GATE_ENV is not defined
+   ❯ src/ai/codex/__tests__/codexLiveSmoke.test.ts > codex CLI live smoke — pins the gate env-var name > spawn error surfaces fast (missing binary)
+     → startProbe is not defined
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ai/codex/__tests__/codexLiveSmoke.test.ts > codex CLI live smoke — pins the gate env-var name > GATE_ENV === 'UnicDB_CODEX_SMOKE'
+ReferenceError: GATE_ENV is not defined
+ ❯ src/ai/codex/__tests__/codexLiveSmoke.test.ts:137:12
+    135│ describe("codex CLI live smoke — pins the gate env-var name", () => {
+    136│   it("GATE_ENV === 'UnicDB_CODEX_SMOKE'", () => {
+    137│     expect(GATE_ENV).toBe("UnicDB_CODEX_SMOKE");
+    138│   });
+    139│
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/ai/codex/__tests__/codexLiveSmoke.test.ts > codex CLI live smoke — pins the gate env-var name > spawn error surfaces fast (missing binary)
+ReferenceError: startProbe is not defined
+ ❯ src/ai/codex/__tests__/codexLiveSmoke.test.ts:147:23
+    145│       );
+    146│       try {
+    147│         const probe = await startProbe(
+    148│           "unicdb-smoke-missing-binary",
+    149│           ["--print", "ping"],
+    150│         );
+    151│         const start = Date.now();
+    152│         await expect(
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 1 passed | 1 skipped (4)
+   Start at  15:28:59
+   Duration  187ms (transform 17ms, setup 13ms, collect 13ms, tests 4ms, environment 0ms, prepare 40ms)
+```
+Verification Output:
+```text
+$ UnicDB_CODEX_SMOKE= npx vitest run src/ai/codex/__tests__/codexLiveSmoke.test.ts
+▲ [WARNING] Unrecognized target environment "ES2024" [tsconfig.json]
+
+    ../../tsconfig.json:3:14:
+      3 │     "target": "ES2024",
+      ╵               ^^^^^^^^^
+
+▲ [WARNING] Unrecognized target environment "ES2024" [tsconfig.json]
+
+    tsconfig.json:3:14:
+      3 │     "target": "ES2024",
+      ╵               ^^^^^^^^^
+
+[33mThe CJS build of Vite's Node API is deprecated. See https://vite.dev/guide/troubleshooting.html#vite-cjs-node-api-deprecated for more details.[39m
+
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/clean2-005
+
+ ✓ src/ai/codex/__tests__/codexLiveSmoke.test.ts  (4 tests | 1 skipped) 34ms
+
+ Test Files  1 passed (1)
+      Tests  3 passed | 1 skipped (4)
+   Start at  15:30:02
+   Duration  178ms (transform 16ms, setup 11ms, collect 13ms, tests 34ms, environment 0ms, prepare 31ms)
+$ grep -qF '"exec",' src/ai/codex/__tests__/codexLiveSmoke.test.ts
+$ grep -qF '"--json",' src/ai/codex/__tests__/codexLiveSmoke.test.ts
+$ grep -qF '"-",' src/ai/codex/__tests__/codexLiveSmoke.test.ts
+$ grep -qF '"--cd",' src/ai/codex/__tests__/codexLiveSmoke.test.ts
+$ grep -qF 'child.stdin.write("ping\\n")' src/ai/codex/__tests__/codexLiveSmoke.test.ts
+$ grep -qF 'child.stdin.end()' src/ai/codex/__tests__/codexLiveSmoke.test.ts
+all Codex argv/stdin source-contract checks passed
+$ npm run typecheck
+> UnicDB@1.53.25 typecheck
+> tsc --noEmit
+```
+Status: PASS
+Note: none

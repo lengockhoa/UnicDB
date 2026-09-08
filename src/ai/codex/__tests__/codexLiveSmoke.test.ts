@@ -11,34 +11,35 @@
 //
 // Mirrors src/ai/omp/__tests__/acpLiveSmoke.test.ts shape (proven gate
 // pattern from TASK-006).
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { spawn } from "child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "child_process";
 
+const GATE_ENV = "UnicDB_CODEX_SMOKE";
+
 interface CodexProbe {
   child: ChildProcessWithoutNullStreams;
   events: Array<Record<string, unknown>>;
   workspace: string;
+  getSpawnError: () => Error | undefined;
 }
 
-function startCodex(workspace: string): Promise<CodexProbe> {
+function startProbe(
+  bin: string,
+  args: string[],
+  cwd: string,
+): Promise<CodexProbe> {
   const { promise, resolve, reject } = Promise.withResolvers<CodexProbe>();
   // Use exec mode with --json so the binary emits one JSON event per line.
   // We pass a literal non-prompt ("ping") plus `-` to indicate stdin input.
   // We DO NOT pass --dangerously-bypass-approvals, apiKey, or any DB credential.
-  const args = [
-    "exec",
-    "--json",
-    "-",
-    "--cd",
-    workspace,
-  ];
-  const child = spawn("codex", args, { stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"], cwd });
   let buf = "";
   const events: Array<Record<string, unknown>> = [];
+  let spawnError: Error | undefined;
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
     buf += chunk;
@@ -54,40 +55,73 @@ function startCodex(workspace: string): Promise<CodexProbe> {
       }
     }
   });
-  child.once("error", reject);
+  child.once("error", (err) => {
+    spawnError = err;
+    reject(err);
+  });
   // Feed the trivial prompt on stdin so the binary doesn't wait forever.
   child.stdin.write("ping\n");
   child.stdin.end();
   child.stdin.on("error", () => {
     /* allow writes to no-op if the binary closed early */
   });
-  resolve({ child, events, workspace });
+  resolve({
+    child,
+    events,
+    workspace: cwd,
+    getSpawnError: () => spawnError,
+  });
   return promise;
 }
 
-async function awaitFirstEvent(
+function startCodex(workspace: string): Promise<CodexProbe> {
+  const args = [
+    "exec",
+    "--json",
+    "-",
+    "--cd",
+    workspace,
+  ];
+  return startProbe("codex", args, workspace);
+}
+
+function awaitFirstEvent(
   events: Array<Record<string, unknown>>,
   timeoutMs: number,
+  getSpawnError?: () => Error | undefined,
 ): Promise<Record<string, unknown>> {
-  const { promise, resolve, reject } = Promise.withResolvers<Record<string, unknown>>();
-  if (events.length > 0) {
-    resolve(events[0]!);
-    return promise;
-  }
-  const interval = setInterval(() => {
-    if (events.length > 0) {
-      clearInterval(interval);
-      resolve(events[0]!);
+  // Entry check: fail fast when the spawn already errored before this call.
+  const early = getSpawnError?.();
+  if (early) return Promise.reject(early);
+  if (events.length > 0) return Promise.resolve(events[0]!);
+  return new Promise((resolve, reject) => {
+    // Inside the promise body: re-check in case spawn error fired between
+    // the synchronous entry check above and the microtask that ran this body.
+    const entry = getSpawnError?.();
+    if (entry) {
+      reject(entry);
+      return;
     }
-  }, 25);
-  const timeout = setTimeout(() => {
-    clearInterval(interval);
-    reject(new Error(`timed out after ${timeoutMs}ms waiting for first event`));
-  }, timeoutMs);
-  return promise;
+    const interval = setInterval(() => {
+      const tick = getSpawnError?.();
+      if (tick) {
+        clearInterval(interval);
+        reject(tick);
+        return;
+      }
+      if (events.length > 0) {
+        clearInterval(interval);
+        resolve(events[0]!);
+      }
+    }, 25);
+    const timeout = setTimeout(() => {
+      clearInterval(interval);
+      reject(new Error(`timed out after ${timeoutMs}ms waiting for first event`));
+    }, timeoutMs);
+  });
 }
 
-describe.skipIf(!process.env.UnicDB_CODEX_SMOKE)(
+describe.skipIf(!process.env[GATE_ENV])(
   "codex CLI live smoke",
   () => {
     let workspace = "";
@@ -99,10 +133,10 @@ describe.skipIf(!process.env.UnicDB_CODEX_SMOKE)(
         workspace = mkdtempSync(join(tmpdir(), "unicdb-codex-smoke-"));
         cleanup = true;
 
-        const { child, events } = await startCodex(workspace);
+        const { child, events, getSpawnError } = await startCodex(workspace);
 
         try {
-          const first = await awaitFirstEvent(events, 30_000);
+          const first = await awaitFirstEvent(events, 30_000, getSpawnError);
           expect(typeof first).toBe("object");
           expect(first).not.toBeNull();
           // Evidence dump for the reviewer.
@@ -132,13 +166,47 @@ describe.skipIf(!process.env.UnicDB_CODEX_SMOKE)(
   },
 );
 
-describe("codex CLI live smoke — gate disabled", () => {
-  it("test 5: suite skipped when UnicDB_CODEX_SMOKE is unset", () => {
-    // Contract test for the env-var gate name. Companion describe.skipIf
-    // suite is skipped when env is unset; this test always runs and pins
-    // the gate name match.
-    const gateName = "UnicDB_CODEX_SMOKE";
-    expect(typeof gateName).toBe("string");
-    expect(gateName.length).toBeGreaterThan(0);
+describe("codex CLI live smoke — pins the gate env-var name", () => {
+  it("GATE_ENV === 'UnicDB_CODEX_SMOKE'", () => {
+    expect(GATE_ENV).toBe("UnicDB_CODEX_SMOKE");
+  });
+
+  it(
+    "spawn error surfaces fast (missing binary)",
+    async () => {
+      const workspace = mkdtempSync(
+        join(tmpdir(), "unicdb-codex-smoke-missing-"),
+      );
+      try {
+        const probe = await startProbe(
+          "unicdb-smoke-missing-binary",
+          ["--print", "ping"],
+          workspace,
+        );
+        const start = Date.now();
+        await expect(
+          awaitFirstEvent(probe.events, 30_000, probe.getSpawnError),
+        ).rejects.toThrow();
+        const elapsed = Date.now() - start;
+        expect(elapsed).toBeLessThan(5_000);
+      } finally {
+        rmSync(workspace, { recursive: true, force: true });
+      }
+    },
+    10_000,
+  );
+
+  it("resolves the first pushed event while the 30s timeout is still pending", async () => {
+    vi.useFakeTimers();
+    try {
+      const events: Array<Record<string, unknown>> = [];
+      const promise = awaitFirstEvent(events, 30_000, () => undefined);
+      events.push({ type: "system", subtype: "init" });
+      await vi.advanceTimersByTimeAsync(25);
+      const first = await promise;
+      expect(first).toEqual({ type: "system", subtype: "init" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

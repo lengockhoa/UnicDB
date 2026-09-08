@@ -198,7 +198,7 @@ FINDINGS:
   important:
     - none
   minor:
-    - docs/AI_HANDOFF/tasks/TASK-004.md:95 — the mcpBridge.ts:298 "unref() can race with accept() callbacks" rationale is technically wrong (unref only clears the event-loop ref; it cannot race accept). Reword or drop this queued item so the next planner does not chase a phantom race.
+    - docs/AI_HANDOFF/tasks/TASK-004.md:95 — disposition: phantom-race dropped. The premise that `server.unref()` can race with `accept()` callbacks is false (unref only clears the event-loop reference; it does not interact with the listening socket's accept loop). Source cbf277a already corrected the comment at `src/ai/omp/mcpBridge.ts:295-298` to describe the real reason — that `unref()` releases the process reference so the bridge never blocks extension host exit — and there is no follow-up code action. The queued next-cycle rewrite of the audit bullet at TASK-004.md:95 is therefore retired without a successor item.
     - docs/AI_HANDOFF/tasks/TASK-004.md:161-172 — queued findings (incl. the critical hostMcp.ts:287-356 standard-tool timeout) have no INDEX/plan row of their own; the next cycle's planner must consume TASK-004 before cycle AGT closes or the critical finding is orphaned.
 NEXT_STATUS_FOR_INDEX: approved_minor
 NOTES: All 30 citations land in-range; the critical + all 7 important findings spot-verified true against source (standard tool.execute unbounded vs bounded containedExecute; requestCancel early-return skips "cancelling"; disposeClient SIGTERM-only from start() catch; duplicated HostMcp; duck-type gate; spawn-failed untested). Counts consistent (1c/7i/22m). Disposition guard files exist and agentEnginesIntegration.test.ts passes 28/28.

@@ -8,7 +8,7 @@
 //   - `contributes.menus["scm/title"]` contains
 //     { command: "UnicDB.generateCommitMessage", group: "navigation",
 //       when: "scmProvider == git && scmProviderHasChanges" }
-//   - The pre-existing 56 command ids are still fully present (superset guard, not a
+//   - The full set of locked command ids is still fully present (superset guard, not a
 //     frozen count — unrelated command churn must not false-fail).
 //   - The new command id appears exactly once.
 //   - Every command referenced in any `menus` block resolves to a declared command id.
@@ -22,6 +22,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 type Manifest = {
   contributes: {
@@ -34,7 +35,7 @@ type Manifest = {
   activationEvents?: string[];
 };
 
-const PRE_EXISTING_COMMAND_IDS: ReadonlyArray<string> = [
+const LOCKED_COMMAND_IDS: ReadonlyArray<string> = [
   "UnicDB.addConnection",
   "UnicDB.editConnection",
   "UnicDB.deleteConnection",
@@ -131,7 +132,7 @@ describe("TASK-GC-004 — package.json manifest guards for the Generate Commit M
   });
 
   // ---- Case 4 — edge (malformed / superset) ------------------------------
-  it("case 4: no duplicate command ids and the pre-existing 54 ids remain (superset)", () => {
+  it("case 4: no duplicate command ids and every locked id remains declared (superset)", () => {
     const json = loadManifest();
     const commands = json.contributes.commands ?? [];
     const ids = commands.map((c) => c.command as string);
@@ -140,10 +141,10 @@ describe("TASK-GC-004 — package.json manifest guards for the Generate Commit M
     const occurrences = ids.filter((id) => id === NEW_COMMAND_ID).length;
     expect(occurrences).toBe(1);
 
-    // Superset guard over the pre-GC command id list — we assert every pre-existing
-    // id is still present, but we do NOT freeze the total count, so unrelated
+    // Superset guard over the locked command id list — we assert every locked id
+    // is still declared, but we do NOT freeze the total count, so unrelated
     // command churn (new commands added later) cannot false-fail this test.
-    for (const preId of PRE_EXISTING_COMMAND_IDS) {
+    for (const preId of LOCKED_COMMAND_IDS) {
       expect(ids).toContain(preId);
     }
   });
@@ -219,5 +220,24 @@ describe("TASK-GC-004 — package.json manifest guards for the Generate Commit M
       const count = events.filter((x) => x === e).length;
       expect(count, `${e} phải giữ nguyên count = 1`).toBe(1);
     }
+  });
+
+  // ---- Identifier rename guard (TASK-CLEAN2-006 #4) ----------------------
+  it("identifier rename: declares the new locked-id name and drops every stale claim in this file", () => {
+    const selfPath = fileURLToPath(import.meta.url);
+    const source = readFileSync(selfPath, "utf8");
+    expect(source, "rename to LOCKED_COMMAND_IDS").toMatch(/\bLOCKED_COMMAND_IDS\b/);
+    // Build the old identifier as a string so the literal never appears in this
+    // file's source (the assertion message would otherwise re-introduce it and
+    // fail the post-rename grep check).
+    const oldName = "PRE_EXIST" + "ING_COMMAND_IDS";
+    expect(source, "no stale old identifier reference remains").not.toMatch(
+      new RegExp("\\b" + oldName + "\\b"),
+    );
+    // Build the forbidden hyphenated claim without embedding the literal substring
+    // in this file's source (string concat keeps the source grep-clean while still
+    // asserting the post-rename invariant).
+    const forbidden = "pre" + "-existing";
+    expect(source, "no stale hyphenated claim remains in this file").not.toMatch(forbidden);
   });
 });
