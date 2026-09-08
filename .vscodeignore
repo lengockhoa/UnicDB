@@ -54,3 +54,7 @@ Thumbs.db
 
 # Don't ship vsix files inside vsix
 **/*.vsix
+
+# Polluted working-tree dirs (added 2026-09-08 cycle RES-BAR post-publish cleanup)
+node_modules_backup/**
+.tmp-debug/**

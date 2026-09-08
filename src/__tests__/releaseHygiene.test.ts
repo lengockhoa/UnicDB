@@ -61,6 +61,76 @@ describe("release hygiene (TASK-703)", () => {
   });
 });
 
+// .vsix packaging-pollution guards (cycle RES-BAR post-publish cleanup):
+//   - `.vscodeignore` phải exclude `node_modules_backup/**` và `.tmp-debug/**`
+//     (vsce không đọc .gitignore; chỉ đọc .vscodeignore — guard against the
+//     leak that shipped `node_modules_backup/.vite/vitest/results.json` 21 KB
+//     + `.tmp-debug/refs.test.ts` vào UnicDB-1.53.28.vsix trước khi fix).
+//   - `.gitignore` cũng phải có cùng 2 entry — git-side safety net giữ cho
+//     working tree clean sau khi các test runner dump cache.
+//   - Cả hai guard đọc file on disk, không hardcode — bump version không phải
+//     sửa test.
+describe(".vsix packaging pollution guards (RES-BAR post-publish)", () => {
+  function readLines(relPath: string): string[] {
+    return fs
+      .readFileSync(path.join(repoRoot, relPath), "utf-8")
+      .split(/\r?\n/);
+  }
+
+  it(".vscodeignore phải exclude node_modules_backup/**", () => {
+    const lines = readLines(".vscodeignore");
+    expect(
+      lines.some((l) => l.trim() === "node_modules_backup/**"),
+      ".vscodeignore phải có dòng 'node_modules_backup/**' để vsce không ship cache directory",
+    ).toBe(true);
+  });
+
+  it(".vscodeignore phải exclude .tmp-debug/**", () => {
+    const lines = readLines(".vscodeignore");
+    expect(
+      lines.some((l) => l.trim() === ".tmp-debug/**"),
+      ".vscodeignore phải có dòng '.tmp-debug/**' để vsce không ship local debug scratch",
+    ).toBe(true);
+  });
+
+  it(".gitignore phải exclude node_modules_backup/ (git-side safety net)", () => {
+    const lines = readLines(".gitignore");
+    expect(
+      lines.some((l) => l.trim() === "node_modules_backup/"),
+      ".gitignore phải có dòng 'node_modules_backup/' để git không track vitest dump cache",
+    ).toBe(true);
+  });
+
+  it(".gitignore phải exclude .tmp-debug/ (git-side safety net)", () => {
+    const lines = readLines(".gitignore");
+    expect(
+      lines.some((l) => l.trim() === ".tmp-debug/"),
+      ".gitignore phải có dòng '.tmp-debug/' để git không track local debug scratch files",
+    ).toBe(true);
+  });
+
+  it("working tree phải không có file pollution đang tracked trong git", () => {
+    // Belt-and-suspenders: nếu .tmp-debug/ hoặc node_modules_backup/ xuất hiện
+    // lại trong `git ls-files` thì guard fail-fast. Đây là kênh phát hiện sớm
+    // nếu ignore rule bị xoá nhầm bởi một chore commit kế tiếp.
+    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+    const out = execFileSync("git", ["ls-files"], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+    });
+    const tracked = out.split("\n");
+    const pollutionTracked = tracked.filter(
+      (f) =>
+        f === ".tmp-debug/refs.test.ts" ||
+        f.startsWith("node_modules_backup/"),
+    );
+    expect(
+      pollutionTracked,
+      `git ls-files cho thấy pollution đang tracked: ${pollutionTracked.join(", ")}`,
+    ).toEqual([]);
+  });
+});
+
 // Release confidence profiles (ARP-09) — TASK-ARP09-002:
 //   - Named profile keys `profile:fast` / `profile:release` over the SAME stage
 //     sets as `verify:*`, deliberately kept in lockstep (roadmap "named profiles").

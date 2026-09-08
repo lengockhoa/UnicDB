@@ -43,3 +43,4 @@ dist/
 # version being released.
 .bump-notes-*.md
 node_modules_backup/
+.tmp-debug/
