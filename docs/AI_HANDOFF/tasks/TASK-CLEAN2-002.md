@@ -126,3 +126,14 @@ record); package.json has no `exports`/`types`/`typings`, only runtime
 this export with `@deprecated` JSDoc rather than delete it. Verified at HEAD: both Detection
 types are still referenced by `projectAgent()`'s parameters, so no import cleanup is needed
 beyond the deleted block.
+
+## Review Verdict
+
+REVIEWER_MODEL: unic-smart
+VERDICT: APPROVED
+FINDINGS:
+  - none — diff is exactly the 4-line deletion (3-line marker block + trailing blank) at engineChoice.ts:206-208; zero other changes in the file.
+  - `_LegacyDetectionTypes` identifier gone repo-wide (grep src/ webview/ tests/ = 0 matches).
+  - `ClaudeCodeDetection`/`CodexDetection` still imported (lines 31/35) and consumed by `projectAgent()` signature (line 119); no orphaned imports.
+  - typecheck exit 0; engineChoice.test.ts 11/11 pass (re-run by reviewer).
+NOTE: Model isolation OK — executor unic-code, reviewer unic-smart (per handoff.reviewer.model), differ as required. Executor report RED_OUTPUT contains real pre-change grep evidence (1 hit at :208) satisfying the failing-before check for this type-only deletion.

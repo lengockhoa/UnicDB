@@ -117,3 +117,11 @@ Verification Output: |
     + const validChoice = isEngineChoice(resolvedEngine);
 Status: PASS
 Note: Header comment at policy.ts:13-15 already carries the four-value vocabulary (`"builtin" | "omp" | "claude-code" | "codex"`) — item #1 re-verified via grep only, no re-edit. No `git add`/`commit`/`push` executed; tree left dirty for orchestrator copy-back.
+
+---
+## Review Verdict
+
+REVIEWER_MODEL: unic-smart
+VERDICT: APPROVED
+FINDINGS: none
+NOTE: Diff is exactly 1+/5- (3-line alias block + separating blank + caller rewrite); grep-zero for isValidEngineChoice repo-wide; four-value header comment at policy.ts:13-15 intact; re-ran both mapped suites (31/31) and typecheck (exit 0) fresh.

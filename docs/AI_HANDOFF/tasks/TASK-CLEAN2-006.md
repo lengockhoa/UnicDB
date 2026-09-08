@@ -146,3 +146,12 @@ premise is false, that source cbf277a already corrected the comment at
 adjacent queued finding for the critical `hostMcp` standard-tool timeout (:202) is
 byte-for-byte preserved. No omp source touched; `git diff --stat` only the two target
 files.
+
+---
+
+## Review Verdict
+REVIEWER_MODEL: unic-smart
+VERDICT: APPROVED-WITH-MINOR
+FINDINGS:
+  - minor: src/ui/__tests__/commitGenManifest.test.ts:147 — loop variable still named `preId` after the rename; harmless (grep-clean, no behavior impact) but a leftover naming remnant from the old `PRE_EXISTING_COMMAND_IDS` identifier. Rename to `lockedId` for consistency with the task's "remove every stale pre-existing claim" goal.
+NOTE: All critical checks pass — 56 command-id values byte-for-byte identical (array-block diff shows only the identifier line changed), greps all 0, RED test present with real failing output, vitest 8/8 re-run PASS, typecheck clean, TASK-004 :202 adjacent finding byte-for-byte preserved (only :201 changed in the 4-line window).
