@@ -54,7 +54,7 @@ import {
   summarizeAttachmentsForLog,
   type MinimalAttachment,
 } from "./aiChatAttachments";
-import { defaultAiSettings, type AiModelRole } from "../ai/settings";
+import { defaultAiSettings, type AiConfig, type AiModelRole } from "../ai/settings";
 import { createDbTools } from "../ai/tools/registry";
 import { createWorkspaceSearchTool } from "../ai/tools/workspaceSearchTool";
 import { createFileOpsTool, createFileOpsPreview, fileOpsDeniedEnvelope } from "../ai/tools/fileOpsTool";
@@ -99,6 +99,7 @@ import { formatAttributionFooter } from "../ai/grounding/attribution";
    HISTORY_RENDER_CAP,
    type AiChatPanelEngine,
    type AiChatPanelHostMessage,
+   type AiChatPanelModels,
    type AiChatPanelPermissionRequest,
    type AiChatPanelUsage,
    type AiChatPanelWebviewMessage,
@@ -126,6 +127,46 @@ import type { ConnectionRecoveryStatus } from "../core/connectionManager";
  * no-context branch, but NO adapter introspection ever runs. */
 const GENERIC_SYSTEM_PROMPT =
   "You are UnicDB's AI assistant. Help the user explore and query their database.";
+
+// ============================================================================
+// TASK-AGTUI-006 — model role set + bypass-permissions predicate
+// ============================================================================
+
+/** Closed `AiModelRole` set (mirror of the literal union in
+ * `src/ai/settings.ts`). Used by `buildModelsFrame` (iterate) and
+ * `handleModelSelect` (validate a `model_select` role). */
+const AI_MODEL_ROLES: readonly AiModelRole[] = [
+  "work",
+  "smart",
+  "autocomplete",
+  "lite",
+];
+
+/** Closed-set guard for the `model_select` wire role. Anything outside
+ * this list is rejected (no exception thrown — `handleModelSelect`
+ * posts an `error` bubble and leaves `activeRole` unchanged). */
+function isAiModelRole(value: unknown): value is AiModelRole {
+  return (
+    value === "work" ||
+    value === "smart" ||
+    value === "autocomplete" ||
+    value === "lite"
+  );
+}
+
+/** TASK-AGTUI-006: predicate for an ACP / HostMcp permission option
+ * that grants execution. Mirrors `optionIdGrants` in
+ * `src/ai/omp/hostMcp.ts:122-124` — the existing flow already classifies
+ * `allow-once` and `allow-session` as the "allow-kind" set; we reuse
+ * the same vocabulary so a bypass answer writes a result the rest of
+ * the host treats identically to a webview-picked optionId.
+ *
+ * `undefined` is NOT allow-kind — it is the deny fallback shape the
+ * webview emits when the user picks the Deny button (see
+ * `AiChatPanelPermissionResponse` in `aiChatPanelMessages.ts`). */
+function isAllowKindOptionId(optionId: unknown): optionId is "allow-once" | "allow-session" {
+  return optionId === "allow-once" || optionId === "allow-session";
+}
 
 // ============================================================================
 // TASK-005 — @-mention references (DB objects + workspace files)
@@ -1194,8 +1235,18 @@ export class AiChatPanel {
    * `[user, assistant]` pair — i.e. the last UI exchange was stopped
    * mid-turn and the pair was therefore never appended (PLAN §3). */
   private lastSentText: string | null = null;
-  /** Session-local model role selected by the `/model` slash command. */
+  /** Session-local model role selected by the `/model` slash command or
+   *  the header role chip (TASK-AGTUI-006 — full `AiModelRole` set, not
+   *  just `work|smart`). */
   private activeRole: AiModelRole = "work";
+  /**
+   * TASK-AGTUI-006: panel-session "bypass permissions" flag. Default OFF.
+   * When ON, the host auto-answers ACP permission requests with the
+   * first allow-kind option (allow-first); when no allow-kind option is
+   * present the host resolves as DENY (default-deny posture). NEVER
+   * persisted — panel-session lifetime only.
+   */
+  private bypassPermissions: boolean = false;
   /** Cached engine resolution — set on first show; reused on every turn. */
   private engine: EngineKind | null = null;
   /** Cached ACP session — created on first acp-mode send. */
@@ -1639,6 +1690,22 @@ export class AiChatPanel {
           turnId: `toggle-${Date.now()}`,
         });
         return;
+      case "model_select":
+        // TASK-AGTUI-006: webview chip path. Silent on success — no
+        // assistant echo (the chip path is its own UI surface). Validates
+        // role against the current settings AND requires a non-empty
+        // modelId (empty = feature disabled, not a target). On success,
+        // `activeRole` flips and a fresh `models` frame is posted so the
+        // webview reconciles.
+        await this.handleModelSelect(msg.role);
+        return;
+      case "bypass_permissions":
+        // TASK-AGTUI-006: panel-session toggle. NEVER persisted — `false`
+        // after `true` is the explicit reset path; a fresh panel starts
+        // off (default-OFF). No confirmation frame: the composer chip
+        // already reflects the state (the webview owns its own visual).
+        this.bypassPermissions = msg.enabled;
+        return;
     }
   }
   private async handleCommand(
@@ -1727,6 +1794,20 @@ export class AiChatPanel {
       this.engine = this.resolveEngineKind();
       this.postEngine(this.engine);
     }
+    // TASK-AGTUI-006: resolve the AI config ONCE and reuse it for both
+    // the legacy `visionCapable` decision AND the new `models` frame.
+    // The frame is posted BEFORE `init` so a webview that reacts to
+    // `init` already sees the chip label / picker state — and legacy
+    // tests that snapshot `postedMessages` at the moment init arrives
+    // observe every frame the ready path will produce (no late surprise
+    // frame). Failure is non-fatal (an empty `roles[]` is the "nothing
+    // configured" signal, NOT a schema violation).
+    let cfg: AiConfig | null = null;
+    try {
+      cfg = await this.options.deps.loadConfig();
+    } catch {
+      cfg = null;
+    }
     // TASK-001 (cycle AB): the omp engine cannot accept images regardless
     // of the active role's `vision` flag — engine is the belt. TASK-011
     // extends the belt: Claude Code + Codex are image-capable by engine
@@ -1748,14 +1829,13 @@ export class AiChatPanel {
       // TASK-001 belt-vs-suspenders rule (engine owns the truth).
       visionCapable = true;
     } else {
-      try {
-        const cfg = await this.options.deps.loadConfig();
-        visionCapable = cfg?.models.work.vision
-          ?? defaultAiSettings().models.work.vision;
-      } catch {
-        visionCapable = defaultAiSettings().models.work.vision;
-      }
+      visionCapable = cfg?.models.work.vision
+        ?? defaultAiSettings().models.work.vision;
     }
+    // Post the `models` frame BEFORE `init` — the chip / dropdown render
+    // consumes it eagerly, and snapshotting postedMessages after init
+    // arrival must observe every frame this method will produce.
+    this.post(this.buildModelsFrame(cfg));
     this.post({
       type: "init",
       hasHistory: this.history.length > 0,
@@ -1767,6 +1847,84 @@ export class AiChatPanel {
     // Null before the first ready fires — `prepareAttachments` treats
     // the un-resolved state as a conservative "no images" until then.
     this.resolvedVisionCapable = visionCapable;
+  }
+
+  /**
+   * TASK-AGTUI-006: build the `models` frame from the current
+   * `AiConfig`. Filters out roles whose `modelId` is empty (those
+   * roles are "feature disabled" — same precedent as `autocomplete` /
+   * `lite` per `aiSettingsErrors` validation). `active` is the panel's
+   * current `activeRole`; if no role has a non-empty modelId we post
+   * an empty `roles` list — that is the "nothing configured" signal,
+   * NOT a schema violation (the webview must show the empty-state).
+   *
+   * The frame carries ONLY role literal + modelId + vision flag — no
+   * apiKey, no baseUrl, no method, no engine. Privacy invariant: shape
+   * is the same as the legacy `init.visionCapable` boolean; expanded
+   * only by role name + modelId + vision.
+   */
+  private buildModelsFrame(cfg: AiConfig | null): AiChatPanelModels {
+    const roles: Array<{ role: AiModelRole; modelId: string; vision: boolean }> = [];
+    if (cfg !== null && cfg.models !== undefined) {
+      for (const role of AI_MODEL_ROLES) {
+        const m = cfg.models[role];
+        if (m === undefined) continue;
+        if (typeof m.modelId !== "string" || m.modelId.length === 0) continue;
+        roles.push({
+          role,
+          modelId: m.modelId,
+          vision: m.vision === true,
+        });
+      }
+    }
+    return {
+      type: "models",
+      active: this.activeRole,
+      roles,
+    };
+  }
+
+  /**
+   * TASK-AGTUI-006: webview → host chip path. Validates the role
+   * against the closed `AiModelRole` set AND against the current
+   * settings (empty modelId = feature disabled, NOT a flip target).
+   * On success the active role flips and a fresh `models` frame is
+   * posted so the webview reconciles. On rejection an `error` bubble
+   * surfaces and `activeRole` stays put — no `models` frame is posted
+   * (the chip path is silent on success and on rejection alike; the
+   * existing `models` frame remains the visible truth).
+   */
+  private async handleModelSelect(role: AiModelRole): Promise<void> {
+    if (!isAiModelRole(role)) {
+      this.post({
+        type: "error",
+        message: `Invalid model role: ${String(role)}`,
+      });
+      return;
+    }
+    let cfg: AiConfig | null = null;
+    try {
+      cfg = await this.options.deps.loadConfig();
+    } catch {
+      cfg = null;
+    }
+    if (cfg === null) {
+      this.post({
+        type: "error",
+        message: `Model role '${role}' is not configured`,
+      });
+      return;
+    }
+    const target = cfg.models[role];
+    if (target === undefined || typeof target.modelId !== "string" || target.modelId.length === 0) {
+      this.post({
+        type: "error",
+        message: `Model role '${role}' is not configured`,
+      });
+      return;
+    }
+    this.activeRole = role;
+    this.post(this.buildModelsFrame(cfg));
   }
 
   /**
@@ -2733,6 +2891,17 @@ export class AiChatPanel {
         resolve(undefined);
         return;
       }
+      // TASK-AGTUI-006: bypass ON — auto-answer without touching the
+      // webview. Allow-first: pick the first allow-kind option from
+      // the HostMcp card (mirrors `optionIdGrants` in
+      // `src/ai/omp/hostMcp.ts:122-124`); deny fallback when none.
+      // The webview receives NO `permission_request` frame; the gate
+      // resolver never goes through the round-trip.
+      if (this.bypassPermissions) {
+        const allowOption = msg.options.find((o) => isAllowKindOptionId(o.optionId));
+        resolve(allowOption?.optionId);
+        return;
+      }
       // Register the gate card so Stop/cancelAllPending fail-closes it, and
       // resolve through the webview's `permission_response` path.
       const requestId = msg.requestId;
@@ -3383,6 +3552,38 @@ export class AiChatPanel {
       if (id.length === 0) continue;
       optionEntries.push({ optionId: id, label });
       optionIdSet.add(id);
+    }
+
+    // TASK-AGTUI-006: bypass ON — auto-answer without touching the
+    // webview. Allow-first: pick the first allow-kind option from the
+    // request's options (mirrors `optionIdGrants` in
+    // `src/ai/omp/hostMcp.ts:122-124`). When NO allow-kind option is
+    // present the default-deny posture holds — write a `cancelled`
+    // outcome with no optionId. Either branch writes EXACTLY ONE result
+    // for `call.id`, mirroring `handlePermissionResponse`'s settle
+    // contract. The webview receives NO `permission_request` frame
+    // (parity assertion #4 / #5).
+    if (this.bypassPermissions) {
+      const allowOption = optionEntries.find((o) => isAllowKindOptionId(o.optionId));
+      if (allowOption !== undefined) {
+        try {
+          session.handle.acp.respond(call.id, {
+            outcome: { outcome: "selected", optionId: allowOption.optionId },
+          });
+        } catch {
+          // Process may have exited; the bypass result is best-effort
+          // (mirrors `cancelPending`'s error-tolerance).
+        }
+      } else {
+        try {
+          session.handle.acp.respond(call.id, {
+            outcome: { outcome: "cancelled" },
+          });
+        } catch {
+          /* best-effort */
+        }
+      }
+      return;
     }
 
     const seq = session.bumpRequestSeq();

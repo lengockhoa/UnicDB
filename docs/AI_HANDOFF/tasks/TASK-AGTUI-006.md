@@ -58,7 +58,111 @@ OPEN ITEM for executor: the "allow-kind" predicate must be derived from the REAL
 
 ## Executor Report
 
-(appended below by executor)
+```
+EXECUTOR_TOOL: Claude Code (Agent tool)
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+EXECUTOR_SUBAGENT: feature-implementer
+
+## Open Item Resolution — allow-kind predicate
+The "allow-kind" predicate is `optionId === "allow-once" || optionId === "allow-session"`.
+Derived from `optionIdGrants(optionId)` at `src/ai/omp/hostMcp.ts:122-124`. The option
+set used by the existing HostMcp gate is the closed `[allow-once, allow-session, deny]`
+defined at `src/ai/omp/hostMcp.ts:113-120`. The new host-side helper is
+`isAllowKindOptionId(optionId)` at `src/ui/aiChatPanel.ts` (private module helper,
+mirrors the existing predicate byte-for-byte so a bypass answer writes a result the
+rest of the host treats identically to a webview-picked optionId).
+
+## RED — 8 tests failed (all in the new file)
+Command: `npx vitest run src/ui/__tests__/aiChatPanelCloneHost.test.ts`
+All 8 new tests failed with `Error: until: condition not met` — the panel's ready
+path did not post the new `models` frame (the chip path had no host wiring yet).
+Each test observed an empty `postedMessages` for the new wire shape.
+
+## Implementation Summary
+1. `src/ui/aiChatPanel.ts`
+   - Added module-level helpers: `AI_MODEL_ROLES`, `isAiModelRole`, `isAllowKindOptionId`.
+   - Added `private bypassPermissions: boolean = false` panel-session flag
+     (no persistence — verified: no `globalState` / workspace writes).
+   - Added `case "model_select"` and `case "bypass_permissions"` to the
+     webview message switch.
+   - Added `private buildModelsFrame(cfg)` — filters roles to non-empty
+     `modelId`, carries ONLY role literal + modelId + vision flag (no
+     apiKey / baseUrl / method / engine — verified via JSON-string regex).
+   - Added `private async handleModelSelect(role)` — closed-set guard +
+     settings-driven "feature disabled" rejection; on success flips
+     `activeRole` and re-posts `models`. Silent on both success and
+     rejection (PLAN §3 chip path: no assistant echo).
+   - Modified `handleReady()` — loads config ONCE, reuses for both the
+     legacy `visionCapable` decision and the new `models` frame. Posts
+     `models` BEFORE `init` so any test snapshotting postedMessages at
+     the moment init arrives observes every frame this method produces
+     (no late surprise). Load failure is non-fatal (empty `roles[]`).
+   - Modified `handleAcpServerRequest()` — when `bypassPermissions` is
+     ON, picks the first allow-kind option from the request's options
+     and writes `{outcome:"selected", optionId:<allow-kind>}`; when no
+     allow-kind option exists writes `{outcome:"cancelled"}` (deny
+     fallback). Webview receives NO `permission_request` frame. Best-
+     effort writes (mirrors `cancelPending`'s error-tolerance).
+   - Modified `requestHostPermission()` (HostMcp gate) — same bypass
+     behavior for parity: allow-first / deny fallback, no webview frame.
+   - NO edits to engine-dispatch methods (`resolveEngineKind`,
+     `runOmpEngineTurn`, `runClaudeCodeTurn`, `runCodexTurn`,
+     `runImageCapableEngineTurn`). Verified via `git diff`.
+
+## Verification Output
+Command: `npx vitest run src/ui/__tests__/aiChatPanelCloneHost.test.ts`
+→ `Tests  8 passed (8)` ✓
+
+Command: `npx vitest run src/ui/__tests__/aiChatPanelAgentEngines.test.ts src/ui/__tests__/aiChatPanelEngine.test.ts`
+→ `Tests  25 passed (25)` ✓
+
+Command: `npm run typecheck`
+→ exit 0 (no errors)
+
+Command: full chat-webview regression union (TASK-AGTUI-007 verification set):
+  npx vitest run \
+    src/ui/__tests__/aiChatPanel.test.ts \
+    src/ui/__tests__/aiChatPanelAcp.test.ts \
+    src/ui/__tests__/aiChatPanelAgentEngines.test.ts \
+    src/ui/__tests__/aiChatPanelAttachments.test.ts \
+    src/ui/__tests__/aiChatPanelBundle.test.ts \
+    src/ui/__tests__/aiChatPanelCloneCss.test.ts \
+    src/ui/__tests__/aiChatPanelCloneHost.test.ts \
+    src/ui/__tests__/aiChatPanelCommands.test.ts \
+    src/ui/__tests__/aiChatPanelDbAware.test.ts \
+    src/ui/__tests__/aiChatPanelDbAwareWebview.test.ts \
+    src/ui/__tests__/aiChatPanelEngine.test.ts \
+    src/ui/__tests__/aiChatPanelMentions.test.ts \
+    src/ui/__tests__/aiChatPanelMessages.test.ts \
+    src/ui/__tests__/aiChatPanelMessagesClone.test.ts \
+    src/ui/__tests__/aiChatPanelPlan.test.ts \
+    src/ui/__tests__/aiChatPanelPlanWebview.test.ts \
+    src/ui/__tests__/aiChatPanelPolicy.test.ts \
+    src/ui/__tests__/aiChatPanelResume.test.ts \
+    src/ui/__tests__/aiChatPanelSessionState.test.ts \
+    src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts \
+    src/ui/__tests__/aiChatPanelThoughtRegen.test.ts \
+    src/ui/__tests__/aiChatPanelToolParity.test.ts \
+    src/ui/__tests__/aiChatPanelWebview.test.ts \
+    src/ui/__tests__/aiChatPanelWebviewTask002.test.ts \
+    src/ui/__tests__/aiChatPanelWebviewTask005.test.ts \
+    src/ui/__tests__/aiChatPanelPrivacy.test.ts
+→ `Test Files  25 passed | 1 skipped (26)`
+→ `Tests  392 passed | 30 skipped (422)` ✓
+
+## Acceptance Criteria
+- [x] All §Test Cases pass; `git diff` on `src/ui/aiChatPanel.ts` shows no edits
+      inside engine-dispatch methods (`resolveEngineKind`, `runOmpEngineTurn`/
+      `runClaudeCodeTurn`/`runCodexTurn` call sites).
+- [x] Bypass flag is never persisted (no `context.globalState`/workspace writes;
+      panel-session lifetime only — class field, no persistence seam).
+- [x] `models` frame carries NO apiKey/model-secret material — only role names
+      + modelId + vision booleans. Verified via regex sweep of the JSON-serialized
+      frame in test #1 (`apiKey`, `sk-…`, `fixture-not-loaded` all negative).
+
+Status: PASS
+Note: none
+```
 
 ---
 
