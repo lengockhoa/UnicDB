@@ -51,6 +51,7 @@ import {
   buildPagedQueryTerms,
   composeSortQuery,
   parseOrderBy,
+  stripLeadingClauseKeyword,
   type ColumnFilterModel,
   type OrderByTerm,
 } from "./queryComposer";
@@ -1769,8 +1770,16 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
     pkTiebreakers: string[],
     columnTypes?: Record<string, string>,
   ): { sql: string; hiddenColumns?: string[] } {
-    const where = msg.where ?? "";
-    const orderBy = msg.orderBy ?? "";
+    // TASK-RES-002 — the host boundary already strips the leading
+    // WHERE/ORDER BY keyword in `handleRequery` (lines 1850-1851). Strip
+    // again at this inner boundary: every downstream lane
+    // (`composeRequery` 1775/1787, `composeSortQuery` 1799, multi-term
+    // wrap 1804, `combinedWhere` 1780) reads `msg.where`/`msg.orderBy`
+    // here, so re-applying the strip guarantees a keyword-free fragment
+    // reaches each lane (PLAN §3 rejected alternative: a single inner
+    // strip inside `composeRequery` would miss the dialect lanes).
+    const where = stripLeadingClauseKeyword(msg.where ?? "", "WHERE");
+    const orderBy = stripLeadingClauseKeyword(msg.orderBy ?? "", "ORDER BY");
     if (!dialect) return { sql: composeRequery(r.sql, where, orderBy) };
 
     const filterWhere = msg.filters
@@ -1847,8 +1856,13 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
     // OTHER; the epoch guards them against the PANEL being replaced.
     const epoch = this.sessionEpoch;
     const index = msg.index;
-    const where = msg.where ?? "";
-    const orderBy = msg.orderBy ?? "";
+    // TASK-RES-002 — strip exactly ONE leading clause keyword from the
+    // user-typed fragments at the message boundary (case-insensitive,
+    // whitespace-bounded). The downstream composition lanes
+    // (composeRequery, composeSortQuery, multi-term wrap, combinedWhere
+    // paging) all see the stripped fragment from this single choke point.
+    const where = stripLeadingClauseKeyword(msg.where ?? "", "WHERE");
+    const orderBy = stripLeadingClauseKeyword(msg.orderBy ?? "", "ORDER BY");
     const r = this.lastResults[index];
     if (!r) {
       void vscode.window.showErrorMessage(

@@ -159,69 +159,91 @@ function readRuleBody(src: string, selector: string): string {
 }
 
 // -----------------------------------------------------------------------
-// Test #1 — happy: requery bar CSS rules for one-baseline alignment
+// Test #1 — happy: requery input CSS rules (TASK-RES-001 toolbar slot)
 // -----------------------------------------------------------------------
+//
+// TASK-009 D tested the OLD standalone requery bar — .UnicDB-requery-bar
+// (display:flex + align-items:center wrapper) and .UnicDB-requery-label
+// (shared 26px baseline label). TASK-RES-001 moved the inputs into the
+// toolbar row, dropped the bar wrapper + labels, and re-tuned the input
+// height to 24px so it lines up with the 24-26px .UnicDB-btn height in
+// the same flex row. The buttons are .UnicDB-btn (height from the shared
+// rule) and need no extra height override.
 
-describe("TASK-009 D — requery bar CSS alignment", () => {
-  it("declares .UnicDB-requery-bar with display:flex + align-items:center", () => {
-    const body = readRuleBody(stylesSrc, ".UnicDB-requery-bar");
-    expect(body, "rule body for .UnicDB-requery-bar").not.toBe("");
-    expect(body).toMatch(/display\s*:\s*flex/);
-    expect(body).toMatch(/align-items\s*:\s*center/);
-  });
-
-  it(".UnicDB-requery-label sets line-height to 26px (shared baseline)", () => {
-    const body = readRuleBody(stylesSrc, ".UnicDB-requery-label");
-    expect(body, "rule body for .UnicDB-requery-label").not.toBe("");
-    expect(body).toMatch(/line-height\s*:\s*26px/);
-  });
-
-  it(".UnicDB-requery-input sets height:26px + box-sizing:border-box", () => {
+describe("TASK-RES-001 — requery input CSS alignment (toolbar slot)", () => {
+  it(".UnicDB-requery-input sets height:24px + box-sizing:border-box", () => {
     const body = readRuleBody(stylesSrc, ".UnicDB-requery-input");
     expect(body, "rule body for .UnicDB-requery-input").not.toBe("");
-    expect(body).toMatch(/height\s*:\s*26px/);
+    expect(body).toMatch(/height\s*:\s*24px/);
     expect(body).toMatch(/box-sizing\s*:\s*border-box/);
   });
 
-  it("button.UnicDB-requery-run sets height:26px", () => {
-    const body = readRuleBody(stylesSrc, "button.UnicDB-requery-run");
-    expect(body, "rule body for button.UnicDB-requery-run").not.toBe("");
-    expect(body).toMatch(/height\s*:\s*26px/);
+  it(".UnicDB-requery-input.UnicDB-requery-where is shrinkable (flex 0 1 + min-width)", () => {
+    const body = readRuleBody(stylesSrc, ".UnicDB-requery-input.UnicDB-requery-where");
+    expect(body, "rule body for .UnicDB-requery-input.UnicDB-requery-where").not.toBe("");
+    expect(body).toMatch(/flex\s*:\s*0\s+1\s+140px/);
+    expect(body).toMatch(/min-width\s*:\s*90px/);
   });
 
-  it("button.UnicDB-requery-clear sets height:26px", () => {
-    const body = readRuleBody(stylesSrc, "button.UnicDB-requery-clear");
-    expect(body, "rule body for button.UnicDB-requery-clear").not.toBe("");
-    expect(body).toMatch(/height\s*:\s*26px/);
+  it(".UnicDB-requery-input.UnicDB-requery-order is shrinkable (flex 0 1 + min-width)", () => {
+    const body = readRuleBody(stylesSrc, ".UnicDB-requery-input.UnicDB-requery-order");
+    expect(body, "rule body for .UnicDB-requery-input.UnicDB-requery-order").not.toBe("");
+    expect(body).toMatch(/flex\s*:\s*0\s+1\s+140px/);
+    expect(body).toMatch(/min-width\s*:\s*90px/);
+  });
+
+  it("button.UnicDB-requery-run + button.UnicDB-requery-clear set flex:0 0 auto", () => {
+    const runBody = readRuleBody(stylesSrc, "button.UnicDB-requery-run");
+    const clearBody = readRuleBody(stylesSrc, "button.UnicDB-requery-clear");
+    expect(runBody, "rule body for button.UnicDB-requery-run").not.toBe("");
+    expect(clearBody, "rule body for button.UnicDB-requery-clear").not.toBe("");
+    expect(runBody).toMatch(/flex\s*:\s*0\s+0\s+auto/);
+    expect(clearBody).toMatch(/flex\s*:\s*0\s+0\s+auto/);
+  });
+
+  it(".UnicDB-requery-bar + .UnicDB-requery-label rules are gone (TASK-RES-001 removed them)", () => {
+    // The bar wrapper and label were dropped when the inputs moved into
+    // the toolbar. Make sure no stale rules survive.
+    expect(readRuleBody(stylesSrc, ".UnicDB-requery-bar")).toBe("");
+    expect(readRuleBody(stylesSrc, ".UnicDB-requery-label")).toBe("");
   });
 });
 
 // -----------------------------------------------------------------------
-// Test #2 — edge: requery bar element class exists + CSS rule applied
+// Test #2 — edge: requery inputs + buttons mount into the toolbar (not a bar)
 // -----------------------------------------------------------------------
 
-describeIfBundle("TASK-009 D — requery bar element in DOM", () => {
+describeIfBundle("TASK-RES-001 — requery elements mounted in toolbar", () => {
   itIfBundle(
-    "bundle mounts the requery bar after a state message",
+    "bundle mounts the WHERE / ORDER BY inputs + Re-Run / Clear buttons in the toolbar (no requery bar)",
     async () => {
       const { root } = loadBundle();
-      // The requery bar lives inside the persistent gridWrap; gridWrap is
-      // only attached to the panel when a statement is active. Dispatch a
-      // minimal 2-row state so the panel takes the grid branch.
       dispatchState(oneStatementState());
       await flushGridEvents();
-      const bar = root.querySelector(".UnicDB-requery-bar");
-      expect(
-        bar,
-        "expected .UnicDB-requery-bar element in persistent DOM",
-      ).toBeTruthy();
-      if (!bar) return;
-      const label = bar.querySelector(".UnicDB-requery-label");
-      const input = bar.querySelector(".UnicDB-requery-input");
-      const runBtn = bar.querySelector("button.UnicDB-requery-run");
-      const clearBtn = bar.querySelector("button.UnicDB-requery-clear");
-      expect(label).toBeTruthy();
-      expect(input).toBeTruthy();
+
+      // No standalone requery-bar wrapper.
+      expect(root.querySelector(".UnicDB-requery-bar")).toBeNull();
+      expect(root.querySelector("[data-UnicDB-requery-bar]")).toBeNull();
+
+      // Toolbar owns all four elements.
+      const toolbar = root.querySelector(".UnicDB-toolbar") as HTMLElement | null;
+      expect(toolbar, "expected .UnicDB-toolbar element").toBeTruthy();
+      if (!toolbar) return;
+
+      const whereInput = toolbar.querySelector(
+        ".UnicDB-requery-where",
+      ) as HTMLInputElement | null;
+      const orderInput = toolbar.querySelector(
+        ".UnicDB-requery-order",
+      ) as HTMLInputElement | null;
+      const runBtn = toolbar.querySelector(
+        "button.UnicDB-requery-run",
+      ) as HTMLButtonElement | null;
+      const clearBtn = toolbar.querySelector(
+        "button.UnicDB-requery-clear",
+      ) as HTMLButtonElement | null;
+      expect(whereInput).toBeTruthy();
+      expect(orderInput).toBeTruthy();
       expect(runBtn).toBeTruthy();
       expect(clearBtn).toBeTruthy();
     },

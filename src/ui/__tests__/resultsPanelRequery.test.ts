@@ -1055,3 +1055,138 @@ describe("ResultsPanel — keyset paging (TASK-004 cycle Y)", () => {
 });
 
 
+// =============================================================================
+// TASK-RES-002 — host-side boundary normalization for the requery inputs.
+//
+// The user types WHERE/ORDER BY bodies into the requery boxes; the P0
+// contract is "no leading clause keyword" but the host enforces it
+// defensively too: `handleRequery` strips exactly ONE leading
+// `WHERE` / `ORDER BY` keyword (case-insensitive, whitespace-bounded)
+// from `msg.where` / `msg.orderBy` before they reach any composition
+// lane. This means a literal `WHERE a>1` typed into the box produces
+// `… WHERE a>1` (not `… WHERE WHERE a>1`) and a literal `ORDER BY id
+// DESC` produces a valid ORDER BY clause (not an "Invalid ORDER BY"
+// parse rejection). Keyword-free fragments stay byte-identical.
+// =============================================================================
+
+describe("ResultsPanel — handleRequery strips one leading clause keyword (TASK-RES-002)", () => {
+  it("Test #3 — requery msg with where:'WHERE a>1' produces SQL containing 'WHERE a>1' exactly once (no 'WHERE WHERE')", async () => {
+    const requeryBatched = makeRecordingBatched({
+      columns: ["a"],
+      initialRows: [[1]],
+      closeCalls: 0,
+      cancelCalls: 0,
+    });
+    const recorded: { sql: string }[] = [];
+    const runSql = vi.fn(async (sql: string): Promise<RunResult> => {
+      recorded.push({ sql });
+      return { results: [], batched: requeryBatched };
+    });
+    const runner = {
+      loadMore: vi.fn(async () => []),
+      cancel: vi.fn(async () => undefined),
+      runSql,
+    } as unknown as QueryRunner;
+    const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(
+      ResultsPanel.viewId,
+      panel,
+      { webviewOptions: { retainContextWhenHidden: true } },
+    );
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT a FROM t",
+          status: "done",
+          result: { columns: ["a"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.postMessage.mockClear();
+
+    fake.webview.dispatch({
+      type: "requery",
+      index: 0,
+      where: "WHERE a>1",
+      orderBy: "",
+    });
+    await waitForTerminal(fake);
+
+    expect(recorded[0]?.sql).toBe(
+      "SELECT * FROM (SELECT a FROM t) UnicDB_sub WHERE a>1",
+    );
+    // Critical: the composed SQL contains "WHERE a>1" exactly once and
+    // MUST NOT contain the substring "WHERE WHERE".
+    expect(recorded[0]?.sql).toContain("WHERE a>1");
+    expect(recorded[0]?.sql).not.toContain("WHERE WHERE");
+    // Count check: a single WHERE token guards against any future helper
+    // change that might re-introduce a second copy.
+    const whereMatches = recorded[0]?.sql.match(/WHERE /g) ?? [];
+    expect(whereMatches.length).toBe(1);
+  });
+
+  it("Test #9 — orderBy:'ORDER BY lower(id)' on mysql ⇒ strip happens, parseOrderBy then rejects expression, handler posts synthetic error + toast (no SQL run)", async () => {
+    const runSql = vi.fn(async (_sql: string): Promise<RunResult> => {
+      throw new Error("runSql must not be called when ORDER BY parse fails");
+    });
+    const runner = {
+      loadMore: vi.fn(async () => []),
+      cancel: vi.fn(async () => undefined),
+      runSql,
+    } as unknown as QueryRunner;
+    const saveContext: SaveContext = {
+      getDriver: () => "mysql" as never,
+      listPkColumns: async () => [],
+    };
+    const panel = new ResultsPanel({ runner, saveContext });
+    vscode.window.registerWebviewViewProvider(
+      ResultsPanel.viewId,
+      panel,
+      { webviewOptions: { retainContextWhenHidden: true } },
+    );
+    panel.render(
+      [
+        {
+          index: 0,
+          sql: "SELECT a FROM t",
+          status: "done",
+          result: { columns: ["a"], rows: [[1]], rowCount: 1, durationMs: 0 },
+          durationMs: 0,
+        },
+      ],
+      "hdr",
+    );
+    const fake = lastPanel.current!;
+    fake.webview.postMessage.mockClear();
+
+    fake.webview.dispatch({
+      type: "requery",
+      index: 0,
+      where: "",
+      orderBy: "ORDER BY lower(id)",
+    });
+    await waitForTerminal(fake);
+
+    // The handler must strip the leading ORDER BY keyword; the remainder
+    // ("lower(id)") is then parsed by the live dialect (mysql). Expressions
+    // are universally rejected by parseOrderBy — the handler posts a
+    // synthetic error state + showErrorMessage toast, never running any
+    // SQL. The strip MUST NOT bypass the rejection path (regression guard
+    // for the dialect guard at resultsPanel.ts:1878-1898).
+    expect(runSql).not.toHaveBeenCalled();
+    expect(vscode.window.showErrorMessage).toHaveBeenCalled();
+    const lastState = stateMessages(fake).slice(-1)[0]!;
+    const entry = (lastState.results as Array<{
+      status?: string;
+      error?: string;
+    }>)[0]!;
+    expect(entry.status).toBe("error");
+    expect(entry.error).toMatch(/Invalid ORDER BY/);
+  });
+});
+
+

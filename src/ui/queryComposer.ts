@@ -340,6 +340,58 @@ export function parseOrderBy(orderBy: string, dialect?: Dialect): ParseOrderByRe
   return { ok: true, terms };
 }
 
+/**
+ * Strip exactly ONE leading clause keyword from a fragment, defensively.
+ *
+ * TASK-RES-002 — the requery boxes accept a WHERE body / ORDER BY body
+ * (P0 input format, no leading keyword). When the user types the natural
+ * `WHERE id > 5` or `ORDER BY id DESC` the host normalizes at the
+ * `handleRequery` message boundary by calling this helper on the raw
+ * `msg.where` / `msg.orderBy`. Stripping happens ONCE here — every
+ * downstream composition lane (`composeRequery`, `composeSortQuery`,
+ * multi-term wrap, `combinedWhere` paging) then sees the keyword-free
+ * fragment, so a stacked input like `"WHERE WHERE x=1"` is non-recursive
+ * (`"WHERE x=1"`, deterministic — see §Discussion in TASK-RES-002).
+ *
+ * Contract:
+ *  - Returns `fragment.trim()` when the trimmed fragment does NOT start
+ *    with `keyword` (case-insensitive), or starts with `keyword` but the
+ *    keyword is NOT followed by a whitespace boundary (so `"WHEREx"` or
+ *    `"ORDER BYid"` pass through untouched — those are user input the
+ *    downstream `parseOrderBy` will reject as malformed SQL anyway).
+ *  - When `fragment.trim()` starts with `keyword` (case-insensitive)
+ *    followed by whitespace OR the trimmed fragment IS exactly the
+ *    keyword (with optional surrounding whitespace), removes that ONE
+ *    keyword and returns the rest trimmed. Bare `"WHERE"` / `"ORDER BY"`
+ *    strip to `""` (the empty/empty lane already re-runs the original
+ *    SQL — documented in `resultsGridModel.ts:1308-1310`).
+ *  - Never recursive: only the FIRST leading keyword (when present) is
+ *    stripped. `"WHERE WHERE x=1"` → `"WHERE x=1"`.
+ *
+ * Callers MUST invoke this exactly at the message boundary; do not call
+ * it inside `composeRequery` or any other composition helper — the four
+ * downstream lanes must each see the already-stripped fragment (PLAN §3
+ * rejected alternative).
+ */
+export function stripLeadingClauseKeyword(
+  fragment: string,
+  keyword: "WHERE" | "ORDER BY",
+): string {
+  const trimmed = fragment.trim();
+  const kwLower = keyword.toLowerCase();
+  const trimmedLower = trimmed.toLowerCase();
+  // Case-insensitive prefix check, then boundary check.
+  if (
+    trimmedLower.length >= keyword.length &&
+    trimmedLower.startsWith(kwLower) &&
+    (trimmed.length === keyword.length ||
+      /\s/.test(trimmed.charAt(keyword.length)))
+  ) {
+    return trimmed.slice(keyword.length).trim();
+  }
+  return trimmed;
+}
+
 /** Split an ORDER BY string on commas that are OUTSIDE any quoted identifier,
  *  honoring each style's doubled escape ("" / `` / ]]) so a comma inside a
  *  quoted identifier — `"my,col"` — stays in one term. */

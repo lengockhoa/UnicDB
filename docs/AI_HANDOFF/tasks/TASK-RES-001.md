@@ -108,3 +108,82 @@ Design decisions recorded from PLAN §3 (binding for executor):
    and must not be extended to these inputs in this cycle).
 
 ---
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-res-001
+
+ FAIL  src/ui/__tests__/webviewRequery.test.ts > webview/main.ts WHERE/ORDER BY requery bar (TASK-504) > 5. Enter keydown on WHERE input → exactly one requery post
+   AssertionError: expected [ … ] to have length 1
+   received 0 requery messages — Enter keydown has no handler wired yet.
+
+ FAIL  src/ui/__tests__/webviewRequery.test.ts > webview/main.ts WHERE/ORDER BY requery bar (TASK-504) > 6. Enter keydown on ORDER BY input → exactly one requery post (both values)
+   AssertionError: expected [ … ] to have length 1
+   received 0 requery messages — Enter keydown has no handler wired yet.
+
+ FAIL  src/ui/__tests__/webviewRequery.test.ts > webview/main.ts WHERE/ORDER BY requery bar (TASK-504) > 7. Toolbar placement (P0 slot): inputs between export-format and export-header; no requery-bar wrapper
+   AssertionError: expected '<div class="UnicDB-grid-host">' to be '<div class="UnicDB-toolbar">'
+   WHERE/ORDER BY inputs are still in gridWrap, not the toolbar.
+
+ FAIL  src/ui/__tests__/webviewRequery.test.ts > webview/main.ts WHERE/ORDER BY requery bar (TASK-504) > 8. New placeholders ('WHERE …' / 'ORDER BY …') + non-empty aria-label
+   AssertionError: expected 'e.g. id > 10' to be 'WHERE …'
+   placeholder was still on the old "e.g. …" copy.
+
+ FAIL  src/ui/__tests__/webviewRequery.test.ts > webview/main.ts WHERE/ORDER BY requery bar (TASK-504) > 9. Non-Enter keys ('a', 'Escape') on WHERE input → zero requery posts
+   AssertionError: expected [ … ] to have length 0
+   received 1 requery message — old code path posted on any input event.
+
+ FAIL  src/ui/__tests__/webviewRequery.test.ts > webview/main.ts WHERE/ORDER BY requery bar (TASK-504) > 10. Enter during IME composition (isComposing:true) on WHERE input → zero requery posts
+   AssertionError: expected [ … ] to have length 0
+   received 1 requery message — old code path posted on any input event.
+
+ FAIL  src/ui/__tests__/webviewRequery.test.ts > webview/main.ts WHERE/ORDER BY requery bar (TASK-504) > 11. Document order rewritten for new layout: toolbar < grid-host; requery inputs present in DOM in empty state
+   AssertionError: expected null to be truthy
+   WHERE input was still inside gridWrap (hidden in empty state).
+
+ FAIL  src/ui/__tests__/webviewToolbar.test.ts > webview/main.ts icon toolbar + single-row layout (TASK-603) > 1. every toolbar .UnicDB-btn has an inline svg icon, currentColor stroke, non-empty title + aria-label, empty text
+   AssertionError: expected 10 to be 12
+   Re-Run + Clear icon buttons were still in gridWrap, not the toolbar.
+
+ FAIL  src/ui/__tests__/webviewToolbar.test.ts > webview/main.ts icon toolbar + single-row layout (TASK-603) > 3. single flex row: flat children, 2 separators, search is last, query│edit│export order
+   AssertionError: expected [ …14… ] to deeply equal [ …16… ]
+   toolbar DOM missing the two requery inputs + two requery icon buttons.
+
+ Test Files  2 failed (2)
+      Tests  9 failed | 10 passed (19)
+```
+
+Verification Output:
+```
+> UnicDB@1.53.26 typecheck
+> tsc --noEmit
+(exit 0)
+
+> UnicDB@1.53.26 compile
+> node esbuild.js
+…
+⚡ Done in 144ms
+esbuild: build complete
+
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-res-001
+
+ ✓ src/ui/__tests__/webviewToolbar.test.ts  (5 tests) 430ms
+ ✓ src/ui/__tests__/webviewRequery.test.ts  (14 tests) 1156ms
+
+ Test Files  2 passed (2)
+      Tests  19 passed (19)
+   Duration  1.66s
+
+# Full-suite final gate (also ran)
+ Test Files  274 passed | 1 skipped (275)
+      Tests  4046 passed | 4 skipped (4050)
+```
+
+Status: PASS
+
+Note: implementation kept every interface contract (class names `.UnicDB-requery-where/-order/-run/-clear`, message shape `{type:"requery", index, where, orderBy}`, returned `dom.requeryWhere/-OrderBy/-RunBtn/-ClearBtn` field names) so `webviewPostCommit.test.ts` + `webviewRequery.test.ts` selectors stayed valid. `tests/webviewRequeryAlignment.test.ts` was updated alongside the wave-1 changes — the old `.UnicDB-requery-bar` / `.UnicDB-requery-label` (TASK-009 D) CSS rules were removed per target-files spec, so the test was rewritten for the new toolbar-context inputs (height 24px + flex 0 1 140px + min-width 90px). Worktree node_modules was empty so a symlink to the parent repo was needed to satisfy `execFileSync(esbuild)` for the AI-chat panel bundle tests — node_modules is in `.gitignore` so this does not affect the source diff.

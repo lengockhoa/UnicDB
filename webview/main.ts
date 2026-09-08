@@ -901,6 +901,58 @@ function buildPersistentDom(): PersistentDom {
   exportFormat.title = "Export format";
   toolbar.appendChild(exportFormat);
 
+  // TASK-RES-001 — WHERE / ORDER BY inputs (plus Re-Run + Clear buttons)
+  // moved from the standalone requery bar (which used to live inside
+  // gridWrap) into the toolbar row, slot: after the export format
+  // <select> and before the header checkbox. Labels are dropped — the
+  // placeholder + aria-label carry the meaning since the toolbar has
+  // no room for text labels. Enter key on either input posts a requery
+  // exactly once (debounce-free; IME composition guard). The four
+  // elements keep their original class names so webviewPostCommit +
+  // webviewRequery selectors remain valid.
+  const requeryWhere = document.createElement("input");
+  requeryWhere.type = "text";
+  requeryWhere.placeholder = "WHERE …";
+  requeryWhere.className = "UnicDB-requery-input UnicDB-requery-where";
+  requeryWhere.setAttribute("aria-label", "WHERE filter fragment");
+  requeryWhere.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" || ev.isComposing) return;
+    ev.preventDefault();
+    onRequeryClick();
+  });
+  toolbar.appendChild(requeryWhere);
+
+  const requeryOrderBy = document.createElement("input");
+  requeryOrderBy.type = "text";
+  requeryOrderBy.placeholder = "ORDER BY …";
+  requeryOrderBy.className = "UnicDB-requery-input UnicDB-requery-order";
+  requeryOrderBy.setAttribute("aria-label", "ORDER BY clause");
+  requeryOrderBy.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter" || ev.isComposing) return;
+    ev.preventDefault();
+    onRequeryClick();
+  });
+  toolbar.appendChild(requeryOrderBy);
+
+  const requeryRunBtn = makeIconButton(
+    "UnicDB-requery-run",
+    "Re-Run — re-run the active statement with the WHERE / ORDER BY filter",
+    ICON_REQUERY,
+    () => onRequeryClick(),
+  );
+  toolbar.appendChild(requeryRunBtn);
+
+  const requeryClearBtn = makeIconButton(
+    "UnicDB-requery-clear",
+    "Clear — clear the WHERE and ORDER BY inputs",
+    ICON_CLEAR,
+    () => {
+      requeryWhere.value = "";
+      requeryOrderBy.value = "";
+    },
+  );
+  toolbar.appendChild(requeryClearBtn);
+
   const exportHeader = document.createElement("input");
   exportHeader.type = "checkbox";
   exportHeader.className = "UnicDB-export-header";
@@ -1056,52 +1108,11 @@ function buildPersistentDom(): PersistentDom {
     (ev) => onGridPaste(ev as ClipboardEvent),
     true,
   );
-  // TASK-504 / TASK-005 — WHERE/ORDER BY "Re-Run" bar. Sits inside the
-  // persistent gridWrap ABOVE the grid host (directly under the top
-  // toolbar/tabs, which are root-level siblings) so the filter inputs
-  // live next to the toolbar instead of below the table. Scrolling
-  // and re-render survival match the grid host. The bar is NEVER
-  // recreated — only its inputs' values are read on click. A "Clear"
-  // button resets both inputs.
-  const requeryBar = document.createElement("div");
-  requeryBar.className = "UnicDB-requery-bar";
-  requeryBar.setAttribute("data-UnicDB-requery-bar", "");
-  const requeryWhereLabel = document.createElement("label");
-  requeryWhereLabel.className = "UnicDB-requery-label";
-  requeryWhereLabel.textContent = "WHERE";
-  requeryBar.appendChild(requeryWhereLabel);
-  const requeryWhere = document.createElement("input");
-  requeryWhere.type = "text";
-  requeryWhere.placeholder = "e.g. id > 10";
-  requeryWhere.className = "UnicDB-requery-input UnicDB-requery-where";
-  requeryBar.appendChild(requeryWhere);
-  const requeryOrderLabel = document.createElement("label");
-  requeryOrderLabel.className = "UnicDB-requery-label";
-  requeryOrderLabel.textContent = "ORDER BY";
-  requeryBar.appendChild(requeryOrderLabel);
-  const requeryOrderBy = document.createElement("input");
-  requeryOrderBy.type = "text";
-  requeryOrderBy.placeholder = "e.g. created_at DESC";
-  requeryOrderBy.className = "UnicDB-requery-input UnicDB-requery-order";
-  requeryBar.appendChild(requeryOrderBy);
-  const requeryRunBtn = makeIconButton(
-    "UnicDB-requery-run",
-    "Re-Run — re-run the active statement with the WHERE / ORDER BY filter",
-    ICON_REQUERY,
-    () => onRequeryClick(),
-  );
-  requeryBar.appendChild(requeryRunBtn);
-  const requeryClearBtn = makeIconButton(
-    "UnicDB-requery-clear",
-    "Clear — clear the WHERE and ORDER BY inputs",
-    ICON_CLEAR,
-    () => {
-      requeryWhere.value = "";
-      requeryOrderBy.value = "";
-    },
-  );
-  requeryBar.appendChild(requeryClearBtn);
-  gridWrap.appendChild(requeryBar);
+  // TASK-504 / TASK-005 — WHERE/ORDER BY "Re-Run" bar moved out of gridWrap
+  // in TASK-RES-001. The four elements (requeryWhere, requeryOrderBy,
+  // requeryRunBtn, requeryClearBtn) now live in the toolbar row above,
+  // constructed earlier in buildPersistentDom between exportFormat and
+  // exportHeader. gridWrap holds only gridHost + gridFooter + saveBanner.
   const gridHost = document.createElement("div");
   // Theme class is managed by the JS Theming API (themeQuartz) — no legacy
   // `ag-theme-quartz` class (that is the legacy-CSS system, error #106 pair).

@@ -1233,35 +1233,19 @@
   margin-top: 4px;
 }
 
-/* --- TASK-009 grid D — Requery bar single-baseline alignment ----------
- * Aligns the WHERE / ORDER BY labels, inputs, and run/clear buttons on
- * a single 26px baseline with an even 8px gap. Without these rules the
- * bar inherits defaults: label baselines drift below the input, and the
- * icon-only buttons sit at a different height than the inputs.
- *
- * Color rules follow the existing --vscode-* variable pattern used by
- * .UnicDB-btn and the input-field rules above, so the bar respects both
- * light and dark VS Code themes.
+/* --- TASK-RES-001 — WHERE / ORDER BY inputs in the toolbar ----------
+ * The two requery inputs moved out of the standalone requery bar
+ * (TASK-009 grid D, now removed) and into the toolbar row. They are
+ * compact, shrinkable inputs that line up with the 24-26px icon
+ * buttons. flex 0 1 140px + min-width 90px keeps the toolbar height
+ * stable on the single non-wrapping row. Color rules follow the
+ * existing --vscode-* variable pattern used by .UnicDB-btn and the
+ * input-field rules above, so the inputs respect both light and dark
+ * VS Code themes.
  */
-.UnicDB-requery-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  background: var(--vscode-editorWidget-background, transparent);
-  border-bottom: 1px solid var(--vscode-panel-border, #3c3c3c);
-}
-.UnicDB-requery-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-  color: var(--vscode-foreground, #cccccc);
-  line-height: 26px;
-}
 .UnicDB-requery-input {
-  height: 26px;
-  line-height: 24px;
+  height: 24px;
+  line-height: 22px;
   box-sizing: border-box;
   min-width: 0;
   padding: 0 6px;
@@ -1269,20 +1253,23 @@
   color: var(--vscode-input-foreground, #cccccc);
   border: 1px solid var(--vscode-input-border, #3c3c3c);
   border-radius: 2px;
+  font-family: inherit;
+  font-size: 13px;
 }
 .UnicDB-requery-input:focus {
   outline: 1px solid var(--vscode-focusBorder, #007fd4);
   border-color: var(--vscode-focusBorder, #007fd4);
 }
 .UnicDB-requery-input.UnicDB-requery-where {
-  flex: 1 1 40%;
+  flex: 0 1 140px;
+  min-width: 90px;
 }
 .UnicDB-requery-input.UnicDB-requery-order {
-  flex: 0 1 28%;
+  flex: 0 1 140px;
+  min-width: 90px;
 }
 button.UnicDB-requery-run,
 button.UnicDB-requery-clear {
-  height: 26px;
   flex: 0 0 auto;
 }
 button.UnicDB-requery-run:disabled,

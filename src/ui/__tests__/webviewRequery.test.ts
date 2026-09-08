@@ -315,77 +315,217 @@ describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)", () => 
     expect(orderInput!.value).toBe("");
   });
 
-  // TASK-005 — layout: requery bar must sit ABOVE the AG Grid host (still
-  // inside gridWrap). Inside-document order: requery bar < grid host.
-  itIfBundle("5. DOM order inside gridWrap: requery bar < grid host", () => {
-    const { root } = loadBundle();
+  // TASK-RES-001 — Enter key on the WHERE input posts a requery exactly once
+  // per keydown. debounce-free; host requerySeq guard drops stale runs.
+  itIfBundle("5. Enter keydown on WHERE input → exactly one requery post", () => {
+    const { received, root } = loadBundle();
     dispatchState(selectState());
 
-    const gridWrap = root.querySelector(".UnicDB-grid-host") as HTMLElement | null;
-    expect(gridWrap).toBeTruthy();
+    const whereInput = root.querySelector(
+      ".UnicDB-requery-where",
+    ) as HTMLInputElement | null;
+    const orderInput = root.querySelector(
+      ".UnicDB-requery-order",
+    ) as HTMLInputElement | null;
+    expect(whereInput).toBeTruthy();
+    expect(orderInput).toBeTruthy();
+    whereInput!.value = "id > 1";
+    orderInput!.value = "id DESC";
+    whereInput!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
 
-    const requeryBar = gridWrap!.querySelector(
-      "[data-UnicDB-requery-bar]",
-    ) as HTMLElement | null;
-    const gridHost = gridWrap!.querySelector(".UnicDB-ag-host") as HTMLElement | null;
-    expect(requeryBar).toBeTruthy();
-    expect(gridHost).toBeTruthy();
-
-    const children = Array.from(gridWrap!.children) as HTMLElement[];
-    const idxRequery = children.indexOf(requeryBar!);
-    const idxHost = children.indexOf(gridHost!);
-    expect(idxRequery).toBeGreaterThanOrEqual(0);
-    expect(idxHost).toBeGreaterThanOrEqual(0);
-    expect(idxRequery).toBeLessThan(idxHost);
+    const requeryMsgs = received.filter((m) => m.type === "requery");
+    expect(requeryMsgs).toHaveLength(1);
+    expect(requeryMsgs[0]).toEqual({
+      type: "requery",
+      index: 0,
+      where: "id > 1",
+      orderBy: "id DESC",
+    });
   });
 
-  // TASK-005 — layout: in document order, the requery bar must appear AFTER
-  // the toolbar + tabs (which are root-level siblings of gridWrap) and
-  // BEFORE the grid host (its first meaningful child).
-  itIfBundle("6. Document order: toolbar < requery bar < grid host", () => {
+  // TASK-RES-001 — Enter key on the ORDER BY input (both boxes filled) posts
+  // exactly one requery carrying both values.
+  itIfBundle("6. Enter keydown on ORDER BY input → exactly one requery post (both values)", () => {
+    const { received, root } = loadBundle();
+    dispatchState(selectState());
+
+    const whereInput = root.querySelector(
+      ".UnicDB-requery-where",
+    ) as HTMLInputElement | null;
+    const orderInput = root.querySelector(
+      ".UnicDB-requery-order",
+    ) as HTMLInputElement | null;
+    expect(whereInput).toBeTruthy();
+    expect(orderInput).toBeTruthy();
+    whereInput!.value = "id > 1";
+    orderInput!.value = "id DESC";
+    orderInput!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+
+    const requeryMsgs = received.filter((m) => m.type === "requery");
+    expect(requeryMsgs).toHaveLength(1);
+    expect(requeryMsgs[0]).toEqual({
+      type: "requery",
+      index: 0,
+      where: "id > 1",
+      orderBy: "id DESC",
+    });
+  });
+
+  // TASK-RES-001 — toolbar placement (P0 slot). The requery inputs live as
+  // direct children of the toolbar in the exact slot between the export
+  // format <select> and the export header checkbox. The old
+  // `data-UnicDB-requery-bar` wrapper element is gone.
+  itIfBundle("7. Toolbar placement (P0 slot): inputs between export-format and export-header; no requery-bar wrapper", () => {
     const { root } = loadBundle();
     dispatchState(selectState());
 
     const toolbar = root.querySelector(".UnicDB-toolbar") as HTMLElement | null;
-    const requeryBar = root.querySelector(
-      "[data-UnicDB-requery-bar]",
+    const exportFormat = root.querySelector(
+      ".UnicDB-export-format",
     ) as HTMLElement | null;
-    const gridHost = root.querySelector(".UnicDB-ag-host") as HTMLElement | null;
+    const exportHeader = root.querySelector(
+      ".UnicDB-export-header",
+    ) as HTMLElement | null;
+    const whereInput = root.querySelector(
+      ".UnicDB-requery-where",
+    ) as HTMLElement | null;
+    const orderInput = root.querySelector(
+      ".UnicDB-requery-order",
+    ) as HTMLElement | null;
     expect(toolbar).toBeTruthy();
-    expect(requeryBar).toBeTruthy();
-    expect(gridHost).toBeTruthy();
+    expect(exportFormat).toBeTruthy();
+    expect(exportHeader).toBeTruthy();
+    expect(whereInput).toBeTruthy();
+    expect(orderInput).toBeTruthy();
 
-    // document.body is the parent of root; walk siblings via compareDocumentPosition
+    // Both inputs are direct children of the toolbar.
+    expect(whereInput!.parentElement).toBe(toolbar);
+    expect(orderInput!.parentElement).toBe(toolbar);
+
+    // Sibling order: exportFormat < requeryWhere < requeryOrderBy < exportHeader
     const cmp = (a: Element, b: Element): number => {
       const rel = a.compareDocumentPosition(b);
-      // 4 = DOCUMENT_POSITION_FOLLOWING
       if (rel & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
       if (rel & Node.DOCUMENT_POSITION_PRECEDING) return 1;
       return 0;
     };
-    expect(cmp(toolbar!, requeryBar!)).toBe(-1);
-    expect(cmp(requeryBar!, gridHost!)).toBe(-1);
+    expect(cmp(exportFormat!, whereInput!)).toBe(-1);
+    expect(cmp(whereInput!, orderInput!)).toBe(-1);
+    expect(cmp(orderInput!, exportHeader!)).toBe(-1);
+
+    // Old `requery-bar` wrapper element is gone.
+    expect(document.querySelector("[data-UnicDB-requery-bar]")).toBeNull();
+    expect(document.querySelector(".UnicDB-requery-bar")).toBeNull();
   });
 
-  // TASK-005 — edge (empty state): when no statement has been rendered the
-  // gridWrap stays hidden / detached, so the requery bar (a child of
-  // gridWrap) must not be visible to the user — it must not float outside
-  // gridWrap into the empty-state panel. After moving the bar above the
-  // grid host, it is still a child of gridWrap, so the empty-state hide
-  // rule keeps it hidden.
-  itIfBundle("7. Empty state: requery bar not visible (no active statement)", () => {
+  // TASK-RES-001 — placeholders and aria-labels are the new fragment-style
+  // contract (U+2026 ellipsis + non-empty aria-label).
+  itIfBundle("8. New placeholders ('WHERE …' / 'ORDER BY …') + non-empty aria-label", () => {
     const { root } = loadBundle();
-    // Bundle is loaded (initial render runs) but we never dispatchState.
-    // The active tab is empty → panel shows the empty placeholder, and
-    // gridWrap is either detached or display:none.
-    const panel = root.querySelector(".UnicDB-panel") as HTMLElement | null;
-    const requeryBar = root.querySelector(
-      "[data-UnicDB-requery-bar]",
+    dispatchState(selectState());
+
+    const whereInput = root.querySelector(
+      ".UnicDB-requery-where",
+    ) as HTMLInputElement | null;
+    const orderInput = root.querySelector(
+      ".UnicDB-requery-order",
+    ) as HTMLInputElement | null;
+    expect(whereInput).toBeTruthy();
+    expect(orderInput).toBeTruthy();
+    expect(whereInput!.placeholder).toBe("WHERE …");
+    expect(orderInput!.placeholder).toBe("ORDER BY …");
+    expect(whereInput!.getAttribute("aria-label")).not.toBe("");
+    expect(orderInput!.getAttribute("aria-label")).not.toBe("");
+  });
+
+  // TASK-RES-001 — non-Enter keys MUST NOT post a requery. Tested with two
+  // representative key kinds (a printable letter, Escape).
+  itIfBundle("9. Non-Enter keys ('a', 'Escape') on WHERE input → zero requery posts", () => {
+    const { received, root } = loadBundle();
+    dispatchState(selectState());
+
+    const whereInput = root.querySelector(
+      ".UnicDB-requery-where",
+    ) as HTMLInputElement | null;
+    expect(whereInput).toBeTruthy();
+    whereInput!.value = "id > 1";
+    whereInput!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true }),
+    );
+    whereInput!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+
+    const requeryMsgs = received.filter((m) => m.type === "requery");
+    expect(requeryMsgs).toHaveLength(0);
+  });
+
+  // TASK-RES-001 — Enter during IME composition MUST NOT post a requery.
+  // isComposing flag is set while an IME is converting the keystroke.
+  itIfBundle("10. Enter during IME composition (isComposing:true) on WHERE input → zero requery posts", () => {
+    const { received, root } = loadBundle();
+    dispatchState(selectState());
+
+    const whereInput = root.querySelector(
+      ".UnicDB-requery-where",
+    ) as HTMLInputElement | null;
+    expect(whereInput).toBeTruthy();
+    whereInput!.value = "id > 1";
+    whereInput!.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        isComposing: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    const requeryMsgs = received.filter((m) => m.type === "requery");
+    expect(requeryMsgs).toHaveLength(0);
+  });
+
+  // TASK-RES-001 — REWRITTEN document-order test. The old layout pinned
+  // `requery bar < grid host` and asserted the empty-state invisibility of
+  // the bar (it lived inside gridWrap which is detached pre-state). The
+  // new layout puts the requery inputs in the persistent toolbar, so the
+  // inputs exist in the DOM in the EMPTY state and the toolbar sits
+  // BEFORE the grid host in document order.
+  itIfBundle("11. Document order rewritten for new layout: toolbar < grid-host; requery inputs present in DOM in empty state", () => {
+    const { root } = loadBundle();
+
+    // Empty state: no state dispatched. Toolbar still owns the requery
+    // inputs because the toolbar is persistent.
+    const toolbarEmpty = root.querySelector(".UnicDB-toolbar") as HTMLElement | null;
+    const whereInputEmpty = root.querySelector(
+      ".UnicDB-requery-where",
     ) as HTMLElement | null;
-    expect(panel).toBeTruthy();
-    // No requery bar reachable through root → bar stays inside gridWrap
-    // which is NOT in the live DOM during empty state.
-    expect(requeryBar).toBeNull();
+    const orderInputEmpty = root.querySelector(
+      ".UnicDB-requery-order",
+    ) as HTMLElement | null;
+    expect(toolbarEmpty).toBeTruthy();
+    expect(whereInputEmpty).toBeTruthy();
+    expect(orderInputEmpty).toBeTruthy();
+    // No old requery-bar wrapper exists in the empty state.
+    expect(document.querySelector("[data-UnicDB-requery-bar]")).toBeNull();
+
+    // Now dispatch state — toolbar precedes grid host in document order.
+    dispatchState(selectState());
+    const toolbar = root.querySelector(".UnicDB-toolbar") as HTMLElement | null;
+    const gridHost = root.querySelector(".UnicDB-ag-host") as HTMLElement | null;
+    expect(toolbar).toBeTruthy();
+    expect(gridHost).toBeTruthy();
+
+    const cmp = (a: Element, b: Element): number => {
+      const rel = a.compareDocumentPosition(b);
+      if (rel & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (rel & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    };
+    expect(cmp(toolbar!, gridHost!)).toBe(-1);
   });
   // TASK-005 — regression: footer placement unchanged — gridFooter sits
   // BELOW the grid host (still inside gridWrap), and the saveBanner

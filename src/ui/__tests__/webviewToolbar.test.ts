@@ -179,7 +179,13 @@ function clickButton(b: HTMLButtonElement): void {
 
 
 // Toolbar flat children we expect to find in order. Used to assert
-// query│edit│export grouping.
+// query│edit│export grouping. TASK-RES-001 moved the WHERE / ORDER BY
+// inputs from the standalone requery bar (inside gridWrap) into the
+// toolbar row, slot: between export-format and export-header. The two
+// inputs are children of the toolbar — they are NOT icon buttons, so the
+// toolbar `.UnicDB-btn` census rises from 10 to 12 (Re-Run + Clear join
+// the existing 10 buttons). The full toolbar DOM order pin lives in the
+// resolver's helper below.
 const EXPECTED_ORDER = [
   "UnicDB-btn-danger", // Cancel (query group)
   "UnicDB-btn", // Refresh (query)
@@ -192,6 +198,10 @@ const EXPECTED_ORDER = [
   "UnicDB-btn", // CSV toggle
   "UnicDB-toolbar-sep", // edit│export divider
   "UnicDB-export-format",
+  "UnicDB-requery-where", // TASK-RES-001: WHERE input (toolbar slot)
+  "UnicDB-requery-order", // TASK-RES-001: ORDER BY input (toolbar slot)
+  "UnicDB-btn", // TASK-RES-001: Re-Run icon button (toolbar slot)
+  "UnicDB-btn", // TASK-RES-001: Clear icon button (toolbar slot)
   "UnicDB-export-header",
   "UnicDB-export-copy",
   "UnicDB-export-file",
@@ -214,7 +224,11 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
       ).filter(
         (el): el is HTMLButtonElement => el.tagName === "BUTTON",
       ) as HTMLButtonElement[];
-      expect(btns.length).toBe(10);
+      // TASK-RES-001: Re-Run + Clear icon buttons joined the toolbar row,
+      // so the toolbar icon-button census rises from 10 to 12. Every
+      // button keeps the svg / currentColor / title / aria-label /
+      // empty-text contract that makeIconButton delivers.
+      expect(btns.length).toBe(12);
 
       for (const b of btns) {
         const svg = b.querySelector("svg");
@@ -328,6 +342,8 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
         if (c.classList.contains("UnicDB-btn-danger")) return "UnicDB-btn-danger";
         if (c.classList.contains("UnicDB-commit")) return "UnicDB-commit";
         if (c.classList.contains("UnicDB-export-format")) return "UnicDB-export-format";
+        if (c.classList.contains("UnicDB-requery-where")) return "UnicDB-requery-where";
+        if (c.classList.contains("UnicDB-requery-order")) return "UnicDB-requery-order";
         if (c.classList.contains("UnicDB-export-header")) return "UnicDB-export-header";
         if (c.classList.contains("UnicDB-export-copy")) return "UnicDB-export-copy";
         if (c.classList.contains("UnicDB-export-file")) return "UnicDB-export-file";

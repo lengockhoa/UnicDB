@@ -99,4 +99,62 @@ npx vitest run src/ui/__tests__/requeryClauseNormalize.test.ts src/ui/__tests__/
    pure UI; the host hardening works identically with today's Re-Run button. Same-wave
    file overlap with RES-001: none.
 
+### 2026-09-08 · executor · unic-code
+1. **Implementation note:** the brief pins the choke point at handleRequery:1850-1851,
+   but `composeRequerySql` re-reads `msg.where`/`msg.orderBy` directly from the message
+   (its own `where`/`orderBy` locals at lines 1772-1773 of the original file). To keep
+   every downstream lane (composeRequery 1775/1787, composeSortQuery 1799, multi-term
+   wrap 1804, combinedWhere 1780) seeing the stripped fragment without re-reading
+   `msg.where`, I applied the strip in BOTH boundaries — handleRequery (the public
+   choke point per PLAN §3) AND inside composeRequerySql (where the four downstream
+   lanes consume the value). `parseOrderBy` and `composeRequery` bodies stay
+   byte-identical (verified via `git diff`).
+2. **Test #9 update:** brief example used `id NULLS LAST` on mysql, but TASK-005 added
+   native NULLS support on mysql/mssql so parseOrderBy now accepts it. Adjusted the
+   test to use `lower(id)` (universally rejected as an expression) — the intent is
+   preserved: "post-strip invalid ORDER BY still rejected, handler posts synthetic
+   error + toast, no SQL runs". The strip MUST NOT bypass the rejection path.
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+  src/ui/__tests__/requeryClauseNormalize.test.ts (new file, 25/26 cases failed):
+    25 tests failed with `TypeError: stripLeadingClauseKeyword is not a function`.
+    Only Test #5f passed (composeRequery of empty/empty, since composeRequery already exists).
+  src/ui/__tests__/resultsPanelRequery.test.ts:
+    Test #3 failed: composed SQL was `SELECT * FROM (SELECT a FROM t) UnicDB_sub WHERE WHERE a>1`
+    (expected `... WHERE a>1`). Test #9 was a regression guard and was already green
+    because parseOrderBy still rejected `ORDER BY lower(id)` even without the strip.
+Verification Output:
+  $ npm run typecheck
+  > tsc --noEmit
+  (exit 0 — clean)
+
+  $ npx vitest run src/ui/__tests__/requeryClauseNormalize.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts src/ui/__tests__/resultsGridModelRequery.test.ts
+   ✓ src/ui/__tests__/resultsGridModelRequery.test.ts  (21 tests) 4ms
+   ✓ src/ui/__tests__/requeryClauseNormalize.test.ts  (26 tests) 3ms
+   ✓ src/ui/__tests__/resultsPanelOrderBy.test.ts  (16 tests) 7ms
+   ✓ src/ui/__tests__/resultsPanelRequery.test.ts  (17 tests) 11ms
+   Test Files  4 passed (4)
+        Tests  80 passed (80)
+
+  $ npx vitest run src/ui/__tests__/  (all non-bundle src/ui tests)
+   Test Files  123 passed | 5 failed (128)
+   (5 failed files are aiChatPanel*Webview*.test.ts bundle tests that require
+    `npm run compile` to produce dist/webview.js — pre-existing worktree env issue,
+    esbuild ENOENT, NOT caused by my changes. Orchestrator owns `npm run compile`.)
+Status: PASS
+Note:
+  - All 9 task test cases GREEN (T1, T2, T4-T8 pure helper; T3 + T9 handler-level).
+  - 80/80 verification-suite tests pass; typecheck clean.
+  - parseOrderBy + composeRequery bodies byte-identical (verified via git diff:
+    only 52 insertions in queryComposer.ts = helper + JSDoc).
+  - Two boundary call sites use the helper: handleRequery (1856-1857) AND
+    composeRequerySql (the layer that fans out to all 4 downstream lanes). Both
+    use `?? ""` semantics preserved. Decision recorded in §Discussion above.
+  - Test #9 example updated from `id NULLS LAST` (now accepted by parseOrderBy per
+    TASK-005) to `lower(id)` (universally rejected expression). Intent preserved.
+
 ---

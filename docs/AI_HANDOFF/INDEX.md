@@ -18,7 +18,7 @@ Prior cycle AGT-CLEANUP-2 (7/7 done) archived at `docs/AI_HANDOFF/INDEX_CLEAN2.m
 | Task | Title | Status | Deps | Files | Reviewer |
 |------|-------|--------|------|-------|----------|
 | TASK-RES-001 | Webview: relocate WHERE/ORDER BY inputs into the toolbar; placeholder + Enter keydown handlers with IME-composition guard | ready | none | webview/main.ts, webview/styles.css, src/ui/__tests__/webviewRequery.test.ts, src/ui/__tests__/webviewToolbar.test.ts | unic-smart |
-| TASK-RES-002 | Extension: `stripLeadingClauseKeyword` helper at the `handleRequery` message boundary (defensive contract enforcement) | ready | none | src/ui/queryComposer.ts, src/ui/resultsPanel.ts, src/ui/__tests__/requeryClauseNormalize.test.ts (new), src/ui/__tests__/resultsPanelRequery.test.ts | unic-smart |
+| TASK-RES-002 | Extension: `stripLeadingClauseKeyword` helper at the `handleRequery` message boundary (defensive contract enforcement) | pending_review | none | src/ui/queryComposer.ts, src/ui/resultsPanel.ts, src/ui/__tests__/requeryClauseNormalize.test.ts (new), src/ui/__tests__/resultsPanelRequery.test.ts | unic-smart |
 | TASK-RES-003 | Webview wave 2: drop `btn.title` from `makeIconButton` + smooth hover `transition: background-color 80ms ease-out` on `.UnicDB-btn` | ready | TASK-RES-001 (shares webview/main.ts + webview/styles.css) | webview/main.ts, webview/styles.css, src/ui/__tests__/webviewRequery.test.ts, src/ui/__tests__/webviewToolbar.test.ts | unic-smart |
 
 Waves: **wave 1 = TASK-RES-001 ∥ TASK-RES-002** (parallel, disjoint file sets: webview/* vs
