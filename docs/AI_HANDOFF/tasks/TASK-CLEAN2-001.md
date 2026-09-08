@@ -78,3 +78,42 @@ no mentions; package.json has no `exports`/`types`/`typings`, only runtime
 `main: "dist/extension.js"`. If execution sees any different evidence, do not delete—retain
 an `@deprecated` alias instead. Item #1 was already fixed in 93746a4 — do NOT "re-fix" the
 header; only assert it.
+
+---
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code (claude-sonnet-4-5)
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  Pre-change consumer search (`grep -rn "isValidEngineChoice" --include="*.ts" --include="*.tsx" src/ webview/ tests/`):
+    src/ai/policy.ts:133:/** Backward-compatible alias for the old `isValidEngineChoice` name used by
+    src/ai/policy.ts:135:const isValidEngineChoice = isEngineChoice;
+    src/ai/policy.ts:154:  const validChoice = isValidEngineChoice(resolvedEngine);
+  Pre-change entry-point fields: {"exports":"<absent>","main":"dist/extension.js","types":"<absent>","typings":"<absent>"}
+  Pre-change `grep -c "isValidEngineChoice" src/ai/policy.ts` -> 3 (test #3 fails before fix; passes after).
+  Pre-change `grep -cE '"builtin" \| "omp"\)' src/ai/policy.ts` -> 0 (item #1 already landed in 93746a4; assertion-only, no edit).
+Verification Output: |
+  $ grep -rn "isValidEngineChoice" --include="*.ts" --include="*.tsx" src/ webview/ tests/
+    (no matches; exit code 1 — expected)
+  $ npx vitest run src/ai/__tests__/policy.test.ts src/ui/__tests__/aiChatPanelPolicy.test.ts
+    Test Files  2 passed (2)
+    Tests       31 passed (31)
+    Duration    316ms
+  $ test "$(grep -c "isValidEngineChoice" src/ai/policy.ts || true)" -eq 0
+    (passed — count == 0)
+  $ test "$(grep -cE '"builtin" \| "omp"\)' src/ai/policy.ts || true)" -eq 0
+    (passed — count == 0)
+  $ npm run typecheck
+    > UnicDB@1.53.25 typecheck
+    > tsc --noEmit
+    (exit 0, clean)
+  Diff stat: src/ai/policy.ts | 6 +-----  1 file changed, 1 insertion(+), 5 deletions(-)
+  Diff body:
+    - /** Backward-compatible alias for the old `isValidEngineChoice` name used by
+    -  * pre-TASK-007 callers inside this module. */
+    - const isValidEngineChoice = isEngineChoice;
+    - const validChoice = isValidEngineChoice(resolvedEngine);
+    + const validChoice = isEngineChoice(resolvedEngine);
+Status: PASS
+Note: Header comment at policy.ts:13-15 already carries the four-value vocabulary (`"builtin" | "omp" | "claude-code" | "codex"`) — item #1 re-verified via grep only, no re-edit. No `git add`/`commit`/`push` executed; tree left dirty for orchestrator copy-back.

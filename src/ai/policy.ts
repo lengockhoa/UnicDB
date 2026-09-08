@@ -130,10 +130,6 @@ export function isEngineChoice(value: EngineChoice | null): value is EngineChoic
   );
 }
 
-/** Backward-compatible alias for the old `isValidEngineChoice` name used by
- * pre-TASK-007 callers inside this module. */
-const isValidEngineChoice = isEngineChoice;
-
 /**
  * Resolve the effective AI policy. Default deny: sensitive context classes,
  * tool classes, and audit export are admitted only when the configured
@@ -151,7 +147,7 @@ export function resolvePolicy(input: PolicyInput): EffectivePolicy {
     reasons.push("unsupported or migrated AI engine setting");
   }
 
-  const validChoice = isValidEngineChoice(resolvedEngine);
+  const validChoice = isEngineChoice(resolvedEngine);
   const provider: AiEngine | null = validChoice ? resolvedEngine.engine : null;
   if (!validChoice) {
     reasons.push("AI engine resolver state is unavailable or invalid");

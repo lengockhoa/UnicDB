@@ -69,7 +69,55 @@ npm run typecheck
 
 ## Discussion
 
-### 2026-09-08 · planner · unic-smart
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+  # Pre-change consumer/public-surface evidence (recorded before edit)
+  $ grep -rn "_LegacyDetectionTypes" --include="*.ts" --include="*.tsx" src/ webview/ tests/
+  src/ai/engineChoice.ts:208:export type _LegacyDetectionTypes = ClaudeCodeDetection | CodexDetection;
+  $ grep -rn "_LegacyDetectionTypes" README.md docs/ --exclude-dir=AI_HANDOFF
+  (no output — 0 hits)
+  $ node -p "JSON.stringify({exports: require('./package.json').exports ?? '<absent>', main: require('./package.json').main ?? '<absent>', types: require('./package.json').types ?? '<absent>', typings: require('./package.json').typings ?? '<absent>'})"
+  {"exports":"<absent>","main":"dist/extension.js","types":"<absent>","typings":"<absent>"}
+  $ grep -c "_LegacyDetectionTypes" src/ai/engineChoice.ts
+  1   # FAILS-BEFORE (edge #3 expected to return 0 after deletion)
+
+Diff applied (4 deletions, 0 insertions — only the marker block + trailing blank):
+  --- a/src/ai/engineChoice.ts
+  +++ b/src/ai/engineChoice.ts
+  @@ -202,7 +202,3 @@ function resolveOmpLegacy(
+       hint,
+     };
+   }
+  -
+  -// Unused export marker — keeps `ClaudeCodeDetection`/`CodexDetection` types
+  -// tree-shake-correct without changing the public surface.
+  -export type _LegacyDetectionTypes = ClaudeCodeDetection | CodexDetection;
+
+Verification Output:
+  $ grep -c "_LegacyDetectionTypes" src/ai/engineChoice.ts
+  0
+  $ grep -rn "_LegacyDetectionTypes" --include="*.ts" --include="*.tsx" src/ webview/ tests/
+  (no matches)
+  $ npx vitest run src/ai/__tests__/engineChoice.test.ts
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/clean2-002
+   ✓ src/ai/__tests__/engineChoice.test.ts  (11 tests) 2ms
+   Test Files  1 passed (1)
+        Tests  11 passed (11)
+   Duration  195ms
+  $ npm run typecheck
+  > UnicDB@1.53.25 typecheck
+  > tsc --noEmit
+  (exit 0, no errors)
+
+Status: PASS
+Note: Both `ClaudeCodeDetection` and `CodexDetection` remain consumed by `projectAgent()`'s signature, so no orphaned imports; typecheck exit 0 confirms. Working tree intentionally dirty (no git commit per instruction).
+
+### 2026-09-08 · executor · unic-code
 Type-only deletion → no runtime RED output is producible; edge #3 is the failing-before /
 passing-after check (returns 2 today). The requested pre-change source search returned only
 `engineChoice.ts:208`; README/public docs returned no mentions (excluding this handoff

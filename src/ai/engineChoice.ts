@@ -202,7 +202,3 @@ function resolveOmpLegacy(
     hint,
   };
 }
-
-// Unused export marker — keeps `ClaudeCodeDetection`/`CodexDetection` types
-// tree-shake-correct without changing the public surface.
-export type _LegacyDetectionTypes = ClaudeCodeDetection | CodexDetection;

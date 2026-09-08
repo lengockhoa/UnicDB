@@ -7,8 +7,8 @@ landed in 93746a4 — kept as grep re-verification inside TASK-CLEAN2-001.
 
 | Task | Title | Status | Deps | Files | Reviewer |
 |------|-------|--------|------|-------|----------|
-| TASK-CLEAN2-001 | Drop dead `isValidEngineChoice` alias; re-verify four-value policy header | ready | none | src/ai/policy.ts | - |
-| TASK-CLEAN2-002 | Delete dead `_LegacyDetectionTypes` type export | ready | none | src/ai/engineChoice.ts | - |
+| TASK-CLEAN2-001 | Drop dead `isValidEngineChoice` alias; re-verify four-value policy header | in_progress | none | src/ai/policy.ts | - |
+| TASK-CLEAN2-002 | Delete dead `_LegacyDetectionTypes` type export | done (PASS, awaiting batch-1 copy-back) | none | src/ai/engineChoice.ts | - |
 | TASK-CLEAN2-003 | Finish two R4.5-stale engine comments (failTurn reject / single onError) | ready | none | src/ai/claudeCode/claudeCodeChatEngine.ts | - |
 | TASK-CLEAN2-004 | Claude smoke: fail-fast spawn errors + comment/gate fixes | ready | none | src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts | - |
 | TASK-CLEAN2-005 | Codex smoke: fail-fast spawn errors + gate fix | ready | none | src/ai/codex/__tests__/codexLiveSmoke.test.ts | - |
