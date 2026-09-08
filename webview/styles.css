@@ -2197,10 +2197,10 @@ body.UnicDB-chat-body {
   }
   /* TASK-AGTUI-008: cancel the gentle scroll the chat-thread declaration
    * above opts into. The user explicitly opted out of motion — keep
-   * scroll position jumps out of the animation system. */
-  .UnicDB-chat-thread,
-  html,
-  body {
+   * scroll position jumps out of the animation system. Scoped to the
+   * chat thread alone (the only `scroll-behavior: smooth` declaration in
+   * the file) to preserve the chat-scoped frozen-selector rule. */
+  .UnicDB-chat-thread {
     scroll-behavior: auto !important;
   }
 }

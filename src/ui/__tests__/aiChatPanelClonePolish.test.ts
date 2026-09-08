@@ -28,6 +28,19 @@ const css = existsSync(cssPath) ? readFileSync(cssPath, "utf8") : "";
 
 const distPath = resolve(process.cwd(), "dist", "aiChatPanel.js");
 const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
+// Mutable side-channel so `loadBundle` can re-read after a self-bootstrap
+// compile. Module-load `bundleSrc` is const-captured above and stays as
+// the first-load sentinel for `describeIfBundle` gating.
+const bundleSrcRef: { value: string | null } = { value: bundleSrc };
+let bootstrapAttempted = false;
+
+/** Run `npm run compile` once, synchronously, when the bundle is missing.
+ * Throws on non-zero exit. Kept narrow so the failure mode is obvious in
+ * the test output (a vitest failure with a clear esbuild error, not a
+ * silent skip of every bundle-dependent case). */
+function compileBundle(): void {
+  execFileSync("npm", ["run", "compile"], { stdio: "pipe", cwd: process.cwd() });
+}
 
 interface UnicDBApi {
   postMessage: (msg: unknown) => void;
@@ -100,10 +113,30 @@ interface BundleHandle {
 }
 
 function loadBundle(): BundleHandle {
-  if (!bundleSrc) {
-    throw new Error(
-      "dist/aiChatPanel.js missing — run `npm run compile` before this test",
-    );
+  // Self-bootstrap: if the webview bundle is missing (e.g. CI did not run
+  // `npm run compile` before `npm test`), compile it on the first call.
+  // Without this guard, every bundle-dependent case is silently skipped,
+  // which makes a real regression look like a pass. We only retry once —
+  // if compile fails, surface the real error instead of looping.
+  if (!bundleSrcRef.value) {
+    if (bootstrapAttempted) {
+      throw new Error(
+        "dist/aiChatPanel.js missing — `npm run compile` failed; cannot run bundle-dependent cases",
+      );
+    }
+    bootstrapAttempted = true;
+    compileBundle();
+    const fresh = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
+    if (!fresh) {
+      throw new Error(
+        "dist/aiChatPanel.js still missing after self-bootstrap compile",
+      );
+    }
+    bundleSrcRef.value = fresh;
+    // Fall through with `bundleSrcRef.value` now populated; the const
+    // `bundleSrc` stays as the module-load sentinel (used only by the
+    // `itIfBundle` / `describeIfBundle` gating — both are unconditional
+    // aliases now, so this is informational only).
   }
   for (const { type, listener, options } of bundleListeners) {
     window.removeEventListener(type, listener, options);
@@ -121,7 +154,7 @@ function loadBundle(): BundleHandle {
   (globalThis as unknown as { acquireVsCodeApi: () => UnicDBApi }).acquireVsCodeApi =
     () => api;
 
-  (0, eval)(bundleSrc);
+  (0, eval)(bundleSrcRef.value ?? bundleSrc);
   return { received };
 }
 
@@ -137,8 +170,14 @@ function btn(id: string): HTMLButtonElement {
   return document.getElementById(id) as HTMLButtonElement;
 }
 
-const itIfBundle = it.runIf(bundleSrc !== null);
-const describeIfBundle = describe.runIf(bundleSrc !== null);
+const itIfBundle = it;
+// No `describeIfBundle` gate — we want the bundle-loaded cases to FAIL
+// (not silently skip) when the bundle is missing. `loadBundle` throws
+// inside `beforeAll` so vitest reports a real test failure, and the
+// self-bootstrap path inside `loadBundle` runs the compile on demand.
+// Silently skipping via `describe.runIf(false)` is exactly the false-
+// green the reviewer caught; this rewrite removes that escape hatch.
+const describeIfBundle = describe;
 const describeIfCss = describe.runIf(css !== "");
 
 // ============================================================================

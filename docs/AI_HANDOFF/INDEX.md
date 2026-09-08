@@ -67,9 +67,9 @@ Cycle AGT-UI — AI Chat panel = Claude Code VS Code extension clone (BLUE accen
 | TASK-AGTUI-002 | Wire protocol: `models` frame + `model_select` / `bypass_permissions` | done (approved) | none | src/ui/aiChatPanelMessages.ts, src/ui/__tests__/aiChatPanelMessagesClone.test.ts (new) | unic-smart |
 | TASK-AGTUI-003 | Header + brand module: big BLUE "U" glyph + engine-aware title | pending_review | none | webview/aiChatPanelHeader.ts (new), webview/__tests__/aiChatPanelHeader.test.ts (new) | unic-smart |
 | TASK-AGTUI-004 | Composer module: `+` / model chip / `/` affordance / bypass toggle / mic / send-stop | approved_minor | none | webview/aiChatPanelComposer.ts (new), webview/__tests__/aiChatPanelComposer.test.ts (new) | unic-smart |
-| TASK-AGTUI-005 | Thread rendering module: bubbles, thinking blocks, tool cards, mentions | pending_review | none | webview/aiChatPanelThread.ts (new), webview/__tests__/aiChatPanelThread.test.ts (new) | unic-smart |
+| TASK-AGTUI-005 | Thread rendering module: bubbles, thinking blocks, tool cards, mentions | done (changes_requested → resolved via fixup 960de27) | none | webview/aiChatPanelThread.ts (new), webview/__tests__/aiChatPanelThread.test.ts (new) | unic-smart |
 | TASK-AGTUI-006 | Host wiring: `models` frame, `model_select`, bypass-permissions flag | approved_minor | TASK-AGTUI-002 | src/ui/aiChatPanel.ts, src/ui/__tests__/aiChatPanelCloneHost.test.ts (new) | unic-smart |
-| TASK-AGTUI-007 | Webview integration: compose header + thread + composer into `aiChatPanelMain.ts` | pending_review | TASK-AGTUI-001..005 | webview/aiChatPanelMain.ts, src/ui/__tests__/aiChatPanelCloneWebview.test.ts (new) | unic-smart |
+| TASK-AGTUI-007 | Webview integration: compose header + thread + composer into `aiChatPanelMain.ts` | approved_minor | TASK-AGTUI-001..005 | webview/aiChatPanelMain.ts, src/ui/__tests__/aiChatPanelCloneWebview.test.ts (new) | unic-smart |
 | TASK-AGTUI-008 | Animation + dark-theme polish + full regression gate | pending_review | TASK-AGTUI-006, TASK-AGTUI-007 | webview/aiChatPanelMain.ts, webview/styles.css, src/ui/__tests__/aiChatPanelClonePolish.test.ts (new) | unic-smart |
 
 Wave plan (inferred from `Dependencies`):

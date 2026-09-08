@@ -1574,7 +1574,7 @@ function applyEngine(msg: EngineMsg): void {
     const banner = document.getElementById("engineBanner");
     if (banner) {
       const safeHint = String(msg.hint)
-        .replace(/[ -]/g, "")
+        .replace(/[\u0000-\u001F\u007F]/g, "")
         .slice(0, 120);
       banner.textContent = `Engine: builtin — ${safeHint} — streaming`;
     }
