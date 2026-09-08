@@ -1349,3 +1349,9 @@ Cycle G: set-filter, toolbar icons, `run-sh` fix.
 [1.12.0]: https://github.com/lengockhoa/UnicDB/compare/v1.11.0...v1.12.0
 [1.11.0]: https://github.com/lengockhoa/UnicDB/compare/v1.10.0...v1.11.0
 [1.10.0]: https://github.com/lengockhoa/UnicDB/compare/v1.9.0...v1.10.0
+## [1.53.31] — 2026-09-08
+
+- Summary: **App icon swap** — `media/icon.png` replaced with the UnicDB brand favicon from `https://one.unicjsc.com/static/img/favicon.png` (48×48 PNG, valid PNG magic bytes, 1.5 KB). Top-level `icon` field AND `viewsContainers.activitybar[].icon` / `viewsContainers.panel[].icon` all point at `media/icon.png`, so the new favicon appears everywhere the extension shows an icon: Marketplace preview, Extensions panel, extension detail page, activity bar, and panel. Install v1.53.31 for the new brand mark.
+- Files: `media/icon.png` (replaced; 956 B → 1,472 B); `package.json` + `package-lock.json` (version bump 1.53.30 → 1.53.31); `CHANGELOG.md` (this entry).
+- Verification: `npm run typecheck` ✅ · `npm run compile` ✅ · `npm test` 4088 passed | 4 skipped | 0 failed (276 files) · targeted `manifestAssetRefs` 5/5 PASS (PNG magic-byte guard validated the new 48×48 favicon) · `UnicDB-1.53.31.vsix` 2,164,514 bytes (26 files, SHA-256 `8320753fee66c32de7d5a24645840c79b1e17da11d0e720a759b47a02aed1042`).
+
