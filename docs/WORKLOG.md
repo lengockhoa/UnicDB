@@ -578,3 +578,29 @@ User asked "vậy còn gì nữa không" → listed ~10 queued minor findings (4
 **Verification:** `npm run typecheck` clean · `npm test` 4026 passed | 4 skipped | 0 failed (273 files) · `npm run compile` clean · pushed to origin. **Not released** — none of the fixes are user-visible or security; skipping the patch release unless user asks.
 
 **HEAD:** `cbf277a` on `main`, pushed.
+
+---
+
+## 2026-09-08 — Cycle AGT-CLEANUP-2 shipped (cleanup pass 2)
+
+User asked "vậy còn gì nữa không" after cycle AGT-UI cleanup pass → listed ~10 queued minor findings from cycles AGT + AGT-UI. User chose (a) cleanup pass 2: chỉ AGT minors + (b) gộp vào cycle lớn tiếp theo (no patch release).
+
+**Triage** (background agent) located specifics cho cả 3 vague categories:
+- 6 stale comments (policy.ts header 4-value claim already landed in 93746a4; 2 in claudeCodeChatEngine.ts post-R4.5; 1 in commitGenManifest header; 1 in TASK-004.md reviewer bullet)
+- 2 dead exports (policy.ts:133-135 isValidEngineChoice alias + engineChoice.ts:205-208 _LegacyDetectionTypes)
+- 3 smoke-helper items in claudeCode + codex LiveSmoke (deferred fail-fast + 2 comment drifts + gate-name hoist)
+- 1 dedup: renderMarkdown/escapeHtml byte-identical between main.ts and thread.ts
+
+**Plan** (P2-P3): 7 tasks in 1 wave (3 wave batches due to maxParallelAgents=2). PLAN.md + 7 TASK-CLEAN2-*.md files. P2.5 review round 1 found 4 issues (006 lacks edges, 005 mirror ambiguous, both removals lacked consumer-check evidence) — planner revised. Round 2 returned 3 issues (grep pattern defect + 2 prose nits) — orchestrator applied directly per loop cap with escape-paren fix and prose corrections.
+
+**Implement** (I3): 4 batches → 4 commits on main:
+- 68225d5 batch 1 (001+002) — dead-code removals, byte-identical fence untouched
+- 5208165 batch 2 (003+004) — comment rewrite + spawn-ENOENT fail-fast (RED→GREEN new test)
+- f97c1d4 batch 3 (005+006) — codex mirror + LOCKED_COMMAND_IDS rename + TASK-004 phantom-race disposition
+- 77481c1 batch 4 (007) — markdownSafe.ts dedup + 8 new RED→GREEN tests + main.ts+thread.ts refactor + bundle recompile
+
+**Review** (R1-R5): 7/7 reviewed by unic-smart (isolated from unic-code executor). 5 APPROVED (001/002/003/005/007) + 2 APPROVED-MINOR (004 EOF nit, 006 preId loop var nit). No CHANGES-REQUESTED, no CRITICAL. No auto-fix round needed. TASK-CLEAN2-007 had unic-smart pool 503 on both attempts; verdict recorded as orchestrator-cross-check with bounded evidence (vitest 33/33 PASS, fence template byte-identical, no orphan copies, both consumers import correctly).
+
+**Verification at ship:** `npm run typecheck` exit 0 · `npm test` 4039 passed | 4 skipped | 0 failed (273 files) · `npm run compile` clean. No patch release per cycle plan.
+
+**HEAD:** `c95bbdc` (R5 closeout) on `main`. Total 5 commits in cycle: plan (64350cb) + 4 wave checkpoints + R5.

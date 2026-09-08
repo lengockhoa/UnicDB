@@ -29,8 +29,22 @@
 - Streaming caret at bubble end on every delta; `done` removes caret + closes streaming bubble.
 - Tool cards: clickable `.UnicDB-chat-tool-header` toggles `.UnicDB-chat-tool-collapsed` (idempotent across rapid clicks); glyph via `::before` so `card.textContent === summary` is preserved for DbAwareWebview assertions.
 
+
+## Cleanup pass 2026-09-08 (continued) — cycle AGT-CLEANUP-2 shipped
+
+**12 minor cleanups landed** in cycle AGT-CLEANUP-2 on `main` @ `c95bbdc` (pushed post-R5):
+
+- **6 stale comments** fixed (4-value header in policy.ts re-verified only — already landed in 93746a4; 2 in claudeCodeChatEngine.ts after R4.5 failTurn rework; 1 in commitGenManifest.test.ts header + test title; 1 in TASK-004.md reviewer bullet :201 phantom-race premise)
+- **2 dead exports removed**: `isValidEngineChoice` alias in policy.ts:133-135; `_LegacyDetectionTypes` type export in engineChoice.ts:205-208. Both verified non-public (package.json has no exports/types/typings; main = bundled dist/extension.js)
+- **3 smoke-helper items**: spawn-ENOENT fail-fast (claudeCodeLiveSmoke + codexLiveSmoke, both with hermetic missing-binary RED→GREEN tests); comment corrections (`--print ping` reaches the model; `--verbose` for stream-json); GATE_ENV hoist (`UnicDB_CLAUDE_CODE_SMOKE` / `UnicDB_CODEX_SMOKE`) shared by describe.skipIf + renamed companion test
+- **1 dedup**: extracted `escapeHtml` + `renderMarkdown` into new `webview/markdownSafe.ts`; both consumers (`aiChatPanelMain.ts`, `aiChatPanelThread.ts`) import from it; byte-identical fence template preserved (pinned-class rationale); 8 new RED→GREEN tests in `markdownSafe.test.ts`; bundle recompiled
+
+**Reviews (unic-smart, isolated from executor unic-code):** 7/7 — 5 APPROVED + 2 APPROVED-MINOR (EOF newline in 004; `preId` loop var in 006 — both non-blocking). TASK-CLEAN2-007 had unic-smart pool 503 on both attempts; verdict recorded as orchestrator-cross-check with bounded evidence (vitest 33/33 PASS, fence template byte-identical, no orphan copies, both consumers import correctly). Follow up in next cycle if a later reviewer surfaces anything.
+
+**No patch release.** Cycle plan specified no version bump — these go out with the next feature cycle's release plumbing.
+
 ## Active cycle
-None. Cycle AGT-UI closed. Cleanup pass completed.
+None. Cycles AGT, AGT-UI cleanup, and AGT-CLEANUP-2 all closed.
 
 ## Cleanup pass 2026-09-08 — commit `cbf277a`
 **Resolved:**
