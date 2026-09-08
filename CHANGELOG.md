@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.33] — 2026-09-08
+
+- Summary: Security fix: exclude .secrets/ from .vsix (vsce does not read .gitignore — PAT cache was leaking into v1.53.32 .vsix). Adds regression guard that runs real vsce package round-trip and asserts no .secrets/ entry in the produced archive. Also pins UnicDB.preferPrimarySidebar setting + UnicDB.moveToPrimarySidebar command from v1.53.32 (re-ship because v1.53.32 had the leaked PAT, must be superseded).
+- Files: .vscodeignore,src/__tests__/vsixSecretsExclusion.test.ts,package.json,src/extension.ts
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.33.vsix packaged
+
+---
+
 ## [1.53.32] — 2026-09-08
 
 - Summary: Activity bar icon: convert PNG to RGBA + auto-move container to Primary Sidebar on first activation. Adds UnicDB.preferPrimarySidebar setting (default true) and UnicDB.moveToPrimarySidebar manual command.
