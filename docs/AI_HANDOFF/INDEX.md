@@ -25,7 +25,7 @@ Base: main @ d60b743 (release 1.53.23). Plan approved by unic-smart (P2.5 Round 
 | TASK-001 | Engine vocabulary: extend `AiEngine` to 4 values; validator + persistence migration | done (approved_minor) | none | src/ai/settings.ts, src/ai/config.ts, src/ai/policy.ts | unic-smart |
 | TASK-002 | Claude Code binary detection (`src/ai/claudeCode/detect.ts`) | done (approved_minor) | none | src/ai/claudeCode/detect.ts, src/ai/claudeCode/__tests__/detect.test.ts | unic-smart |
 | TASK-003 | Codex binary detection (`src/ai/codex/detect.ts`) | done | none | src/ai/codex/detect.ts, src/ai/codex/__tests__/detect.test.ts | unic-smart |
-| TASK-004 | omp UKit audit (read-only review, write findings into task file; zero code change) | pending_review | none | src/ai/omp/** (review only), docs/AI_HANDOFF/tasks/TASK-004.md (report) | unic-smart |
+| TASK-004 | omp UKit audit (read-only review, write findings into task file; zero code change) | approved_minor | none | src/ai/omp/** (review only), docs/AI_HANDOFF/tasks/TASK-004.md (report) | unic-smart |
 | TASK-013 | Manifest: extend `UnicDB.ai.engine` enum + add `UnicDB.ai.useWithClaudeCode` / `UnicDB.ai.useWithCodex` commands + activationEvents | done (approved_minor) | none | package.json, src/ui/__tests__/commitGenManifest.test.ts | unic-smart |
 | TASK-005 | Claude Code process/session adapter (mirror AcpProcess; stream-json + MCP config) | approved_minor | TASK-001 | src/ai/claudeCode/claudeCodeProcess.ts, src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts | unic-smart |
 | TASK-006 | Codex process/session adapter (mirror AcpProcess; UNVERIFIED locally — cite Codex CLI docs in task file) | approved_minor | TASK-001 | src/ai/codex/codexProcess.ts, src/ai/codex/__tests__/codexProcess.test.ts | unic-smart |
@@ -34,8 +34,8 @@ Base: main @ d60b743 (release 1.53.23). Plan approved by unic-smart (P2.5 Round 
 | TASK-009 | Claude Code chat engine (mirror OmpChatEngine; image-capable path) | approved_minor | TASK-005, TASK-007 | src/ai/claudeCode/claudeCodeChatEngine.ts, src/ai/claudeCode/__tests__/claudeCodeChatEngine.test.ts | unic-smart |
 | TASK-010 | Codex chat engine (mirror OmpChatEngine; image-capable path) | approved_minor | TASK-006, TASK-007 | src/ai/codex/codexChatEngine.ts, src/ai/codex/__tests__/codexChatEngine.test.ts | unic-smart |
 | TASK-011 | Panel dispatch + image pipeline: per-engine `runXEngineTurn`; un-block image-capable engines | approved_minor | TASK-002, TASK-003, TASK-007, TASK-009, TASK-010 | src/ui/aiChatPanel.ts, src/ui/__tests__/aiChatPanelAgentEngines.test.ts | unic-smart |
-| TASK-012 | Extension wiring + chat webview switcher: `buildClaudeCodeChatEngine` / `buildCodexChatEngine` factories; migrate legacy call sites | critical_block | TASK-011 | src/extension.ts, src/extension.test.ts, webview/aiChatPanelMain.ts | unic-smart |
-| TASK-014 | Integration + env-gated live smokes (UnicDB_CLAUDE_SMOKE=1 / UnicDB_CODEX_SMOKE=1) | pending_review | TASK-012 | src/ai/**/__tests__/liveSmoke.test.ts, src/ui/__tests__/aiChatPanelEngine.test.ts | unic-smart |
+| TASK-012 | Extension wiring + chat webview switcher: `buildClaudeCodeChatEngine` / `buildCodexChatEngine` factories; migrate legacy call sites | approved_minor | TASK-011 | src/extension.ts, src/extension.test.ts, webview/aiChatPanelMain.ts | unic-smart |
+| TASK-014 | Integration + env-gated live smokes (UnicDB_CLAUDE_CODE_SMOKE=1 / UnicDB_CODEX_SMOKE=1) | approved_minor | TASK-012 | src/ai/**/__tests__/*LiveSmoke.test.ts, src/ui/__tests__/aiChatPanelEngine.test.ts | unic-smart |
 
 Wave plan (inferred from `Dependencies`):
 - Wave 1 (5 tasks, batched 2 at a time = 3 batches): TASK-001, TASK-002, TASK-003, TASK-004, TASK-013 — disjoint: settings/config/policy vs claude detect vs codex detect vs omp audit vs manifest

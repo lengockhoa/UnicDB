@@ -163,3 +163,26 @@ esbuild: build complete
 
 Status: PASS
 Note: This cycle's TASK-014 executor was implemented directly in the orchestrator session (parent session lacked agent dispatch surface this round). Single spawn-vs-direct distinction: the `EXECUTOR_MODEL` field above is the actual model ID running the implementation work; reviewers should verify by cross-referencing the model name in their own environment.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npx vitest run src/__tests__/agentEnginesIntegration.test.ts src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts src/ai/codex/__tests__/codexLiveSmoke.test.ts; npm run typecheck; npm run compile; env-unset panel run; env=1 smoke rerun
+  result: 30 pass / 0 fail / 2 skipped (smokes skip, env unset); typecheck clean; compile green; panel run 23 files / 398 pass; env=1 rerun 2 gated-smoke fails only (pre-authorized minor)
+TEST_PLAN_COVERAGE: all-followed — tests 1-4,7 = 28 integration tests; test 5 skip gating verified live; test 6 exercised under gate=1 (fails loudly as designed; codex missing, claude no-event timeout)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts:65-69 and src/ai/codex/__tests__/codexLiveSmoke.test.ts:57-63 — child.once("error", reject) is dead code: resolve() runs synchronously first, so ENOENT (codex missing) never rejects and burns the full 30s timeout instead of failing fast; register the error handler before resolving or surface spawn errors via a flag checked in awaitFirstEvent
+    - both smoke files "gate disabled" companion tests — assert a hardcoded literal is a non-empty string (tautological); the name "suite skipped when ... unset" overclaims since it cannot verify skipping (the vitest "1 skipped" line is the real evidence); rename to pin-the-gate-name semantics
+    - both awaitFirstEvent helpers — the 30s setTimeout is never cleared on success; leaves a pending timer until worker teardown
+    - claudeCodeLiveSmoke.test.ts:33-36 — comment/code drift: says --verbose is "unnecessary" while args include it, and "without ever hitting the model API" is inaccurate (--print ping does reach the model; harmless non-mutating prompt, fix the comment)
+R4_SCOPE_CHECKS: env-var guard honored (spawn only inside describe.skipIf block; default run reports 1 skipped per suite, zero spawns); test names descriptive (#T011-1/5/7 with failure-mode wording); temp-dir cleanup safe on skip (mkdtemp runs inside the gated test, so skip creates nothing; afterEach rmSync runs even on failure since cleanup=true is set right after mkdtemp); full suite green with env unset
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: The R3/R4 caller commands reference src/ai/__tests__/liveSmoke.test.ts and src/ai/**/__tests__/liveSmoke.test.ts — neither matches the actual filenames (claudeCodeLiveSmoke.test.ts / codexLiveSmoke.test.ts); vitest filter matched nothing and exited 1 on the gated invocation. Orchestrator runbook should use the real paths. INDEX row also named UnicDB_CLAUDE_SMOKE; actual gate is UnicDB_CLAUDE_CODE_SMOKE — row corrected.

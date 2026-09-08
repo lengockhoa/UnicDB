@@ -182,3 +182,23 @@ fix to any single omp finding (notably the critical `hostMcp.ts` timeout gap)
 will benefit all four engines simultaneously.
 
 
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart (matches handoff.reviewer.model in .ukit/storage/config.json)
+EXECUTOR_MODEL: claude-sonnet-4-5-20250929
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/omp src/ai/__tests__/policy.test.ts src/ai/__tests__/engineChoice.test.ts ; npm run typecheck ; git diff --stat -- src/ai/omp
+  result: 156 pass / 0 fail / 2 skipped (live smokes); typecheck clean; omp diff empty (read-only contract holds)
+TEST_PLAN_COVERAGE: all-followed — read-only audit per contract; RED_OUTPUT N/A is pre-justified in §Test Cases; acceptance checklist re-verified (7 module subsections, file:line+severity+category+action on every finding, >=2 named coverage gaps, >=1 refactor candidate, zero-diff proof pasted)
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - docs/AI_HANDOFF/tasks/TASK-004.md:95 — the mcpBridge.ts:298 "unref() can race with accept() callbacks" rationale is technically wrong (unref only clears the event-loop ref; it cannot race accept). Reword or drop this queued item so the next planner does not chase a phantom race.
+    - docs/AI_HANDOFF/tasks/TASK-004.md:161-172 — queued findings (incl. the critical hostMcp.ts:287-356 standard-tool timeout) have no INDEX/plan row of their own; the next cycle's planner must consume TASK-004 before cycle AGT closes or the critical finding is orphaned.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: All 30 citations land in-range; the critical + all 7 important findings spot-verified true against source (standard tool.execute unbounded vs bounded containedExecute; requestCancel early-return skips "cancelling"; disposeClient SIGTERM-only from start() catch; duplicated HostMcp; duck-type gate; spawn-failed untested). Counts consistent (1c/7i/22m). Disposition guard files exist and agentEnginesIntegration.test.ts passes 28/28.

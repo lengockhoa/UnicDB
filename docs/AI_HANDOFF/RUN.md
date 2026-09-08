@@ -1,3 +1,3 @@
-Phase: R4.5 round 3 re-review | Final HEAD: 29df740
-Cursor: 10/14 done. Both R3 fixes landed (TASK-011 4/4 cancel tests w/ subprocess assertion; TASK-012 `engine: choice.engine` + 2 RED→GREEN routing tests). Re-reviews in flight.
-Plan: B6 close → B7=TASK-014/004 → R5 push.
+Phase: R4 done → R5 ready | Final HEAD: 93746a4
+Cursor: 14/14 done (all AGT tasks approved_minor or approved). Last verdict: TASK-004 omp UKit audit → approved_minor (156/0; zero-diff contract holds; 2 minors logged for next cycle).
+Plan after /compact: R5 `git push origin main` → Final Report.

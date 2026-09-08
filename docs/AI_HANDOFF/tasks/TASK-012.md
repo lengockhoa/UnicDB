@@ -187,3 +187,23 @@ FINDINGS:
     - none
 NEXT_STATUS_FOR_INDEX: critical_block
 NOTES: Running model and configured `handoff.reviewer.model` are both `unic-smart`; executor model isolation passes. The prior 180/181 failure is fixed: `TASK-AIX07-003 #1` now passes in the 579/579 rerun. Claude/Codex teardown disposal is implemented and covered, but cannot make the selected-engine route reachable without the missing option.
+
+## Reviewer Verdict — Round 3
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: claude-sonnet-4-5
+VERIFICATION_RERUN:
+  command: npm run compile; npx vitest run src/extension.test.ts; npm run typecheck
+  result: compile PASS (exit 0); Vitest 183 pass / 0 fail; typecheck PASS (exit 0)
+TEST_PLAN_COVERAGE: all-followed for the R4.5 round-3 scope — tests #8/#9 assert the resolved `engine` option plus seam wiring; the previously failing TASK-AIX07-003 case stays green in this file
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - docs/AI_HANDOFF/tasks/TASK-012.md — no round-3 Executor Report with pasted RED output; RED→GREEN was instead proven by reviewer mutation: removing `engine: choice.engine` (src/extension.ts:2073) makes both tests fail with `AssertionError: expected undefined to be 'claude-code'/'codex'`; restoring the line returns 2/2 pass. Evidence recorded here.
+    - src/extension.ts:2073 — `engine: choice.engine` sits mid-options grouped with the engine* fields, not literally first; property order is semantically irrelevant because `resolveEngineKind()` (src/ui/aiChatPanel.ts:1783-1795) reads `options.engine` before any fallback.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: All three round-3 confirmations pass: (1) the panel receives the RESOLVED engine via `engine: choice.engine` (mutation-proven load-bearing); (2) tests #8 (extension.test.ts:2042) and #9 (:2079) carry real assertions and pass in isolation (2 passed) and in the full file (183/183); (3) teardown at src/ui/aiChatPanel.ts:1505-1564 disposes omp `shutdown()` + claude `dispose()`/`disposeMcp()` + codex `dispose()`, guarded and idempotent — no round-2 regression.
