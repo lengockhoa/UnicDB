@@ -82,8 +82,12 @@ function prependChangelog(version, today) {
 function readChangelogEntry(version) {
   const path = resolve(ROOT, "CHANGELOG.md");
   const text = readFileSync(path, "utf8");
+  // Match the entry body up to the NEXT `## [version]` heading or end of
+  // file. With the `m` flag `$` matches end-of-line, so use `\Z` (end of
+  // input) instead — otherwise the body gets clipped at every `---`
+  // separator that the canonical entry format uses.
   const re = new RegExp(
-    `^## \\[${version.replace(/\./g, "\\.")}\\][^\\n]*\\n([\\s\\S]*?)(?=^## \\[\\d|$)`,
+    `^## \\[${version.replace(/\./g, "\\.")}\\][^\\n]*\\n([\\s\\S]*?)(?=^## \\[\\d|\\Z)`,
     "m",
   );
   const m = text.match(re);
@@ -132,6 +136,22 @@ function runNpx(tool, args) {
     cwd: ROOT,
   });
   if (res.status !== 0) die(`npx ${tool} ${args.join(" ")} failed`, res.status ?? 1);
+}
+
+// Run a host-installed CLI directly (skip npx). Used for tools that ship
+// outside the npm registry — most importantly `gh`, which Homebrew installs
+// globally and npx cannot fetch from the registry without an interactive
+// YES prompt (this was the 1.53.25 cycle AGT-UI release regression). Falls
+// back to npx only if the binary is missing on PATH.
+function runHost(tool, args) {
+  const which = spawnSync("which", [tool], { encoding: "utf8" });
+  if (which.status === 0 && which.stdout.trim()) {
+    const res = spawnSync(tool, args, { stdio: "inherit", cwd: ROOT });
+    if (res.status !== 0) die(`${tool} ${args.join(" ")} failed`, res.status ?? 1);
+    return;
+  }
+  // Fallback to npx --no-install (works when tool ships via npm).
+  runNpx(tool, args);
 }
 
 // ─── args ────────────────────────────────────────────────────────────────
@@ -282,7 +302,7 @@ if (skipPublish) {
   const notesPath = resolve(ROOT, `.bump-notes-${newVersion}.md`);
   writeFileSync(notesPath, entry || `Release v${newVersion}\n`);
   try {
-    runNpx("gh", [
+    runHost("gh", [
       "release",
       "create",
       `v${newVersion}`,
@@ -303,7 +323,7 @@ if (skipPublish) {
   console.log(`✓ GitHub release v${newVersion} created`);
 
   // 6g. Marketplace publish (PAT is in macOS Keychain).
-  runNpx("vsce", ["publish"]);
+  runHost("vsce", ["publish"]);
   console.log(`✓ Published to VS Code Marketplace`);
 }
 
