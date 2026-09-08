@@ -43,27 +43,29 @@
 
 **No patch release.** Cycle plan specified no version bump — these go out with the next feature cycle's release plumbing.
 
-## Active cycle — RES-BAR (in review, 2026-09-08)
+## Active cycle — RES-BAR (CLOSED, 2026-09-08)
 
-Cycle RES-BAR kicked off 2026-09-08 to add WHERE / ORDER BY input boxes to the Results toolbar (Enter = server-side re-run) plus a toolbar-hover-polish fix (drop redundant native title tooltip; smooth 80ms background-color ease to kill the 1-3s late tooltip flicker + instant hover flash). Three tasks across two waves; code complete and under R4 review.
+Cycle RES-BAR kicked off 2026-09-08 and closed 2026-09-08 (single-day cycle). WHERE / ORDER BY input boxes added to the Results toolbar (Enter = server-side re-run) plus toolbar-hover-polish fix (drop redundant native title tooltip; smooth 80ms background-color ease to kill the 1-3s late tooltip flicker + instant hover flash). Three tasks across two waves; code complete, reviewed, INDEX flipped to `done`.
 
 - **Goal**: WHERE / ORDER BY in the Results toolbar, Enter → requery; toolbar hover polish.
 - **Base**: main @ accf1b5 (v1.53.26).
 - **Tasks (3)**: TASK-RES-001 (webview, requery toolbar inputs) · TASK-RES-002 (ext, `stripLeadingClauseKeyword` boundary helper) · TASK-RES-003 (webview wave 2, drop `btn.title` + smooth hover transition).
 - **Waves**: wave 1 = RES-001 ∥ RES-002 (parallel, disjoint files); wave 2 = RES-003 (sequenced after RES-001, shares `webview/main.ts` + `webview/styles.css`).
 - **P0 (locked)**: server-side re-run · free SQL fragment · in existing toolbar between `tsv` dropdown and `Search…`.
-- **Commits** (all on `main`):
+- **Commits** (all on `main`, in order):
   - `2bc0544` — handoff: plan — RES-BAR cycle.
   - `109008b` — handoff: wave 1 — TASK-RES-001 + TASK-RES-002.
   - `f078391` — chore: drop accidental `node_modules_backup` vitest cache + gitignore it.
   - `59e9ae8` — handoff: wave 2 — TASK-RES-003 (toolbar hover polish).
-  - `5d11664` — handoff: docs checkpoint — INDEX/RUN post-wave-2 + TASK-RES-003 executor report.
-- **Verification (R3 re-run)**: `npm run typecheck` exit 0 · `npm run compile` clean (`dist/webview.js` 2.3mb / `dist/extension.js` 6.5mb) · targeted `npx vitest run` 69/69 PASS (4 files) · full `npm test` 4081 passed / 4 skipped (no regressions, +42 vs pre-cycle baseline 4039).
-- **R2 (model isolation)**: executor = unic-code × 3; reviewer = unic-smart (per `.ukit/storage/config.json` → `handoff.reviewer.model`). Isolation holds.
-- **Review range for R4**: `2bc0544..59e9ae8` (code); 5d11664 is docs-only, excluded.
-- **R4 status**: batch 1 (RES-001 + RES-002 reviewers) running in parallel; batch 2 (RES-003) queued.
-- **R5 plan**: assemble INDEX.md status flips (approved → done; failed → blocked), push `origin/main`, refresh WORKLOG.md, decide patch-release per user ("làm xong phải lên patch mới cho tôi nhé" — pending user confirmation post-review).
-- **Constraints preserved**: no `--dangerously-skip-permissions`, apiKey / DB credentials / HostMcp descriptor never cross any wire frame, no `transition: all` on `.UnicDB-btn`, no edit to the `data-tooltip` pseudo-element block at `webview/styles.css:78-115`, no new message type (existing `requery` discriminator is the only webview→extension contract).
+  - `5d11664` / `906d0e8` / `979e0a0` / `0046898` / `634393b` — doc checkpoints (I4, status, R4 batch 1, worklog, R4 batch 2).
+- **R4 verdicts** (unic-smart, isolated from unic-code executors):
+  - RES-002 → **APPROVED** (no issues; helper at both boundaries; 26/26 RED→GREEN; 80/80 targeted; suite 4081/4081).
+  - RES-001 → **APPROVED-WITH-MINOR** (2 cosmetic: webviewToolbar.test.ts:218 test-1 name still says "non-empty title" after wave-2 title-pin drop; RED_OUTPUT merges two TDD micro-cycles — neither blocks ship; follow-up test-hygiene commit queued).
+  - RES-003 → **APPROVED-WITH-MINOR** (1 minor: manual hover smoke not documented in Executor Report; outcome mechanically implied — `btn.title` deleted → native tooltip cannot render).
+- **R4.5**: not required (`approved_minor` falls below threshold; auto-fix loop only fires for `changes_requested` / `critical`).
+- **R5 closure re-verify**: `npm run typecheck` exit 0 · `npm run compile` clean · full `npm test` 4081 passed / 4 skipped (no regressions, +42 vs pre-cycle 4039 baseline).
+- **Constraints preserved**: no `--dangerously-skip-permissions`, apiKey / DB credentials / HostMcp descriptor never cross any wire frame, no `transition: all` on `.UnicDB-btn`, no edit to the `data-tooltip` pseudo-element block at `webview/styles.css:78-115`, no new message type (existing `requery` discriminator is the only webview→extension contract). Existing target users: where/where nothing typed = no-op (results stay the same); orderBy/orderBy nothing typed = original SQL `ORDER BY` retained; client-side render comes first, server-side re-run only happens after Enter.
+- **Patch-release decision**: pending user (per "làm xong phải lên patch mới cho tôi nhé — Tôi không bao giờ test trên máy dev mà test trực tiếp ở máy khác sau khi bump patch mới lên cho tôi"). Previous release v1.53.26 Marketplace publish is still outstanding on user's side (Keychain block); orchestrator shipped cycle RES-BAR ready for the next bump regardless of v1.53.26 status.
 
 ## Cleanup pass 2026-09-08 — commit `cbf277a`
 **Resolved:**
