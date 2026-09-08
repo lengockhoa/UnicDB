@@ -207,9 +207,11 @@ export function createClaudeCodeChatEngine(
         input.mcpConfigPath = mcpConfigPath;
       }
 
-      // Error dedupe: some process paths fire onError twice (e.g. result-error
-      // frames first emit onError, then failTurn() emits it again). The chat
-      // engine surfaces exactly one error bubble to the panel.
+      // Error dedupe: since R4.5, `failTurn` (claudeCodeProcess.ts:827-855)
+      // is the SINGLE source of truth for onError on a failure path and
+      // fires exactly once. This `turnErrored` dedupe stays as regression
+      // defense-in-depth — the chat engine surfaces exactly one error bubble
+      // to the panel.
       let turnErrored = false;
 
       const forwarded: ClaudeCodeProcessEvents = {
@@ -251,12 +253,13 @@ export function createClaudeCodeChatEngine(
       };
 
       try {
-        // process.send normally resolves on turn end (onError fires inside
-        // the forwarded callbacks). The catch below is a defensive last line
-        // — turnErrored guards against the rare case where process.send
-        // rejects synchronously AND the forwarded onError has already fired
-        // (which is what R4.5's failTurn guard prevents at the process layer);
-        // the panel should still see a single onError bubble.
+        // process.send normally resolves on turn end. Since R4.5 round 1
+        // (commit 9926866), `failTurn` REJECTS the in-flight send promise
+        // (claudeCodeProcess.ts:834-855, `if (reject !== null) reject(err)`),
+        // so this catch IS the live error path on every turn crash —
+        // it is NOT a fallback safety net. `turnErrored` still suppresses a
+        // second onError bubble if the forwarded onError already fired;
+        // do not delete the catch.
         await proc.send(input, forwarded);
       } catch (err) {
         if (turnErrored) return;

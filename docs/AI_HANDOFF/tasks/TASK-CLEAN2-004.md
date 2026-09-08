@@ -68,6 +68,41 @@ npm run typecheck
 
 ---
 
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/clean2-004
+   ❯ src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts  (4 tests | 1 failed | 1 skipped) 10015ms
+     ❯ ... > claude code CLI live smoke — pins the gate env-var name > spawn error surfaces fast (missing binary)
+       → Test timed out in 10000ms.
+  If this is a long-running test, pass a timeout value as the last argument or configure it globally with "testTimeout".
+   FAIL  src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts > ... > spawn error surfaces fast (missing binary)
+  Error: Test timed out in 10000ms.
+  Tests  1 failed | 2 passed | 1 skipped (4)
+  Duration  10.19s
+Verification Output: |
+  === npx vitest run src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts ===
+   RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/clean2-004
+   ✓ src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts  (4 tests | 1 skipped) 31ms
+   Test Files  1 passed (1)
+        Tests  3 passed | 1 skipped (4)
+     Duration  194ms
+  === npm run typecheck ===
+  > tsc --noEmit
+  (exit 0, no errors)
+  === doc-consistency grep ===
+  $ grep -cE "unnecessary|without ever hitting the model API|no prompt, no model use" src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts
+  0
+  === dangerous-flags grep ===
+  $ grep -nE "dangerously-skip-permissions|apiKey|--api-key" src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts
+  14://   - never passes apiKey/DB credential; never uses dangerous bypass flags
+  45:  // We DO NOT pass --dangerously-skip-permissions, apiKey, or any DB
+  (only negated mentions in comments)
+Status: PASS
+Note: none
+
 ## Discussion
 
 ### 2026-09-08 · planner · unic-smart
