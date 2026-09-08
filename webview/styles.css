@@ -1055,6 +1055,16 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  /* TASK-AGTUI-001 — Claude Code clone design tokens (BLUE accent palette).
+   * Scoped under `.UnicDB-chat` so non-chat panels (results, schema, console,
+   * settings, etc.) keep their own --vscode-* tokens untouched. JS tasks
+   * (TASK-AGTUI-003/004/005/007/008) consume these by `var(...)` — they must
+   * not hardcode hexes. */
+  --UnicDB-chat-accent: #3b82f6;
+  --UnicDB-chat-accent-hover: #60a5fa;
+  --UnicDB-chat-accent-strong: #2563eb;
+  --UnicDB-chat-stop: #dc2626;
+  --UnicDB-chat-warn: #f59e0b;
 }
 
 /* AI chat panel — engine banner + bubbles */
@@ -1911,4 +1921,205 @@ body.UnicDB-chat-body {
 @keyframes UnicDB-chat-thinking-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* --- TASK-AGTUI-001 — Claude Code clone (BLUE palette) ---
+ * Pure-CSS clone of Claude Code's chat surface: brand header, session chip,
+ * thread bubbles (user / assistant), thinking card, tool / plan / error /
+ * usage affordances, composer grid, bypass-permissions toggle, red-square
+ * stop button, and the pulse keyframes the stop-live variant drives. All
+ * selectors are scoped under `.UnicDB-chat` / `.UnicDB-chat-*` so shared
+ * webview panels are unaffected. JS tasks (TASK-AGTUI-003..008) emit DOM
+ * that consumes these classes — DO NOT rename selectors without a plan
+ * call to those tasks.
+ */
+.UnicDB-chat-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--vscode-panel-border, #444);
+}
+.UnicDB-chat-brand {
+  font-size: 28px;
+  font-weight: 700;
+  font-family: var(--vscode-font-family, system-ui, sans-serif);
+  color: var(--UnicDB-chat-accent, #3b82f6);
+  line-height: 1;
+  /* Tight, square footprint so it reads as a glyph, not a word. */
+  letter-spacing: -0.02em;
+  user-select: none;
+}
+.UnicDB-chat-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--vscode-foreground, #cccccc);
+}
+.UnicDB-chat-sessionchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  color: var(--vscode-descriptionForeground, #8c8c8c);
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 999px;
+}
+.UnicDB-chat-msg-user {
+  align-self: flex-end;
+  background: var(--UnicDB-chat-accent, #3b82f6);
+  color: #ffffff;
+  padding: 6px 10px;
+  border-radius: 12px 12px 2px 12px;
+  max-width: 80%;
+}
+.UnicDB-chat-msg-assistant {
+  align-self: flex-start;
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-foreground, #cccccc);
+  padding: 6px 10px;
+  border-radius: 12px 12px 12px 2px;
+  max-width: 85%;
+}
+.UnicDB-chat-thought {
+  align-self: flex-start;
+  font-style: italic;
+  color: var(--vscode-descriptionForeground, #8c8c8c);
+  padding: 4px 10px;
+  border-left: 2px solid var(--UnicDB-chat-accent, #3b82f6);
+  max-width: 85%;
+}
+.UnicDB-chat-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px;
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 6px;
+  background: var(--vscode-editorWidget-background, #252526);
+}
+.UnicDB-chat-tool-failed {
+  border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+  background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
+}
+.UnicDB-chat-tool-denied {
+  border-color: var(--UnicDB-chat-warn, #f59e0b);
+  background: var(--vscode-inputValidation-warningBackground, #5a4a1a);
+}
+.UnicDB-chat-plan {
+  border: 1px dashed var(--UnicDB-chat-accent, #3b82f6);
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-foreground, #cccccc);
+}
+.UnicDB-chat-usage {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #8c8c8c);
+  padding: 2px 10px;
+  text-align: right;
+}
+.UnicDB-chat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 999px;
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-foreground, #cccccc);
+  cursor: pointer;
+  user-select: none;
+}
+.UnicDB-chat-chip:hover {
+  border-color: var(--UnicDB-chat-accent-hover, #60a5fa);
+}
+.UnicDB-chat-chipmenu {
+  position: absolute;
+  z-index: 50;
+  min-width: 160px;
+  padding: 4px 0;
+  border: 1px solid var(--vscode-panel-border, #444);
+  border-radius: 4px;
+  background: var(--vscode-editorWidget-background, #252526);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+.UnicDB-chat-toggle {
+  position: relative;
+  display: inline-block;
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--vscode-input-background, #3c3c3c);
+  border: 1px solid var(--vscode-panel-border, #444);
+  cursor: pointer;
+  vertical-align: middle;
+  /* OFF state — BLUE accent shows up only on the thumb ring (subtle). */
+  outline: 1px solid var(--UnicDB-chat-accent, #3b82f6);
+  outline-offset: -2px;
+}
+.UnicDB-chat-toggle::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--UnicDB-chat-accent, #3b82f6);
+  transition: left 0.15s ease-in-out;
+}
+.UnicDB-chat-toggle-on {
+  background: var(--UnicDB-chat-warn, #f59e0b);
+  border-color: var(--UnicDB-chat-warn, #f59e0b);
+  outline-color: var(--UnicDB-chat-warn, #f59e0b);
+}
+.UnicDB-chat-toggle-on::after {
+  left: 13px;
+  background: #ffffff;
+}
+.UnicDB-chat-stop {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 0;
+  background: var(--UnicDB-chat-stop, #dc2626);
+  border: 1px solid var(--UnicDB-chat-stop, #dc2626);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.UnicDB-chat-stop-live {
+  animation: UnicDB-chat-pulse 1s ease-in-out infinite;
+}
+.UnicDB-chat-secondary {
+  background: transparent;
+  color: var(--vscode-foreground, #cccccc);
+  border: 1px solid var(--vscode-panel-border, #444);
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.UnicDB-chat-secondary:hover:not(:disabled) {
+  border-color: var(--UnicDB-chat-accent, #3b82f6);
+  color: var(--UnicDB-chat-accent-hover, #60a5fa);
+}
+@keyframes UnicDB-chat-pulse {
+  0% { opacity: 1; }
+  50% { opacity: 0.45; }
+  100% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .UnicDB-chat-stop-live,
+  .UnicDB-chat-caret,
+  .UnicDB-chat-queued {
+    animation: none !important;
+  }
+  .UnicDB-chat-toggle::after,
+  .UnicDB-chat-toggle-on::after {
+    transition: none !important;
+  }
 }

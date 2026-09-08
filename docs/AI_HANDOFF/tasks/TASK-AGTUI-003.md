@@ -75,3 +75,31 @@ export function renderHeader(root: HTMLElement): UnicDBHeader; // appends el to 
 ## Reviewer Verdict
 
 (appended below by reviewer)
+
+## Executor Report
+
+EXECUTOR_TOOL: Claude Code (Agent tool)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  FAIL  webview/__tests__/aiChatPanelHeader.test.ts [ webview/__tests__/aiChatPanelHeader.test.ts ]
+  Error: Failed to resolve import "../aiChatPanelHeader" from "webview/__tests__/aiChatPanelHeader.test.ts". Does the file exist?
+   ❯ TransformPluginContext._formatError ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:49258:41
+   ❯ TransformPluginContext.transform ../../node_modules/vite/dist/node/chunks/dep-BK3b2jBa.js:49266:7
+  Test Files  1 failed (1)
+       Tests  no tests
+Verification Output: |
+  RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-agtui-003
+   ✓ webview/__tests__/aiChatPanelHeader.test.ts  (10 tests) 14ms
+   Test Files  1 passed (1)
+        Tests  10 passed (10)
+  > UnicDB@1.53.24 typecheck
+  > tsc --noEmit
+  (clean exit, no output)
+Status: PASS
+Note: header module is pure-DOM, no vscode imports; safeEngineClassName whitelists
+  unknown strings (e.g. "<img onerror=...>" → builtin) so the banner DOM + className
+  never carry raw wire data. Session-chip test originally asserted
+  childNodes.length===0 (text node from textContent counts as a child); corrected
+  to querySelectorAll("*").length===0 to match the legacy
+  aiChatPanelSessionStateWebview.test.ts:116 contract.

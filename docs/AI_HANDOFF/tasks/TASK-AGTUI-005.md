@@ -68,7 +68,29 @@ export function renderUsageChip(container: HTMLElement, usage: {inputTokens:numb
 
 ## Executor Report
 
-(appended below by executor)
+```text
+EXECUTOR_TOOL: Claude Code (Agent tool)
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT:
+  Test Files  1 failed (1)
+  Tests       no tests
+  Error: Failed to resolve import "../aiChatPanelThread" from "webview/__tests__/aiChatPanelThread.test.ts". Does the file exist?
+
+Verification Output:
+  Command: npx vitest run webview/__tests__/aiChatPanelThread.test.ts
+  Result:  1 file passed (25 tests passed), 0 failed
+  
+  Command: npx vitest run src/ui/__tests__/aiChatPanelWebview.test.ts
+  Result:  1 file passed (43 tests passed), 0 failed
+  
+  Command: npm run typecheck
+  Result:  exit 0 (no diagnostics)
+
+Status: PASS
+Note: Discovered mid-run that the worktree had no local node_modules — copied parent repo's node_modules so esbuild binaries are discoverable. The parity test file (src/ui/__tests__/aiChatPanelWebview.test.ts) does not have a worktree-fallback for esbuild (cf. aiChatPanelWebviewTask005.test.ts which has one), so without node_modules it could not run; the typecheck + the new thread test passed immediately. After provisioning node_modules, all three verification commands are green in one pass: 25 + 43 tests + tsc --noEmit.
+```
 
 ---
 

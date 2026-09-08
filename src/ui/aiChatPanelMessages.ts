@@ -9,6 +9,12 @@
 // respond to permission requests with one opaque {requestId, optionId?}.
 
 import type { ChatMessage } from "../ai/provider";
+// TASK-AGTUI-002: AiModelRole is the closed set used by the new
+// `models` (host→webview) and `model_select` (webview→host) wire frames.
+// Re-export so downstream consumers (TASK-AGTUI-006/007) can pull both the
+// role literal type and the message types from this single module.
+import type { AiModelRole } from "../ai/settings";
+export type { AiModelRole };
 // TASK-001 (cycle AB): MinimalAttachment is the wire shape the webview sends
 // over for each image attachment. The single source of truth lives in
 // src/ui/aiChatAttachments.ts (task-005); we re-export here so consumers
@@ -214,6 +220,20 @@ export interface AiChatPanelUsage {
   policyNotice: string;
 }
 
+/** TASK-AGTUI-002: host → webview announcement of the active model role and
+ * the full set of configured roles. Posted once on panel-ready so the
+ * webview can render the role chip (header — TASK-AGTUI-003) and gate the
+ * model picker. `active` MUST be one of the roles in `roles` (the host
+ * reconciles them before posting). `roles[]` is the empty list when
+ * nothing is configured — that is the "nothing configured" signal, NOT a
+ * schema violation. Shape is purely additive; no field on this frame may
+ * carry apiKey material. */
+export interface AiChatPanelModels {
+  type: "models";
+  active: AiModelRole;
+  roles: Array<{ role: AiModelRole; modelId: string; vision: boolean }>;
+}
+
 
 /** AIX-04: a reviewed change plan card (plan_change tool result). The
  * webview renders statements + danger tiers + drift and shows Approve/
@@ -259,7 +279,8 @@ export type AiChatPanelHostMessage =
   | AiChatPanelMentionMiss
   | AiChatPanelAttachError
   | AiChatPanelGroundingState
-  | AiChatPanelUsage;
+  | AiChatPanelUsage
+  | AiChatPanelModels;
 
 /** TASK-005: host answer for `mention_list` (≤30 DB objects + ≤20 files).
  * Each item carries `kind` discriminator (table|view|routine|file), a
@@ -390,6 +411,28 @@ export interface AiChatPanelCommand {
   args: string[];
 }
 
+/** TASK-AGTUI-002: webview → host — user picked a different active model
+ * role (header chip — TASK-AGTUI-003). Kept as a dedicated message rather
+ * than reusing `AiChatPanelCommand("model")` so the chip path stays typed
+ * and does NOT inherit the slash-command echo behavior. The host applies
+ * `role` to the active engine on receipt; the webview does NOT mutate
+ * local state until the next `models` frame arrives. */
+export interface AiChatPanelModelSelect {
+  type: "model_select";
+  role: AiModelRole;
+}
+
+/** TASK-AGTUI-002: webview → host — user toggled the "bypass permissions"
+ * affordance in the composer (TASK-AGTUI-004). When `enabled` is true the
+ * host will skip future permission prompts for this session until the
+ * webview posts `enabled: false` again or the panel closes. The webview
+ * does NOT gate outgoing messages on this flag; the host owns the
+ * authoritative policy. */
+export interface AiChatPanelBypassPermissions {
+  type: "bypass_permissions";
+  enabled: boolean;
+}
+
 export type AiChatPanelWebviewMessage =
   | AiChatPanelReady
   | AiChatPanelSend
@@ -401,6 +444,8 @@ export type AiChatPanelWebviewMessage =
   | AiChatPanelResumeCancel
   | AiChatPanelRegenerate
   | AiChatPanelCommand
+  | AiChatPanelModelSelect
+  | AiChatPanelBypassPermissions
   | AiChatPanelMentionList
   | AiChatPanelPlanApprove
   | AiChatPanelPlanReject

@@ -58,7 +58,82 @@ npm run typecheck
 
 ## Executor Report
 
-(appended below by executor)
+### 2026-09-08 · executor · unic-code
+EXECUTOR_TOOL: Claude Code (Agent tool)
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+
+RED_OUTPUT (pre-implementation, from `npx vitest run src/ui/__tests__/aiChatPanelCloneCss.test.ts` — 5 failed / 3 passed of 8):
+
+  FAIL  TASK-AGTUI-001 - clone CSS tokens + chat-scoped layer > .UnicDB-chat declares the BLUE/stop/warn clone token block
+    AssertionError: .UnicDB-chat must declare --UnicDB-chat-accent:#3b82f6: expected false to be true
+    ❯ src/ui/__tests__/aiChatPanelCloneCss.test.ts:70:7
+
+  FAIL  TASK-AGTUI-001 - clone CSS tokens + chat-scoped layer > non-chat selectors are untouched and every new rule is chat-scoped
+    AssertionError: .UnicDB-tab must still declare display:flex: expected false to be true
+    ❯ src/ui/__tests__/aiChatPanelCloneCss.test.ts:122:89
+    (resolved by switching the assertion to `cursor:pointer` after inspecting pre-cycle `.UnicDB-tab` body, which has no `display:flex`)
+
+  FAIL  TASK-AGTUI-001 - clone CSS tokens + chat-scoped layer > .UnicDB-chat-brand is the big BLUE 'U' brand glyph
+    AssertionError: .UnicDB-chat-brand rule block must exist: expected '' not to be ''
+    ❯ src/ui/__tests__/aiChatPanelCloneCss.test.ts:206:66
+
+  FAIL  TASK-AGTUI-001 - clone CSS tokens + chat-scoped layer > .UnicDB-chat-stop is a red square; .UnicDB-chat-stop-live animates the pulse
+    AssertionError: .UnicDB-chat-stop rule block must exist: expected '' not to be ''
+    ❯ src/ui/__tests__/aiChatPanelCloneCss.test.ts:222:65
+
+  FAIL  TASK-AGTUI-001 - clone CSS tokens + chat-scoped layer > .UnicDB-chat-toggle BLUE OFF, .UnicDB-chat-toggle-on amber ON
+    AssertionError: .UnicDB-chat-toggle rule block must exist: expected '' not to be ''
+    ❯ src/ui/__tests__/aiChatPanelCloneCss.test.ts:264:66
+
+  Test Files  1 failed (1) | Tests  5 failed | 3 passed (8)
+
+GREEN (post-implementation) — all 8 tests pass.
+
+Verification Output (full output from §Verification Commands):
+
+```
+$ npx vitest run src/ui/__tests__/aiChatPanelCloneCss.test.ts
+ ✓ src/ui/__tests__/aiChatPanelCloneCss.test.ts  (8 tests) 16ms
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+
+$ npx vitest run src/ui/__tests__/chatLayoutCss.test.ts
+ ✓ src/ui/__tests__/chatLayoutCss.test.ts  (31 tests) 6ms
+ Test Files  1 passed (1)
+      Tests  31 passed (31)
+
+$ npm run typecheck
+> UnicDB@1.53.24 typecheck
+> tsc --noEmit
+(no output → exit 0, pass)
+```
+
+Scope check (`git diff --stat HEAD`):
+```
+ webview/styles.css | 211 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 211 insertions(+)
+```
+Plus the new test file (untracked): `src/ui/__tests__/aiChatPanelCloneCss.test.ts`.
+No JS/TS source files modified.
+
+FILES_CHANGED:
+- webview/styles.css: added `--UnicDB-chat-{accent,accent-hover,accent-strong,stop,warn}` tokens on the existing `.UnicDB-chat` block, plus a chat-scoped clone layer at the bottom of the file containing `.UnicDB-chat-header`, `.UnicDB-chat-brand` (28px/700/sans-serif/BLUE), `.UnicDB-chat-title`, `.UnicDB-chat-sessionchip`, `.UnicDB-chat-msg-user`, `.UnicDB-chat-msg-assistant`, `.UnicDB-chat-thought`, `.UnicDB-chat-tool` (+ `-failed` / `-denied`), `.UnicDB-chat-plan`, `.UnicDB-chat-usage`, `.UnicDB-chat-chip` + `.UnicDB-chat-chipmenu`, `.UnicDB-chat-toggle` (BLUE OFF) + `.UnicDB-chat-toggle-on` (amber `#f59e0b` ON), `.UnicDB-chat-stop` (square 16x16 red `#dc2626`) + `.UnicDB-chat-stop-live`, `.UnicDB-chat-secondary`, `@keyframes UnicDB-chat-pulse`, and a `@media (prefers-reduced-motion: reduce)` block disabling the pulse/caret/queued animations and the toggle thumb transition. Pre-existing `.UnicDB-chat*` rules and every non-chat selector are untouched.
+- src/ui/__tests__/aiChatPanelCloneCss.test.ts (new): TDD test file covering the 5 task-spec cases + brand glyph + stop button + bypass toggle contracts; uses `git show HEAD:webview/styles.css` as the pre-cycle baseline so the isolation check is robust against future non-chat selector growth.
+
+TESTS_ADDED:
+- src/ui/__tests__/aiChatPanelCloneCss.test.ts:
+  - "loads webview/styles.css"
+  - ".UnicDB-chat declares the BLUE/stop/warn clone token block"
+  - "Claude-orange hexes are NOT used as accent inside .UnicDB-chat rules"
+  - "non-chat selectors are untouched and every new rule is chat-scoped"
+  - "chat section has balanced braces"
+  - ".UnicDB-chat-brand is the big BLUE 'U' brand glyph"
+  - ".UnicDB-chat-stop is a red square; .UnicDB-chat-stop-live animates the pulse"
+  - ".UnicDB-chat-toggle BLUE OFF, .UnicDB-chat-toggle-on amber ON"
+
+Status: PASS
+Note: Per the task's note that "JS tasks must not gate animations in code — add/remove classes and let the media query win", the prefers-reduced-motion block in this CSS file uses `animation: none !important` on the same chat-scoped selectors the JS will toggle, so consumers (TASK-AGTUI-007/008) only need to add/remove `.UnicDB-chat-stop-live` / `.UnicDB-chat-toggle-on` etc. and the OS-level preference is respected automatically. No npm deps added. Files left as-is in worktree (no `git add` / `commit` / `push`).
 
 ---
 

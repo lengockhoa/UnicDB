@@ -57,7 +57,36 @@ Kept `model_select` as a dedicated message rather than reusing `AiChatPanelComma
 
 ## Executor Report
 
-(appended below by executor)
+```
+EXECUTOR_TOOL: Claude Code (Agent tool)
+EXECUTOR_MODEL: claude-sonnet-4-5
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: Direct tsc on src/ui/__tests__/aiChatPanelMessagesClone.test.ts before implementation:
+  error TS2724: '"../aiChatPanelMessages"' has no exported member named 'AiChatPanelModels'
+  error TS2724: '"../aiChatPanelMessages"' has no exported member named 'AiChatPanelModelSelect'
+  error TS2305: Module '"../aiChatPanelMessages"' has no exported member 'AiChatPanelBypassPermissions'
+  error TS2367: This comparison appears to be unintentional because the types ... and '"models"' have no overlap.
+  error TS2367: ... and '"model_select"' have no overlap.
+  error TS2367: ... and '"bypass_permissions"' have no overlap.
+  error TS2339: Property 'enabled' does not exist on type 'never'.
+  (12+ type-level errors confirming the new types and union members were absent)
+Verification Output:
+  > UnicDB@1.53.24 typecheck
+  > tsc --noEmit
+  (clean exit — no errors)
+
+  RUN  v1.6.1 .../task-agtui-002
+   ✓ src/ui/__tests__/aiChatPanelMessagesClone.test.ts  (8 tests) 2ms
+   ✓ src/ui/__tests__/aiChatPanelMessages.test.ts  (20 tests) 3ms
+   Test Files  2 passed (2)
+        Tests  28 passed (28)
+Status: PASS
+Note: Webview mirror of these literal shapes is intentionally NOT mirrored
+      here (aiChatPanelMain.ts will copy the literals inline per task spec
+      "Interfaces" note; webview bundles standalone and cannot import host
+      modules). Import of AiModelRole is type-only (re-exported) so the host
+      module graph stays free of runtime coupling. 20/20 regression preserved.
+```
 
 ---
 
