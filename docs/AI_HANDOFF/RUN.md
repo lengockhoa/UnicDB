@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Replace AiChatPanel with a Claude Code VS Code extension UI/UX faithful clone — BLUE accent + big "U" character brand mark; engine dispatch from AGT (TASK-011/012) unchanged.
-Base: main @ 515d87e (post-AGT 1.53.24 closeout) | Plan: 6321b7a | W1: 87ec6e2+612d2ca | W2: b9470dc | W3: 6324c43 | Fixups: 960de27, fc778a2 | Closeout: 3a5c648 | Release: 35da5fd | Script fix: 0f9319b | Docs: 875e087 | Cleanup: cbf277a
-Phase: done
-Cursor: cleanup pass complete — commit cbf277a on main, pushed to origin/main; 4 queued minors resolved (applyEngine hint branch class, hostMcp standard-tool timeout, mcpBridge unref comment, tool-card 150ms ease timing-token contract); typecheck + 4026 tests green
-Next: idle — user-driven next cycle (no patch release scheduled; none of the cleanup fixes are user-visible or security)
+Goal: Apply 12 queued minor cleanups from cycles AGT + AGT-UI (stale comments, dead exports, smoke-helper dead-code, renderMarkdown/escapeHtml dedup between main.ts and thread.ts). No patch release — gộp vào cycle lớn tiếp theo.
+Base: main @ 1be70f7 (post-AGT-UI 1.53.25 + cleanup pass cbf277a)
+Phase: P2.5
+Cursor: Round 1 review found 4 issues; planner revised PLAN.md + TASK-CLEAN2-001/002/005/006. Verified consumer-check evidence encoded (finding 3+4: repo grep + package.json exports/types fields). P2.5 round-2 review agent spawned to verify revisions + scan for new issues.
+Next: wait for round-2 verdict. If Approved → P3 commit plan. If Issues Found → planner applies directly without re-review (loop cap exhausted after round 2).
