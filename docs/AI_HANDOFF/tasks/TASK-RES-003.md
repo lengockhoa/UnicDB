@@ -134,3 +134,53 @@ overlap in CSS rules.
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  # Captured at 17:49:32 — 4 RED tests, 22 passing pre-implementation.
+  FAIL  src/ui/__tests__/webviewRequery.test.ts > webview/main.ts toolbar hover polish (TASK-RES-003) > 1. makeIconButton does NOT set btn.title; data-tooltip + aria-label still present and equal
+  AssertionError: button .UnicDB-btn UnicDB-btn-danger should not have native title attribute
+  ❯ src/ui/__tests__/webviewRequery.test.ts:701:11
+    699|   b.hasAttribute("title"),
+    700|   `button .${b.className} should not have native title attribute`,
+    701| ).toBe(false);
+
+  FAIL  src/ui/__tests__/webviewRequery.test.ts > webview/main.ts toolbar hover polish (TASK-RES-003) > 2. .UnicDB-btn:hover:not(:disabled) declares NO layout-triggering property (jsdom cannot layout)
+  AssertionError: .UnicDB-btn:hover:not(:disabled) must still declare background-color: expected false to be true
+
+  FAIL  src/ui/__tests__/webviewToolbar.test.ts > webview/styles.css toolbar button hover transition (TASK-RES-003) > 3. .UnicDB-btn { ... } block carries a transition rule (no instant hover swap)
+  AssertionError: .UnicDB-btn { ... } must declare a transition; body was: background: var(--vscode-button-background); ... line-height: 1;
+
+  FAIL  src/ui/__tests__/webviewToolbar.test.ts > webview/styles.css toolbar button hover transition (TASK-RES-003) > 4. the .UnicDB-btn transition lists ONLY background-color and/or box-shadow — no layout-triggering properties
+  AssertionError: .UnicDB-btn { ... } must declare a transition; body was: background: var(--vscode-button-background); ... line-height: 1;
+
+  Test Files  2 failed (2)
+       Tests  4 failed | 22 passed (26)
+
+Verification Output: |
+  # 1) npm run typecheck — exit 0
+  # 2) npm run compile — exit 0 (REQUIRED again after webview/main.ts + webview/styles.css edits)
+  # 3) npx vitest run src/ui/__tests__/webviewRequery.test.ts src/ui/__tests__/webviewToolbar.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/requeryClauseNormalize.test.ts
+  ✓ src/ui/__tests__/requeryClauseNormalize.test.ts  (26 tests) 3ms
+  ✓ src/ui/__tests__/resultsPanelRequery.test.ts     (17 tests) 9ms
+  ✓ src/ui/__tests__/webviewToolbar.test.ts          (9 tests) 452ms
+  ✓ src/ui/__tests__/webviewRequery.test.ts          (17 tests) 1294ms
+  Test Files  4 passed (4)
+       Tests  69 passed (69)
+
+  # 4) npm test — full suite final gate
+  Test Files  275 passed | 1 skipped (276)
+       Tests  4081 passed | 4 skipped (4085)
+  Duration  19.55s
+
+  # 5) Post-merge acceptance greps
+  # grep -nE 'btn\.title\s*=\s*title' webview/main.ts — exit 1 (zero matches, as required)
+  # grep -nE 'transition\s*:' webview/styles.css — match at line 62 inside .UnicDB-btn { ... } block:
+  # 62:  transition: background-color 80ms ease-out, box-shadow 80ms ease-out;
+
+Status: PASS
+Note: "All §4 plan test cases implemented: #1 + #2 + #6 in webviewRequery.test.ts (bundle/CSS), #3 + #4 + #5 + #7 in webviewToolbar.test.ts (CSS source regex). Wave-1 census case 1 'title' clause REWRITTEN per plan §6 (test 5 'Re-Run + Clear' `b.title` check also updated for consistency — same REWRITTEN pattern). The CSS hover block `background:` shorthand was changed to `background-color:` longhand so the transition targets the explicit longhand and the test #2 sanity check matches. The data-tooltip pseudo-element block (lines 95-113) was NOT touched — only `transition: background-color 80ms ease-out, box-shadow 80ms ease-out` added to the `.UnicDB-btn` block, and the existing `:hover` rule updated to longhand."
