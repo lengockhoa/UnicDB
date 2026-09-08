@@ -27,6 +27,10 @@ dist/
 
 .worktrees/
 
+# Local credentials (created via AskUserQuestion flow for Marketplace publish).
+# The .pat file inside holds the vsce/Azure DevOps publisher PAT — never commit.
+.secrets/
+
 # Cycle AGT (TASK-012) — ephemeral MCP config files written by the extension
 # when launching Claude Code / Codex sessions. Must NOT be committed: the
 # files contain only `127.0.0.1:<port>` endpoint metadata, but they leak
