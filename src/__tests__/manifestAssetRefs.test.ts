@@ -145,4 +145,31 @@ describe("manifest asset references", () => {
       ).toBe(true);
     }
   });
+
+  it("every contributed PNG asset uses color type 6 (RGBA true-color), not palette/indexed", () => {
+    // v1.53.32 defensive guard — VS Code's activity-bar icon masker
+    // silently refuses to render palette/indexed PNGs (color_type=3) for
+    // some users, leaving the activity-bar container slot empty even when
+    // the manifest is valid. Indexed PNGs only render reliably on the
+    // Extensions panel + extension detail page (the surfaces that showed
+    // the icon correctly throughout 1.53.29–1.53.31). True-color RGBA
+    // (color_type=6) is the universal format.
+    const pkg = readJson<Manifest>("package.json");
+    const refs = collectMediaIconRefs(pkg).filter((r) => r.toLowerCase().endsWith(".png"));
+    expect(refs.length, "no PNG icons contributed").toBeGreaterThan(0);
+    for (const rel of refs) {
+      const buf = fs.readFileSync(path.join(repoRoot, rel));
+      // PNG signature (8) + IHDR length (4) + 'IHDR' (4) + 13 bytes data.
+      // IHDR data layout: width(4) height(4) bit_depth(1) color_type(1) compression(1) filter(1) interlace(1).
+      // color_type sits at offset 25 (sig=8 + len=4 + type=4 + width=4 + height=4 + bit_depth=1).
+      expect(buf.length, `${rel}: PNG too short to contain IHDR`).toBeGreaterThanOrEqual(8 + 4 + 4 + 13);
+      const colorType = buf[25];
+      expect(
+        colorType === 6,
+        `${rel}: PNG color_type=${colorType} (must be 6=RGBA true-color). ` +
+          `Indexed/palette PNGs (color_type=3) render on Extensions panel but ` +
+          `VS Code activity-bar icon masker silently drops them.`,
+      ).toBe(true);
+    }
+  });
 });
