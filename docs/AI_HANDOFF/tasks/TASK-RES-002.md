@@ -158,3 +158,24 @@ Note:
     TASK-005) to `lower(id)` (universally rejected expression). Intent preserved.
 
 ---
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+REVIEW_TARGET_TYPE: code
+REVIEW_SCOPE: 2bc0544..59e9ae8 -- src/ui/queryComposer.ts, src/ui/resultsPanel.ts, src/ui/__tests__/requeryClauseNormalize.test.ts, src/ui/__tests__/resultsPanelRequery.test.ts
+VERIFICATION_RECHECK:
+  - npm run typecheck: exit 0
+  - targeted vitest re-run: 80 passed | 0 failed (requeryClauseNormalize 26, resultsPanelRequery 17, resultsPanelOrderBy 16, resultsGridModelRequery 21)
+  - full suite re-run: 4081 passed | 0 failed (275 files passed, 1 skipped; executor's 5 bundle-test failures were cleared by the orchestrator's `npm run compile` — suite fully GREEN at review time)
+CRITERIA_CHECK:
+  1. TDD gate (RED→GREEN): pass — RED_OUTPUT has concrete failure evidence (TypeError: stripLeadingClauseKeyword is not a function, 25/26; composed SQL `WHERE WHERE a>1` mismatch); the new file has exactly 26 tests (25 RED + pre-existing composeRequery case #5f) and all pass on my re-run.
+  2. Acceptance Criteria: pass — helper exported (queryComposer.ts:384); both boundaries strip (resultsPanel.ts:1781-1782 + 1864-1865, `?? ""` preserved); required coverage families all present (whitespace T5e/T6f/T8d, strip T1/T2, absent T8a-c, boundary T4a-c, case T6a-f, uppercase/mixed-case T6c/T6e/f, non-recursive T7a-c, double-strip idempotency via handler Test #3 through the real two-boundary path); parseOrderBy + composeRequery bodies byte-untouched (queryComposer.ts diff purely additive, 52 insertions / 0 deletions; resultsGridModel.ts not in diff); no new message type, requery shape unchanged.
+  3. Side effects / regressions: pass — scoped diff returns exactly 4 files; full suite 4081/4081 GREEN including resultsPanelOrderBy byte-identity and resultsGridModelRequery regression guards.
+  4. Correctness: pass — pure function, no state mutation, returns string; empty (T5c), whitespace-only (T5d), bare keyword (T5a/b/e) safe; null/undefined guarded at both call sites via `?? ""` per the typed contract; "WHEREx"/"ORDER BYid"/"WHEREBY x" whitespace-boundary guard verified (T4a-c).
+  5. Boundary placement (two strips): pass — the only `msg.where`/`msg.orderBy` reads in resultsPanel.ts are lines 1781-1782 (composeRequerySql) and 1864-1865 (handleRequery), both stripped; the line 1970 composeRequerySql caller is handleRequery itself, so the two strips compose idempotently and Test #3 exercises the real double-strip end to end.
+ISSUES_FOUND: none
+SUGGESTIONS:
+  - minor: no test pins lowercase mid-clause preservation directly (e.g. `stripLeadingClauseKeyword("id where 5","WHERE")` stays unchanged); the prefix-only implementation plus T7a/c make this trivially safe — add one test if the file is touched again.
+  - minor: helper would throw on null/undefined if ever called directly from JS; safety relies on the typed `?? ""` call sites and the JSDoc boundary-only mandate — acceptable as-is, keep the mandate for future callers.
+GATE: REVIEW_DONE — handoff may proceed; INDEX row set to approved.

@@ -187,3 +187,28 @@ esbuild: build complete
 Status: PASS
 
 Note: implementation kept every interface contract (class names `.UnicDB-requery-where/-order/-run/-clear`, message shape `{type:"requery", index, where, orderBy}`, returned `dom.requeryWhere/-OrderBy/-RunBtn/-ClearBtn` field names) so `webviewPostCommit.test.ts` + `webviewRequery.test.ts` selectors stayed valid. `tests/webviewRequeryAlignment.test.ts` was updated alongside the wave-1 changes — the old `.UnicDB-requery-bar` / `.UnicDB-requery-label` (TASK-009 D) CSS rules were removed per target-files spec, so the test was rewritten for the new toolbar-context inputs (height 24px + flex 0 1 140px + min-width 90px). Worktree node_modules was empty so a symlink to the parent repo was needed to satisfy `execFileSync(esbuild)` for the AI-chat panel bundle tests — node_modules is in `.gitignore` so this does not affect the source diff.
+
+---
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+REVIEW_TARGET_TYPE: code
+REVIEW_SCOPE: 2bc0544..59e9ae8 -- src/ui/__tests__/webviewRequery.test.ts, src/ui/__tests__/webviewToolbar.test.ts, tests/webviewRequeryAlignment.test.ts, webview/main.ts
+VERIFICATION_RECHECK:
+  - npm run typecheck: exit 0
+  - targeted vitest re-run (after fresh npm run compile): 36 passed | 0 failed (webviewRequery 17, webviewToolbar 9, webviewRequeryAlignment 10; no self-skips)
+  - full suite re-run: 4081 passed | 4 skipped (0 failed)
+CRITERIA_CHECK:
+  1. TDD gate (RED→GREEN): pass — RED_OUTPUT holds 9 real AssertionErrors with per-case expected/received text matching all 9 §Test Cases; every case re-verified GREEN by reviewer's own run post-compile. Caveat in ISSUES_FOUND minor #2.
+  2. Acceptance Criteria: pass — 9/9 cases green; typecheck 0; full suite 4081/4; message shape pinned toEqual({type:"requery",index,where,orderBy}) (tests 5-6); webview/styles.css:34 flex-wrap:nowrap intact, 0 remaining .UnicDB-requery-bar rules; census updated 10→12 with the `+ title` pin dropped per RES-003 (aria-label pin kept).
+  3. Side effects / regressions: pass — pathspec git diff --name-only returns exactly the 4 target files; dom contract preserved (webview/main.ts:1167-1170); old bar fully removed from main.ts.
+  4. Correctness: pass — slot exportFormat < where < orderBy < Re-Run < Clear < exportHeader (webview/main.ts:916-957, pinned by test 7 + toolbar EXPECTED_ORDER); keydown = `ev.key !== "Enter" || ev.isComposing → return; preventDefault(); onRequeryClick()` fires exactly once per keydown (webview/main.ts:921-925, 933-937); Clear resets both inputs.
+  5. Verification Output: pass — executor's 19/19 matches its mid-wave worktree snapshot; at range end (59e9ae8 confirmed ancestor of HEAD, 4 files byte-identical since) counts grow to 36 targeted / 4081 full from RES-002/RES-003 commits inside the same range, all green.
+ISSUES_FOUND:
+  - minor: src/ui/__tests__/webviewToolbar.test.ts:218 — test 1 name still reads "non-empty title + aria-label" but the title assertion was intentionally dropped for RES-003; rename to reflect svg/currentColor/aria-label/empty-text so the name does not re-pin a removed contract.
+  - minor: TASK-RES-001.md RED_OUTPUT — red lines for tests 9/10 ("received 1 requery message — old code path posted on any input event") are inconsistent with a no-handler pre-implementation baseline, where guard tests pass by construction; the block appears to merge two TDD micro-cycles (pre-handler + naive-handler states). Evidence is still genuine assertion output; flagged for RED-output honesty only.
+SUGGESTIONS:
+  - Apply the webviewToolbar.test.ts test-1 rename in a follow-up test-hygiene commit; no re-review cycle needed.
+GATE: REVIEW_DONE — R4.5 auto-fix not required
