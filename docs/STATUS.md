@@ -43,6 +43,19 @@
 
 **No patch release.** Cycle plan specified no version bump — these go out with the next feature cycle's release plumbing.
 
+## Active cycle — RES-BAR (SHIPPED → v1.53.27, 2026-09-08)
+
+Cycle RES-BAR shipped as **v1.53.27** on 2026-09-08. v1.53.27 `.vsix` packaged (2.06 MB); GitHub release `v1.53.27` created with asset attached. Marketplace `vsce publish` is pending user-side Keychain unlock (same block as v1.53.26); release commit/tag pushed to origin.
+
+- **Goal**: WHERE / ORDER BY in the Results toolbar, Enter → requery; toolbar hover polish.
+- **Base → HEAD**: accf1b5 → 499dfb8 (10 commits across plan, wave 1, wave 2, doc checkpoints, R5 closure, release).
+- **Tasks (3)**: TASK-RES-001 (webview, requery toolbar inputs) · TASK-RES-002 (ext, `stripLeadingClauseKeyword` boundary helper) · TASK-RES-003 (webview wave 2, drop `btn.title` + smooth hover transition).
+- **R4 verdicts** (unic-smart, isolated from unic-code executors): RES-001 approved_minor · RES-002 approved · RES-003 approved_minor. R4.5 not required.
+- **Patch release**: shipped per user standing instruction "làm xong phải lên patch mới cho tôi nhé" — tested by user on a separate machine after patch bumps.
+- **Verification**: `npm run typecheck` 0 · `npm run compile` clean · full `npm test` 4081 passed / 4 skipped (no regressions, +42 vs pre-cycle 4039 baseline) · UnicDB-1.53.27.vsix (2.06 MB) packaged.
+- **GitHub release**: https://github.com/lengockhoa/UnicDB/releases/tag/v1.53.27 (asset `UnicDB-1.53.27.vsix` uploaded).
+- **Outstanding**: Marketplace `vsce publish` for v1.53.27 (and v1.53.26 still pending) — both blocked on user-side Keychain unlock. Run `! cd /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB && VSCE_PAT="$(security find-generic-password -s 'vscode-vsce' -w)" && npx --no-install vsce publish --pat "$VSCE_PAT"` once.
+
 ## Active cycle — RES-BAR (CLOSED, 2026-09-08)
 
 Cycle RES-BAR kicked off 2026-09-08 and closed 2026-09-08 (single-day cycle). WHERE / ORDER BY input boxes added to the Results toolbar (Enter = server-side re-run) plus toolbar-hover-polish fix (drop redundant native title tooltip; smooth 80ms background-color ease to kill the 1-3s late tooltip flicker + instant hover flash). Three tasks across two waves; code complete, reviewed, INDEX flipped to `done`.
