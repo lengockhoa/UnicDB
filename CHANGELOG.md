@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.27] — 2026-09-08
+
+- Summary: Adds WHERE / ORDER BY input boxes to the Results toolbar — typing a fragment and pressing Enter re-runs the original SQL on the database with the fragment applied (server-side requery via the existing message discriminator). Fold-in: toolbar hover polish — drops the redundant native `title` attribute on every `makeIconButton` so the instant custom `data-tooltip` CSS pseudo-element is the sole tooltip source (kills the 1–3 s late-arriving native tooltip that read as "giật giật"), and adds `transition: background-color 80ms ease-out, box-shadow 80ms ease-out` on `.UnicDB-btn` so the hover background change fades instead of flashing. New helper `stripLeadingClauseKeyword(fragment, keyword)` (with 26 unit tests) lives in `src/ui/queryComposer.ts` and is applied at BOTH the `composeRequerySql` boundary AND the `handleRequery` message boundary so a redundant "WHERE " / "ORDER BY " prefix typed by the user is safely normalized once.
+- Files: webview/main.ts, webview/styles.css, src/ui/queryComposer.ts, src/ui/resultsPanel.ts, src/ui/__tests__/webviewRequery.test.ts, src/ui/__tests__/webviewToolbar.test.ts, src/ui/__tests__/requeryClauseNormalize.test.ts (new), src/ui/__tests__/resultsPanelRequery.test.ts, tests/webviewRequeryAlignment.test.ts
+- Verification: npm run typecheck ✅ · npm test 4081 passed | 4 skipped | 0 failed (275 files) · npm run compile clean · UnicDB-1.53.27.vsix packaged · R4 reviews: RES-001 approved_minor · RES-002 approved · RES-003 approved_minor (unic-smart, isolated from unic-code executors). No regressions vs pre-cycle baseline 4039 tests (+42 new). Privacy invariant held: no `--dangerously-skip-permissions`, apiKey / DB credentials / HostMcp descriptor never cross any wire frame.
+
+---
+
 ## [1.53.26] — 2026-09-08
 
 - Summary: Cycle AGT-CLEANUP-2 (12 minor cleanups: 6 stale comments, 2 dead exports, 3 smoke-helper improvements, 1 renderMarkdown dedup) + activity-bar icon defensive fix. No user-visible behavior changes from the cleanups; the icon fix restores the UnicDB "U" badge in VS Code's left activity bar after install.
