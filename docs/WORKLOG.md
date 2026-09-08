@@ -524,3 +524,36 @@ User moved project folder `VSDB → UnicDB`. Git internals already aligned by th
 **Verification:** `npm run typecheck` → `tsc --noEmit` exit 0; grep `vsdb|VSDB` over source tree (excluding CHANGELOG / STATUS rename notes / install-UnicDB.sh / UnicDB_USER_GUIDE.md) returns 0 hits; `git status` clean post-commit.
 
 **Committed:** `4efb079 docs: post-rename cleanup + drop ukit install from user guide` (2 files, +4/-3). Local `main` is 1 commit ahead of `origin/main`; push pending.
+
+## 2026-09-08 — Cycle AGT-UI shipped → v1.53.25 (main @ 0f9319b)
+
+User asked mid-cycle AGT to clone the Claude Code VS Code extension UI/UX (marketplace reference `anthropic.claude-code` + https://code.claude.com/docs/en/vs-code) onto UnicDB's AiChat panel: BLUE accent `#3b82f6` replacing orange (same placement), big letter "U" character brand mark (UnicDB icon, large), faithful clone of position / layout / behavior / control placement / animations / dark theme. Engine dispatch from AGT (TASK-011/012) must remain unchanged.
+
+**P0 (4 questions, all Recommended answered):** Replace AiChatPanel entirely / Plain character glyph "U" / Show bypass-permissions default-OFF / Show all configured models in dropdown.
+
+**8 tasks across 3 waves** (5 + 2 + 1):
+- Wave 1: 001 styles.css (BLUE tokens + `.UnicDB-chat*` clone layer) · 002 messages.ts (wire protocol: `models` / `model_select` / `bypass_permissions`) · 003 header.ts (`#engineBanner` legacy label map, big "U", `#sessionChip`) · 004 composer.ts (`#resumeBtn`/`#clearBtn`/`#regenerateBtn` + bypass toggle BLUE OFF default + model chip dropdown + `+`/slash/mic) · 005 thread.ts (bubbles + thinking + tool cards)
+- Wave 2: 006 aiChatPanel.ts host (handle new wire types) · 007 aiChatPanelMain.ts (compose modules)
+- Wave 3: 008 animation polish (caret end-of-bubble, tool card collapse, stop pulse, smooth scroll + reduced-motion)
+
+**Reviews (unic-smart, isolated from executor):** 8/8 done — 1 approved (002) + 7 approved_minor (001/003/004/005/006/007/008). 0 critical.
+
+**2 auto-fix rounds** (max-2 cap respected):
+- `960de27` — 005 must-fix: thread module emitted `.UnicDB-chat-msg-error` but styles.css styles `.UnicDB-chat-error` (error bubbles unstyled after 007 swap). Also 4 raw NUL bytes in fence sentinel regex made file binary in git. Fix: emit `-error`, escape NULs to `   `, update 2 thread-test assertions.
+- `fc778a2` — 008 must-fix: polish test silent-skips via `describe.runIf(bundleSrc !== null)` when `dist/aiChatPanel.js` absent (false green). Fix: self-bootstrap compile inside `loadBundle()` + drop the runIf gates + scope reduced-motion to `.UnicDB-chat-thread` + escape raw control bytes in main.ts hint-sanitizer regex.
+
+**Ship:** v1.53.25 released 2026-09-08. GitHub Release + Marketplace + UnicDB-1.53.25.vsix (2.06 MB) all live. HEAD: `35da5fd` (release) + `0f9319b` (post-release script fix).
+
+**Verification at ship:** `npm run typecheck` clean · `npm test` 4026 passed | 4 skipped | 0 failed (273 files) · `npm run compile` clean · UnicDB-1.53.25.vsix packaged.
+
+**Engine dispatch invariants held:** `git diff 515d87e..HEAD -- src/ui/aiChatPanel.ts src/extension.ts` shows only TASK-006's additive `models` / `model_select` / `bypass_permissions` handlers; no AGT engine-routing regressions.
+
+**Element-id compatibility contract held:** 15 pinned `#engineBanner` assertions in `aiChatPanelWebview.test.ts` pass unmodified.
+
+**bump-version.mjs follow-up patch (`0f9319b`):** added `runHost()` helper (tries host binary first; `npx --no-install gh` cancels with YES prompt because `gh` ships outside npm registry on Homebrew); fixed `readChangelogEntry` regex lookahead (`$` with `m` flag clipped entries at `---` separators; now uses `\Z`).
+
+**~4 non-blocking minor findings carried forward** (no R blocker):
+- `.UnicDB-chat-tool-collapsible` declares dead `transition: max-height, opacity` (collapse animates body only) — kept for CSS-contract regex
+- `applyEngine` builtin+hint branch (main.ts:1567-1581) skips `header.setEngine`, leaves `#engineBanner` classless on first frame carrying hint
+- `renderMarkdown`/`escapeHtml` duplicated between main.ts and aiChatPanelThread.ts (intentional per pinned-class rationale; consolidate in follow-up)
+- Pre-existing flaky failure in `webviewServerFilter` area (1 of 3 runs); worth future triage
