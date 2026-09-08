@@ -47,8 +47,14 @@
   placeholder is still unfilled (must pass `--changelog-summary` or edit the file first).
   Refuses to bump only if `package.json` / `package-lock.json` / `CHANGELOG.md` are
   already dirty (would clobber). Skip flags for emergencies: `--skip-test`,
-  `--skip-package`, `--skip-publish`. PAT for `vsce publish` is in macOS Keychain from
-  the first `vsce login lengockhoa`; `gh release create` requires `gh` CLI auth.
+  `--skip-package`, `--skip-publish`. **Marketplace PAT lives at
+  `.secrets/.pat`** (gitignored — file content is the raw Azure DevOps PAT
+  string, no newline). macOS Keychain entry `vscode-vsce` also exists from
+  the original `vsce login lengockhoa` BUT `security find-generic-password`
+  hangs in non-interactive shells (GUI unlock prompt), so the on-disk cache
+  is the only AI-runnable path. Flow: `VSCE_PAT="$(cat .secrets/.pat)" vsce
+  publish --packagePath ./UnicDB-<ver>.vsix`. `gh release create` requires
+  `gh` CLI auth.
   **GitHub Releases and VS Code Marketplace are kept in lockstep by this script** — every
   bump ships to both channels at the same version, no manual `git tag` / `gh release
   create` / `vsce publish` separated run.
@@ -76,10 +82,16 @@
   installer (needs a GitHub release per Ship Constraint).
 
 ## Session Handoff
-- Last worked on: 2026-08-27 — fixed open risk `pg-metadata-vs-transaction-window` (pool
-  max 1→4 + regression test); risk entry cleared. ⚠️ Watch: a parallel process (omp hooks?)
-  is translating docs/ Vietnamese→English concurrently in this workspace.
-- Next step: release a GitHub version bump for the pool fix when convenient (Ship Constraint).
+- Last worked on: 2026-09-08 — v1.53.31 SHIPPED to GitHub Releases AND VS Code
+  Marketplace (confirmed by `vsce publish` returning "v1.53.31 already exists" — earlier
+  session publish went through). Activity-bar icon mask fix (SVG → PNG) in v1.53.30,
+  brand favicon swap in v1.53.31. `.secrets/.pat` is now the documented Marketplace
+  PAT cache (replaces broken macOS Keychain non-interactive-shell path).
+- Next step: verify on user's separate test machine that activity-bar icon renders
+  after v1.53.31 install (the user's ship-test workflow). v1.53.29 + v1.53.30 not
+  yet on Marketplace — only v1.53.31 is. If user wants gap-fill, run
+  `VSCE_PAT="$(cat .secrets/.pat)" vsce publish --packagePath ./UnicDB-1.53.29.vsix`
+  and same for 1.53.30.
 
 ## Completed Milestones
 
