@@ -244,10 +244,15 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
           b.textContent?.trim(),
           `button .${b.className} must have no visible text`,
         ).toBe("");
-        expect(b.title, `button .${b.className} missing title`).not.toBe("");
-        expect(b.getAttribute("aria-label"), `button .${b.className} missing aria-label`).not.toBe(
-          "",
-        );
+        // TASK-RES-003 REWRITTEN: the `+ title` clause was dropped because
+        // wave-2 deletes btn.title from makeIconButton — the native
+        // tooltip is replaced by the instant data-tooltip pseudo (see the
+        // new TASK-RES-003 describe block below). The svg + currentColor +
+        // aria-label + empty-text pins remain.
+        expect(
+          b.getAttribute("aria-label"),
+          `button .${b.className} missing aria-label`,
+        ).not.toBe("");
         // viewBox must be 0 0 16 16 (icon-only sizing).
         expect(svg!.getAttribute("viewBox")).toBe("0 0 16 16");
         // svg must be aria-hidden so screen readers fall back to title/aria-label.
@@ -390,11 +395,14 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
       expect(runBtn).toBeTruthy();
       expect(clearBtn).toBeTruthy();
 
-      // Iconified: empty text, has svg, has title.
+      // Iconified: empty text, has svg, has data-tooltip + aria-label (TASK-RES-003
+// drops the native `title` attribute — the data-tooltip pseudo-tooltip is
+// the only source).
       for (const b of [runBtn!, clearBtn!]) {
         expect(b.textContent?.trim()).toBe("");
         expect(b.querySelector("svg")).toBeTruthy();
-        expect(b.title).not.toBe("");
+        expect(b.getAttribute("data-tooltip")).not.toBeNull();
+        expect(b.getAttribute("data-tooltip")).not.toBe("");
         expect(b.getAttribute("aria-label")).not.toBe("");
       }
 
@@ -426,3 +434,138 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
     },
   );
 });
+
+// TASK-RES-003 — toolbar button hover transition. The instant
+// background-color flash on .UnicDB-btn:hover must be eased with a short
+// `transition` that touches ONLY composited/non-layout properties
+// (background-color, box-shadow) — never `transition: all`, never a
+// layout-triggering property (width/height/padding/margin/top/left/etc).
+// The instant data-tooltip pseudo-element block stays untouched.
+describeIfBundle(
+  "webview/styles.css toolbar button hover transition (TASK-RES-003)",
+  () => {
+    itIfBundle(
+      "3. .UnicDB-btn { ... } block carries a transition rule (no instant hover swap)",
+      () => {
+        if (!stylesSrc) {
+          throw new Error("webview/styles.css missing");
+        }
+        // The transition must live inside the .UnicDB-btn { ... } block.
+        // We match the FIRST .UnicDB-btn block (the base one, lines 41-71)
+        // and assert it contains `transition:`. Using non-greedy match on
+        // the body prevents the regex from spanning across multiple blocks.
+        const re = /\.UnicDB-btn\s*\{([^}]*)\}/;
+        const m = re.exec(stylesSrc);
+        expect(
+          m,
+          "could not locate .UnicDB-btn { ... } block in styles.css",
+        ).toBeTruthy();
+        const body = m![1];
+        expect(
+          /transition\s*:/i.test(body),
+          `.UnicDB-btn { ... } must declare a transition; body was: ${body.trim()}`,
+        ).toBe(true);
+      },
+    );
+
+    itIfBundle(
+      "4. the .UnicDB-btn transition lists ONLY background-color and/or box-shadow — no layout-triggering properties",
+      () => {
+        if (!stylesSrc) {
+          throw new Error("webview/styles.css missing");
+        }
+        // Strip CSS comments first so the regex doesn't accidentally match
+        // a literal "transition: all" inside a comment block.
+        const cssNoComments = stylesSrc.replace(/\/\*[\s\S]*?\*\//g, "");
+        const blockRe = /\.UnicDB-btn\s*\{([^}]*)\}/;
+        const blockMatch = blockRe.exec(cssNoComments);
+        expect(blockMatch).toBeTruthy();
+        const body = blockMatch![1];
+        // Find the `transition: <value>;` declaration.
+        const trRe = /transition\s*:\s*([^;]+);/i;
+        const trMatch = trRe.exec(body);
+        expect(
+          trMatch,
+          `.UnicDB-btn { ... } must declare a transition; body was: ${body.trim()}`,
+        ).toBeTruthy();
+        const value = trMatch![1].trim();
+        // The plan FORBIDS `transition: all` — it would re-introduce
+        // layout jitter on width/height/padding etc. The accepted shape is
+        // exactly: `background-color <time> <ease>[, box-shadow <time> <ease>]`.
+        expect(
+          /\ball\b/i.test(value),
+          `transition must not be 'all'; value was: ${value}`,
+        ).toBe(false);
+        // Layout-triggering properties are forbidden in the transition
+        // value. Word-boundary checks so "top" does not match "stop-color".
+        const forbidden = [
+          "width",
+          "height",
+          "padding",
+          "margin",
+          "border",
+          "top",
+          "left",
+          "right",
+          "bottom",
+          "font-size",
+          "line-height",
+          "transform",
+        ];
+        for (const prop of forbidden) {
+          const propRe = new RegExp(`(?:^|[,\\s])${prop}\\b`, "i");
+          expect(
+            propRe.test(value),
+            `transition value must not list layout-triggering property "${prop}"; value was: ${value}`,
+          ).toBe(false);
+        }
+        // The accepted properties are background-color and/or box-shadow.
+        const allowedRe = /^(?:background-color|box-shadow)(\s+\S+(\s+\S+)?)?(\s*,\s*(background-color|box-shadow)(\s+\S+(\s+\S+)?)?)*$/i;
+        expect(
+          allowedRe.test(value),
+          `transition value must list ONLY background-color and/or box-shadow; value was: ${value}`,
+        ).toBe(true);
+      },
+    );
+
+    itIfBundle(
+      "5. .UnicDB-btn[data-tooltip] pseudo keeps z-index: 1000 (so the tooltip floats above the toolbar)",
+      () => {
+        if (!stylesSrc) {
+          throw new Error("webview/styles.css missing");
+        }
+        // The data-tooltip block MUST keep z-index: 1000. We match the
+        // whole block (lines 78-115) to confirm it's structurally intact.
+        const re = /\.UnicDB-btn\[data-tooltip\][^{]*\{[^}]*z-index\s*:\s*1000/;
+        expect(
+          re.test(stylesSrc),
+          "styles.css must keep z-index: 1000 on the data-tooltip block",
+        ).toBe(true);
+      },
+    );
+
+    itIfBundle(
+      "7. .UnicDB-btn[data-tooltip]:not(:disabled):hover::after still defines the instant tooltip pseudo-element",
+      () => {
+        if (!stylesSrc) {
+          throw new Error("webview/styles.css missing");
+        }
+        // The pseudo-element block is regex-pinned: same selector AND it
+        // must contain `content: attr(data-tooltip)`. TASK-RES-003 must
+        // NOT touch this block.
+        const selRe =
+          /\.UnicDB-btn\[data-tooltip\]:not\(:disabled\):hover::after\s*\{([^}]*)\}/;
+        const m = selRe.exec(stylesSrc);
+        expect(
+          m,
+          "could not locate .UnicDB-btn[data-tooltip]:not(:disabled):hover::after block",
+        ).toBeTruthy();
+        const body = m![1];
+        expect(
+          /content\s*:\s*attr\(\s*data-tooltip\s*\)/.test(body),
+          `pseudo-element block must contain 'content: attr(data-tooltip)'; body was: ${body.trim()}`,
+        ).toBe(true);
+      },
+    );
+  },
+);

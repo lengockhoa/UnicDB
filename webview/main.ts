@@ -686,7 +686,10 @@ function makeIconButton(
 ): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.className = `UnicDB-btn ${className}`.trim();
-  btn.title = title;
+  // TASK-RES-003: drop the native `btn.title` so the custom `data-tooltip`
+  // pseudo-tooltip is the ONLY tooltip source (the native browser tooltip
+  // has a 1-3s delay inside VS Code webviews, which produced the
+  // user-reported "two-tooltip flicker" when hovering toolbar icons).
   btn.setAttribute("data-tooltip", title);
   btn.setAttribute("aria-label", title);
   btn.innerHTML =

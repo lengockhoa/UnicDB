@@ -54,6 +54,12 @@
   min-width: 26px;
   flex-shrink: 0;
   line-height: 1;
+  /* TASK-RES-003: ease the :hover background swap so it reads as a brief
+   * fade instead of an instant flash. Only composited properties
+   * (background-color, box-shadow) — no `transition: all`, no
+   * layout-triggering properties (width/height/padding/margin/top/left/etc).
+   */
+  transition: background-color 80ms ease-out, box-shadow 80ms ease-out;
 }
 /* Toolbar buttons: 16×16 inline SVG icons, currentColor. */
 .UnicDB-btn svg {
@@ -63,7 +69,11 @@
   pointer-events: none;
 }
 .UnicDB-btn:hover:not(:disabled) {
-  background: var(--vscode-button-hoverBackground);
+  /* TASK-RES-003: longhand `background-color` so the transition above
+   * (which lists only `background-color` + `box-shadow`) actually applies.
+   * The shorthand `background` would still work, but the longhand makes
+   * intent explicit and matches the transition declaration. */
+  background-color: var(--vscode-button-hoverBackground);
 }
 .UnicDB-btn:disabled {
   opacity: 0.5;

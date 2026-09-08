@@ -672,3 +672,114 @@ describeIfBundle("webview grid reset on requery (Fix R2 critical #1)", () => {
     },
   );
 });
+
+// TASK-RES-003 — toolbar hover polish: drop native `title` so the custom
+// `data-tooltip` pseudo-tooltip is the only tooltip source; ensure the
+// hover block does NOT transition any layout-triggering property.
+const stylesPath = resolve(process.cwd(), "webview", "styles.css");
+const stylesSrc = existsSync(stylesPath) ? readFileSync(stylesPath, "utf8") : null;
+
+describeIfBundle("webview/main.ts toolbar hover polish (TASK-RES-003)", () => {
+  itIfBundle(
+    "1. makeIconButton does NOT set btn.title; data-tooltip + aria-label still present and equal",
+    () => {
+      const { root } = loadBundle();
+      dispatchState(selectState());
+      const btns = Array.from(
+        root.querySelectorAll(".UnicDB-toolbar .UnicDB-btn"),
+      ).filter(
+        (el): el is HTMLButtonElement => el.tagName === "BUTTON",
+      ) as HTMLButtonElement[];
+      expect(btns.length, "expected 12 toolbar buttons (10 + Re-Run + Clear)").toBe(12);
+
+      for (const b of btns) {
+        // The native `title` attribute is gone — the custom data-tooltip
+        // pseudo-tooltip is the only source.
+        expect(
+          b.hasAttribute("title"),
+          `button .${b.className} should not have native title attribute`,
+        ).toBe(false);
+        // data-tooltip and aria-label carry the tooltip text.
+        const dataTooltip = b.getAttribute("data-tooltip");
+        const ariaLabel = b.getAttribute("aria-label");
+        expect(dataTooltip, `button .${b.className} missing data-tooltip`).toBeTruthy();
+        expect(dataTooltip).not.toBe("");
+        expect(ariaLabel, `button .${b.className} missing aria-label`).toBeTruthy();
+        expect(ariaLabel).not.toBe("");
+        // They must carry the SAME tooltip text (callers continue to pass
+        // one string, used for both the pseudo-tooltip and aria-label).
+        expect(dataTooltip).toBe(ariaLabel);
+      }
+    },
+  );
+
+  itIfBundle(
+    "2. .UnicDB-btn:hover:not(:disabled) declares NO layout-triggering property (jsdom cannot layout)",
+    () => {
+      if (!stylesSrc) {
+        throw new Error("webview/styles.css missing");
+      }
+      // P2.5 reviewer rewrite: jsdom does not layout, so getBoundingClientRect()
+      // equality before/after hover is unreliable. Assert property-level
+      // absence of layout-triggering properties instead. The hover block
+      // may ONLY change composited/non-layout properties (background-color,
+      // box-shadow, etc.).
+      const re = /\.UnicDB-btn:hover:not\(:disabled\)\s*\{([^}]*)\}/;
+      const m = re.exec(stylesSrc);
+      expect(
+        m,
+        "could not locate .UnicDB-btn:hover:not(:disabled) block in styles.css",
+      ).toBeTruthy();
+      const body = m![1];
+      const forbidden = [
+        "width",
+        "height",
+        "padding",
+        "margin",
+        "border",
+        "top",
+        "left",
+        "right",
+        "bottom",
+      ];
+      for (const prop of forbidden) {
+        // Match `prop:` (not substrings); word-boundary keeps "top" out of "stop-color".
+        const propRe = new RegExp(
+          `(?:^|[;\\s{])${prop}\\s*:`,
+          "m",
+        );
+        expect(
+          propRe.test(body),
+          `.UnicDB-btn:hover:not(:disabled) must NOT declare layout-triggering property "${prop}"; body was: ${body.trim()}`,
+        ).toBe(false);
+      }
+      // The hover block must STILL declare background-color (the visual
+      // hover swap).
+      expect(
+        /background-color\s*:/.test(body),
+        ".UnicDB-btn:hover:not(:disabled) must still declare background-color",
+      ).toBe(true);
+    },
+  );
+
+  // TASK-RES-003 regression — every toolbar button still carries the same
+  // text in both `data-tooltip` and `aria-label` (the only tooltip surface
+  // is now the custom pseudo-element + the a11y label).
+  itIfBundle(
+    "6. every toolbar button still carries data-tooltip === aria-label (no native title drift)",
+    () => {
+      const { root } = loadBundle();
+      dispatchState(selectState());
+      const btns = Array.from(
+        root.querySelectorAll(".UnicDB-toolbar .UnicDB-btn"),
+      ).filter(
+        (el): el is HTMLButtonElement => el.tagName === "BUTTON",
+      ) as HTMLButtonElement[];
+      expect(btns.length).toBeGreaterThan(0);
+      for (const b of btns) {
+        expect(b.getAttribute("data-tooltip")).toBe(b.getAttribute("aria-label"));
+        expect(b.getAttribute("data-tooltip")?.length ?? 0).toBeGreaterThan(0);
+      }
+    },
+  );
+});
