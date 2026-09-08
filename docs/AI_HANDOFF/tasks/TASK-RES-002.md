@@ -1,0 +1,102 @@
+# TASK-RES-002 — Requery input hardening: strip one leading WHERE / ORDER BY keyword at the host boundary
+
+- Status: `ready`
+- Owner: `-`
+- Reviewer: `-`
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §2, §3 (TASK-RES-002), §4, §7
+
+## Goal
+
+Enforce the P0 input-format contract defensively: if the user types `WHERE id>5` or
+`ORDER BY id DESC` (with the leading clause keyword) into the requery boxes, the host
+strips exactly that one leading keyword before composing/parsing, instead of producing
+`… WHERE WHERE id>5` or a confusing "Invalid ORDER BY" parse rejection. Strip happens ONCE,
+at the `handleRequery` message boundary, via pure helpers in `queryComposer.ts`.
+
+## Target Files
+
+- `src/ui/queryComposer.ts` — add one exported pure helper near `parseOrderBy`
+  (line ~306):
+  ```ts
+  export function stripLeadingClauseKeyword(
+    fragment: string,
+    keyword: "WHERE" | "ORDER BY",
+  ): string
+  ```
+  Contract: returns `fragment.trim()`; additionally, when `fragment.trim()` starts with
+  `keyword` case-insensitively AND the keyword is followed by whitespace/whitespace-then-
+  body (or IS the entire trimmed string), remove that ONE keyword and return the rest
+  trimmed. No recursion, no other cleanup. `parseOrderBy` itself stays UNTOUCHED.
+- `src/ui/resultsPanel.ts` — in `handleRequery`, normalize at the boundary (lines
+  1850-1851): `const where = stripLeadingClauseKeyword(msg.where ?? "", "WHERE");` and
+  `const orderBy = stripLeadingClauseKeyword(msg.orderBy ?? "", "ORDER BY");` (keep the
+  `?? ""` semantics + import the helper). This single choke point covers all four
+  downstream lanes: `composeRequery` (lines 1774/1786), `composeSortQuery` (line 1798),
+  multi-term wrap (line 1803), and `combinedWhere` paging (line 1779).
+- `src/ui/__tests__/requeryClauseNormalize.test.ts` — NEW pure-logic unit tests for the
+  helper (style: mirror `resultsGridModelRequery.test.ts` — plain vitest, no DOM, no
+  vscode mock).
+- `src/ui/__tests__/resultsPanelRequery.test.ts` — ADD one handler-level case to the
+  existing FakeWebview + mocked-QueryRunner harness (pattern: the "Requery with empty
+  WHERE/ORDER BY emits the literal statement" case at line 386).
+
+## Test Cases (REQUIRED — TDD)
+
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|----------|----------|---------------------|
+| 1 | happy | WHERE keyword stripped | `stripLeadingClauseKeyword("WHERE id > 5", "WHERE")` === `"id > 5"` | pure call |
+| 2 | happy | ORDER BY keyword stripped, result parses | strip `"ORDER BY id DESC"` → `"id DESC"`; `parseOrderBy("id DESC", "postgresql")` → `{ok:true, terms:[{column:"id", direction:"DESC"}]}` (shape per `OrderByTerm`, queryComposer.ts:233) | pure call + real `parseOrderBy` |
+| 3 | happy (handler) | requery msg with `where:"WHERE a>1"` on fixture `SELECT a FROM t` | composed SQL forwarded to the runner contains `WHERE a>1` exactly once — SQL must NOT contain the substring `WHERE WHERE` | resultsPanelRequery harness: panel with 1 done statement, message `{type:"requery", index:0, where:"WHERE a>1", orderBy:""}` |
+| 4 | edge (boundary) | keyword without whitespace boundary is NOT stripped | `"WHEREx"` → `"WHEREx"`; `"ORDER BYid"` → `"ORDER BYid"` (still fails parseOrderBy downstream — acceptable, malformed input) | pure call |
+| 5 | edge (empty) | bare keyword and empty string | `"WHERE"` → `""`; `"ORDER BY"` → `""`; `""` → `""`; `composeRequery(sql, "", "")` returns the original SQL with trailing `;` stripped (existing documented behavior) | pure call; `composeRequery` from resultsGridModel |
+| 6 | edge (case) | case-insensitive strip | `"where a=1"` → `"a=1"`; `"Where a=1"` → `"a=1"`; `"ORDER BY id"` variant `"order by id"` → `"id"` | pure call |
+| 7 | edge (repeat-input) | exactly ONE strip | `"WHERE WHERE x=1"` → `"WHERE x=1"` (deterministic, non-recursive) | pure call |
+| 8 | regression | keyword-free fragments byte-identical | existing `resultsPanelRequery` "empty WHERE/ORDER BY emits the literal statement (no `;` corruption)" and `resultsPanelOrderBy` composeRequery cases stay GREEN unchanged; `stripLeadingClauseKeyword("id > 5","WHERE")` === `"id > 5"` | existing suites |
+| 9 | regression (dialect guard preserved) | post-strip invalid ORDER BY still rejected | `orderBy:"ORDER BY id NULLS LAST"` on a dialect that rejects NULLS (mysql) → strip → `"id NULLS LAST"` → `parseOrderBy` returns `{ok:false, …}` → handler posts the existing synthetic error statement + toast (resultsPanel.ts:1878-1898 path) | resultsPanelRequery harness with mocked driver |
+
+## Test Files
+
+- `src/ui/__tests__/requeryClauseNormalize.test.ts` — NEW; tests 1, 2, 4, 5, 6, 7.
+- `src/ui/__tests__/resultsPanelRequery.test.ts` — tests 3, 8 (extend), 9 (extend).
+
+## Verification Commands
+
+```bash
+npm run typecheck
+npx vitest run src/ui/__tests__/requeryClauseNormalize.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts src/ui/__tests__/resultsGridModelRequery.test.ts
+```
+
+## Acceptance Criteria
+
+- [ ] All 9 test cases above GREEN; `npm run typecheck` exits 0.
+- [ ] `npm test` full suite GREEN — especially resultsPanelOrderBy (byte-identity cases 7-13b) and resultsGridModelRequery (composeRequery untouched → byte-identical).
+- [ ] `parseOrderBy` and `composeRequery` bodies unchanged (helper is additive; the only host edit is the two boundary lines + import in `handleRequery`).
+- [ ] No new message type, no change to the `requery` message shape.
+
+## Dependencies
+
+- (none)
+
+## Interfaces
+
+- Consumes: `RequeryMessage` shape `{type:"requery", index:number, where:string, orderBy:string}` (`webview/main.ts:171-176`, mirrored host-side in resultsPanel.ts) — unchanged.
+  `parseOrderBy(orderBy: string, dialect?: Dialect): ParseOrderByResult` (queryComposer.ts:306) — unchanged, used by test 2/9.
+- Produces: `stripLeadingClauseKeyword(fragment: string, keyword: "WHERE" | "ORDER BY"): string` exported from `src/ui/queryComposer.ts` — TASK-RES-001 does NOT consume it (webview sends raw values; host normalizes). Future callers must call it at the message boundary only.
+
+---
+
+## Discussion
+
+### 2026-09-08 · planner · unic-smart
+1. Why the boundary and not inside `composeRequery`: the where fragment is consumed in
+   FOUR places (resultsPanel.ts:1774/1786/1798/1803 + `combinedWhere` at 1779); stripping
+   only in `composeRequery` misses the dialect lanes, and stacked strips across lanes
+   would make `"WHERE WHERE x=1"` non-deterministic. One choke point at lines 1850-1851.
+2. `"WHERE"` alone strips to `""` deliberately — the empty/empty lane already re-runs the
+   original SQL (documented in resultsGridModel.ts:1308-1310), so a bare keyword behaves
+   like "no filter", not like a SQL error.
+3. This task does NOT depend on TASK-RES-001 (wave 1 parallel): the webview change is
+   pure UI; the host hardening works identically with today's Re-Run button. Same-wave
+   file overlap with RES-001: none.
+
+---

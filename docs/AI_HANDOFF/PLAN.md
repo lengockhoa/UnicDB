@@ -1,353 +1,269 @@
-# PLAN — Cycle AGT-CLEANUP-2: 12 queued minor cleanups from cycles AGT + AGT-UI
+# PLAN — Cycle RES-BAR: WHERE / ORDER BY inputs in the Results toolbar (Enter = re-run)
 
 ## §1 Intent
 
-**Problem:** Reviewer verdict blocks in cycles AGT / AGT-UI (TASK-004/007/009/013/014, all
-`approved_minor`) queued 12 cleanup findings that were explicitly deferred: stale comments
-that contradict R4.5 behavior, dead export aliases, smoke-helper dead code, and one
-duplicated helper pair across webview files. Left in place, the stale comments will cause a
-future maintainer to delete live error-path code (the reviewers say so verbatim), and the
-duplicated `renderMarkdown`/`escapeHtml` keeps two diverging copies of the webview's
-security-critical escape-then-replace contract.
+**Problem (user, verbatim):** "Ở chỗ result này, trên table, có cái ô where và order by.
+Sau khi tôi thêm thông tin vào đây. gõ enter thì phải search ra kết quả cho tôi nhé"
+("In the results area, on the table, there should be WHERE and ORDER BY boxes. After I
+type into them and press Enter, it should re-search and show me results.")
 
-**Success looks like:** all 12 findings resolved on `main` with zero behavior change except
-the two smoke-helper contracts that must newly fail fast on spawn error; full suite +
-typecheck + compile green; no version bump / release (gộp vào cycle
-lớn tiếp theo per user).
+**Locked P0 answers (from the orchestrator's one-time question window — treat as fixed):**
+1. **Execution mode:** Re-run SQL on the database (server-side). NOT client-side filtering.
+2. **Input format:** Free SQL fragment. WHERE box = boolean expression body, no leading
+   `WHERE` keyword. ORDER BY box = ORDER BY body (column list + directions), no leading
+   `ORDER BY` keyword.
+3. **Placement:** In the existing toolbar row, between the `tsv` dropdown and the existing
+   `Search...` input (slot: right after `tsv ▼`, before the header checkbox). Two narrow
+   text inputs with placeholders `WHERE …` and `ORDER BY …`. Toolbar height must remain
+   stable.
 
-**Planner grounding corrections (verified against working tree @ 1be70f7 — where the caller's
-triage and the source disagreed, the source won):**
-- Item #1 (policy.ts:16-18 stale `("builtin" | "omp")` comment) — **already landed** in
-  commit 93746a4 ("R4.5 round 3", TASK-012 ride-along, exactly as TASK-007's NOTES
-  predicted). Line 14 now reads `AiEngine` = "builtin" | "omp" | "claude-code" | "codex".
-  Remaining work: a grep re-verification pinned inside TASK-CLEAN2-001's acceptance.
-- Item #2 (claudeCodeChatEngine send comment) — **partially landed** in 93746a4: the false
-  "resolves (never throws) on crash" text is gone, but the current comment (lines 254-259)
-  still calls the catch "a defensive last line" — the exact framing the reviewer rejected,
-  since R4.5's `failTurn` (claudeCodeProcess.ts:827-855, `if (reject !== null) reject(err)`)
-  makes the catch the **live error path** on every turn crash. TASK-CLEAN2-003 finishes it.
-- Item #4 has a third stale spot the caller's triage missed: the case-4 test NAME at
-  commitGenManifest.test.ts:134 says "pre-existing 54 ids" while the :11 comment says 56.
-  All three (#4 comment, #4 test name, TASK-013's queued `PRE_EXISTING_COMMAND_IDS` →
-  `LOCKED_COMMAND_IDS` rename) are one file-local cleanup in TASK-CLEAN2-006.
-- Item #12 remains strictly limited to the caller-named `escapeHtml` and `renderMarkdown`
-  pair. The separately duplicated file-local `unescapeHtml` helpers are deliberately left
-  untouched because the caller fixed this cleanup cycle to exactly 12 items.
+   **Toolbar DOM order pinned (so the two shorthand wordings above resolve to one slot):**
+   `[close | refresh | separator | upload | delete | undo | redo | ✓ | grid | tsv ▼ |
+   WHERE … | ORDER BY … | ☐ header | copy | download | Search…]`. P0's "between tsv
+   dropdown and Search..." and §2's "after `exportFormat`, before `exportHeader`" describe
+   the SAME two-slot gap: WHERE input is the first child immediately after
+   `.UnicDB-export-format`; ORDER BY input is the second; the empty `.UnicDB-export-header`
+   checkbox is the third; `.UnicDB-search-input` remains the last.
+
+**Success looks like:** the Results webview toolbar carries the two inputs in the P0 slot;
+pressing Enter inside either one re-runs the statement's ORIGINAL SQL with the typed
+fragments applied (server-side, same connection), and the grid re-renders the new rows;
+full suite + typecheck + compile green.
+
+**Planner grounding correction (verified against working tree @ accf1b5):** the
+server-side re-run pipeline the caller expected to build (tasks RES-003/RES-004) **already
+exists and is fully tested** — heritage of TASK-504/TASK-004/TASK-005/TASK-006:
+- webview posts `{type:"requery", index, where, orderBy}` (`webview/main.ts:3294`
+  `onRequeryClick`), message type declared at `webview/main.ts:171-176`.
+- host `handleRequery` (`src/ui/resultsPanel.ts:1843`) validates ORDER BY with the live
+  dialect (`parseOrderBy`, `src/ui/queryComposer.ts:306`), rewrites the ORIGINAL cached
+  statement SQL via `composeRequery` (`src/ui/resultsGridModel.ts:1326`) /
+  `composeSortQuery` / multi-term wrap / paging lane (`resultsPanel.ts:1764-1841`), routes
+  through the same transaction/connection handle, posts `running → done` state so the grid
+  fully re-renders, and surfaces errors (invalid ORDER BY → synthetic error statement +
+  toast; missing statement → toast, `resultsPanel.ts:1853-1857`).
+The real gaps vs the user request + P0 are webview-side placement/Enter (TASK-RES-001) and
+one input-hardening gap (TASK-RES-002): a user typing the natural `WHERE id>5` into the box
+today produces `… WHERE WHERE id>5` (or a parseOrderBy rejection for a leading `ORDER BY`)
+— a confusing raw DB error. P0 answer 2 defines the fragment contract; RES-002 enforces it
+defensively.
 
 ## §2 Scope
 
-**In-scope (exactly the 12 items, plus the two bounded extensions above):**
+**In scope:**
+- Relocate the existing WHERE / ORDER BY inputs (plus their Re-Run + Clear buttons) from
+  the standalone requery bar (`webview/main.ts:1066-1104`, rendered inside `gridWrap`
+  under the toolbar) into the toolbar row, slot: after `exportFormat` (`tsv` select),
+  before `exportHeader` (checkbox) — exactly the P0 slot.
+- Placeholders `WHERE …` / `ORDER BY …`; labels carried by placeholder + aria-label
+  (toolbar has no room for text labels).
+- Enter key on either input triggers the requery exactly once per keydown (debounce-free;
+  IME-composition guard).
+- CSS: narrow toolbar inputs matching the existing `.UnicDB-search-input` sizing pattern;
+  toolbar height stable (`flex-wrap: nowrap` is pinned by a structural test — keep it).
+- Remove the now-empty standalone requery bar (DOM + its CSS block).
+- Update the tests that pin the old layout.
+- Extension: strip one leading clause keyword at the `handleRequery` message boundary
+  (pure helpers in `queryComposer.ts`) so the P0 input format is enforced defensively.
+- **Fold-in (orchestrator-appended after P0 closed): user reported toolbar hover is
+  non-responsive — tooltip appears slowly and icons jerk on mouseover. Root cause:
+  `makeIconButton` (`webview/main.ts:680`) sets both `btn.title` (1-3s native delay)
+  AND `data-tooltip` (instant CSS pseudo at `webview/styles.css:78-115`), so two
+  tooltips fire per hover; background-color flash on `:hover` has no `transition`. Fix:
+  drop the native `title` and add an 80ms ease transition on the background. Sequenced
+  after RES-001 in wave 2 because they share `webview/main.ts` + `webview/styles.css`.**
 
-| # | Item | File(s) | Task |
-|---|------|---------|------|
-| 1 | stale configuredEngine vocab comment | src/ai/policy.ts | ALREADY LANDED — re-verify in TASK-CLEAN2-001 |
-| 2 | "defensive last line" send comment (finish reword) | src/ai/claudeCode/claudeCodeChatEngine.ts:254-259 | TASK-CLEAN2-003 |
-| 3 | "fire onError twice" dedupe comment | src/ai/claudeCode/claudeCodeChatEngine.ts:210-212 | TASK-CLEAN2-003 |
-| 4 | "pre-existing 56"/"54" comment + test name + `LOCKED_COMMAND_IDS` rename | src/ui/__tests__/commitGenManifest.test.ts:11,37,134 | TASK-CLEAN2-006 |
-| 5 | mcpBridge unref "race with accept()" phantom-race doc bullet | docs/AI_HANDOFF/tasks/TASK-004.md:95 | TASK-CLEAN2-006 |
-| 6 | "no prompt / --verbose unnecessary" smoke header+inline comments | src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts:3-7,32-37 | TASK-CLEAN2-004 |
-| 7 | `_LegacyDetectionTypes` dead type export | src/ai/engineChoice.ts:206-208 | TASK-CLEAN2-002 |
-| 8 | `isValidEngineChoice` dead alias (internal caller at :154) | src/ai/policy.ts:133-135,154 | TASK-CLEAN2-001 |
-| 9 | `child.once("error", reject)` dead code (resolve settles first) | src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts:65-69 | TASK-CLEAN2-004 |
-| 10 | same dead-code pattern, Codex smoke | src/ai/codex/__tests__/codexLiveSmoke.test.ts:57-66 | TASK-CLEAN2-005 |
-| 11 | "gate disabled" tautological test → pin-the-gate-name semantics (both files) | both `*LiveSmoke.test.ts` | TASK-CLEAN2-004 + TASK-CLEAN2-005 (own file each) |
-| 12 | dedup `renderMarkdown`/`escapeHtml` → `webview/markdownSafe.ts` (new) | webview/aiChatPanelMain.ts, webview/aiChatPanelThread.ts, webview/__tests__/aiChatPanelThread.test.ts | TASK-CLEAN2-007 |
+**Out of scope:**
+- Any new webview→extension message type (rejected — see §3).
+- Client-side filtering, SQL parsing beyond the existing helpers, parametrized rewrites
+  (composeRequery's documented injection policy is unchanged: fragments are user-intended
+  SQL in a SQL client).
+- The existing Re-Run button / Clear button click behavior (kept; only relocated).
+- Sort-on-column-click requery, set-filter, paging lanes (already shipped; only verified
+  as regressions).
 
-**Out of scope (deferred, do NOT touch):**
-- Everything else in the AGT-UI TASK-004 disposition queue: `AgentChatEngine` extraction,
-  `dispatchNotification` outer guard, `tool_call_update` isError ledger, `summarizeArgs`
-  newline escaping, hostMcp port-0 url getter, mcpExtensionRegistry copy/hoist findings,
-  TASK-004.md:161-172 INDEX-row bookkeeping.
-- `src/ui/aiChatPanel.ts` engine routing (AGT-UI invariant), element-id contract, any
-  version bump / GitHub Release / Marketplace publish.
+**Same-wave file rule:** TASK-RES-001 and TASK-RES-002 share **no** file (webview/* vs
+src/ui/{queryComposer,resultsPanel}.ts; disjoint test files). Both run in wave 1 parallel.
+No demotions were necessary. (An earlier draft split the webview work into
+"DOM elements" + "Enter handler" tasks, but both would modify `webview/main.ts` — merged
+into TASK-RES-001 per the conflict rule.)
 
-**CONSTRAINT honored:** no two same-wave tasks modify the same file — all 7 tasks own
-disjoint file sets (§3 wave table).
+**Folded-in task (TASK-RES-003 — toolbar hover polish):** drops `btn.title` from
+`makeIconButton` and adds a short `transition: background-color 80ms ease-out` to
+`.UnicDB-btn` so the two-tooltip flicker and the instant background flash disappear.
+Shares `webview/main.ts` + `webview/styles.css` with TASK-RES-001 → sequenced into
+**wave 2** with `Dependencies: TASK-RES-001`. Touches only CSS rules outside RES-001's
+.toolbar-context input rule and only one line of `makeIconButton` (the `btn.title` delete).
 
 ## §3 Approach
 
-**Comment/doc fixes (#2, #3, #4, #5, #6, #11-rename):** edit only comment lines / test
-names / a module-private const name. Verification is post-change read + grep-zero for the
-stale phrase + existing suites green. No new test files — per user constraint, no tests for
-tests' sake; the TDD tables below use regression + grep/consistency edges honestly labeled.
+**Grounded delta, not the suggested 4-task split.** The orchestrator's suggested
+TASK-RES-003 (extension SQL-rewrite handler) and TASK-RES-004 (re-render pipeline) are
+pre-existing, shipped, and pinned by tests (`resultsPanelRequery.test.ts`,
+`resultsPanelOrderBy.test.ts`, `resultsGridModelRequery.test.ts`, and the bundle tests in
+`webviewRequery.test.ts` including the equal-row-count reset fix). Re-implementing them or
+adding a new `unicdb/results/whereOrderBy` message discriminator would fork the `requery`
+contract that `handleRequery` already consumes. **Rejected alternative:** new message type
++ new handler → duplicate pipeline, double the review surface, zero user value. The Enter
+handler simply calls the existing `onRequeryClick()` (`webview/main.ts:3294`).
 
-**Dead-code removals (#7, #8):** before deletion, record repository/public-consumer evidence.
-The pre-change `isValidEngineChoice` search returns exactly policy.ts's alias comment (:133),
-alias (:135), and caller (:154); `_LegacyDetectionTypes` returns only its definition at
-engineChoice.ts:208. Neither name appears in README/public docs (the handoff record excluded),
-and package.json has no `exports`, `types`, or `typings` field—only runtime
-`main: "dist/extension.js"`. Therefore neither source module is a supported published
-TypeScript entry point, so delete the private alias (fix policy.ts:154 to call
-`isEngineChoice`) and the marker type export; `ClaudeCodeDetection`/`CodexDetection` imports
-stay consumed by `projectAgent()`'s signature. If this evidence changes during execution,
-retain the export with `@deprecated` JSDoc rather than silently break an external consumer.
-No runtime surface changes; proven by existing suites + `npm run typecheck` + grep-zero.
-TDD RED is not achievable for private-alias/type-export deletion (no observable runtime
-delta) — recorded in the task Discussions instead of faking a RED output.
+**TASK-RES-001 (webview):** move the four existing elements (`requeryWhere`,
+`requeryOrderBy`, `requeryRunBtn`, `requeryClearBtn` — same class names
+`.UnicDB-requery-where/-order/-run/-clear`, which `webviewPostCommit.test.ts` and
+`webviewRequery.test.ts` select on) into the toolbar between `exportFormat` and
+`exportHeader`; change placeholders to `WHERE …` / `ORDER BY …`; add one `keydown`
+listener per input: `if (ev.key !== "Enter" || ev.isComposing) return; ev.preventDefault();
+onRequeryClick();`. Delete the `UnicDB-requery-bar` wrapper + labels; restyle inputs with a
+toolbar-context rule (flex `0 1 140px`, min-width `90px`, height aligned to
+`.UnicDB-btn`/`.UnicDB-search-input`) so the toolbar stays one row tall. Buttons keep
+`makeIconButton` (svg + title + aria-label contract, `webview/main.ts:674`).
 
-**Smoke-helper contracts (#9, #10):** in each smoke file, capture the spawn error into a
-closure cell; `awaitFirstEvent` checks the cell at entry and inside its 25ms interval tick
-and rejects immediately on spawn error (reviewer's option B, keeping the existing probe
-shape). Add a NON-gated describe in the same file driving the helpers against a hermetic nonexistent binary
-(`unicdb-smoke-missing-binary`) — default env never spawns a real binary, so the TASK-014
-gate contract is preserved. Fail-fast test is genuine RED→GREEN (today ENOENT burns the
-30s timeout); the separate timer edge uses `vi.useFakeTimers()` only to prove the existing
-first-event polling path resolves without waiting for its 30s timeout.
+**TASK-RES-002 (extension hardening):** new pure exported helper
+`stripLeadingClauseKeyword(fragment: string, keyword: "WHERE" | "ORDER BY"): string` in
+`src/ui/queryComposer.ts` — returns `fragment.trim()`, and when `fragment.trim()` starts
+with the keyword case-insensitively followed by a whitespace boundary (or is exactly the
+keyword), removes that ONE keyword and returns the rest trimmed. Called exactly twice, in
+`handleRequery` (`resultsPanel.ts:1850-1851`) where `msg.where`/`msg.orderBy` enter the
+host — the single choke point covering all four downstream composition lanes
+(`composeRequery` line 1774/1786, `composeSortQuery` line 1798, multi-term wrap line 1803,
+`combinedWhere` line 1779). `parseOrderBy` and `composeRequery` stay untouched (their
+unit tests stay byte-identical green). **Rejected alternative:** stripping inside
+`composeRequery` only → misses the dialect lanes (`composeSortQuery`, wrap, paging); the
+double-strip would also be non-idempotent across lanes.
 
-**Dedup (#12):** create `webview/markdownSafe.ts` exporting only `escapeHtml` and
-`renderMarkdown` (thread.ts's copy of `renderMarkdown` is the canonical body — both current
-bodies verified functionally identical including the `data-raw="${escapeHtml(f.code)}"`
-fence contract); `aiChatPanelThread.ts` imports `escapeHtml` and `renderMarkdown`, then
-uses `export { renderMarkdown };` for compat; `aiChatPanelMain.ts` imports both and drops
-its two local copies (usages at :1289, :1369
-unchanged); `aiChatPanelThread.test.ts` imports from `../markdownSafe`; new
-`webview/__tests__/markdownSafe.test.ts` pins the escape table and the markdown subset
-through the public `renderMarkdown` contract. No esbuild config change (markdownSafe is a
-bundled import, not an entry point — verified entryPoints list).
+**Accepted behaviors recorded (not bugs):**
+- Inputs are now visible in the empty state (toolbar is persistent; the old bar was hidden
+  inside `gridWrap`). Enter with no active statement → existing host guard toasts
+  "UnicDB: requery failed — no statement at index N." (`resultsPanel.ts:1853-1857`).
+- Holding Enter fires repeated keydowns → repeated posts; host `requerySeq` guard
+  (`resultsPanel.ts:1868-1870`) drops stale runs. Debounce-free per instruction.
 
-**Wave plan (all `Dependencies: none` — every task owns a disjoint file set):**
-
-| Wave | Tasks | Files owned |
-|------|-------|-------------|
-| 1 (7 parallel) | 001 policy.ts · 002 engineChoice.ts · 003 claudeCodeChatEngine.ts · 004 claudeCodeLiveSmoke · 005 codexLiveSmoke · 006 TASK-004.md + commitGenManifest.test.ts · 007 markdownSafe + 2 webview consumers + thread test | disjoint |
-
-Wave-boundary regression net: full `npm test` + `npm run typecheck` + `npm run compile`
-after the wave.
-
-**Alternatives rejected:** (a) shared smoke-probe module for #9/#10 — rejected, it would
-couple 004 and 005 into a dependency chain for ~40 duplicated lines; per-file fixes keep
-the wave flat. (b) Re-export-only dedup for #12 (thread re-exports everything, main keeps
-copies) — rejected, leaves the duplication the finding exists to remove. (c) Fixing the
-policy.ts comment again — rejected, already correct at HEAD (§1).
+**TASK-RES-003 (wave 2 — toolbar hover polish):** removes the ONLY second source of the
+two-tooltip flicker — `btn.title` — so `data-tooltip` is the sole tooltip provider. Adds
+`transition: background-color 80ms ease-out, box-shadow 80ms ease-out` to `.UnicDB-btn`
+so the `:hover` background-color swap fades instead of cutting. Does NOT touch the
+`data-tooltip` pseudo-element block (`webview/styles.css:78-115`) — that block is already
+instant and correctly z-indexed (`z-index: 1000`); regex-pinned by TASK-RES-003 tests #5,#7.
+**Rejected alternative:** removing `data-tooltip` and keeping `title` only → re-introduces
+the 1-3s VS Code-webview tooltip delay. **Rejected alternative:** adding `transition: all`
+→ would also ease layout-triggering properties (width/padding/border) and reintroduce the
+very jitter this task exists to remove.
 
 ## §4 Test Plan
 
-Comment-only tasks: regression rows + concrete grep/consistency edges (expected values
-stated; a grep that returns 0 CAN fail against today's tree — e.g. `isValidEngineChoice`
-currently returns 3). Code tasks: genuine RED→GREEN or contract-pinning tests as below.
+Existing fixtures: bundle tests eval `dist/webview.js` into jsdom with a stubbed
+`acquireVsCodeApi` + `selectState()` (rows `[[1,"alpha"],[2,"beta"]]`) — pattern of
+`webviewRequery.test.ts`. Host tests reuse the FakeWebview/FakeWebviewPanel + mocked
+QueryRunner harness of `resultsPanelRequery.test.ts`. Bundle tests REQUIRE
+`npm run compile` first (they eval `dist/webview.js` and self-skip when it is missing —
+never accept a silent skip as green).
 
 | Type | Test Name | Expected |
 |------|-----------|----------|
-| regression (001) | policy.test.ts `isEngineChoice — TASK-007 four-engine vocabulary guard` | passes UNMODIFIED (4 valid true; "unknown"/null/{} false) |
-| edge (001, consumer-check) | repository `isValidEngineChoice` search + package entry-point fields | pre-change source results are exactly policy.ts :133 comment, :135 alias, :154 caller; `exports`/`types`/`typings` absent and `main` = `dist/extension.js`, so safe internal deletion |
-| edge (001, grep) | `grep -c "isValidEngineChoice" src/ai/policy.ts` | 0 (today: 3 — fails before fix) |
-| edge (001, doc-consistency) | `grep -cE '"builtin" \| "omp"\)' src/ai/policy.ts` (stale two-value claim) | 0 (item #1 stays landed; the literal string appears only inside the four-value header, where the trailing `)` distinguishes it) |
-| regression (002) | engineChoice.test.ts full file | passes UNMODIFIED (projectAgent surface intact) |
-| edge (002, consumer-check) | repository `_LegacyDetectionTypes` search + README/docs + package entry-point fields | pre-change source result is only engineChoice.ts:208; README/public docs are 0; `exports`/`types`/`typings` absent and `main` = `dist/extension.js`, so not a supported public type API |
-| edge (002, grep) | `grep -c "_LegacyDetectionTypes" src/ai/engineChoice.ts` | 0 (today: 1 — the export at :208; the comment at :206-207 uses the wording "Legacy detection types" without the identifier) |
-| edge (002, typecheck) | `npm run typecheck` | exit 0 — Detection types still resolve via projectAgent signature |
-| regression (003) | claudeCodeChatEngine.test.ts + claudeCodeProcess.test.ts | 15 pass / 0 fail, unmodified |
-| edge (003, doc-consistency) | grep for "defensive last line" and "fire onError twice" in engine file | both 0 after fix; diff touches comment lines only |
-| regression→RED→GREEN (004) | `spawn error surfaces fast (missing binary)` | awaitFirstEvent rejects with spawn error in <5s wall (today: rejects "timed out after 30000ms" only after 30s → RED) |
-| edge (004, timer) | `awaitFirstEvent resolves while the 30s timeout is still pending` (fake timers) | resolves the pushed event at the first tick; pinning the pending-timer state the fix is allowed to leave or clear, not invent behavior beyond #9 | fixture events |
-| edge (004, doc-consistency) | header + inline comment grep | "no prompt", "never hitting the model API", "--verbose is unnecessary" all 0; comment states `--print ping` reaches the model non-mutatingly |
-| edge (004, gate rename) | renamed gate test pins `UnicDB_CLAUDE_CODE_SMOKE` literal via shared `GATE_ENV` const | `GATE_ENV === "UnicDB_CLAUDE_CODE_SMOKE"`; no "suite skipped when" overclaim |
-| regression (004/005) | gated describe under default env | vitest reports it skipped (1 skipped per suite); zero real-binary spawns |
-| happy (005) | existing codexLiveSmoke suite after companion-test clarity rename | default-env run passes its non-gated helpers and reports 1 gated skip under `UnicDB_CODEX_SMOKE`; no real binary spawns |
-| edge (005, RED→GREEN) | `spawn error surfaces fast (missing binary)` | closure-held ENOENT makes `awaitFirstEvent` reject within ~30ms / <5s; today it burns 30s then rejects timeout |
-| edge (005, timer) | fake-timer first-event polling | a fixture event pushed at the first 25ms tick returns exactly that event while the 30s timeout remains pending (out of scope to clear) |
-| edge (005, gate semantics) | renamed companion gate test + default-env Vitest report | `GATE_ENV` is non-empty `"UnicDB_CODEX_SMOKE"`; run reports exactly 1 skipped when unset |
-| edge (005, stdin preservation) | file-local argv/stdin contract checks | `exec --json - --cd <workspace>`, `child.stdin.write("ping\\n")`, and `.end()` remain present; test inputs unchanged |
-| happy (007) | markdownSafe.test.ts `renders the pinned markdown subset` | `**b**`→`<strong>b</strong>`; `` `c` ``→`<code>c</code>`; `## x`→`<h2>x</h2>`; `### y`→`<h3>y</h3>`; fence→`<pre class="UnicDB-md-code" data-raw="…">…<button … class="UnicDB-md-copy">Copy</button></pre>` |
-| edge (007, escaping/XSS) | `escapeHtml maps the five metacharacters` + hostile markdown | `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`; `<img src=x onerror=…>`/`"><script>` render inert text, zero live nodes |
-| edge (007, boundary) | `fenced data-raw encoding` | fence code containing `<>&"'` yields an escaped `data-raw` value and trims exactly one trailing fence newline, preserving the current rendered-output contract |
-| regression (007) | aiChatPanelThread.test.ts (import updated) + aiChatPanel.test.ts | both pass with ZERO assertion changes; thread pinned cases (:186, :360-367) green |
-| happy (006) | commitGenManifest.test.ts full suite | passes with locked command-id values/assertions unchanged |
-| edge (006, stale text) | `grep -cE "pre-existing" src/ui/__tests__/commitGenManifest.test.ts` | 0, removing the stale 56/54 claims and remaining same-file stale claim |
-| edge (006, identifier) | `grep -c "PRE_EXISTING_COMMAND_IDS" src/ui/__tests__/commitGenManifest.test.ts` | 0 after rename to `LOCKED_COMMAND_IDS` |
-| edge (006, phantom-race docs) | `grep -c "unref() can race with accept()" docs/AI_HANDOFF/tasks/TASK-004.md` | 0; only the false queued-action bullet is disposed, adjacent findings remain |
-| regression (all) | full `npm test` at wave boundary | 0 failed (baseline 3743+ tests / 2 smoke skips may grow by new non-gated passes) |
+| happy (webview) | Enter keydown on WHERE input (values `id > 1` / `id DESC`) → posts `requery` | exactly 1 message `{type:"requery", index:0, where:"id > 1", orderBy:"id DESC"}` |
+| happy (webview) | Enter keydown on ORDER BY input (both boxes filled) | exactly 1 requery post carrying both values |
+| happy (webview) | Toolbar placement | `.UnicDB-requery-where` and `.UnicDB-requery-order` are children of `.UnicDB-toolbar`, ordered after `.UnicDB-export-format` and before `.UnicDB-export-header`; no `[data-UnicDB-requery-bar]` element exists |
+| happy (ext) | `stripLeadingClauseKeyword("WHERE id > 5", "WHERE")` | returns `"id > 5"` |
+| happy (ext) | `stripLeadingClauseKeyword("ORDER BY id DESC", "ORDER BY")` then `parseOrderBy(out, dialect)` | `"id DESC"`; parse ok with 1 term, column `id` |
+| happy (ext) | handler: requery msg `where:"WHERE a>1"` on fixture `SELECT a FROM t` | composed SQL sent to the runner contains `WHERE a>1` exactly once — no `WHERE WHERE` substring |
+| edge (input-kind, webview) | keydown `"a"` then `"Escape"` in WHERE input | zero requery posts |
+| edge (IME-kind, webview) | Enter keydown with `isComposing: true` | zero requery posts |
+| edge (boundary, ext) | `"WHEREx"`, `"ORDER BYid"` (no whitespace after keyword) | returned unchanged (no strip) |
+| edge (empty, ext) | `"WHERE"` alone → `""`; `"ORDER BY"` alone → `""`; `""` → `""` | all `""`; `composeRequery(sql,"","")` path returns original SQL |
+| edge (case, ext) | `"where a=1"`, `"Where a=1"` | stripped (case-insensitive) |
+| edge (repeat-input, ext) | `"WHERE WHERE x=1"` | `"WHERE x=1"` — exactly one strip, deterministic |
+| regression (webview) | existing cases: Re-Run click posts, empty boxes post `{where:"",orderBy:""}`, Clear empties | unchanged GREEN (class names + click path preserved) |
+| regression (webview) | toolbar icon-button census | `.UnicDB-toolbar .UnicDB-btn` buttons = 12 (was 10), each with svg + currentColor + title + aria-label; `flex-wrap: nowrap` structural regex still green |
+| regression (webview) | old layout pins REWRITTEN: toolbar < gridWrap/gridHost document order; inputs present in empty state | updated assertions GREEN (old cases 5-7 replaced, not deleted silently) |
+| regression (ext) | `resultsPanelRequery` "empty WHERE/ORDER BY emits the literal statement (no `;` corruption)" + `resultsPanelOrderBy` compose cases | unchanged GREEN — keyword-free fragments byte-identical |
+| happy (RES-003 webview) | `makeIconButton` no longer sets `btn.title` | first `.UnicDB-btn` rendered in jsdom: `title` attr missing; `data-tooltip` and `aria-label` present | bundle compile, render stub |
+| happy (RES-003 webview) | `.UnicDB-btn:hover:not(:disabled)` style block does not change any layout-triggering property | parse the CSS block; assert its declarations list EXCLUDES `width`, `height`, `padding`, `margin`, `border`, `top`, `left`, `right`, `bottom` (background-color + box-shadow only) | webview/styles.css |
+| edge (RES-003 css) | `.UnicDB-btn` carries a `transition` rule | source regex matches `\.\s*UnicDB-btn\s*\{[^}]*transition\s*:` | webview/styles.css |
+| edge (RES-003 css) | the transition contains NO layout-triggering property | parsed value excludes `width`/`height`/`top`/`left`/`margin`/`padding` | parsed CSS |
+| edge (RES-003 css) | `data-tooltip` pseudo keeps `z-index: 1000` | source regex matches `\.UnicDB-btn\[data-tooltip\][^{]*\{[^}]*z-index\s*:\s*1000` | webview/styles.css |
+| regression (RES-003 webview) | every toolbar button still has `data-tooltip` and `aria-label` matching its provided title text | for each rendered `.UnicDB-btn`: `getAttribute("data-tooltip")` and `getAttribute("aria-label")` both equal the original `title` arg | bundle compile |
+| regression (RES-003 webview) | wave-1 toolbar icon-button census rewrites the `title` clause | the wave-1 census test (`.UnicDB-toolbar .UnicDB-btn` count = 12) keeps the `svg + currentColor + aria-label` pins but its `+ title` clause is removed in wave 2; REWRITTEN, not silently deleted (same pattern as the wave-1 layout-pin rewrites in row :169) | webviewToolbar.test.ts |
+| regression (RES-003 css) | instant tooltip pseudo-element block (`UnicDB-btn[data-tooltip]:not(:disabled):hover::after`) intact | source regex finds the block and `content: attr(data-tooltip)` inside | webview/styles.css |
+
+No bugfix against shipped behavior is claimed (the WHERE/WHERE duplication is a live UX
+defect but no regression test can fail against pre-cycle code for the webview move; for
+RES-002 the new edge cases DO fail against today's `handleRequery`, which passes fragments
+through untouched).
 
 ## §5 Verification
 
-Project scripts (package.json, verified): `test` = vitest run · `typecheck` = tsc
---noEmit · `compile` = node esbuild.js · **no lint script exists — lint is N/A for every
-task; stated here once instead of silently omitted** (verified per RULES §Phase-2).
-
-Per-task narrowed commands (tests-map.json resolution noted in each task file; files
-missing from the map use the neighbouring-test convention, floor never empty):
-
 ```bash
-# 001 — record pre-change consumer/API evidence, then narrow suite + post-change checks
-grep -rn "isValidEngineChoice" --include="*.ts" --include="*.tsx" src/ webview/ tests/
-node -p "JSON.stringify({exports: require('./package.json').exports ?? '<absent>', main: require('./package.json').main ?? '<absent>', types: require('./package.json').types ?? '<absent>', typings: require('./package.json').typings ?? '<absent>'})"
-npx vitest run src/ai/__tests__/policy.test.ts src/ui/__tests__/aiChatPanelPolicy.test.ts
-test "$(grep -c "isValidEngineChoice" src/ai/policy.ts || true)" -eq 0
-test "$(grep -cE '"builtin" \| "omp"\)' src/ai/policy.ts || true)" -eq 0
-# 002 — record pre-change consumer/docs/API evidence, then narrow suite + post-change check
-grep -rn "_LegacyDetectionTypes" --include="*.ts" --include="*.tsx" src/ webview/ tests/
-grep -rn "_LegacyDetectionTypes" README.md docs/ --exclude-dir=AI_HANDOFF || true
-node -p "JSON.stringify({exports: require('./package.json').exports ?? '<absent>', main: require('./package.json').main ?? '<absent>', types: require('./package.json').types ?? '<absent>', typings: require('./package.json').typings ?? '<absent>'})"
-npx vitest run src/ai/__tests__/engineChoice.test.ts
-test "$(grep -c "_LegacyDetectionTypes" src/ai/engineChoice.ts || true)" -eq 0
-# 003 — narrowed
-npx vitest run src/ai/claudeCode/__tests__/claudeCodeChatEngine.test.ts src/ai/claudeCode/__tests__/claudeCodeProcess.test.ts
-# 004/005 — the test files under fix are their own tests (hermetic non-gated additions)
-npx vitest run src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts
-UnicDB_CODEX_SMOKE= npx vitest run src/ai/codex/__tests__/codexLiveSmoke.test.ts  # expect: 1 skipped
-grep -qF '"exec",' src/ai/codex/__tests__/codexLiveSmoke.test.ts
-grep -qF '"--json",' src/ai/codex/__tests__/codexLiveSmoke.test.ts
-grep -qF '"-",' src/ai/codex/__tests__/codexLiveSmoke.test.ts
-grep -qF '"--cd",' src/ai/codex/__tests__/codexLiveSmoke.test.ts
-grep -qF 'child.stdin.write("ping\n")' src/ai/codex/__tests__/codexLiveSmoke.test.ts
-grep -qF 'child.stdin.end()' src/ai/codex/__tests__/codexLiveSmoke.test.ts
-# 006 — self-testing manifest suite + post-change stale-text / identifier / doc checks
-npx vitest run src/ui/__tests__/commitGenManifest.test.ts
-test "$(grep -cE "pre-existing" src/ui/__tests__/commitGenManifest.test.ts || true)" -eq 0
-test "$(grep -c "PRE_EXISTING_COMMAND_IDS" src/ui/__tests__/commitGenManifest.test.ts || true)" -eq 0
-test "$(grep -c "unref() can race with accept()" docs/AI_HANDOFF/tasks/TASK-004.md || true)" -eq 0
-# 007 — new + updated webview suites + bundle
-npx vitest run webview/__tests__/markdownSafe.test.ts webview/__tests__/aiChatPanelThread.test.ts src/ui/__tests__/aiChatPanel.test.ts
-npm run compile
-# every task, plus the wave boundary
 npm run typecheck
-npm test
+npm run compile        # REQUIRED before any bundle (webview*) test — they eval dist/webview.js
+# Wave 1 (TASK-RES-001 + TASK-RES-002 in parallel)
+npx vitest run src/ui/__tests__/webviewRequery.test.ts src/ui/__tests__/webviewToolbar.test.ts
+npx vitest run src/ui/__tests__/requeryClauseNormalize.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts src/ui/__tests__/resultsGridModelRequery.test.ts
+# Wave 2 (TASK-RES-003 after RES-001)
+npm run compile        # REQUIRED again — RES-003 edits webview/main.ts + webview/styles.css; a stale dist/webview.js will make the bundle tests self-skip
+npx vitest run src/ui/__tests__/webviewRequery.test.ts src/ui/__tests__/webviewToolbar.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/requeryClauseNormalize.test.ts
+npm test               # full-suite final gate
 ```
+
+`npm run lint` does not exist in this repo (package.json scripts: compile, watch, test,
+test:integration, typecheck, package, publish:*, verify:fast, verify:release, profile:*);
+`npm run typecheck` is the lint-equivalent gate and is mandatory. Bundle-eval tests
+self-skip when `dist/webview.js` is missing — an executor that skips them without
+`npm run compile` has NOT verified anything.
 
 ## §6 Acceptance
 
-- [ ] All 12 findings resolved (item #1 accepted as already-landed with grep
-      re-verification in TASK-CLEAN2-001) — trace: #1→001, #8→001, #7→002, #2+#3→003,
-      #6+#9+#11→004, #10+#11→005, #4+#5→006, #12→007.
-- [ ] Before #7/#8 deletion, repository consumer searches and package public-entry-point
-      fields match the documented internal-only evidence; otherwise retain a deprecated
-      compatibility export instead — trace: TASK-CLEAN2-001/002.
-- [ ] Every task's §Test Cases green, including the two genuine RED→GREEN smoke
-      contracts (fail-fast spawn error), Codex's one-skip/nonempty-gate result, and retained
-      Codex argv/stdin source contract — trace: TASK-CLEAN2-004/005.
-- [ ] TASK-CLEAN2-006's suite passes with every `pre-existing` phrase,
-      `PRE_EXISTING_COMMAND_IDS`, and `unref() can race with accept()` returning zero
-      matches — trace: TASK-CLEAN2-006.
-- [ ] `npm run typecheck` exit 0 after every task; `npm test` 0 failed at wave boundary;
-      `npm run compile` green (mandatory for 007, run at boundary for all).
-- [ ] Zero assertion changes in existing test files (006 renames an identifier + test
-      name with values unchanged; 007 updates one import path).
-- [ ] No behavior delta outside the two smoke-helper contracts: `git diff` for 001/002/003
-      shows comment/identifier-only changes.
-- [ ] Engine dispatch (`src/ui/aiChatPanel.ts`), element ids, and the no-credentials /
-      no-dangerous-flags wire rules untouched.
-- [ ] Every task reviewed by a model different from its executor; no version bump, no
-      release, no push beyond the cycle's wave commits.
+- [ ] `npm run typecheck` exits 0.
+- [ ] `npx vitest run src/ui/__tests__/webviewRequery.test.ts src/ui/__tests__/webviewToolbar.test.ts` — all GREEN with the NEW assertions (bundle actually evaluated: no `skipped` blocks counted as pass). Includes RES-003 hover-polish cases.
+- [ ] `npx vitest run src/ui/__tests__/requeryClauseNormalize.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts src/ui/__tests__/resultsGridModelRequery.test.ts` — all GREEN.
+- [ ] `npm test` full suite GREEN.
+- [ ] Manual smoke (executor, from VS Code dev host or documented equivalent): run a SELECT, type `id > 1` in WHERE + `id DESC` in ORDER BY, press Enter in each → grid re-renders filtered/sorted rows; invalid fragment (`WHERE (`) surfaces a DB error state, panel stays usable.
+- [ ] Manual smoke (RES-003): hover each toolbar icon — ONE tooltip appears instantly (the `data-tooltip` pseudo); NO second tooltip arrives ~1.5 s later; icon background fades smoothly on mouse-in/mouse-out instead of flashing.
+- [ ] Post-merge: `grep -nE 'btn\.title\s*=\s*title' webview/main.ts` returns 0 matches.
+- [ ] Post-merge: `grep -nE 'transition\s*:' webview/styles.css` shows at least one match inside the `.UnicDB-btn { ... }` block.
+- [ ] No file outside the Target Files lists of TASK-RES-001/002/003 modified.
 
-## §7 Global Constraints (inherited by every TASK-CLEAN2-xxx.md by reference)
+## §7 Global Constraints
 
-- Cleanup-only: any change not in §2's table (plus its two named extensions) is deferred.
-- `npm` only (never yarn). Scripts: `npm run typecheck`, `npm test`, `npm run compile`.
-- No lint script exists in package.json — "lint: N/A" is the documented state.
-- Engine dispatch in `src/ui/aiChatPanel.ts` must remain unchanged.
-- Element-id compatibility contract holds — no pinned id renamed/removed.
-- Never pass `--dangerously-skip-permissions`, `apiKey`, or DB credentials on any wire
-  frame; smoke tests never invoke a real binary unless `UnicDB_CLAUDE_CODE_SMOKE=1` /
-  `UnicDB_CODEX_SMOKE=1` is explicitly set.
-- Comments rewritten in this cycle must cite verified anchors (file:line verified at
-  HEAD 1be70f7) — no new plausible-looking citations.
-- No bump-version, no GitHub Release, no Marketplace publish for this cycle.
-- Line-level rule for comment fixes: `git diff` must show comment/whitespace/identifier
-  lines only (except tasks 004/005/007 which have scoped code deltas).
+- No new npm dependencies; no new webview→extension message discriminator — the `requery` type (`webview/main.ts:171-176`) is the only contract.
+- Placeholders exactly `WHERE …` and `ORDER BY …` (U+2026, matching the existing `Search…` style).
+- Preserve class names `.UnicDB-requery-where`, `.UnicDB-requery-order`, `.UnicDB-requery-run`, `.UnicDB-requery-clear` (webviewPostCommit + webviewRequery tests select them).
+- `.UnicDB-toolbar { flex-wrap: nowrap }` must remain — pinned by a structural source-regex test.
+- Normalization strips exactly ONE leading clause keyword (case-insensitive, whitespace-bounded); never recursive.
+- composeRequery's documented injection policy is unchanged (fragments are user-intended SQL).
+- Bundle tests require `npm run compile`; treat self-skips as failures in review.
+- RES-003: the `transition` added to `.UnicDB-btn` MUST list only `background-color` and `box-shadow` (composited properties — no layout trigger). NEVER `transition: all`; NEVER transition `width`/`height`/`padding`/`margin`/`top`/`left`.
+- RES-003: do NOT touch the `.UnicDB-btn[data-tooltip]:not(:disabled):hover::after` pseudo-element block at `webview/styles.css:78-115`; tests #5 and #7 regex-pin it.
+- No version bump / release (maintainer folds into the next release).
 
 ## Planner Report
-PLANNER_MODEL: unic-smart
+PLANNER_MODEL: unic-smart + orchestrator-append RES-003 (unic-code)
+PLAN_REVIEW: Approved by unic-smart (Round 1, 4 minor doc-fixes applied — compile-on-wave-2, property-level hover assertion, wave-1 census `title`-clause rewrite, toolbar DOM-order pin)
 
 ## Planner Self-Audit
-Checklist: 12/12 pass
-Fixed during audit: (a) discovered item #1 already landed (93746a4) — demoted to
-grep re-verification inside TASK-CLEAN2-001 instead of a fake edit; (b) Round-2 review
-required public-consumer evidence for #7/#8, so added exact pre-change source, README/public
-docs, and package entry-point checks to TASK-CLEAN2-001/002; deletion is conditional on their
-recorded internal-only results, otherwise the task preserves a deprecated compatibility name;
-(c) Round-2 required self-contained Codex semantics, so TASK-CLEAN2-005 now enumerates its
-happy path, ENOENT fail-fast, timer, one-skip gate, and argv/stdin edges with source checks;
-(d) Round-2 required explicit #4/#5 verification, so TASK-CLEAN2-006 now pins its happy path
-and distinct identifier/stale-text/phantom-race zero-match checks; (e) discovered item #2
-partially landed — TASK-CLEAN2-003 rescoped to the remaining "defensive last line" framing;
-(c) added the third stale spot of #4 (test name "pre-existing 54" at :134) + the
-TASK-013-queued LOCKED_COMMAND_IDS rename to TASK-CLEAN2-006 — both inside the cited
-sources for #4; (d) two earlier drafts had folded in extra TASK-014 sub-findings (30s
-success-timer never cleared; Codex header wording) and the duplicated `unescapeHtml` —
-REMOVED from scope during this audit because the user fixed the cycle to exactly 12 items;
-they are recorded as Known gaps (3) and as out-of-scope notes in the 004/005/007 task
-Discussions instead; (e) rewrote 004/005 test tables as genuine RED→GREEN using a hermetic
-missing-binary spawn.
-
-Known gaps: (1) TDD RED is not producible for pure comment fixes and private-alias/
-type-export deletions (#2,#3,#4,#5,#6,#7,#8) — those tasks carry regression + concrete
-grep-zero/doc-consistency edges whose expected values fail against today's tree instead;
-#7/#8 additionally record a repository/public-surface check because local typecheck cannot
-prove downstream compatibility;
-documented in each task's Discussion. (2) tests-map.json has no entry for
-claudeCodeChatEngine.ts — TASK-CLEAN2-003 uses its direct neighbour suites (15 tests,
-verified present) rather than the map. (3) Two adjacent TASK-014 sub-findings were
-deliberately left out to honor the fixed 12-item scope and should ride the next cleanup
-cycle: the never-cleared 30s setTimeout in both awaitFirstEvent helpers, and the
-duplicated file-local unescapeHtml helpers (both explicitly recorded in TASK-CLEAN2-004/005/
-007 Discussion as out-of-scope, no silent half-fixes).
+Checklist: 12/12 pass for RES-001 + RES-002 (planner session); RES-003 added by the
+orchestrator after P0 closed, with its own Task Gate fields populated, wave-structure
+sequenced (wave 2 after RES-001), file-collision re-checked, and §7 constraints extended
+to forbid `transition: all` / layout-triggering properties.
+Fixed during audit: merged the drafted "DOM elements" + "Enter handler" webview tasks into one TASK-RES-001 (same-file collision on webview/main.ts); replaced the suggested extension handler tasks RES-003/004 with a grounded §1 correction (pipeline already shipped at accf1b5) instead of planning duplicate work; added the missing-owner test files for the toolbar button-census change (webviewToolbar.test.ts must move 10→12). For RES-003: pinned the data-tooltip pseudo-element as off-limits (tests #5 + #7), rejected `transition: all` as a re-introduction of layout jitter.
+Known gaps: no automated visual/CSS assertion that the toolbar height is pixel-stable (verified structurally via nowrap pin + flex/min-width values; manual smoke in §6 covers it); empty-state Enter surfaces the existing host toast rather than a disabled input — accepted, recorded in §3; no pixel-level measure of `getBoundingClientRect()` before/after hover in jsdom (jsdom does not layout, so the test asserts property-level absence of layout-triggering transitions rather than runtime rect equality — accepted as the best achievable via the harness).
 
 ## Plan Review Log
 
-### Round 2 — revised
-- Addressed Finding 1 in TASK-CLEAN2-006: made its happy-path and three distinct edge checks
-  explicit; added executable zero-match checks and acceptance criteria for every
-  `pre-existing` phrase, `PRE_EXISTING_COMMAND_IDS`, and the exact TASK-004 phantom-race text.
-- Addressed Finding 2 in TASK-CLEAN2-005: replaced the ambiguous mirror row with the complete
-  Codex happy path plus ENOENT fail-fast, timer, one-skip/nonempty-gate, and preserved
-  argv/stdin contract assertions; added matching source-contract verification commands.
-- Addressed Finding 3 in TASK-CLEAN2-002: recorded the actual source-consumer result (only
-  engineChoice.ts:208), zero README/public-doc mentions, and package entry-point fields
-  (`exports`/`types`/`typings` absent; runtime `main` only). Deletion now falls back to a
-  `@deprecated` compatibility export if execution discovers different consumer evidence.
-- Addressed Finding 4 in TASK-CLEAN2-001: recorded the actual three-site policy-only consumer
-  result and the same package entry-point evidence. The task retains a deprecated alias rather
-  than deleting if that evidence no longer holds.
-- PLAN §3–§6 now trace these checks, TASK-CLEAN2-005's self-contained smoke semantics, and
-  TASK-CLEAN2-006's concrete documentation/identifier verification. All statuses remain
-  `ready`; INDEX.md and ACTIVE.md require no state change.
+### Round 1 — 2026-09-08 · unic-smart
+REVIEWER_MODEL: unic-smart
+Status: Approved
 
+COMPLETENESS:
+  - PLAN.md:193 — Wave-2 command block (and the §6 checklist item at :206) does not re-run `npm run compile` after RES-003 edits `webview/main.ts`; §4/:151 and §7/:223 make compile mandatory before any bundle test, so add the compile line to the wave-2 block to prevent a stale-`dist/webview.js` run.
+  - none otherwise — intent, locked P0s, test matrix, verification, acceptance, and known gaps are all present.
+CONSISTENCY:
+  - PLAN.md:172 vs :237 — §4 RES-003 hover test asserts `getBoundingClientRect()` width/height equality before/after hover, but the Self-Audit says jsdom cannot measure rects and the test asserts property-level absence of layout-triggering transitions instead; align the §4 row with the property-level assertion actually planned so the implementing task copies one contract, not two.
+  - PLAN.md:168 vs :171/:176 — the wave-1 census test pins `title` present on all 12 toolbar buttons while wave-2 RES-003 deletes `btn.title`; state explicitly that the census test's title clause is rewritten in wave 2 (same "REWRITTEN, not silently deleted" pattern used for the layout pins at :169).
+CLARITY:
+  - PLAN.md:16 vs :48 — placement is described both as "between the `tsv` dropdown and the `Search…` input" and "after `exportFormat`, before `exportHeader`"; add one sentence pinning the full toolbar DOM order so both wordings are verifiably the same slot.
+SCOPE:
+  - none — one focused cycle; explicit out-of-scope list; the RES-003 fold-in carries its own task, wave sequencing, and §7 constraints.
+YAGNI:
+  - none — new message type, duplicate requery pipeline, and `transition: all` are all explicitly rejected with reasons.
 
-## Plan Review Log
-
-### Round 1 — Issues Found
-- Verdict: Issues Found
-- Findings:
-  - §4: TASK-CLEAN2-006 has no happy-path or two edge-case rows and no explicit post-change read/grep checks for the `pre-existing 56`/`54` text, `PRE_EXISTING_COMMAND_IDS` rename, or TASK-004 phantom-race bullet. Its sole narrowed suite command in §5:160-161 cannot verify those documentation and identifier edits; add concrete zero-match/read checks and acceptance criteria.
-  - §4:136 describes TASK-CLEAN2-005 only as a “mirror of 004’s three rows,” although TASK-CLEAN2-004 has additional timer, comment, gate-name, and default-gate rows at §4:131-135. This leaves the Codex task’s required happy path and two edges indeterminate; enumerate its exact test cases, including which smoke-gate semantics and stdin-preservation assertions run.
-  - §3:73-78 plans removal of exported `_LegacyDetectionTypes` without a repository/public-package consumer check. Type-only exports are still a TypeScript compile-time API, so local typecheck cannot catch an external import failure; require evidence that it is non-public or unused by supported consumers, or retain/deprecate it.
-  - §3:73-78 and §4:124 require only a file-local grep for `isValidEngineChoice`; they do not establish that `policy.ts:154` is its sole consumer. Add a repository-wide/public API consumer check before deleting the alias, so a cross-module or downstream caller is not broken.
-
-NOTES: §§1-6 are present, item #1 is correctly treated as already landed with re-verification only, and the Wave 1 target sets and prescribed two-agent batches are disjoint. The configured P2.5 reviewer tier is `unic-smart`, matching the planner tier; this is the documented acceptable no-second-Opus compromise.
-
-### Round 2 — 2026-09-08 · unic-smart
-Status: Issues Found
-
-Round 1 findings verification:
-- Finding 1 (006 missing verification) — RESOLVED. Test Cases now has 5 rows: happy regression, identifier grep, stale-text grep, phantom-race docs grep, docs-scope regression. Verification Commands include all three greps with `-eq 0` assertions. Verified against tree: `pre-existing` = 3, `PRE_EXISTING_COMMAND_IDS` = 2, `unref() can race with accept()` = 1 — all genuine failing-before checks.
-- Finding 2 (005 ambiguous mirror) — RESOLVED. Test Cases now self-contained with 5 rows: happy regression, ENOENT RED→GREEN, fake-timer, gate semantics (`UnicDB_CODEX_SMOKE`), stdin preservation. All 6 argv/stdin greps verified matching current file.
-- Finding 3 (`_LegacyDetectionTypes` evidence) — RESOLVED with minor factual error. Repo-wide grep (only :208), README/docs (0), package.json (no exports/types/typings, main=dist/extension.js) all verified. Disposition (delete + `@deprecated` fallback) justified. But "today: 2" is wrong — actual count is 1 (comment at :206-207 lacks the identifier). Check still fails-before (1≠0), so non-blocking.
-- Finding 4 (`isValidEngineChoice` evidence) — RESOLVED. Repo-wide grep returns exactly the 3 policy.ts sites (:133/:135/:154), package.json fields verified. Disposition justified.
-
-New issues:
-- important: TASK-CLEAN2-001 row 4 + Verification Commands `grep -cE '"builtin" \| "omp"' src/ai/policy.ts` → 0 can NEVER pass. The pattern matches the correct four-value header line 14 (`AiEngine` = "builtin" | "omp" | "claude-code" | "codex" —), returning 1 today and 1 after the fix. The stale two-value claim it targets no longer exists as a standalone phrase. Fix: use `grep -cE '"builtin" \| "omp"\)'` (verified returns 0 today) or `grep -cE '"builtin" \| "omp"[^|]'`. Same defect in PLAN.md §4:134 and §5:176.
-- minor: TASK-CLEAN2-002 row 3 + Discussion + PLAN.md §4:137 claim "today: 2" for `_LegacyDetectionTypes`; actual count is 1. Correct the expected pre-state.
-- minor: TASK-CLEAN2-006 Target Files says "replace reviewer bullet :95's false action" but the reviewer bullet is at TASK-004.md:201; :95 is the original finding body. The grep-zero check correctly matches BOTH locations (verified), so the check is sound — only the prose misidentifies the line.
-
-COMPLETENESS: all 6 sections present; all 4 revised tasks have full Task Gate fields.
-CONSISTENCY: revisions consistent with PLAN.md §3/§4/§5 except the two "today: 2" claims and the grep pattern defect above.
-CLARITY: 005 self-contained (no "see 004" in test cases); 006's :95/:201 conflation is a prose nit.
-SCOPE: no creep beyond the 12 items; `@deprecated` fallback is conditional disposition, not new behavior.
-YAGNI: fake-timer and stdin-preservation edges justified by the cited items.
-WAVE: all 7 tasks own disjoint file sets — verified no same-wave file sharing.
-
-NOTES: Round 1 findings all addressed. One important defect (the `"builtin" | "omp"` grep can never pass) must be fixed before execution; two minor factual/prose errors should be corrected. Per loop cap, apply these directly without a third review round.
-
-### Round 3 — findings applied without re-review (loop cap reached)
-Per RULES, after round 2 returned Issues Found the planner applied every outstanding finding directly. No third review.
-
-- **Important — fixed:** TASK-CLEAN2-001 row 4 + Verification Commands + PLAN.md §4:134 / §5:176 — replaced the perpetually-failing `grep -cE '"builtin" \| "omp"'` with `grep -cE '"builtin" \| "omp"\)'` (verified returns 0 today; matches only the trailing-`)` form that does NOT appear in the corrected four-value header at line 14).
-- **Minor — fixed:** TASK-CLEAN2-002 row 3 + PLAN.md §4:137 — corrected "today: 2" → "today: 1 (only :208; the comment at :206-207 uses 'Legacy detection types' without the identifier; check still fails-before)".
-- **Minor — fixed:** TASK-CLEAN2-006 Target Files + row 5 — corrected "reviewer bullet :95" → "reviewer bullet :201" (line :95 is the original finding body; :201 is the disposition line in the reviewer verdict block, which is what gets reworded).
-
-Final verification (all three fixes pass against HEAD `1be70f7`):
-- `grep -cE '"builtin" \| "omp"\)' src/ai/policy.ts` → 0 ✓
-- `grep -c "_LegacyDetectionTypes" src/ai/engineChoice.ts` → 1 ✓
-- `sed -n '201p' docs/AI_HANDOFF/tasks/TASK-004.md` → reviewer bullet line, ready for reword ✓
-
-PLAN_REVIEW: Approved (loop-cap direct-apply) by round-2 reviewer (unic-smart)
+NOTES: Plan-review mode has no model-isolation gate; for awareness only, planner and reviewer both self-report unic-smart (the RES-003 orchestrator append was unic-code). All findings are one-line doc fixes; none would have led to a flawed plan.

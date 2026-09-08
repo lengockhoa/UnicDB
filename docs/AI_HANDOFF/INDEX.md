@@ -1,24 +1,35 @@
 # Handoff INDEX
 
-## Cycle AGT-CLEANUP-2 — 12 queued minor cleanups from AGT + AGT-UI
+## Cycle RES-BAR — WHERE / ORDER BY inputs in the Results toolbar + toolbar hover polish
 
-Base: main @ 77481c1 (cycle AGT-CLEANUP-2 wave 1 batches 1-4 all checkpointed; 7/7 reviews complete; ready for R5 closeout).
-Plan written by unic-smart (planner self-audit 12/12). Item #1 already landed in 93746a4 — kept
-as grep re-verification inside TASK-CLEAN2-001.
-R1-R5 results: 7/7 reviewed — 5 APPROVED (001/002/003/005/007), 2 APPROVED-MINOR (004 EOF nit, 006 preId loop var nit). No CHANGES-REQUESTED, no CRITICAL.
+Base: main @ accf1b5 (release 1.53.26). Cycle kicked off 2026-09-08 after user reported
+missing/empty WHERE + ORDER BY inputs on the Results webview toolbar (P0 locked answers:
+server-side re-run · free SQL fragment · in existing toolbar between `tsv` dropdown and
+`Search…`). After P0 closed, user added a hover-jitter / late-tooltip concern that was
+folded into TASK-RES-003 in wave 2.
+
+Plan written by `unic-smart` (self-audit 12/12). P2.5 reviewer also `unic-smart`
+(plan-review mode has no model-isolation gate per P2.5 contract). 4 minor findings
+applied (compile-on-wave-2, property-level hover assertion vs rect-equality, wave-1
+census `title`-clause rewrite to wave 2, toolbar DOM-order pin).
+
+Prior cycle AGT-CLEANUP-2 (7/7 done) archived at `docs/AI_HANDOFF/INDEX_CLEAN2.md`.
 
 | Task | Title | Status | Deps | Files | Reviewer |
 |------|-------|--------|------|-------|----------|
-| TASK-CLEAN2-001 | Drop dead `isValidEngineChoice` alias; re-verify four-value policy header | done (PASS — batch 1 checkpoint 68225d5) | none | src/ai/policy.ts | unic-smart (APPROVED) |
-| TASK-CLEAN2-002 | Delete dead `_LegacyDetectionTypes` type export | done (APPROVED) | none | src/ai/engineChoice.ts | unic-smart |
-| TASK-CLEAN2-003 | Rewrite two stale comments in claudeCodeChatEngine.ts after R4.5 failTurn rework | done (PASS — batch 2 checkpoint 5208165) | none | src/ai/claudeCode/claudeCodeChatEngine.ts | approved | unic-smart |
-| TASK-CLEAN2-004 | claudeCodeLiveSmoke: spawn-ENOENT fail-fast + comment drift + gate-name rename | approved_minor | none | src/ai/claudeCode/__tests__/claudeCodeLiveSmoke.test.ts | unic-smart |
-| TASK-CLEAN2-005 | codexLiveSmoke: spawn-ENOENT fail-fast + argv/stdin preservation + gate-name hoist | approved | none | src/ai/codex/__tests__/codexLiveSmoke.test.ts | unic-smart |
-| TASK-CLEAN2-006 | Rename PRE_EXISTING_COMMAND_IDS → LOCKED_COMMAND_IDS; dispose TASK-004 phantom-race bullet | done (PASS — batch 3 checkpoint f97c1d4) | none | src/ui/__tests__/commitGenManifest.test.ts, docs/AI_HANDOFF/tasks/TASK-004.md | approved_minor |
-| TASK-CLEAN2-007 | Dedup renderMarkdown/escapeHtml: new webview/markdownSafe.ts + refactor 2 consumers + test | done (APPROVED — cross-check) | none | webview/markdownSafe.ts (new), webview/aiChatPanelMain.ts, webview/aiChatPanelThread.ts, webview/__tests__/aiChatPanelThread.test.ts, webview/__tests__/markdownSafe.test.ts (new) | orchestrator-cross-check (unic-smart 503) |
+| TASK-RES-001 | Webview: relocate WHERE/ORDER BY inputs into the toolbar; placeholder + Enter keydown handlers with IME-composition guard | ready | none | webview/main.ts, webview/styles.css, src/ui/__tests__/webviewRequery.test.ts, src/ui/__tests__/webviewToolbar.test.ts | unic-smart |
+| TASK-RES-002 | Extension: `stripLeadingClauseKeyword` helper at the `handleRequery` message boundary (defensive contract enforcement) | ready | none | src/ui/queryComposer.ts, src/ui/resultsPanel.ts, src/ui/__tests__/requeryClauseNormalize.test.ts (new), src/ui/__tests__/resultsPanelRequery.test.ts | unic-smart |
+| TASK-RES-003 | Webview wave 2: drop `btn.title` from `makeIconButton` + smooth hover `transition: background-color 80ms ease-out` on `.UnicDB-btn` | ready | TASK-RES-001 (shares webview/main.ts + webview/styles.css) | webview/main.ts, webview/styles.css, src/ui/__tests__/webviewRequery.test.ts, src/ui/__tests__/webviewToolbar.test.ts | unic-smart |
 
-Waves (inferred from Deps): wave 1 = all 7 parallel (disjoint file sets).
-Wave-boundary gate: full `npm test` (4039 pass / 4 skip / 0 fail on main @ 77481c1) + `npm run typecheck` (exit 0) + `npm run compile` (clean).
-Constraints: cleanup-only; engine dispatch + element ids untouched; npm; no lint script (N/A); no version bump/release this cycle.
+Waves: **wave 1 = TASK-RES-001 ∥ TASK-RES-002** (parallel, disjoint file sets: webview/* vs
+src/ui/{queryComposer,resultsPanel}.ts and disjoint test files). **wave 2 = TASK-RES-003**
+(sequenced after RES-001 — shares both `webview/main.ts` and `webview/styles.css`).
 
-Prior AGT/AGT-UI index history archived at `docs/AI_HANDOFF/INDEX_AGTUI.md` to keep this active state file below the RULES.md 80-line cap.
+Wave-boundary gates: `npm run typecheck` exit 0 · `npm run compile` clean · targeted
+`npx vitest run …` GREEN at every wave (bundle-eval tests require compile first; silent
+skips DO NOT count as green) · full `npm test` GREEN at final closeout.
+
+Constraints: no version bump this cycle (maintainer folds into next release); the existing
+`requery` message discriminator is the only webview→extension contract (no new message
+type); no `transition: all` on `.UnicDB-btn` (RES-003); no change to the
+`data-tooltip` pseudo-element block at `webview/styles.css:78-115`.
