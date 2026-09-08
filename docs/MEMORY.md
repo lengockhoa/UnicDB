@@ -69,6 +69,19 @@
   release (or an explicit queued next-cycle release task); releaseHygiene.test.ts now fails
   the build when package-lock version drifts — run `npm install --package-lock-only` after bumping.
 
+- [2026-09-08] **CRITICAL SECURITY: PAT leak in `UnicDB-1.53.32.vsix`.** The `.secrets/`
+  directory (Marketplace publish PAT cache) was packaged into v1.53.32 because `vsce
+  package` reads `.vscodeignore` (NOT `.gitignore`). The Azure DevOps PAT inside
+  `.secrets/.pat` was therefore embedded in the public .vsix on both GitHub Releases
+  and VS Code Marketplace. **User rotated the PAT** in Azure DevOps (mandatory
+  before any further `vsce publish`). Fix: added `.secrets/**` to `.vscodeignore`
+  + new regression guard `vsixSecretsExclusion.test.ts` that runs a real
+  `vsce package` round-trip on a tmp stage with a planted `.secrets/.pat` and
+  asserts the produced archive contains no `.secrets/` entry. v1.53.33 ships the
+  fix; v1.53.32 is superseded. Watch for: any future local credential cache
+  (API keys, OAuth refresh tokens, SSH keys, `.env`) MUST be added to
+  `.vscodeignore` at the SAME commit that creates the cache, not later.
+
 ## Open Risks
 
 <!-- Unresolved questions, known fragile areas, or deferred decisions. -->
@@ -82,16 +95,19 @@
   installer (needs a GitHub release per Ship Constraint).
 
 ## Session Handoff
-- Last worked on: 2026-09-08 — v1.53.31 SHIPPED to GitHub Releases AND VS Code
-  Marketplace (confirmed by `vsce publish` returning "v1.53.31 already exists" — earlier
-  session publish went through). Activity-bar icon mask fix (SVG → PNG) in v1.53.30,
-  brand favicon swap in v1.53.31. `.secrets/.pat` is now the documented Marketplace
-  PAT cache (replaces broken macOS Keychain non-interactive-shell path).
-- Next step: verify on user's separate test machine that activity-bar icon renders
-  after v1.53.31 install (the user's ship-test workflow). v1.53.29 + v1.53.30 not
-  yet on Marketplace — only v1.53.31 is. If user wants gap-fill, run
-  `VSCE_PAT="$(cat .secrets/.pat)" vsce publish --packagePath ./UnicDB-1.53.29.vsix`
-  and same for 1.53.30.
+- Last worked on: 2026-09-08 — **SECURITY INCIDENT + FIX**: `.secrets/.pat` (Azure
+  DevOps PAT) leaked into `UnicDB-1.53.32.vsix` because `vsce package` does NOT
+  read `.gitignore`. User rotated PAT; v1.53.33 shipped with `.vscodeignore` fix
+  + new regression guard `vsixSecretsExclusion.test.ts` (real `vsce package`
+  round-trip asserting no `.secrets/` in archive). v1.53.33 LIVE on GitHub
+  Releases + VS Code Marketplace. Also includes activity-bar icon fixes (RGBA
+  PNG, `UnicDB.preferPrimarySidebar` setting, `UnicDB.moveToPrimarySidebar`
+  command, `ensurePrimarySidebar(context)` auto-move on first activation).
+- Next step: user verifies on separate test machine that activity-bar icon now
+  shows on PRIMARY sidebar (left) after v1.53.33 install. The auto-move runs on
+  first activation via `workbench.action.moveViewsToPrimarySidebar`; if it
+  fails (older VS Code), user can right-click activity bar > toggle UnicDB, or
+  run command `UnicDB: Move to Primary Sidebar` manually.
 
 ## Completed Milestones
 
