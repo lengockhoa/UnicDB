@@ -42,3 +42,4 @@ dist/
 # leaves the file behind. Content is the multi-line CHANGELOG entry for the
 # version being released.
 .bump-notes-*.md
+node_modules_backup/
