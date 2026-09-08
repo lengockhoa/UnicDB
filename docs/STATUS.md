@@ -43,8 +43,27 @@
 
 **No patch release.** Cycle plan specified no version bump — these go out with the next feature cycle's release plumbing.
 
-## Active cycle
-None. Cycles AGT, AGT-UI cleanup, and AGT-CLEANUP-2 all closed.
+## Active cycle — RES-BAR (in review, 2026-09-08)
+
+Cycle RES-BAR kicked off 2026-09-08 to add WHERE / ORDER BY input boxes to the Results toolbar (Enter = server-side re-run) plus a toolbar-hover-polish fix (drop redundant native title tooltip; smooth 80ms background-color ease to kill the 1-3s late tooltip flicker + instant hover flash). Three tasks across two waves; code complete and under R4 review.
+
+- **Goal**: WHERE / ORDER BY in the Results toolbar, Enter → requery; toolbar hover polish.
+- **Base**: main @ accf1b5 (v1.53.26).
+- **Tasks (3)**: TASK-RES-001 (webview, requery toolbar inputs) · TASK-RES-002 (ext, `stripLeadingClauseKeyword` boundary helper) · TASK-RES-003 (webview wave 2, drop `btn.title` + smooth hover transition).
+- **Waves**: wave 1 = RES-001 ∥ RES-002 (parallel, disjoint files); wave 2 = RES-003 (sequenced after RES-001, shares `webview/main.ts` + `webview/styles.css`).
+- **P0 (locked)**: server-side re-run · free SQL fragment · in existing toolbar between `tsv` dropdown and `Search…`.
+- **Commits** (all on `main`):
+  - `2bc0544` — handoff: plan — RES-BAR cycle.
+  - `109008b` — handoff: wave 1 — TASK-RES-001 + TASK-RES-002.
+  - `f078391` — chore: drop accidental `node_modules_backup` vitest cache + gitignore it.
+  - `59e9ae8` — handoff: wave 2 — TASK-RES-003 (toolbar hover polish).
+  - `5d11664` — handoff: docs checkpoint — INDEX/RUN post-wave-2 + TASK-RES-003 executor report.
+- **Verification (R3 re-run)**: `npm run typecheck` exit 0 · `npm run compile` clean (`dist/webview.js` 2.3mb / `dist/extension.js` 6.5mb) · targeted `npx vitest run` 69/69 PASS (4 files) · full `npm test` 4081 passed / 4 skipped (no regressions, +42 vs pre-cycle baseline 4039).
+- **R2 (model isolation)**: executor = unic-code × 3; reviewer = unic-smart (per `.ukit/storage/config.json` → `handoff.reviewer.model`). Isolation holds.
+- **Review range for R4**: `2bc0544..59e9ae8` (code); 5d11664 is docs-only, excluded.
+- **R4 status**: batch 1 (RES-001 + RES-002 reviewers) running in parallel; batch 2 (RES-003) queued.
+- **R5 plan**: assemble INDEX.md status flips (approved → done; failed → blocked), push `origin/main`, refresh WORKLOG.md, decide patch-release per user ("làm xong phải lên patch mới cho tôi nhé" — pending user confirmation post-review).
+- **Constraints preserved**: no `--dangerously-skip-permissions`, apiKey / DB credentials / HostMcp descriptor never cross any wire frame, no `transition: all` on `.UnicDB-btn`, no edit to the `data-tooltip` pseudo-element block at `webview/styles.css:78-115`, no new message type (existing `requery` discriminator is the only webview→extension contract).
 
 ## Cleanup pass 2026-09-08 — commit `cbf277a`
 **Resolved:**
