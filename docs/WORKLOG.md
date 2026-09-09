@@ -640,3 +640,4 @@ User asked "vậy còn gì nữa không" after cycle AGT-UI cleanup pass → lis
 - Verification: extension suite `184/184` passed; AI/settings/chat integration `250/250` passed; `npm run typecheck` and `npm run compile` passed.
 - Released `v1.53.40` to GitHub and VS Code Marketplace with `UnicDB-1.53.40.vsix`; `.vsix` inspection found no `.secrets` or `.pat` entries.
 - Release closeout was pushed to `origin/main`; subsequent documentation-only alignment commits preserve the release record, and the working tree is clean.
+- Current manifest version remains `1.53.40`; later documentation-only commits did not trigger another patch bump.
