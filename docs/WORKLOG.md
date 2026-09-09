@@ -652,4 +652,4 @@ User asked "vậy còn gì nữa không" after cycle AGT-UI cleanup pass → lis
 - Files changed: `package.json`, `src/extension.ts`, `src/extension.test.ts`, `docs/UNICDB_USER_GUIDE.md`.
 - Verification: focused console/menu tests passed (8/8); console/guide bundle tests passed (40/40); `npm run typecheck` passed; `npm run compile` passed. Full `npm test` hit unrelated pre-existing AI settings jsdom failures (273 passed files, 3 failed files).
 - Released as `v1.53.41`: GitHub release and VS Code Marketplace publish succeeded; VSIX `UnicDB-1.53.41.vsix` packaged.
-- Release documentation was finalized in commits `cd370a9`, `e6d14c5`, `c6350af`, `a005e53`, `2fae201`, and `c5fcbdd`; `main` is pushed and the working tree is clean.
+- Release documentation was finalized in commits `cd370a9`, `e6d14c5`, `c6350af`, `a005e53`, `2fae201`, `c5fcbdd`, and `470ab46`; `main` is pushed and the working tree is clean.
