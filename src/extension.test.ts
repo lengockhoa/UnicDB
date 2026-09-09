@@ -1998,6 +1998,31 @@ describe("TASK-012 — Claude Code / Codex engine routing", () => {
     expect(text).toMatch(/Codex/);
     expect(writeSpy).not.toHaveBeenCalled();
   });
+  it("#6 persisted AI settings engine=omp overrides stale builtin workspace default", async () => {
+    state.aiEngine = "builtin";
+    detectOmpState.impl = async () => ({
+      available: true,
+      ok: true,
+      path: "/usr/bin/omp",
+      version: "18.0.1",
+    });
+    const ctx = makeConfiguredCtx("omp");
+    activate(ctx as never);
+
+    const fn = state.registeredCommands.get("UnicDB.aiChat");
+    expect(fn).toBeDefined();
+    await fn!();
+
+    expect(panelConstructorCalls.length).toBe(1);
+    const opts = panelConstructorCalls[0] as {
+      engine?: string;
+      ompChatEngine?: unknown;
+      acp?: unknown;
+    };
+    expect(opts.engine).toBe("omp");
+    expect(opts.ompChatEngine).toBeDefined();
+    expect(opts.acp).toBeDefined();
+  });
 
   // ----- #7 regression: omp configured route unchanged ---------------------
   it("#7 regression: omp selected + healthy → buildOmpChatEngine wired with detection.path (not bare string)", async () => {
@@ -2267,10 +2292,10 @@ describe("TASK-003 — extension wires streamComplete for builtin streaming", ()
     await fn!();
     const opts = panelConstructorCalls[panelConstructorCalls.length - 1] as {
       deps: {
-        streamComplete: (
-          cfg: unknown,
-          role: unknown,
-          req: unknown,
+        streamComplete?: (
+          model: string,
+          messages: unknown,
+          options: unknown,
           onText: unknown,
           signal: unknown,
         ) => Promise<unknown>;
@@ -2284,7 +2309,7 @@ describe("TASK-003 — extension wires streamComplete for builtin streaming", ()
     expect(opts.deps.streamComplete.name).not.toBe("");
   });
 });
-function makeConfiguredCtx() {
+function makeConfiguredCtx(engine: "builtin" | "omp" | "claude-code" | "codex" = "builtin") {
   const subscriptions: Array<{ dispose: () => void }> = [];
   const settings = {
     baseUrl: "http://example.test",
@@ -2294,8 +2319,10 @@ function makeConfiguredCtx() {
     models: {
       work: { modelId: "gpt-test", vision: true },
       smart: { modelId: "gpt-test", vision: false },
+      autocomplete: { modelId: "", vision: false },
+      lite: { modelId: "", vision: false },
     },
-    engine: "builtin",
+    engine,
   };
   return {
     subscriptions,

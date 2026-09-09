@@ -1211,16 +1211,13 @@ export async function activate(
     ),
   );
 
-  // 15. UnicDB.openAiSettings — TASK-004: open AI Settings form (single instance).
-  // TASK-003 cycle AE — read the user-toggled `UnicDB.ai.engine` setting.
-  // When "omp", detect OMP once at activation. If the binary is missing
-  // or too old, show a one-time install/update info notice, flip the
-  // setting back to "builtin" so the chat panel uses the OpenAI path on
-  // the first invocation (and stays there until the user re-selects
-  // "omp" after installing). PLAN_AE.md §Acceptance 0.
+  // The AI Settings form persists the global engine in globalState. The
+  // manifest and host fallback both use `omp`, so a fresh install and a
+  // missing legacy preference start on the same engine. If omp is not
+  // available, the gate below explicitly persists the safe builtin fallback.
   const initialEngine = vscode.workspace
     .getConfiguration("UnicDB")
-    .get<string>("ai.engine", "builtin");
+    .get<string>("ai.engine", "omp");
   // Cycle AE.5 — perform only the lightweight availability gate at activation.
   // AcpProcess is intentionally created when the user opens chat, not here,
   // so activating VS Code without opening chat never leaks a child process.
@@ -2085,13 +2082,16 @@ async function commandOpenAiChat(
     aiChatPanel.show();
     return;
   }
-  const configuredRaw = vscode.workspace
-    .getConfiguration("UnicDB")
-    .get<unknown>("ai.engine", "builtin");
+  // AI Settings is the authoritative source of the global engine. The
+  // built-in VS Code configuration value is retained only as a compatibility
+  // fallback for installs that have no persisted AI settings yet.
+  const storedSettings = await aiStore.loadSettings();
+  const configuredRaw =
+    storedSettings?.engine ??
+    vscode.workspace
+      .getConfiguration("UnicDB")
+      .get<unknown>("ai.engine", "omp");
   const engine = normalizeEngineChoice(configuredRaw);
-  // Probe ONLY the user-selected non-builtin agent. Other agent detections
-  // are intentionally NOT performed — keeps the open cheap and prevents
-  // any chance of a healthy-other-agent silent substitution. The
   // `detections` dictionary carries exactly one entry, the selected one.
   const [detections, cfg] = await Promise.all([
     probeSelectedEngine(engine),
