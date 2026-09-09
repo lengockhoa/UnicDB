@@ -13,7 +13,7 @@ pinned by TASK-COLLAPSE-001 tests). Prior cycle archived at `INDEX_RES.md` / `AC
 
 | Task | Title | Status | Deps | Files | Reviewer |
 |------|-------|--------|------|-------|----------|
-| TASK-COLLAPSE-002 | Webview: enforce exactly 2-row toolbar — `.UnicDB-toolbar` column + two `.UnicDB-toolbar-row` wrappers; WHERE/ORDER BY `flex: 1 1 100%` in row 2; re-target transactionControls insertBefore; flip 4 test pins | ready | none | webview/main.ts, webview/styles.css, src/ui/__tests__/webviewToolbar.test.ts, tests/webviewRequeryAlignment.test.ts, src/ui/__tests__/aiChatPanelCloneCss.test.ts | - |
+| TASK-COLLAPSE-002 | Webview: enforce exactly 2-row toolbar — `.UnicDB-toolbar` column + two `.UnicDB-toolbar-row` wrappers; WHERE/ORDER BY `flex: 1 1 100%` in row 2; re-target transactionControls insertBefore; flip 4 test pins | pending_review | none | webview/main.ts, webview/styles.css, src/ui/__tests__/webviewToolbar.test.ts, tests/webviewRequeryAlignment.test.ts, src/ui/__tests__/aiChatPanelCloneCss.test.ts | - |
 
 Waves: **wave 1 = TASK-COLLAPSE-002** (single task — all edits share webview/main.ts +
 webview/styles.css, so no parallel split is possible).
