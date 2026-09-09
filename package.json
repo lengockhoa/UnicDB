@@ -514,6 +514,11 @@
       ],
       "editor/title": [
         {
+          "command": "UnicDB.selectActiveSchema",
+          "when": "editorTextFocus && resourceLangId == sql",
+          "group": "navigation"
+        },
+        {
           "command": "UnicDB.runQuery",
           "when": "editorTextFocus && resourceLangId == sql",
           "group": "navigation"
