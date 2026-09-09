@@ -21,6 +21,7 @@
 
 <!-- WHY choices were made. Prevents future sessions from re-debating settled questions. -->
 <!-- Format: [YYYY-MM-DD] Decision: X. Reason: Y. Do NOT change because: Z. -->
+- [2026-09-09] Decision: Reuse `UnicDB.openConsoleForObject` for Schema Explorer connection/schema/category/table/view shortcuts. Reason: preserves the singleton Console, existing table/view SELECT seeding, active-schema pinning, and shared execution path without another command surface.
 
 ## Active Constraints
 
