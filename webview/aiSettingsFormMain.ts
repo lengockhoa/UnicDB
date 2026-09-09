@@ -25,7 +25,6 @@ type Engine = "builtin" | "omp" | "claude-code" | "codex";
 interface ModelConfig {
   modelId: string;
   vision: boolean;
-  engine?: Engine;
 }
 
 interface InitMsg {
@@ -86,13 +85,11 @@ const state: State = {
       work: { modelId: "", vision: true },
       smart: { modelId: "", vision: false },
       autocomplete: { modelId: "", vision: false },
-      lite: { modelId: "", vision: false, engine: "omp" },
+      lite: { modelId: "", vision: false },
     },
-    engine: "builtin",
+    engine: "omp",
   },
-  hasApiKey: false,
   testing: false,
-  lastStatus: null,
 };
 
 function post(msg: unknown): void {
@@ -136,7 +133,6 @@ function readSettings(): {
       lite: {
         modelId: input("modelLite").value.trim(),
         vision: input("visionLite").checked,
-        engine: select("engineLite").value as Engine,
       },
     },
   };
@@ -175,24 +171,6 @@ function validateSettings(s: State["settings"]): string[] {
       }
     }
     // Cycle AIC: empty autocomplete is allowed (feature disabled), not invalid.
-    // Cycle GC: empty lite is also allowed (feature disabled), not invalid.
-    // Per-model engine override (cycle AE) — when present must be one of the
-    // legal values; undefined means "follow global engine". TASK-008 mirrors
-    // exactly the four-value set + error string from src/ai/settings.ts.
-    if (
-      s.models.lite &&
-      s.models.lite.engine !== undefined &&
-      s.models.lite.engine !== "builtin" &&
-      s.models.lite.engine !== "omp" &&
-      s.models.lite.engine !== "claude-code" &&
-      s.models.lite.engine !== "codex"
-    ) {
-      errors.push("Engine must be builtin, omp, claude-code, or codex");
-    }
-  }
-  // engine (cycle AE / AGT) — undefined / anything other than the four
-  // legal values is rejected so a mis-saved config can't silently degrade to
-  // the wrong engine. Mirrors src/ai/settings.ts `aiSettingsErrors`.
   if (
     s.engine !== "builtin" &&
     s.engine !== "omp" &&
@@ -307,15 +285,6 @@ function liteBlock(): string {
             <input id="visionLite" type="checkbox" /> Vision-capable
           </label>
         </div>
-        <div class="UnicDB-field">
-          <label for="engineLite">Engine</label>
-          <select id="engineLite">
-            <option value="omp" selected>omp</option>
-            <option value="claude-code">claude-code</option>
-            <option value="codex">codex</option>
-            <option value="builtin">builtin</option>
-          </select>
-        </div>
       </div>
     </div>`;
 }
@@ -347,16 +316,16 @@ function render(): void {
           <option value="builtin" selected>builtin</option>
         </select>
       </div>
-    </div>
-    <div class="UnicDB-row">
-      <div class="UnicDB-field grow">
-        <label for="apiKey">API key</label>
-        <input id="apiKey" type="password" autocomplete="off" />
-      </div>
       <div class="UnicDB-field">
-        <label for="timeoutMs">Timeout (ms) <span class="req">*</span></label>
-        <input id="timeoutMs" type="number" min="1000" max="600000" step="1000" value="60000" />
+        <label for="engine">Engine</label>
+        <select id="engine">
+          <option value="omp" selected>omp</option>
+          <option value="claude-code">claude-code</option>
+          <option value="codex">codex</option>
+          <option value="builtin">builtin</option>
+        </select>
       </div>
+    </div>
       <div class="UnicDB-field">
         <label for="maxSteps">Max steps <span class="req">*</span></label>
         <input id="maxSteps" type="number" min="1" max="100" step="1" value="12" />
@@ -385,11 +354,7 @@ function render(): void {
     el?.addEventListener("input", () => refreshOkButton(validateSettings(readSettings())));
     el?.addEventListener("change", () => refreshOkButton(validateSettings(readSettings())));
   }
-  for (const id of ["method", "engine", "engineLite"]) {
-    const el = document.getElementById(id) as HTMLSelectElement | null;
-    el?.addEventListener("change", () => refreshOkButton(validateSettings(readSettings())));
-  }
-  for (const id of ["visionWork", "visionSmart", "visionLite"]) {
+  for (const id of ["method", "engine"]) {
     const el = document.getElementById(id) as HTMLInputElement | null;
     el?.addEventListener("change", () => refreshOkButton(validateSettings(readSettings())));
   }
@@ -433,7 +398,6 @@ function applyInit(msg: InitMsg): void {
     msg.settings.models.smart.vision;
   (input("visionLite") as HTMLInputElement).checked =
     msg.settings.models.lite?.vision ?? false;
-  select("engineLite").value = msg.settings.models.lite?.engine ?? "omp";
   // Placeholder tells the user the key is stored; empty submit ⇒ keep.
   input("apiKey").placeholder = msg.hasApiKey ? "•••• stored" : "";
   input("apiKey").value = "";

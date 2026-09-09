@@ -38,7 +38,7 @@ export class AiConfigStore {
     }
     if (!parsed || typeof parsed !== "object") return null;
     // Cycle AE — legacy migration: configs persisted before the `engine`
-    // field was added have no engine key. Normalize to "builtin" BEFORE
+    // field was added have no engine key. Normalize to "omp" BEFORE
     // validation so `aiSettingsErrors()` does NOT flag the saved config
     // as invalid. Without this, every pre-cycle-AE user's settings load
     // returns null and the panel falls through to its empty-state flow.
@@ -47,7 +47,7 @@ export class AiConfigStore {
     // configs lack it; add `{ modelId: "", vision: false }` so the
     const obj = parsed as Record<string, unknown>;
     if (obj.engine === undefined) {
-      obj.engine = "builtin";
+      obj.engine = "omp";
       parsed = obj;
     }
 
@@ -59,16 +59,23 @@ export class AiConfigStore {
       parsed = obj;
     }
     // Cycle GC — same idea for the new `lite` role. Pre-GC configs lack it;
-    // inject the default `{ modelId: "", vision: false, engine: "omp" }` so
-    // the validator never sees a missing-key error. Also back-fill the per-
-    // model `engine` if a stored lite has it omitted (legacy / corrupted).
+    // inject the default `{ modelId: "", vision: false }` so the validator
+    // never sees a missing-key error.
+    if (modelsObj && typeof modelsObj === "object" && modelsObj.lite === undefined) {
+      modelsObj.lite = { modelId: "", vision: false };
+      obj.models = modelsObj;
+      parsed = obj;
+    }
+    // Back-compat: pre-cutover stored configs (saved while per-model engine
+    // was still in the data model) may carry a stale `engine` key inside
+    // individual `models.*` entries. Strip it so the new schema — which
+    // has no per-model engine — stays well-typed.
     if (modelsObj && typeof modelsObj === "object") {
-      const liteObj = modelsObj.lite as Record<string, unknown> | undefined;
-      if (liteObj === undefined) {
-        modelsObj.lite = { modelId: "", vision: false, engine: "omp" };
-      } else if (liteObj && typeof liteObj === "object" && liteObj.engine === undefined) {
-        liteObj.engine = "omp";
-        modelsObj.lite = liteObj;
+      for (const role of ["work", "smart", "autocomplete", "lite"] as const) {
+        const entry = modelsObj[role] as Record<string, unknown> | undefined;
+        if (entry && typeof entry === "object" && "engine" in entry) {
+          delete (entry as Record<string, unknown>).engine;
+        }
       }
       obj.models = modelsObj;
       parsed = obj;
@@ -132,30 +139,18 @@ export class AiConfigStore {
         work: {
           modelId: settings.models.work.modelId,
           vision: settings.models.work.vision,
-          ...(settings.models.work.engine !== undefined
-            ? { engine: settings.models.work.engine }
-            : {}),
         },
         smart: {
           modelId: settings.models.smart.modelId,
           vision: settings.models.smart.vision,
-          ...(settings.models.smart.engine !== undefined
-            ? { engine: settings.models.smart.engine }
-            : {}),
         },
         autocomplete: {
           modelId: settings.models.autocomplete?.modelId ?? "",
           vision: settings.models.autocomplete?.vision ?? false,
-          ...(settings.models.autocomplete?.engine !== undefined
-            ? { engine: settings.models.autocomplete.engine }
-            : {}),
         },
         lite: {
           modelId: settings.models.lite?.modelId ?? "",
           vision: settings.models.lite?.vision ?? false,
-          ...(settings.models.lite?.engine !== undefined
-            ? { engine: settings.models.lite.engine }
-            : {}),
         },
       },
       engine: settings.engine,

@@ -89,7 +89,7 @@ function validSettings(): AiSettings {
       work: { modelId: "gpt-4o-mini", vision: true },
       smart: { modelId: "gpt-4o", vision: false },
       autocomplete: { modelId: "", vision: false },
-      lite: { modelId: "", vision: false, engine: "omp" },
+      lite: { modelId: "", vision: false},
     },
   };
 }
@@ -219,7 +219,7 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
     global._setRaw("UnicDB.ai.settings", legacy);
     const loaded = await store.loadSettings();
     expect(loaded).not.toBeNull();
-    expect(loaded!.engine).toBe("builtin");
+    expect(loaded!.engine).toBe("omp");
   });
 
   // ---- TASK-GC-001: legacy migration injects `lite` role ------------
@@ -282,7 +282,7 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
         autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
-        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+        lite: { modelId: "vendor/lite-fast", vision: false},
       },
     };
     await store.save(s, "sk-1");
@@ -340,7 +340,7 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
         autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
-        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+        lite: { modelId: "vendor/lite-fast", vision: false},
       },
       engine: "vscode-copilot",
     };

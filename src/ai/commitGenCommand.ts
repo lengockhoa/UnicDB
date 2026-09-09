@@ -85,7 +85,6 @@ export interface CommitGenDeps {
 }
 
 // ---- main entry -------------------------------------------------------------
-
 /**
  * Run the Generate Commit Message flow. Pure / single-shot — no global
  * state. The host (`src/extension.ts`) supplies real vscode-backed deps;
@@ -95,12 +94,16 @@ export interface CommitGenDeps {
  *   1. settings = loadSettings(); if null or lite.modelId empty → settings
  *      toast; if action picked → openSettings(); return.
  *   2. diff = collectDiff(); null → info toast; return.
- *   3. engine = settings.models.lite.engine ?? "omp"
+ *   3. engine = settings.engine  (the global engine — same one the chat
+ *      panel uses; no per-model override.)
  *        "omp"     → resolveEngine; if engine !== "omp" → error+hint; else
  *                    sanitize(await buildOmpEngine(choice).generate(prompt))
  *        "builtin" → loadConfig; null → settings toast; else
  *                    sanitize(builtinComplete(cfg, request).text)
- *   4. setInputBox(message) (only on success).
+ *        "claude-code" | "codex" → fall through to builtin (commit-gen
+ *                    only ships omp + builtin today; UI exposes all four,
+ *                    runtime falls back to builtin for the image-capable
+ *                    agents so the sparkle still works for those users).
  */
 export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<void> {
   // 1. Lite model must be configured.
@@ -121,12 +124,17 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
     return;
   }
 
-  // 3. Engine selection.
-  // Cycle AGT: AiEngine widened to 4 values. The commit-gen path only wires
-  // "omp" (one-shot OmpChatEngine.generate) and "builtin" (provider.complete);
-  // claude-code / codex engines at the lite role fall through to the builtin
-  // path until TASK-005/006 wire them into commit-gen (out of scope this cycle).
-  const engine: AiEngine = lite.engine ?? "omp";
+  // 3. Engine selection. The global `settings.engine` is the single source
+  // of truth — chat panel and the Generate Commit Message sparkle share it.
+  // Per-model engine override was removed; the Lite section in the AI
+  // Settings form no longer exposes an Engine dropdown.
+  //   "omp" → one-shot omp generate (hostMcp/ACP path)
+  //   "builtin" → provider.complete (OpenAI-compatible backend)
+  //   "claude-code" | "codex" → fall through to builtin (commit-gen only
+  //     ships omp + builtin; image-capable agents without a commit-gen
+  //     adapter still get a working sparkle via the OpenAI-compatible
+  //     backend).
+  const engine: AiEngine = settings.engine;
   const prompt = buildCommitPrompt({
     repoName: diff.repoName,
     ...(diff.branch !== undefined ? { branch: diff.branch } : {}),

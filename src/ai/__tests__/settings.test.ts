@@ -11,7 +11,7 @@ import {
 import type { AiSettings, AiConfig, AiEngine } from "../settings";
 
 describe("ai/settings — defaults + validation + helpers", () => {
-  it("Test #1 — defaultAiSettings exact literal (work + smart + autocomplete)", () => {
+  it("Test #1 — defaultAiSettings exact literal (work + smart + autocomplete + lite, global engine 'omp')", () => {
     expect(defaultAiSettings()).toEqual({
       baseUrl: "https://api.openai.com/v1",
       method: "chat/completions",
@@ -21,24 +21,25 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "", vision: true },
         smart: { modelId: "", vision: false },
         autocomplete: { modelId: "", vision: false },
-        lite: { modelId: "", vision: false, engine: "omp" },
+        lite: { modelId: "", vision: false },
       },
-      engine: "builtin",
+      engine: "omp",
     });
   });
 
-  it("GC #1 — defaultAiSettings has 4 roles; lite defaults to omp engine; work/smart/autocomplete have NO engine key", () => {
+  it("GC #1 — defaultAiSettings has 4 roles; no per-model engine; global engine 'omp'", () => {
     const d = defaultAiSettings();
     expect(Object.keys(d.models).sort()).toEqual(
       ["autocomplete", "lite", "smart", "work"].sort(),
     );
-    expect(d.models.lite).toEqual({ modelId: "", vision: false, engine: "omp" });
-    // work/smart/autocomplete must NOT have engine key (per-model engine opt-in).
+    expect(d.models.lite).toEqual({ modelId: "", vision: false });
+    // No role carries a per-model engine override.
     expect("engine" in d.models.work).toBe(false);
     expect("engine" in d.models.smart).toBe(false);
+    expect("engine" in d.models.lite).toBe(false);
     expect("engine" in d.models.autocomplete).toBe(false);
-    // Global engine stays "builtin".
-    expect(d.engine).toBe("builtin");
+    // Global engine defaults to "omp".
+    expect(d.engine).toBe("omp");
   });
 
   it("Test #2 — valid (all three roles populated) → no errors", () => {
@@ -48,7 +49,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
         autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
-        lite: { modelId: "", vision: false, engine: "omp" },
+        lite: { modelId: "vendor/lite-fast", vision: false },
       },
     };
     expect(aiSettingsErrors(s)).toEqual([]);
@@ -61,7 +62,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
         autocomplete: { modelId: "", vision: false },
-        lite: { modelId: "", vision: false, engine: "omp" },
+        lite: { modelId: "", vision: false},
       },
     };
     expect(aiSettingsErrors(s)).toEqual([]);
@@ -77,7 +78,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "", vision: true },
         smart: { modelId: "ok", vision: false },
         autocomplete: { modelId: "", vision: false },
-        lite: { modelId: "", vision: false, engine: "omp" },
+        lite: { modelId: "", vision: false},
       },
       engine: "builtin",
     } as AiSettings;
@@ -104,7 +105,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "m", vision: true },
         smart: { modelId: "m", vision: false },
         autocomplete: { modelId: "", vision: false },
-        lite: { modelId: "", vision: false, engine: "omp" },
+        lite: { modelId: "", vision: false},
       },
       engine: "builtin",
     };
@@ -177,8 +178,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
     expect(red.timeoutMs).toBe(cfg.timeoutMs);
     expect(red.maxSteps).toBe(cfg.maxSteps);
     expect(red.models).toEqual(cfg.models);
-    expect(red.engine).toBe("builtin");
-    expect(red.models.autocomplete.modelId).toBe("vendor/free-fast-sql");
+    expect(red.engine).toBe("omp");
   });
 
   it("Test #7b (Cycle AIC regression) — redactAiConfig tolerates missing autocomplete in input", () => {
@@ -207,7 +207,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
         autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
-        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+        lite: { modelId: "vendor/lite-fast", vision: false},
       },
     };
     expect(aiSettingsErrors(s)).toEqual([]);
@@ -220,26 +220,12 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
         autocomplete: { modelId: "", vision: false },
-        lite: { modelId: "", vision: false, engine: "omp" },
+        lite: { modelId: "", vision: false},
       },
     };
     const errs = aiSettingsErrors(s);
     expect(errs).not.toContain("Model is required for role: lite");
     expect(errs).toEqual([]);
-  });
-
-  it("GC #4 — lite engine 'groq' is rejected with exact error message", () => {
-    const s: AiSettings = {
-      ...defaultAiSettings(),
-      models: {
-        work: { modelId: "gpt-4o-mini", vision: true },
-        smart: { modelId: "gpt-4o", vision: false },
-        autocomplete: { modelId: "", vision: false },
-        lite: { modelId: "vendor/lite-fast", vision: false, engine: "groq" as AiEngine },
-      },
-    };
-    const errs = aiSettingsErrors(s);
-    expect(errs).toContain("Engine must be builtin, omp, claude-code, or codex");
   });
 
   it("GC #5 — global engine 'x' is rejected (still validated)", () => {
@@ -251,14 +237,14 @@ describe("ai/settings — defaults + validation + helpers", () => {
     expect(errs).toContain("Engine must be builtin, omp, claude-code, or codex");
   });
 
-  it("GC #8 — redactAiConfig preserves lite.modelId/vision/engine and omits apiKey", () => {
+  it("GC #8 — redactAiConfig preserves lite.modelId/vision, strips per-model engine, omits apiKey", () => {
     const cfg: AiConfig = {
       ...defaultAiSettings(),
       models: {
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
         autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
-        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+        lite: { modelId: "vendor/lite-fast", vision: false },
       },
       apiKey: "sk-very-secret",
     };
@@ -267,14 +253,13 @@ describe("ai/settings — defaults + validation + helpers", () => {
     expect(red.models.lite).toEqual({
       modelId: "vendor/lite-fast",
       vision: false,
-      engine: "omp",
     });
-    // work/smart/autocomplete must NOT have an engine key (preserving undefined).
+    // No role carries a per-model engine key.
     expect("engine" in red.models.work).toBe(false);
     expect("engine" in red.models.smart).toBe(false);
     expect("engine" in red.models.autocomplete).toBe(false);
+    expect("engine" in red.models.lite).toBe(false);
   });
-
   // ---- TASK-001: AiEngine widens to 4 values (builtin/omp/claude-code/codex)
 
   it("T1#1 — valid AiSettings with engine 'claude-code' → no errors", () => {
@@ -284,7 +269,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
         autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
-        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+        lite: { modelId: "vendor/lite-fast", vision: false},
       },
       engine: "claude-code",
     };
@@ -298,7 +283,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
         autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
-        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+        lite: { modelId: "vendor/lite-fast", vision: false},
       },
       engine: "codex",
     };
@@ -312,7 +297,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
         autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
-        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp" },
+        lite: { modelId: "vendor/lite-fast", vision: false},
       },
       engine: "vscode-copilot" as AiEngine,
     };
@@ -330,34 +315,5 @@ describe("ai/settings — defaults + validation + helpers", () => {
       const red = redactAiConfig(cfg);
       expect(red.engine).toBe(eng);
     }
-  });
-
-  it("T1#5 — per-model engine override accepts all 4 values", () => {
-    for (const eng of ["builtin", "omp", "claude-code", "codex"] as const) {
-      const s: AiSettings = {
-        ...defaultAiSettings(),
-        models: {
-          work: { modelId: "gpt-4o-mini", vision: true },
-          smart: { modelId: "gpt-4o", vision: false },
-          autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
-          lite: { modelId: "vendor/lite-fast", vision: false, engine: eng },
-        },
-      };
-      expect(aiSettingsErrors(s)).toEqual([]);
-    }
-  });
-
-  it("T1#5 — per-model engine override 'omp2' is rejected with the normative message", () => {
-    const s: AiSettings = {
-      ...defaultAiSettings(),
-      models: {
-        work: { modelId: "gpt-4o-mini", vision: true },
-        smart: { modelId: "gpt-4o", vision: false },
-        autocomplete: { modelId: "vendor/free-fast-sql", vision: false },
-        lite: { modelId: "vendor/lite-fast", vision: false, engine: "omp2" as AiEngine },
-      },
-    };
-    const errs = aiSettingsErrors(s);
-    expect(errs).toContain("Engine must be builtin, omp, claude-code, or codex");
   });
 });

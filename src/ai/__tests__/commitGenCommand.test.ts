@@ -15,7 +15,9 @@ import type { ProviderRequest, ProviderResult } from "../provider";
 
 // ---- fake builders ----------------------------------------------------------
 
-function fakeSettings(over: Partial<AiSettings["models"]["lite"]> = {}): AiSettings {
+function fakeSettings(
+  over: Partial<Pick<AiSettings, "engine"> & { lite: Partial<AiSettings["models"]["lite"]> }> = {},
+): AiSettings {
   return {
     baseUrl: "https://example.com/v1",
     method: "chat/completions",
@@ -25,9 +27,9 @@ function fakeSettings(over: Partial<AiSettings["models"]["lite"]> = {}): AiSetti
       work: { modelId: "w", vision: true },
       smart: { modelId: "s", vision: false },
       autocomplete: { modelId: "", vision: false },
-      lite: { modelId: "m", vision: false, engine: "builtin", ...over },
+      lite: { modelId: "m", vision: false, ...over.lite },
     },
-    engine: "builtin",
+    engine: over.engine ?? "builtin",
   };
 }
 
@@ -64,7 +66,7 @@ function fakeOmpOneShot(text: string): OmpOneShot {
 // ============================================================================
 describe("ai/commitGenCommand — Test #1 builtin happy path", () => {
   it("injects sanitized message into the input box via the builtin provider", async () => {
-    const settings = fakeSettings({ modelId: "gpt-mini", engine: "builtin" });
+    const settings = fakeSettings({ engine: "builtin", lite: { modelId: "gpt-mini" } });
     const cfg = fakeConfig(settings);
     const rawText = "```\nfeat(db): add index\n```";
     const built: ProviderResult = {
@@ -124,7 +126,7 @@ describe("ai/commitGenCommand — Test #1 builtin happy path", () => {
 // ============================================================================
 describe("ai/commitGenCommand — Test #2 omp happy path", () => {
   it("routes through the omp engine and injects the sanitized message", async () => {
-    const settings = fakeSettings({ modelId: "lite-1", engine: "omp" });
+    const settings = fakeSettings({ engine: "omp", lite: { modelId: "lite-1" } });
     const detection: OmpDetection = {
       available: true,
       ok: true,
@@ -190,7 +192,7 @@ describe("ai/commitGenCommand — Test #2 omp happy path", () => {
 // ============================================================================
 describe("ai/commitGenCommand — Test #3 lite model not configured", () => {
   it("shows the frozen settings toast and never collects a diff", async () => {
-    const settings = fakeSettings({ modelId: "", engine: "omp" });
+    const settings = fakeSettings({ engine: "omp", lite: { modelId: "" } });
     const showSettingsToast = vi.fn().mockResolvedValue(undefined);
     const openSettings = vi.fn();
     const collectDiff = vi.fn(async () => fakeDiff());
@@ -235,7 +237,7 @@ describe("ai/commitGenCommand — Test #3 lite model not configured", () => {
   });
 
   it("calls openSettings() when the user picks the Open Settings action", async () => {
-    const settings = fakeSettings({ modelId: "", engine: "omp" });
+    const settings = fakeSettings({ engine: "omp", lite: { modelId: "" } });
     const showSettingsToast = vi.fn().mockResolvedValue("Open Settings");
     const openSettings = vi.fn();
 
@@ -272,7 +274,7 @@ describe("ai/commitGenCommand — Test #3 lite model not configured", () => {
 // ============================================================================
 describe("ai/commitGenCommand — Test #4 no changes to summarize", () => {
   it("shows the empty-diff error and never calls the provider or omp", async () => {
-    const settings = fakeSettings({ modelId: "lite", engine: "omp" });
+    const settings = fakeSettings({ engine: "omp", lite: { modelId: "lite" } });
     const showError = vi.fn();
     const builtinComplete = vi.fn(async () => ({
       text: "",
@@ -316,7 +318,7 @@ describe("ai/commitGenCommand — Test #4 no changes to summarize", () => {
 // ============================================================================
 describe("ai/commitGenCommand — Test #5 builtin chosen but no global config", () => {
   it("shows the base-URL settings toast and never calls the provider", async () => {
-    const settings = fakeSettings({ modelId: "lite", engine: "builtin" });
+    const settings = fakeSettings({ engine: "builtin", lite: { modelId: "lite" } });
     const showSettingsToast = vi.fn().mockResolvedValue(undefined);
     const builtinComplete = vi.fn(fakeBuiltinComplete({
       text: "should-not-be-used",
@@ -362,7 +364,7 @@ describe("ai/commitGenCommand — Test #5 builtin chosen but no global config", 
 // ============================================================================
 describe("ai/commitGenCommand — Test #6 provider throws", () => {
   it("surfaces the error via showError and never writes the input box", async () => {
-    const settings = fakeSettings({ modelId: "lite", engine: "builtin" });
+    const settings = fakeSettings({ engine: "builtin", lite: { modelId: "lite" } });
     const cfg = fakeConfig(settings);
     const showError = vi.fn();
     const setInputBox = vi.fn();
@@ -400,7 +402,7 @@ describe("ai/commitGenCommand — Test #6 provider throws", () => {
 // ============================================================================
 describe("ai/commitGenCommand — Test #7 omp down while lite.engine is omp", () => {
   it("does NOT silently fall back to builtin — shows error with hint", async () => {
-    const settings = fakeSettings({ modelId: "lite", engine: "omp" });
+    const settings = fakeSettings({ engine: "omp", lite: { modelId: "lite" } });
     const detection: OmpDetection = {
       available: false,
       ok: false,

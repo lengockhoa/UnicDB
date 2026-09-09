@@ -75,7 +75,7 @@ function fakeSettings(over: Partial<AiSettings["models"]["lite"]> = {}): AiSetti
       work: { modelId: "w", vision: true },
       smart: { modelId: "s", vision: false },
       autocomplete: { modelId: "", vision: false },
-      lite: { modelId: "m", vision: false, engine: "builtin", ...over },
+      lite: { modelId: "m", vision: false ...over },
     },
     engine: "builtin",
   };

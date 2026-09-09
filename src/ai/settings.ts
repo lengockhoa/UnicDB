@@ -24,11 +24,6 @@ export type AiEngine = "builtin" | "omp" | "claude-code" | "codex";
 export interface AiModelConfig {
   modelId: string;
   vision: boolean;
-  /**
-   * Per-model engine override. Optional — `undefined` means "follow the
-   * global `settings.engine`". When set, must be one of `AiEngine`.
-   */
-  engine?: AiEngine;
 }
 
 export interface AiSettings {
@@ -37,7 +32,7 @@ export interface AiSettings {
   timeoutMs: number; // 1000..600000
   maxSteps: number; // 1..100 — agent step budget (consumed by TASK-003)
   models: Record<AiModelRole, AiModelConfig>;
-  /** Cycle AE — chat engine selection. Default "builtin". */
+  /** Cycle AE — chat engine selection. Default "omp". */
   engine: AiEngine;
 }
 
@@ -56,9 +51,9 @@ export function defaultAiSettings(): AiSettings {
       work: { modelId: "", vision: true },
       smart: { modelId: "", vision: false },
       autocomplete: { modelId: "", vision: false },
-      lite: { modelId: "", vision: false, engine: "omp" },
+      lite: { modelId: "", vision: false },
     },
-    engine: "builtin",
+    engine: "omp",
   };
 }
 
@@ -129,11 +124,6 @@ export function aiSettingsErrors(s: AiSettings): string[] {
         errors.push(`Model is required for role: ${role}`);
         continue;
       }
-      // Per-model engine override — undefined means "follow global engine"
-      // (allowed). Any other value must be one of the legal engines.
-      if (m.engine !== undefined && m.engine !== "builtin" && m.engine !== "omp" && m.engine !== "claude-code" && m.engine !== "codex") {
-        errors.push("Engine must be builtin, omp, claude-code, or codex");
-      }
     }
   }
 
@@ -163,26 +153,18 @@ export function redactAiConfig(cfg: AiConfig): AiSettings {
     work: {
       modelId: cfg.models.work.modelId,
       vision: cfg.models.work.vision,
-      ...(cfg.models.work.engine !== undefined ? { engine: cfg.models.work.engine } : {}),
     },
     smart: {
       modelId: cfg.models.smart.modelId,
       vision: cfg.models.smart.vision,
-      ...(cfg.models.smart.engine !== undefined ? { engine: cfg.models.smart.engine } : {}),
     },
     autocomplete: {
       modelId: cfg.models.autocomplete?.modelId ?? "",
       vision: cfg.models.autocomplete?.vision ?? false,
-      ...(cfg.models.autocomplete?.engine !== undefined
-        ? { engine: cfg.models.autocomplete.engine }
-        : {}),
     },
     lite: {
       modelId: cfg.models.lite?.modelId ?? "",
       vision: cfg.models.lite?.vision ?? false,
-      ...(cfg.models.lite?.engine !== undefined
-        ? { engine: cfg.models.lite.engine }
-        : {}),
     },
   };
   return {
