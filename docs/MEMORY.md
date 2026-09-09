@@ -97,7 +97,7 @@
   installer (needs a GitHub release per Ship Constraint).
 
 ## Session Handoff
-- Last worked on: 2026-09-09 — added Schema Explorer SQL Console shortcuts for connection, schema, category, table, and view nodes. Released as v1.53.41 on GitHub Releases and the VS Code Marketplace.
+- Last worked on: 2026-09-09 — added Schema Explorer SQL Console shortcuts for connection, schema, category, table, and view nodes. Released as v1.53.41 on GitHub Releases and the VS Code Marketplace; release closeout documentation was pushed through `a005e53`.
 - Verification: focused console/menu tests 8/8, console/guide bundle tests 40/40, `npm run typecheck`, and `npm run compile` passed. Full `npm test` still has unrelated AI settings jsdom failures; release artifact `UnicDB-1.53.41.vsix` was packaged.
 - Next step: none unless a new user-visible change is requested. For a new user-visible change, run the normal verification gate and atomic `npm run bump` release workflow.
 
