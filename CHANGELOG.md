@@ -29,6 +29,14 @@
 - **`package.json`:** `UnicDB.ai.engine.default` updated to `"omp"`; copy
   refreshed to note the new default.
 
+## [1.53.41] — 2026-09-09
+
+- Summary: Add Schema Explorer SQL Console shortcuts for connections, schemas, categories, tables, and views.
+- Files: package.json, src/extension.ts, src/extension.test.ts, docs/UNICDB_USER_GUIDE.md
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.41.vsix packaged
+
+---
+
 ## [1.53.40] — 2026-09-09
 
 - Summary: Honor the AI Settings engine selection in AI Chat: persisted omp now routes chat through omp instead of the stale builtin fallback; fresh installs consistently default to omp.
