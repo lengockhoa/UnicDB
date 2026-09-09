@@ -375,10 +375,10 @@ describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)", () => 
     });
   });
 
-  // TASK-RES-001 — toolbar placement (P0 slot). The requery inputs live as
-  // direct children of the toolbar in the exact slot between the export
-  // format <select> and the export header checkbox. The old
-  // `data-UnicDB-requery-bar` wrapper element is gone.
+  // TASK-RES-001 / TASK-COLLAPSE-002 — toolbar placement (P0 slot). The
+  // requery inputs live as direct children of row 2 in the exact slot after
+  // the row-1 export format <select> and before the export header checkbox.
+  // The old `data-UnicDB-requery-bar` wrapper element is gone.
   itIfBundle("7. Toolbar placement (P0 slot): inputs between export-format and export-header; no requery-bar wrapper", () => {
     const { root } = loadBundle();
     dispatchState(selectState());
@@ -402,9 +402,15 @@ describeIfBundle("webview/main.ts WHERE/ORDER BY requery bar (TASK-504)", () => 
     expect(whereInput).toBeTruthy();
     expect(orderInput).toBeTruthy();
 
-    // Both inputs are direct children of the toolbar.
-    expect(whereInput!.parentElement).toBe(toolbar);
-    expect(orderInput!.parentElement).toBe(toolbar);
+    // Both inputs are direct children of row 2; row 1 still owns the
+    // export-format select and the split begins exactly at WHERE.
+    const row2 = toolbar!.querySelector(
+      ".UnicDB-toolbar-row:nth-child(2)",
+    ) as HTMLElement | null;
+    expect(row2).toBeTruthy();
+    expect(whereInput!.parentElement).toBe(row2);
+    expect(orderInput!.parentElement).toBe(row2);
+    expect(row2!.firstElementChild).toBe(whereInput);
 
     // Sibling order: exportFormat < requeryWhere < requeryOrderBy < exportHeader
     const cmp = (a: Element, b: Element): number => {
