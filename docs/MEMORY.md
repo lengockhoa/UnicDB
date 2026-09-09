@@ -101,6 +101,9 @@
 - Verification: focused console/menu tests 8/8, console/guide bundle tests 40/40, `npm run typecheck`, and `npm run compile` passed. Full `npm test` still has unrelated AI settings jsdom failures; release artifact `UnicDB-1.53.41.vsix` was packaged.
 - Next step: none unless a new user-visible change is requested. For a new user-visible change, run the normal verification gate and atomic `npm run bump` release workflow.
 
+- [2026-09-09] Decision: Keep the SQL Console editor dependency-free by layering `webview/sqlHighlight.ts` spans under a transparent native textarea. Reason: preserves native selection, clipboard, autocomplete, draft persistence, and keyboard behavior while adding file-like syntax coloring without introducing a heavyweight editor runtime.
+- [2026-09-09] Constraint: The active namespace picker is shared across status bar, Console toolbar, and SQL file editor title menu. `ConnectionManager` reads the per-connection `ActiveSchemaStore` dynamically at execution time and prepends PostgreSQL `SET search_path`; do not duplicate namespace state in webviews or rewrite user SQL.
+
 ## Completed Milestones
 
 <!-- Significant shipped work. For historical context. One line per milestone. -->

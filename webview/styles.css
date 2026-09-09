@@ -1440,23 +1440,30 @@ button.UnicDB-requery-clear:disabled {
  * Emitted into dist/webview.css via main.ts's existing `import "./styles.css"`
  * — TASK-003 links that asset; there is no second CSS pipeline.
  */
+body.UnicDB-console-body {
+  height: 100vh;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
 .UnicDB-console {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px;
+  gap: 8px;
+  padding: 10px 12px 12px;
   height: 100%;
+  min-height: 0;
   box-sizing: border-box;
+  background: var(--vscode-editor-background, #1e1e1e);
 }
 .UnicDB-console-toolbar {
   display: flex;
   gap: 6px;
   align-items: center;
-  /* Allow the schema chip to push to the right edge when the row is
-   * wide. `margin-left: auto` on the chip below does the actual
-   * alignment — this rule just keeps the toolbar a single wrapping
-   * row when the viewport narrows. */
   flex-wrap: wrap;
+  flex: 0 0 auto;
 }
 .UnicDB-console-toolbar button {
   padding: 4px 12px;
@@ -1484,16 +1491,96 @@ button.UnicDB-requery-clear:disabled {
   opacity: 0.5;
   cursor: default;
 }
+.UnicDB-console-editor-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--vscode-input-border, #454545);
+  border-radius: 3px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+}
+.UnicDB-console-syntax,
 .UnicDB-console-editor {
-  flex: 1;
-  resize: vertical;
-  min-height: 120px;
-  font-family: var(--vscode-editor-font-family, monospace);
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  padding: 14px 16px 18px;
+  border: 0;
+  outline: 0;
+  overflow: auto;
+  white-space: pre;
+  overflow-wrap: normal;
+  tab-size: 2;
+  font-family: var(--vscode-editor-font-family, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
   font-size: var(--vscode-editor-font-size, 13px);
-  background: var(--vscode-input-background, #3c3c3c);
-  color: var(--vscode-input-foreground, #cccccc);
-  border: 1px solid var(--vscode-input-border, #3c3c3c);
-  padding: 6px;
+  line-height: 1.55;
+}
+.UnicDB-console-syntax {
+  pointer-events: none;
+  color: var(--vscode-editor-foreground, #d4d4d4);
+}
+.UnicDB-console-editor {
+  z-index: 1;
+  resize: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--vscode-editorCursor-foreground, #aeafad);
+  -webkit-text-fill-color: transparent;
+}
+.UnicDB-console-editor::placeholder {
+  color: var(--vscode-input-placeholderForeground, #858585);
+  opacity: 1;
+  -webkit-text-fill-color: var(--vscode-input-placeholderForeground, #858585);
+}
+.UnicDB-console-editor::selection {
+  background: var(--vscode-editor-selectionBackground, rgba(38, 79, 120, 0.7));
+  -webkit-text-fill-color: transparent;
+}
+.UnicDB-console-editor:focus,
+.UnicDB-console-editor:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+.UnicDB-console-syntax .UnicDB-sql-tok-keyword {
+  color: var(--vscode-symbolIcon-keywordForeground, #569cd6);
+  font-weight: 600;
+}
+.UnicDB-console-syntax .UnicDB-sql-tok-string {
+  color: var(--vscode-symbolIcon-stringForeground, #ce9178);
+}
+.UnicDB-console-syntax .UnicDB-sql-tok-number {
+  color: var(--vscode-symbolIcon-numberForeground, #b5cea8);
+}
+.UnicDB-console-syntax .UnicDB-sql-tok-comment {
+  color: var(--vscode-descriptionForeground, #6a9955);
+  font-style: italic;
+}
+.UnicDB-console-syntax .UnicDB-sql-tok-ident {
+  color: var(--vscode-editor-foreground, #d4d4d4);
+}
+.UnicDB-console-syntax .UnicDB-sql-tok-punct {
+  color: var(--vscode-symbolIcon-operatorForeground, #d4d4d4);
+}
+.UnicDB-console-ghost {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  white-space: pre;
+  color: var(--vscode-editorGhostText-foreground, #6a9955);
+  opacity: 0.75;
+  font-family: var(--vscode-editor-font-family, "SFMono-Regular", Consolas, "Liberation Mono", monospace);
+  font-size: var(--vscode-editor-font-size, 13px);
+  line-height: 1.55;
+}
+.UnicDB-console-ghost-mirror {
+  white-space: pre;
+  overflow-wrap: normal;
+  pointer-events: none;
 }
 .UnicDB-console-contextmenu {
   position: absolute;

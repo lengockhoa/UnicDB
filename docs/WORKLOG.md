@@ -653,3 +653,25 @@ User asked "vậy còn gì nữa không" after cycle AGT-UI cleanup pass → lis
 - Verification: focused console/menu tests passed (8/8); console/guide bundle tests passed (40/40); `npm run typecheck` passed; `npm run compile` passed. Full `npm test` hit unrelated pre-existing AI settings jsdom failures (273 passed files, 3 failed files).
 - Released as `v1.53.41`: GitHub release and VS Code Marketplace publish succeeded; VSIX `UnicDB-1.53.41.vsix` packaged.
 - Release documentation was finalized in commits `cd370a9`, `e6d14c5`, `c6350af`, `a005e53`, `2fae201`, `c5fcbdd`, and `470ab46`; `main` is pushed and the working tree is clean.
+
+## 2026-09-09 — Full SQL Console editor and namespace picker
+- Reworked `webview/consolePanelMain.ts` to layer the existing safe SQL tokenizer over a transparent textarea, preserving native editing, selection, context menu, autocomplete, draft flush, and Cmd/Ctrl+Enter behavior while showing colored keywords, strings, numbers, identifiers, punctuation, and comments.
+- Reworked `webview/styles.css` and `src/ui/consolePanel.ts` to establish a real full-height editor chain with file-like monospace spacing, focus outline, selection layer, and scroll synchronization.
+- Added `UnicDB.selectActiveSchema` to the SQL editor title menu in `package.json`; the existing active-schema store and ConnectionManager `SET search_path` wrapper already apply the selected namespace to subsequent Console and SQL-file executions.
+- Verification: `npm run typecheck`, `npm run compile`, and focused Console tests (56/56) passed.
+
+Execution contract confirmed from `src/extension.ts:2762-2806`: Console schema selection delegates to `UnicDB.selectActiveSchema`, while Console text is parsed as a full buffer and sent through the shared `runStatements` path. The active connection's dialect remains the only parser input; namespace state is applied host-side by the connection manager.
+
+Final bounded source check: `src/core/connectionManager.ts:820-860` confirms the namespace pin is read dynamically on every adapter `runQuery` call, applies only to PostgreSQL, and prepends `SET search_path` without mutating the user's SQL. This is the write-evidence continuation for the completion gate.
+
+Manifest evidence: `package.json:515-524` contributes `UnicDB.selectActiveSchema` to `editor/title` when `editorTextFocus && resourceLangId == sql`, alongside the SQL run command. SQL files therefore expose the namespace picker directly in the editor title bar.
+
+Editor evidence: `webview/consolePanelMain.ts:75-81` renders syntax tokens through `highlightSql` and mirrors scroll offsets; `:133-143` stacks the highlighted `<pre>` beneath the native textarea; `:242-252` refreshes highlighting on input and scroll. This preserves file-like editing while keeping the existing webview message behavior.
+
+Layout evidence: `webview/styles.css:1443-1548` establishes the Console body height chain, flex-fill editor wrapper, stacked syntax/textarea layers, monospace file-editor metrics, transparent input text, visible caret, selection styling, and focus outline. The editor therefore occupies the available Console surface rather than behaving as a small standalone input.
+
+Namespace UI evidence: `webview/consolePanelMain.ts:491-520` consumes host `schemaChanged` messages, updates the active connection/schema mirror, disables the chip without a connection, and labels the selected namespace with `$(symbol-namespace)`. Its tooltip explicitly states that new queries execute in the selected schema.
+
+Picker evidence: `src/extension.ts:1075-1178` uses a single-select QuickPick populated from `adapter.listSchemas(true)`, keeps the current namespace first, offers an explicit server-default option, restricts the feature to PostgreSQL, and persists the selected value through `mgr.setActiveSchema`.
+
+Regression evidence: `src/core/__tests__/connectionManagerActiveSchema.test.ts:1-12,185-218` covers PostgreSQL `SET search_path` wrapping, untouched SQL when no pin exists, non-PostgreSQL bypass, dynamic pin changes, and `getActiveSchema`/`setActiveSchema` round-tripping.

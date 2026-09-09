@@ -881,7 +881,7 @@ export class ConsolePanel {
   <link rel="stylesheet" href="${styleUri}" />
   <title>UnicDB Console</title>
 </head>
-<body class="UnicDB-form-body">
+<body class="UnicDB-console-body">
   <div id="UnicDB-root" class="UnicDB-console"></div>
   <script src="${scriptUri}"></script>
 </body>

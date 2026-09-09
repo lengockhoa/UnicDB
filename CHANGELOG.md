@@ -29,6 +29,14 @@
 - **`package.json`:** `UnicDB.ai.engine.default` updated to `"omp"`; copy
   refreshed to note the new default.
 
+## [1.53.42] — 2026-09-09
+
+- Summary: Full-height SQL Console editor with realtime syntax highlighting and namespace selection from SQL files
+- Files: webview/consolePanelMain.ts, webview/styles.css, src/ui/consolePanel.ts, src/extension.ts, src/core/connectionManager.ts, package.json, docs/MEMORY.md, docs/WORKLOG.md
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.42.vsix packaged
+
+---
+
 ## [1.53.41] — 2026-09-09
 
 - Summary: Add Schema Explorer SQL Console shortcuts for connections, schemas, categories, tables, and views.

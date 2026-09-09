@@ -1,3 +1,5 @@
+import { highlightSql } from "./sqlHighlight";
+
 // SQL Console v2 webview — TASK-AF-004 (cycle AF) + AIC-004 (cycle AIC).
 // Tab bar, Run / Run Selection / Explain (Analyze) / Format / Save toolbar,
 // ArrowUp/ArrowDown history recall, plan pane, context menu (TASK-002
@@ -70,6 +72,14 @@ let ghostMirror: HTMLDivElement | null = null;
 function post(msg: Msg): void { vscodeApi?.postMessage(msg); }
 function activeTab(): Tab { return tabs.find((t) => t.id === activeTabId) ?? tabs[0]; }
 function editor(): HTMLTextAreaElement | null { return document.getElementById("consoleSqlEditor") as HTMLTextAreaElement | null; }
+function syncSyntaxHighlight(): void {
+  const e = editor();
+  const layer = document.getElementById("consoleSyntaxHighlight");
+  if (!e || !layer) return;
+  layer.replaceChildren(highlightSql(e.value));
+  layer.scrollTop = e.scrollTop;
+  layer.scrollLeft = e.scrollLeft;
+}
 function syncBuffer(): void { const e = editor(); if (e) activeTab().buffer = e.value; }
 // ---- Context menu (TASK-002 regression surface) ----------------------------
 let contextMenu: HTMLDivElement | null = null;
@@ -121,6 +131,7 @@ function render(): void {
       <button id="consoleSchemaBtn" class="UnicDB-console-schema-chip" title="Active schema — click to change" aria-label="Active schema">$(symbol-namespace) default</button>
     </div>
     <div class="UnicDB-console-editor-wrap">
+      <pre id="consoleSyntaxHighlight" class="UnicDB-console-syntax" aria-hidden="true"></pre>
       <textarea id="consoleSqlEditor" class="UnicDB-console-editor" rows="12" placeholder="Type SQL here…" spellcheck="false"></textarea>
       <div id="consoleGhostOverlay" class="UnicDB-console-ghost" hidden aria-hidden="true"></div>
     </div>
@@ -129,6 +140,7 @@ function render(): void {
   </div>`;
   const e = editor();
   if (e) e.value = a?.buffer ?? "";
+  syncSyntaxHighlight();
   renderTabs();
   wireControls();
   const p = document.getElementById("consolePlanPane") as HTMLElement | null;
@@ -213,6 +225,7 @@ function wireControls(): void {
     // The explicit click IS the confirmation (PLAN §3) — no dialog.
     const ed = editor();
     if (ed) ed.value = "";
+    syncSyntaxHighlight();
     activeTab().buffer = "";
     dirtyByTab.delete(activeTabId);
     cancelPendingFlush();
@@ -228,13 +241,15 @@ function wireControls(): void {
   renderSchemaChip();
   e?.addEventListener("input", () => {
     activeTab().buffer = e.value;
-    // ARP-08: arm/re-arm the trailing-edge debounce (latest-wins) so the
-    // host learns of the edit even if this webview dies before switching.
+    syncSyntaxHighlight();
+    // The host reads the active schema dynamically for every run. The editor
+    // therefore needs no SQL rewrite when the namespace chip changes.
     dirtyByTab.add(activeTabId);
     if (flushTimer !== null) clearTimeout(flushTimer);
     flushTimer = setTimeout(flushPending, FLUSH_DEBOUNCE_MS);
     requestGhost();
   });
+  e?.addEventListener("scroll", syncSyntaxHighlight);
   e?.addEventListener("keydown", (ev: KeyboardEvent) => {
     if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") { ev.preventDefault(); hideContextMenu(); runCurrent(); return; }
     if (ev.key === "Tab" && ghostVisible && isGhostEligible(e)) {
@@ -261,6 +276,7 @@ function wireControls(): void {
         : (historyIndex - 1 + history.length) % history.length;
       e.value = history[historyIndex];
       activeTab().buffer = e.value;
+      syncSyntaxHighlight();
       // ARP-08: keyboard history recall mutates the buffer — arm the flush.
       dirtyByTab.add(activeTabId);
       if (flushTimer !== null) clearTimeout(flushTimer);
@@ -287,7 +303,7 @@ function renderHistory(): void {
     b.textContent = sql;
     b.addEventListener("click", () => {
       const ed = editor();
-      if (ed) { ed.value = sql; activeTab().buffer = sql; }
+      if (ed) { ed.value = sql; syncSyntaxHighlight(); activeTab().buffer = sql; }
       historyIndex = i;
       // ARP-08: a recall mutates the buffer — arm the flush for it too.
       dirtyByTab.add(activeTabId);
@@ -331,12 +347,11 @@ function acceptGhost(): void {
   if (!requestId || !suffix) return;
   // Mutate the local tab buffer (single source of truth) and let the
   // editor's input event re-fire, then post the accept for the host to
-  // apply the same change atomically.
   activeTab().buffer = activeTab().buffer + suffix;
   e.value = activeTab().buffer;
+  syncSyntaxHighlight();
   e.selectionStart = e.value.length;
   e.selectionEnd = e.value.length;
-  post({ type: "acceptAutocomplete", tabId: activeTabId, requestId, suffix });
   // ARP-08: the accepted suffix mutates the buffer — arm the flush so the
   // host persists the completed statement even if the webview dies first.
   dirtyByTab.add(activeTabId);
@@ -500,9 +515,9 @@ function renderSchemaChip(): void {
     : "$(symbol-namespace) no connection";
   btn.title = hasConn
     ? activeSchema
-      ? `Active schema: ${activeSchema} — click to change.`
-      : "No schema pinned — SQL runs with the server default search_path. Click to pin one."
-    : "No active connection. Open a connection to pin a schema.";
+      ? `Active namespace: ${activeSchema}. New queries execute in this schema.`
+      : "No namespace pinned — queries execute with the server default search_path. Click to choose one."
+    : "No active connection. Open a connection to choose a namespace.";
 }
 
 // ARP-08 — belt for abrupt webview death: flush the pending buffer when the
