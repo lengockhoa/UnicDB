@@ -29,6 +29,20 @@
 - **`package.json`:** `UnicDB.ai.engine.default` updated to `"omp"`; copy
   refreshed to note the new default.
 
+## [1.53.39] — 2026-09-09
+
+- Split the results toolbar into exactly two rows at the WHERE input: row 1 keeps the
+  icon controls and `tsv` format selector; row 2 contains WHERE/ORDER BY, re-run,
+  clear, export controls, active schema, and Search.
+- Added fixed `.UnicDB-toolbar-row` wrappers with nowrap/overflow clipping and kept
+  transaction controls in row 1 without changing existing handlers.
+- Verification: `npm run typecheck` ✅ · `npm run compile` ✅ · targeted toolbar and
+  requery tests ✅ · full `npm test` ⚠️ (pre-existing carried AI/settings failures;
+  4,088 passed, 12 failed, 4 skipped).
+- Package: `UnicDB-1.53.39.vsix` packaged successfully.
+
+---
+
 ## [1.53.38] — 2026-09-09
     - `.UnicDB-toolbar` switched from `flex-wrap: wrap` to
       `flex-wrap: nowrap` and now has `overflow: hidden` so any

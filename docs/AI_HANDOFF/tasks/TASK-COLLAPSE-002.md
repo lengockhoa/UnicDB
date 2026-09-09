@@ -5713,3 +5713,9 @@ The latest test that might've caused the error is "global + lite selects carry t
 
 Status: PASS
 Note: Toolbar-targeted tests pass (27/27), legacy requery regression passes (17/17), typecheck and compile pass. The full npm test gate still reports unrelated carried AI/settings/config failures; the one implementation-attributable stale P0 placement pin was updated in src/ui/__tests__/webviewRequery.test.ts and reverified green. The one-line webview/aiSettingsFormMain.ts brace repair is a carried compile fix from the checkpoint, outside the toolbar scope.
+
+## Reviewer Verdict
+REVIEWER_MODEL: unic-smart
+STATUS: APPROVED-WITH-MINOR
+VERDICT: approved_minor
+DETAILS: The stale P0 parent pin was rewritten to assert row-2 ownership and WHERE-first ordering, then verified by the 17-test webviewRequery suite. The toolbar implementation matches the exact two-row DOM/CSS contract; typecheck, compile, and targeted toolbar tests pass. Minor: the carried one-line brace repair in webview/aiSettingsFormMain.ts is outside the original toolbar target list and remains documented as such. Full-suite failures are unrelated carried AI/settings/config work, not this toolbar change.
