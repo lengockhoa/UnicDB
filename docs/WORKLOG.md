@@ -630,3 +630,13 @@ User asked "vậy còn gì nữa không" after cycle AGT-UI cleanup pass → lis
 **Verification at ship:** `npm run typecheck` exit 0 · `npm test` 4039 passed | 4 skipped | 0 failed (273 files) · `npm run compile` clean. No patch release per cycle plan.
 
 **HEAD:** `c95bbdc` (R5 closeout) on `main`. Total 5 commits in cycle: plan (64350cb) + 4 wave checkpoints + R5.
+
+---
+
+## 2026-09-09 — RES2ROW and AI engine routing release
+
+- Finalized `TASK-COLLAPSE-002` as `done` after `unic-smart` review (`approved_minor`); the results toolbar remains exactly two rows with WHERE-first row 2.
+- Fixed AI Chat routing to prefer persisted `AiSettings.engine`; selecting `omp` in AI Settings now reaches the OMP chat engine instead of the stale builtin fallback. Fresh-install fallback is consistently `omp` and unavailable OMP still falls back to builtin.
+- Verification: extension suite `184/184` passed; AI/settings/chat integration `250/250` passed; `npm run typecheck` and `npm run compile` passed.
+- Released `v1.53.40` to GitHub and VS Code Marketplace with `UnicDB-1.53.40.vsix`; `.vsix` inspection found no `.secrets` or `.pat` entries.
+- HEAD: `9ba4ac1` on `main`, pushed to `origin/main`; working tree clean.
