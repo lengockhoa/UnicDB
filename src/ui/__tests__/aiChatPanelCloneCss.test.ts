@@ -116,7 +116,13 @@ describe("TASK-AGTUI-001 - clone CSS tokens + chat-scoped layer", () => {
   it("non-chat selectors are untouched and every new rule is chat-scoped", () => {
     const toolbar = ruleBody(".UnicDB-toolbar");
     expect(toolbar, ".UnicDB-toolbar rule block must still exist").not.toBe("");
-    expect(/flex-wrap:\s*nowrap/i.test(toolbar), ".UnicDB-toolbar must pin flex-wrap:nowrap (TASK-COLLAPSE-001: single-row layout) so WHERE/ORDER BY inputs stay on the icon row").toBe(true);
+    // TASK-COLLAPSE-002 — the toolbar is a column of two `.UnicDB-toolbar-row`
+    // wrappers (row 2 starts at WHERE). The toolbar BLOCK itself must
+    // declare `flex-direction: column` and must NOT carry the old
+    // single-row `flex-wrap: nowrap`; that pin now lives on the row
+    // wrapper so each row can clip its own overflow.
+    expect(/flex-direction:\s*column/i.test(toolbar), ".UnicDB-toolbar must declare flex-direction:column (TASK-COLLAPSE-002: 2-row column contract)").toBe(true);
+    expect(/flex-wrap:\s*nowrap/i.test(toolbar), ".UnicDB-toolbar must NOT carry flex-wrap:nowrap (TASK-COLLAPSE-002: that pin lives on .UnicDB-toolbar-row now)").toBe(false);
 
     const tab = ruleBody(".UnicDB-tab");
     expect(tab, ".UnicDB-tab rule block must still exist").not.toBe("");
@@ -191,6 +197,10 @@ describe("TASK-AGTUI-001 - clone CSS tokens + chat-scoped layer", () => {
       // Higher specificity than either individual class — handles the
       // !important background conflict between orange-dirty and blue-range.
       ".UnicDB-cell-range.UnicDB-cell-dirty",
+      // TASK-COLLAPSE-002 — results-panel 2-row toolbar row wrapper.
+      // Lives on the results webview's `.UnicDB-toolbar`; not a chat-panel
+      // selector (the chat panel's own toolbar is scoped to `.UnicDB-chat`).
+      ".UnicDB-toolbar-row",
     ]);
 
     // Any selector first-token in the current file but absent from the

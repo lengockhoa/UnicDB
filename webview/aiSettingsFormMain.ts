@@ -171,6 +171,7 @@ function validateSettings(s: State["settings"]): string[] {
       }
     }
     // Cycle AIC: empty autocomplete is allowed (feature disabled), not invalid.
+  }
   if (
     s.engine !== "builtin" &&
     s.engine !== "omp" &&

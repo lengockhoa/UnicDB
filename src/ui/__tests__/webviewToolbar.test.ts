@@ -1,5 +1,5 @@
 // src/ui/__tests__/webviewToolbar.test.ts
-// TASK-603 — bundle-eval integration test for the icon toolbar + single-row
+// TASK-603 — bundle-eval integration test for the icon toolbar + 2-row
 // layout + requery-bar iconification.
 //
 // Loads dist/webview.js (built via `npm run compile`) into jsdom, stubs
@@ -8,11 +8,13 @@
 //   1. Every toolbar `.UnicDB-btn` renders an inline SVG icon with
 //      `stroke="currentColor"`, an empty text body, a non-empty `title`,
 //      and a non-empty `aria-label` (presentation only — handlers intact).
-//   2. The toolbar's children are flat (2 `.UnicDB-toolbar-sep` dividers),
-//      the search input is the last child, and group order is
-//      query│edit│export.
-//   3. styles.css pins `flex-wrap: nowrap` so wrapping is impossible by
-//      construction at any width (TASK-COLLAPSE-001 — single-row layout).
+//   2. The toolbar is split into exactly 2 `.UnicDB-toolbar-row` rows
+//      (TASK-COLLAPSE-002 — split results toolbar into 2 rows, WHERE first
+//      on row 2, Search last). Row 1 ends with `.UnicDB-export-format`,
+//      row 2 starts at WHERE.
+//   3. styles.css pins the toolbar to a column with two `.UnicDB-toolbar-row`
+//      wrappers (each `flex-wrap: nowrap` + `overflow: hidden`) so a third
+//      row can never appear (TASK-COLLAPSE-002 — 2-row column contract).
 //   4. Requery-bar `Re-Run` and `Clear` buttons are iconified; clicking
 //      them still posts the right messages / empties the inputs.
 //
@@ -178,18 +180,18 @@ function clickButton(b: HTMLButtonElement): void {
 }
 
 
-// Toolbar flat children we expect to find in order. Used to assert
-// query│edit│export grouping. TASK-RES-001 moved the WHERE / ORDER BY
-// inputs from the standalone requery bar (inside gridWrap) into the
-// toolbar row, slot: between export-format and export-header. The two
-// inputs are children of the toolbar — they are NOT icon buttons, so the
-// toolbar `.UnicDB-btn` census rises from 10 to 12 (Re-Run + Clear join
-// the existing 10 buttons). The ACTIVE-SCHEMA chip (`.UnicDB-schema-chip`)
-// rides in the toolbar too — it sits between the Clear button and the
-// export-header checkbox so it stays visible regardless of how the
-// requery-input wrap below behaves. The full toolbar DOM order pin lives
-// in the resolver's helper below.
-const EXPECTED_ORDER = [
+// Toolbar row children we expect to find in order. Used to assert
+// query│edit│export grouping on row 1 and WHERE-first/Search-last on
+// row 2 (TASK-COLLAPSE-002 — "Chia đôi cho tôi menu này. Từ Where là
+// đưa xuống dòng dưới. TÔi cần 2 dòng"). The toolbar is a column of
+// two `.UnicDB-toolbar-row` wrappers; each row is a nowrap flex line.
+// Row 1 owns the icon buttons + `.UnicDB-export-format` <select>. Row 2
+// owns the WHERE / ORDER BY inputs, Re-Run + Clear icon buttons, the
+// header checkbox, Copy, Export-to-file, the schema chip, and the Search
+// input as the LAST child. The toolbar `.UnicDB-btn` census is 12
+// (descendant selector crosses row wrappers). The full row order pins
+// live in the resolvers below.
+const EXPECTED_ORDER_ROW1 = [
   "UnicDB-btn-danger", // Cancel (query group)
   "UnicDB-btn", // Refresh (query)
   "UnicDB-toolbar-sep", // query│edit divider
@@ -200,16 +202,19 @@ const EXPECTED_ORDER = [
   "UnicDB-commit", // Commit
   "UnicDB-btn", // CSV toggle
   "UnicDB-toolbar-sep", // edit│export divider
-  "UnicDB-export-format",
-  "UnicDB-requery-where", // TASK-RES-001: WHERE input (toolbar slot)
-  "UnicDB-requery-order", // TASK-RES-001: ORDER BY input (toolbar slot)
+  "UnicDB-export-format", // row 1 ends here
+];
+
+const EXPECTED_ORDER_ROW2 = [
+  "UnicDB-requery-where", // TASK-COLLAPSE-002: WHERE first on row 2 (split starts here)
+  "UnicDB-requery-order",
   "UnicDB-btn", // TASK-RES-001: Re-Run icon button (toolbar slot)
   "UnicDB-btn", // TASK-RES-001: Clear icon button (toolbar slot)
   "UnicDB-export-header",
   "UnicDB-export-copy",
   "UnicDB-export-file",
-  "UnicDB-schema-chip", // ACTIVE-SCHEMA chip (toolbar slot)
-  "UnicDB-search-input",
+  "UnicDB-schema-chip", // ACTIVE-SCHEMA chip (row 2)
+  "UnicDB-search-input", // row 2 ends here (last child)
 ];
 
 // ---- tests ----------------------------------------------------------------
@@ -217,7 +222,7 @@ const EXPECTED_ORDER = [
 const itIfBundle = it.runIf(bundleSrc !== null);
 const describeIfBundle = describe.runIf(bundleSrc !== null);
 
-describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", () => {
+describeIfBundle("webview/main.ts icon toolbar + 2-row layout (TASK-603 / TASK-COLLAPSE-002)", () => {
   itIfBundle(
     "1. every toolbar .UnicDB-btn has an inline svg icon, currentColor stroke, non-empty aria-label, empty text",
     () => {
@@ -319,7 +324,7 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
   );
 
   itIfBundle(
-    "3. single flex row: flat children, 2 separators, search is last, query│edit│export order",
+    "3. 2-row split: toolbar has exactly 2 .UnicDB-toolbar-row children; row1 ends at export-format, row2 starts at WHERE, ends at search",
     () => {
       const { root } = loadBundle();
       dispatchState(threeRowsState());
@@ -327,70 +332,115 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
       const toolbar = root.querySelector(".UnicDB-toolbar") as HTMLDivElement;
       expect(toolbar).toBeTruthy();
 
-      const children = Array.from(toolbar.children) as HTMLElement[];
+      // TASK-COLLAPSE-002 — the toolbar is a column of EXACTLY 2 rows.
+      const rows = Array.from(toolbar.children) as HTMLElement[];
+      expect(rows.length, "toolbar must have exactly 2 .UnicDB-toolbar-row children").toBe(2);
+      expect(rows[0]!.classList.contains("UnicDB-toolbar-row")).toBe(true);
+      expect(rows[1]!.classList.contains("UnicDB-toolbar-row")).toBe(true);
 
-      // All children have equal offsetTop in jsdom (0), but the planner
-      // pinned the structural guarantee in the CSS test (#4). Here we
-      // assert the actual DOM contract: flat children, 2 separators,
-      // search last, and a stable order.
-      const seps = children.filter(
-        (c) => c.classList.contains("UnicDB-toolbar-sep"),
-      );
-      expect(seps.length, "expected exactly 2 .UnicDB-toolbar-sep dividers").toBe(2);
-
-      const last = children[children.length - 1];
-      expect(
-        last.classList.contains("UnicDB-search-input"),
-        "search input must be the last toolbar child",
-      ).toBe(true);
+      const row1 = rows[0]!;
+      const row2 = rows[1]!;
 
       // Order: walk the children and assert the sequence of class
       // predicates. Buttons that share .UnicDB-btn are matched in the
       // expected position; the seq uses the predicate string.
-      const got: string[] = children.map((c) => {
-        if (c.classList.contains("UnicDB-btn-danger")) return "UnicDB-btn-danger";
-        if (c.classList.contains("UnicDB-commit")) return "UnicDB-commit";
-        if (c.classList.contains("UnicDB-export-format")) return "UnicDB-export-format";
-        if (c.classList.contains("UnicDB-requery-where")) return "UnicDB-requery-where";
-        if (c.classList.contains("UnicDB-requery-order")) return "UnicDB-requery-order";
-        if (c.classList.contains("UnicDB-export-header")) return "UnicDB-export-header";
-        if (c.classList.contains("UnicDB-export-copy")) return "UnicDB-export-copy";
-        if (c.classList.contains("UnicDB-export-file")) return "UnicDB-export-file";
-        if (c.classList.contains("UnicDB-schema-chip")) return "UnicDB-schema-chip";
-        if (c.classList.contains("UnicDB-search-input")) return "UnicDB-search-input";
-        if (c.classList.contains("UnicDB-toolbar-sep")) return "UnicDB-toolbar-sep";
-        if (c.classList.contains("UnicDB-btn")) return "UnicDB-btn";
-        return c.className;
-      });
-      expect(got).toEqual(EXPECTED_ORDER);
+      const walk = (children: HTMLElement[]): string[] =>
+        children.map((c) => {
+          if (c.classList.contains("UnicDB-btn-danger")) return "UnicDB-btn-danger";
+          if (c.classList.contains("UnicDB-commit")) return "UnicDB-commit";
+          if (c.classList.contains("UnicDB-export-format")) return "UnicDB-export-format";
+          if (c.classList.contains("UnicDB-requery-where")) return "UnicDB-requery-where";
+          if (c.classList.contains("UnicDB-requery-order")) return "UnicDB-requery-order";
+          if (c.classList.contains("UnicDB-export-header")) return "UnicDB-export-header";
+          if (c.classList.contains("UnicDB-export-copy")) return "UnicDB-export-copy";
+          if (c.classList.contains("UnicDB-export-file")) return "UnicDB-export-file";
+          if (c.classList.contains("UnicDB-schema-chip")) return "UnicDB-schema-chip";
+          if (c.classList.contains("UnicDB-search-input")) return "UnicDB-search-input";
+          if (c.classList.contains("UnicDB-toolbar-sep")) return "UnicDB-toolbar-sep";
+          if (c.classList.contains("UnicDB-btn")) return "UnicDB-btn";
+          return c.className;
+        });
+
+      expect(walk(Array.from(row1.children) as HTMLElement[])).toEqual(EXPECTED_ORDER_ROW1);
+      expect(walk(Array.from(row2.children) as HTMLElement[])).toEqual(EXPECTED_ORDER_ROW2);
+
+      // Both seps live in ROW 1 (query│edit + edit│export dividers).
+      const seps = (Array.from(row1.children) as HTMLElement[]).filter(
+        (c) => c.classList.contains("UnicDB-toolbar-sep"),
+      );
+      expect(seps.length, "expected exactly 2 .UnicDB-toolbar-sep dividers, both in row 1").toBe(2);
+
+      // Search is the LAST child of row 2.
+      const last = row2.lastElementChild as HTMLElement | null;
+      expect(
+        last?.classList.contains("UnicDB-search-input"),
+        "search input must be the last row-2 child",
+      ).toBe(true);
     },
   );
 
   itIfBundle(
-    "4. styles.css pins .UnicDB-toolbar to flex-wrap: nowrap (TASK-COLLAPSE-001 — single-row layout, no jerky reflow)",
+    "4. styles.css pins .UnicDB-toolbar to a 2-row column (TASK-COLLAPSE-002): flex-direction:column, row wrapper pins flex-wrap:nowrap, requery inputs use flex:1 1 100%",
     () => {
       if (!stylesSrc) {
         throw new Error("webview/styles.css missing");
       }
-      // The rule MUST match. The toolbar is single-row by construction at
-      // any viewport width — WHERE / ORDER BY inputs share the icon row
-      // with sensible `min-width` floors so they cannot disappear.
-      const re = /\.UnicDB-toolbar\s*\{[^}]*flex-wrap:\s*nowrap/;
-      expect(re.test(stylesSrc), "styles.css must pin .UnicDB-toolbar flex-wrap: nowrap").toBe(
-        true,
-      );
-      // The requery inputs must NOT use `flex: 1 1 100%` (which would claim
-      // a full row); they should share the row with a flexible basis.
-      const whereRe = /\.UnicDB-requery-input\.UnicDB-requery-where\s*\{[^}]*flex:\s*1\s+1\s+(\d+)px/;
-      const orderRe = /\.UnicDB-requery-input\.UnicDB-requery-order\s*\{[^}]*flex:\s*1\s+1\s+(\d+)px/;
+      // TASK-COLLAPSE-002 — the toolbar is a column of two nowrap rows,
+      // so the BLOCK rule must declare `flex-direction: column` and must
+      // NOT carry the old single-row `flex-wrap: nowrap`.
+      const toolbarBlockRe = /\.UnicDB-toolbar\s*\{([^}]*)\}/;
+      const toolbarBlock = toolbarBlockRe.exec(stylesSrc);
+      expect(toolbarBlock, "could not locate .UnicDB-toolbar { ... } block").toBeTruthy();
+      const toolbarBody = toolbarBlock![1]!;
+      expect(
+        /flex-direction\s*:\s*column/i.test(toolbarBody),
+        `.UnicDB-toolbar { ... } must declare flex-direction:column; body was: ${toolbarBody.trim()}`,
+      ).toBe(true);
+      expect(
+        /flex-wrap\s*:\s*nowrap/i.test(toolbarBody),
+        `.UnicDB-toolbar { ... } must NOT carry flex-wrap:nowrap (TASK-COLLAPSE-002 splits into 2 rows); body was: ${toolbarBody.trim()}`,
+      ).toBe(false);
+
+      // Each row wrapper pins `flex-wrap: nowrap` + `overflow: hidden`
+      // so a third row can never appear and narrow widths clip inside
+      // the row instead of growing a scrollbar.
+      const rowBlockRe = /\.UnicDB-toolbar-row\s*\{([^}]*)\}/;
+      const rowBlock = rowBlockRe.exec(stylesSrc);
+      expect(rowBlock, "could not locate .UnicDB-toolbar-row { ... } block").toBeTruthy();
+      const rowBody = rowBlock![1]!;
+      expect(
+        /flex-wrap\s*:\s*nowrap/i.test(rowBody),
+        `.UnicDB-toolbar-row { ... } must pin flex-wrap:nowrap; body was: ${rowBody.trim()}`,
+      ).toBe(true);
+      expect(
+        /overflow\s*:\s*hidden/i.test(rowBody),
+        `.UnicDB-toolbar-row { ... } must clip overflow:hidden; body was: ${rowBody.trim()}`,
+      ).toBe(true);
+
+      // The requery inputs now SHARE the leftover space inside the
+      // nowrap row-2 wrapper with `flex: 1 1 100%` + `min-width: 0`
+      // (the old px-based `flex: 1 1 140px` is the FORBIDDEN shape).
+      const whereRe = /\.UnicDB-requery-input\.UnicDB-requery-where\s*\{[^}]*flex:\s*1\s+1\s+100\s*%/;
+      const orderRe = /\.UnicDB-requery-input\.UnicDB-requery-order\s*\{[^}]*flex:\s*1\s+1\s+100\s*%/;
       expect(
         whereRe.test(stylesSrc),
-        "styles.css must give .UnicDB-requery-where a px-based flex basis (not 100%)",
+        "styles.css must give .UnicDB-requery-where flex: 1 1 100% (TASK-COLLAPSE-002 row-2 sizing)",
       ).toBe(true);
       expect(
         orderRe.test(stylesSrc),
-        "styles.css must give .UnicDB-requery-order a px-based flex basis (not 100%)",
+        "styles.css must give .UnicDB-requery-order flex: 1 1 100% (TASK-COLLAPSE-002 row-2 sizing)",
       ).toBe(true);
+      const whereNoPx = /\.UnicDB-requery-input\.UnicDB-requery-where\s*\{[^}]*flex:\s*1\s+1\s+140px/;
+      const orderNoPx = /\.UnicDB-requery-input\.UnicDB-requery-order\s*\{[^}]*flex:\s*1\s+1\s+140px/;
+      expect(
+        whereNoPx.test(stylesSrc),
+        "styles.css must NOT use the old single-row flex: 1 1 140px on .UnicDB-requery-where",
+      ).toBe(false);
+      expect(
+        orderNoPx.test(stylesSrc),
+        "styles.css must NOT use the old single-row flex: 1 1 140px on .UnicDB-requery-order",
+      ).toBe(false);
+
       // Buttons must size SVGs at 16×16 to keep the compact 24–26px height.
       expect(
         /\.UnicDB-btn[^}]*\.UnicDB-btn\s+svg|\.UnicDB-btn\s+svg/.test(stylesSrc),

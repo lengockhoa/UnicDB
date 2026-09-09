@@ -684,6 +684,17 @@ function simulateCellEdit(
 interface PersistentDom {
   header: HTMLDivElement;
   toolbar: HTMLDivElement;
+  /** TASK-COLLAPSE-002 — row 1 of the 2-row column toolbar. Owns the
+   *  icon buttons (cancel / refresh / add-row / delete-row / undo /
+   *  redo / commit / csv-toggle) + the two `.UnicDB-toolbar-sep`
+   *  dividers + the `.UnicDB-export-format` <select>. The manual
+   *  transaction `transactionControls` wrapper inserts here too. */
+  toolbarRow1: HTMLDivElement;
+  /** TASK-COLLAPSE-002 — row 2 of the 2-row column toolbar. Owns
+   *  WHERE / ORDER BY inputs, Re-Run + Clear icon buttons, the
+   *  export header checkbox, Copy + Export-to-file, the ACTIVE-SCHEMA
+   *  chip, and the Search input as the LAST child. */
+  toolbarRow2: HTMLDivElement;
   cancelBtn: HTMLButtonElement;
   refreshBtn: HTMLButtonElement;
   /** ACTIVE-SCHEMA chip — toolbar button mirroring the status-bar /
@@ -815,7 +826,13 @@ function render(): void {
   // mode actually opens a transaction. Several consumers inspect toolbar
   // children, and hidden controls should not change their default layout.
   if (transactionOpen && !dom.transactionControls.parentElement) {
-    dom.toolbar.insertBefore(dom.transactionControls, dom.csvToggleBtn);
+    // TASK-COLLAPSE-002 — csvToggleBtn lives inside row 1 (the toolbar
+    // is a column of two `.UnicDB-toolbar-row` wrappers), so the
+    // insertBefore anchor must also live in row 1. Inserting on
+    // `dom.toolbar` directly would throw NotFoundError because the
+    // reference child (`csvToggleBtn`) is no longer a direct child of
+    // the toolbar — it lives one level down.
+    dom.toolbarRow1.insertBefore(dom.transactionControls, dom.csvToggleBtn);
   } else if (!transactionOpen && dom.transactionControls.parentElement) {
     dom.transactionControls.remove();
   }
@@ -936,6 +953,17 @@ function buildPersistentDom(): PersistentDom {
   const toolbar = document.createElement("div");
   toolbar.className = "UnicDB-toolbar";
 
+  // TASK-COLLAPSE-002 — the toolbar is a column of EXACTLY two
+  // `.UnicDB-toolbar-row` wrapper divs. Row 1 owns the icon buttons +
+  // the `.UnicDB-export-format` <select>; row 2 owns the WHERE/ORDER BY
+  // inputs, Re-Run/Clear, header checkbox, Copy, Export-to-file, schema
+  // chip, and Search (last). The split point is exactly WHERE.
+  const toolbarRow1 = document.createElement("div");
+  toolbarRow1.className = "UnicDB-toolbar-row";
+  const toolbarRow2 = document.createElement("div");
+  toolbarRow2.className = "UnicDB-toolbar-row";
+  toolbar.append(toolbarRow1, toolbarRow2);
+
   // TASK-603 — all toolbar buttons are icon buttons (16×16 inline SVG,
   // currentColor stroke, title + aria-label, no visible text). Two
   // `.UnicDB-toolbar-sep` dividers mark the query│edit│export groups. The
@@ -949,7 +977,7 @@ function buildPersistentDom(): PersistentDom {
     ICON_CANCEL,
     () => postToHost({ type: "cancel" }),
   );
-  toolbar.appendChild(cancelBtn);
+  toolbarRow1.appendChild(cancelBtn);
 
   const refreshBtn = makeIconButton(
     "",
@@ -957,9 +985,9 @@ function buildPersistentDom(): PersistentDom {
     ICON_REFRESH,
     () => onRefreshClick(),
   );
-  toolbar.appendChild(refreshBtn);
+  toolbarRow1.appendChild(refreshBtn);
 
-  toolbar.appendChild(makeToolbarSep());
+  toolbarRow1.appendChild(makeToolbarSep());
 
   // Edit group
   const addRowBtn = makeIconButton(
@@ -968,7 +996,7 @@ function buildPersistentDom(): PersistentDom {
     ICON_ADD_ROW,
     () => onAddRowClick(),
   );
-  toolbar.appendChild(addRowBtn);
+  toolbarRow1.appendChild(addRowBtn);
 
   const deleteRowBtn = makeIconButton(
     "",
@@ -976,7 +1004,7 @@ function buildPersistentDom(): PersistentDom {
     ICON_DELETE_ROW,
     () => onDeleteRowClick(),
   );
-  toolbar.appendChild(deleteRowBtn);
+  toolbarRow1.appendChild(deleteRowBtn);
 
   const undoBtn = makeIconButton(
     "",
@@ -985,7 +1013,7 @@ function buildPersistentDom(): PersistentDom {
     () => onUndoClick(),
   );
   undoBtn.disabled = true;
-  toolbar.appendChild(undoBtn);
+  toolbarRow1.appendChild(undoBtn);
   // TASK-008 — Redo button next to Undo (Excel toolbar order). Initially
   // disabled — `refreshUndoRedoButtons` keeps it in sync with the stack.
   const redoBtn = makeIconButton(
@@ -995,7 +1023,7 @@ function buildPersistentDom(): PersistentDom {
     () => onRedoClick(),
   );
   redoBtn.disabled = true;
-  toolbar.appendChild(redoBtn);
+  toolbarRow1.appendChild(redoBtn);
 
   // TASK-503 — Commit button (and Cmd/Ctrl+Enter keyboard shortcut).
   // Posts a single saveEdits batch with every dirty cell. No-op when the
@@ -1007,7 +1035,7 @@ function buildPersistentDom(): PersistentDom {
     ICON_COMMIT,
     () => onCommitClick(),
   );
-  toolbar.appendChild(commitBtn);
+  toolbarRow1.appendChild(commitBtn);
 
   // TASK-009 — controls are kept in an initially hidden wrapper so older
   // connections retain the exact toolbar structure until the host reports an
@@ -1035,9 +1063,9 @@ function buildPersistentDom(): PersistentDom {
     ICON_CSV,
     () => onCsvToggleClick(),
   );
-  toolbar.appendChild(csvToggleBtn);
+  toolbarRow1.appendChild(csvToggleBtn);
 
-  toolbar.appendChild(makeToolbarSep());
+  toolbarRow1.appendChild(makeToolbarSep());
 
   // Export group (format <select> + Header checkbox + Copy + Export-to-file)
   const exportFormat = document.createElement("select");
@@ -1059,17 +1087,17 @@ function buildPersistentDom(): PersistentDom {
   }
   exportFormat.value = "tsv";
   exportFormat.title = "Export format";
-  toolbar.appendChild(exportFormat);
+  toolbarRow1.appendChild(exportFormat);
 
-  // TASK-RES-001 — WHERE / ORDER BY inputs (plus Re-Run + Clear buttons)
-  // moved from the standalone requery bar (which used to live inside
-  // gridWrap) into the toolbar row, slot: after the export format
-  // <select> and before the header checkbox. Labels are dropped — the
-  // placeholder + aria-label carry the meaning since the toolbar has
-  // no room for text labels. Enter key on either input posts a requery
-  // exactly once (debounce-free; IME composition guard). The four
-  // elements keep their original class names so webviewPostCommit +
-  // webviewRequery selectors remain valid.
+  // TASK-RES-001 / TASK-COLLAPSE-002 — WHERE / ORDER BY inputs (plus
+  // Re-Run + Clear buttons) live on ROW 2 of the 2-row toolbar. The
+  // split starts at WHERE — exactly where the user asked for ("Từ Where
+  // là đưa xuống dòng dưới"). Labels are dropped — the placeholder +
+  // aria-label carry the meaning since the toolbar has no room for text
+  // labels. Enter key on either input posts a requery exactly once
+  // (debounce-free; IME composition guard). The four elements keep
+  // their original class names so webviewPostCommit + webviewRequery
+  // selectors remain valid.
   const requeryWhere = document.createElement("input");
   requeryWhere.type = "text";
   requeryWhere.placeholder = "WHERE …";
@@ -1080,7 +1108,7 @@ function buildPersistentDom(): PersistentDom {
     ev.preventDefault();
     onRequeryClick();
   });
-  toolbar.appendChild(requeryWhere);
+  toolbarRow2.appendChild(requeryWhere);
 
   const requeryOrderBy = document.createElement("input");
   requeryOrderBy.type = "text";
@@ -1092,7 +1120,7 @@ function buildPersistentDom(): PersistentDom {
     ev.preventDefault();
     onRequeryClick();
   });
-  toolbar.appendChild(requeryOrderBy);
+  toolbarRow2.appendChild(requeryOrderBy);
 
   const requeryRunBtn = makeIconButton(
     "UnicDB-requery-run",
@@ -1100,7 +1128,7 @@ function buildPersistentDom(): PersistentDom {
     ICON_REQUERY,
     () => onRequeryClick(),
   );
-  toolbar.appendChild(requeryRunBtn);
+  toolbarRow2.appendChild(requeryRunBtn);
 
   const requeryClearBtn = makeIconButton(
     "UnicDB-requery-clear",
@@ -1111,13 +1139,13 @@ function buildPersistentDom(): PersistentDom {
       requeryOrderBy.value = "";
     },
   );
-  toolbar.appendChild(requeryClearBtn);
+  toolbarRow2.appendChild(requeryClearBtn);
 
   const exportHeader = document.createElement("input");
   exportHeader.type = "checkbox";
   exportHeader.className = "UnicDB-export-header";
   exportHeader.title = "Include header row (TSV/CSV/XML/JSON only)";
-  toolbar.appendChild(exportHeader);
+  toolbarRow2.appendChild(exportHeader);
 
   const exportCopyBtn = makeIconButton(
     "UnicDB-export-copy",
@@ -1125,7 +1153,7 @@ function buildPersistentDom(): PersistentDom {
     ICON_COPY,
     () => onExportCopyClick(),
   );
-  toolbar.appendChild(exportCopyBtn);
+  toolbarRow2.appendChild(exportCopyBtn);
 
   const exportFileBtn = makeIconButton(
     "UnicDB-export-file",
@@ -1133,9 +1161,9 @@ function buildPersistentDom(): PersistentDom {
     ICON_EXPORT_FILE,
     () => onExportFileClick(),
   );
-  toolbar.appendChild(exportFileBtn);
+  toolbarRow2.appendChild(exportFileBtn);
 
-  // searchInput is appended below (last child).
+  // searchInput is appended below (last child of row 2).
 
   // Toggle Header checkbox enable/disable based on format — SQL modes have
   // a fixed structure (INSERT column list, UPDATE SET list, WHERE groups)
@@ -1175,7 +1203,7 @@ function buildPersistentDom(): PersistentDom {
     if (schemaChip.disabled) return;
     postToHost({ type: "pickActiveSchema" });
   });
-  toolbar.appendChild(schemaChip);
+  toolbarRow2.appendChild(schemaChip);
   const searchInput = document.createElement("input");
   searchInput.type = "text";
   searchInput.placeholder = "Search…";
@@ -1200,7 +1228,7 @@ function buildPersistentDom(): PersistentDom {
       updateFooterNow();
     }
   });
-  toolbar.appendChild(searchInput);
+  toolbarRow2.appendChild(searchInput);
 
   const tabs = document.createElement("div");
   tabs.className = "UnicDB-tabs";
@@ -1453,6 +1481,8 @@ function buildPersistentDom(): PersistentDom {
   return {
     header,
     toolbar,
+    toolbarRow1,
+    toolbarRow2,
     cancelBtn,
     refreshBtn,
     addRowBtn,

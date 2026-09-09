@@ -170,14 +170,16 @@ function readRuleBody(src: string, selector: string): string {
 // the same flex row. The buttons are .UnicDB-btn (height from the shared
 // rule) and need no extra height override.
 //
-// TASK-RES-002 / TASK-COLLAPSE-001: each input now SHARES the icon row
-// instead of claiming its own row (`flex: 1 1 140px; min-width: 80px`)
-// — they shrink with the viewport (down to 80px) but never disappear.
-// This is the single-row contract; the toolbar wrapper itself is
-// `flex-wrap: nowrap` (see webviewToolbar.test.ts test #4) so wrapping
-// is impossible by construction.
+// TASK-COLLAPSE-002: the toolbar is now a column of two `.UnicDB-toolbar-row`
+// wrappers, each `flex-wrap: nowrap` + `overflow: hidden` so a third row
+// can never appear. The WHERE / ORDER BY inputs live on row 2 and SHARE
+// the leftover horizontal space inside that nowrap row via
+// `flex: 1 1 100%; min-width: 0` — `flex-basis: 100%` + `flex-shrink: 1`
+// just lets them split whatever space the fixed-size buttons leave.
+// The old single-row contract (`flex: 1 1 140px; min-width: 80px`) is
+// FORBIDDEN.
 
-describe("TASK-RES-001 / TASK-COLLAPSE-001 — requery input CSS alignment (toolbar slot)", () => {
+describe("TASK-RES-001 / TASK-COLLAPSE-002 — requery input CSS alignment (row-2 toolbar slot)", () => {
   it(".UnicDB-requery-input sets height:24px + box-sizing:border-box", () => {
     const body = readRuleBody(stylesSrc, ".UnicDB-requery-input");
     expect(body, "rule body for .UnicDB-requery-input").not.toBe("");
@@ -185,24 +187,26 @@ describe("TASK-RES-001 / TASK-COLLAPSE-001 — requery input CSS alignment (tool
     expect(body).toMatch(/box-sizing\s*:\s*border-box/);
   });
 
-  it(".UnicDB-requery-input.UnicDB-requery-where shares the toolbar row (flex 1 1 140px + min-width 80px, NOT 100%)", () => {
+  it(".UnicDB-requery-input.UnicDB-requery-where fills row 2 (flex 1 1 100% + min-width 0, NOT 140px/80px)", () => {
     const body = readRuleBody(stylesSrc, ".UnicDB-requery-input.UnicDB-requery-where");
     expect(body, "rule body for .UnicDB-requery-input.UnicDB-requery-where").not.toBe("");
-    expect(body).toMatch(/flex\s*:\s*1\s+1\s+140px/);
-    expect(body).toMatch(/min-width\s*:\s*80px/);
-    // Old TASK-RES-002 contract was `flex: 1 1 100%` (full row); that
-    // would shove WHERE onto its own line on narrow viewports and make
-    // the toolbar reflow — exactly the "jerky" behavior TASK-COLLAPSE-001
-    // removes. The new contract must NOT use 100% anywhere.
-    expect(body).not.toMatch(/flex\s*:\s*1\s+1\s+100\s*%/);
+    expect(body).toMatch(/flex\s*:\s*1\s+1\s+100\s*%/);
+    expect(body).toMatch(/min-width\s*:\s*0/);
+    // The OLD single-row TASK-RES-002 / TASK-COLLAPSE-001 contract used
+    // px-based sizes (`flex: 1 1 140px; min-width: 80px`); under the
+    // 2-row layout those px floors would clip Re-Run / Clear on
+    // moderate widths. The new contract must NOT use the px shapes.
+    expect(body).not.toMatch(/flex\s*:\s*1\s+1\s+140px/);
+    expect(body).not.toMatch(/min-width\s*:\s*80px/);
   });
 
-  it(".UnicDB-requery-input.UnicDB-requery-order shares the toolbar row (flex 1 1 140px + min-width 80px, NOT 100%)", () => {
+  it(".UnicDB-requery-input.UnicDB-requery-order fills row 2 (flex 1 1 100% + min-width 0, NOT 140px/80px)", () => {
     const body = readRuleBody(stylesSrc, ".UnicDB-requery-input.UnicDB-requery-order");
     expect(body, "rule body for .UnicDB-requery-input.UnicDB-requery-order").not.toBe("");
-    expect(body).toMatch(/flex\s*:\s*1\s+1\s+140px/);
-    expect(body).toMatch(/min-width\s*:\s*80px/);
-    expect(body).not.toMatch(/flex\s*:\s*1\s+1\s+100\s*%/);
+    expect(body).toMatch(/flex\s*:\s*1\s+1\s+100\s*%/);
+    expect(body).toMatch(/min-width\s*:\s*0/);
+    expect(body).not.toMatch(/flex\s*:\s*1\s+1\s+140px/);
+    expect(body).not.toMatch(/min-width\s*:\s*80px/);
   });
 
   it("button.UnicDB-requery-run + button.UnicDB-requery-clear set flex:0 0 auto", () => {

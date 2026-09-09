@@ -24,28 +24,35 @@
   margin-bottom: 8px;
 }
 
-/* --- Toolbar (TASK-603 + TASK-COLLAPSE-001: single-row layout) ---
- * `flex-wrap: nowrap` keeps the entire toolbar (icon buttons + WHERE /
- * ORDER BY inputs + export controls + schema chip + Search) on a SINGLE
- * row at every viewport width — wrapping is impossible by construction.
- * `overflow: hidden` clips any horizontal overflow from the inputs
- * rather than spawning a scrollbar (the old `wrap` behavior used to
- * drop WHERE / ORDER BY onto their own lines on narrow widths, which
- * users read as "jerky" because the toolbar kept reflowing). Icon
- * buttons + schema chip + export select keep `flex-shrink: 0` so they
- * stay visible; the requery inputs + Search input share the leftover
- * space with sensible `flex: 1 1 …` + `min-width` floors so they cannot
- * disappear entirely on a tiny viewport. The wrap assertion is pinned
- * structurally (test 4 reads this regex from the source).
+/* --- Toolbar (TASK-603 + TASK-COLLAPSE-002: 2-row column layout) ---
+ * The user asked "Chia đôi cho tôi menu này. Từ Where là đưa xuống dòng
+ * dưới. TÔi cần 2 dòng" — the toolbar is a COLUMN of exactly two
+ * `.UnicDB-toolbar-row` wrapper divs. The toolbar block itself drops
+ * `flex-wrap: nowrap` (that pin moves to each row wrapper); `flex-direction:
+ * column` + `gap: 4px` + `overflow: hidden` clip any horizontal bleed
+ * between rows and forbid a third line from appearing. Each row wrapper
+ * pins `flex-wrap: nowrap` + `overflow: hidden` so narrow widths clip
+ * WITHIN a row instead of spawning a scrollbar or a third line.
+ * Row 1 = cancel / refresh / sep / add-row / delete-row / undo / redo /
+ * commit / csv-toggle / sep / tsv select. Row 2 = WHERE … / ORDER BY … /
+ * Re-Run / Clear / header checkbox / Copy / Export-file / schema chip /
+ * Search (last). The split point is exactly WHERE — row 2 starts there.
  */
 .UnicDB-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.UnicDB-toolbar-row {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
   min-width: 0;
   overflow: hidden;
-  margin-bottom: 8px;
 }
 
 .UnicDB-btn {
@@ -1347,23 +1354,24 @@
   opacity: 0.5;
   cursor: default;
 }
-/* TASK-RES-002 / TASK-COLLAPSE-001: requery inputs SHARE the icon row
- * instead of stacking onto their own lines. `flex: 1 1 140px` gives
- * each input a 140px starting size, lets it grow into the leftover
- * space (the WHERE / ORDER BY inputs ARE the wide flexible elements in
- * this toolbar — they're where the user reads & writes their filter
- * fragment), and lets it shrink down to `min-width: 80px` so a tiny
- * viewport cannot push the icon buttons off-row. `min-width: 0` lets
- * the input shrink below its content width (placeholder text doesn't
- * dictate minimum size). `box-sizing: border-box` (from the base rule
- * above) keeps the 24px height with the border included. */
+/* TASK-RES-002 / TASK-COLLAPSE-002: requery inputs SHARE row 2 of the
+ * 2-row column toolbar. Inside the nowrap row they use `flex: 1 1 100%`
+ * + `min-width: 0` — flex-basis 100% with `flex-shrink: 1` and
+ * `min-width: 0` lets the two inputs split whatever horizontal space
+ * the fixed-size Re-Run / Clear / header / Copy / Export-file / schema
+ * chip / Search elements leave behind. `min-width: 0` lets the inputs
+ * shrink below their content width (placeholder text doesn't dictate
+ * minimum size). `box-sizing: border-box` (from the base rule above)
+ * keeps the 24px height with the border included. The old single-row
+ * `flex: 1 1 140px; min-width: 80px` shape is FORBIDDEN — the px-based
+ * floors would clip Re-Run / Clear on moderate widths. */
 .UnicDB-requery-input.UnicDB-requery-where {
-  flex: 1 1 140px;
-  min-width: 80px;
+  flex: 1 1 100%;
+  min-width: 0;
 }
 .UnicDB-requery-input.UnicDB-requery-order {
-  flex: 1 1 140px;
-  min-width: 80px;
+  flex: 1 1 100%;
+  min-width: 0;
 }
 button.UnicDB-requery-run,
 button.UnicDB-requery-clear {
