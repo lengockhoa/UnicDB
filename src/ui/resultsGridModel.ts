@@ -1294,6 +1294,127 @@ export function applyPasteToDirty(
   }
 }
 
+// ---- Cell range selection (TASK-RANGE-001) --------------------------------
+//
+// Spreadsheet-style rectangle selection: the user clicks (or shift-clicks) a
+// start cell, drags (or arrow-keys) to an end cell, and gets a single
+// rectangular range {startRow, startCol, endRow, endCol} (inclusive on both
+// ends). The range may span a single cell, a row/column strip, or a multi-row
+// × multi-column block.
+//
+// The pure helpers below operate on the FULL rows array (server-truth), not
+// the displayed slice — the webview layer is responsible for translating
+// between AG Grid display row indices and the underlying __rowId space
+// (stable identity survives sort/filter/reorder). Coordinates here are
+// expected to be in the same row/col namespace the caller already uses for
+// `applyPasteToDirty` (i.e. row = rowId, col = currentSpecs index).
+//
+// Copy semantics: the range is COPIED AS-IS — every cell inside the rectangle
+// becomes a cell in the output TSV, even blank/null ones. We do NOT pad or
+// trim. This matches Excel/Google Sheets: select 3×4 → get 3 rows × 4 cols.
+//
+// Paste semantics: the clipboard rows/cols are TILED into the selected
+// rectangle, starting from the range's top-left corner. If the clipboard is
+// smaller than the range (1×1 clipboard → 3×4 range), cells repeat. If the
+// clipboard is larger than the range (3×3 clipboard → 2×2 range), the
+// over-paste is clipped to the range bounds. Either direction is silent —
+// no throw, no dialog, matching the prior single-anchor paste behavior.
+
+export interface CellRange {
+  startRow: number;
+  startCol: number;
+  endRow: number;
+  endCol: number;
+}
+
+/** Normalize a range so start ≤ end on both axes. Negative coords are
+ *  clamped to 0 — callers may pass an in-progress (drag-start) range with a
+ *  "before the grid" pointer, and we still want a usable shape. */
+export function normalizeCellRange(range: CellRange): CellRange {
+  const startRow = Math.max(0, Math.min(range.startRow, range.endRow));
+  const endRow = Math.max(0, Math.max(range.startRow, range.endRow));
+  const startCol = Math.max(0, Math.min(range.startCol, range.endCol));
+  const endCol = Math.max(0, Math.max(range.startCol, range.endCol));
+  return { startRow, startCol, endRow, endCol };
+}
+
+/** Number of cells in a normalized range, inclusive on both ends. */
+export function cellRangeSize(range: CellRange): { rows: number; cols: number } {
+  const n = normalizeCellRange(range);
+  return { rows: n.endRow - n.startRow + 1, cols: n.endCol - n.startCol + 1 };
+}
+
+/** Build TSV text from the cells inside `range`. `rows` is the full data
+ *  matrix (server-truth rows, NOT filtered/sorted display slice). Out-of-
+ *  range row indices (range expands past rows.length) become empty cells.
+ *  Per-cell conversion reuses `formatCell` so the clipboard matches what the
+ *  user sees on screen (bigint → string, Date → ISO, null → ""). */
+export function selectionRangeToText(
+  rows: unknown[][],
+  range: CellRange,
+): string {
+  const { startRow, startCol, endRow, endCol } = normalizeCellRange(range);
+  const out: string[] = [];
+  for (let r = startRow; r <= endRow; r++) {
+    const row = rows[r];
+    const cells: string[] = [];
+    for (let c = startCol; c <= endCol; c++) {
+      if (row === undefined) {
+        cells.push("");
+      } else {
+        const v = row[c];
+        cells.push(v === null || v === undefined ? "" : formatCell(v));
+      }
+    }
+    out.push(cells.join("\t"));
+  }
+  return out.join("\n");
+}
+
+/**
+ * Apply a parsed TSV paste into a normalized range, starting at the top-left
+ * of the range. The clipboard rows/cols are TILED — if the clipboard is
+ * smaller than the range, values repeat to fill it; if larger, the over-
+ * paste is clipped. Out-of-grid cells (row / col out of bounds) are
+ * silently dropped, matching the single-anchor paste behavior.
+ *
+ * `targetRowIds` semantics carry over from `applyPasteToDirty`: when the
+ * caller has already resolved the row ids for the displayed anchor row
+ * (display-sequence iteration in the webview), pass them so we skip the
+ * dense `rangeStartRow + r` arithmetic. Without them, the legacy formula
+ * is used and clipped against `rowCount`.
+ */
+export function applyRangePasteToDirty(
+  state: EditState,
+  parsed: string[][],
+  range: CellRange,
+  colCount: number,
+  rowCount: number,
+  targetRowIds?: number[],
+): void {
+  const { startRow, startCol, endRow, endCol } = normalizeCellRange(range);
+  if (parsed.length === 0) return;
+  const rangeRows = endRow - startRow + 1;
+  const rangeCols = endCol - startCol + 1;
+  const n = targetRowIds ? targetRowIds.length : rowCount;
+  // The range may exceed the loaded window — clip to rowCount so we never
+  // stamp into a non-existent row in the dense path.
+  const effectiveRows = Math.min(rangeRows, n);
+  for (let r = 0; r < effectiveRows; r++) {
+    const targetRow = targetRowIds ? targetRowIds[r] : startRow + r;
+    if (targetRow < 0) continue;
+    if (!targetRowIds && targetRow >= rowCount) continue;
+    // Tile source rows: clipboard row `parsed[r % parsed.length]`.
+    const srcRow = parsed[r % parsed.length];
+    for (let c = 0; c < rangeCols; c++) {
+      const targetCol = startCol + c;
+      if (targetCol < 0 || targetCol >= colCount) continue;
+      const srcCol = c % (srcRow.length || 1);
+      state.markDirty(targetRow, targetCol, srcRow[srcCol] ?? "", undefined);
+    }
+  }
+}
+
 // ---- composeRequery (TASK-504) --------------------------------------------
 //
 // Pure-logic helper used by the webview's WHERE/ORDER BY "Re-Run" bar. The

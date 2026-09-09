@@ -183,6 +183,14 @@ describe("TASK-AGTUI-001 - clone CSS tokens + chat-scoped layer", () => {
     const ALLOWED_OFF_CHAT = new Set([
       ".UnicDB-schema-chip",
       ".UnicDB-console-schema-chip",
+      // TASK-RANGE-001 — cell-range selection highlight for the results
+      // grid (Excel-style rectangle drag). Lives in styles.css alongside
+      // the dirty/edit highlights; not a chat-panel selector.
+      ".UnicDB-cell-range",
+      // Combined rule for a cell that is BOTH inside the range AND dirty.
+      // Higher specificity than either individual class — handles the
+      // !important background conflict between orange-dirty and blue-range.
+      ".UnicDB-cell-range.UnicDB-cell-dirty",
     ]);
 
     // Any selector first-token in the current file but absent from the

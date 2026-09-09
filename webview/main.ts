@@ -45,12 +45,16 @@ import {
   inferColumns,
   createResultsGridModel,
   selectionToText,
+  selectionRangeToText,
+  normalizeCellRange,
+  cellRangeSize,
   footerText,
   formatCell,
   formatDataCellForDialect,
   EditState,
   parseTsvPaste,
   applyPasteToDirty,
+  applyRangePasteToDirty,
   serializeExport,
   buildSetFilterEntries,
   setFilterPass,
@@ -62,6 +66,7 @@ import {
   type ColumnSpec,
   type ResultsGridModel,
   type ExportFormat,
+  type CellRange,
 } from "../src/ui/resultsGridModel";
 import { UndoStack } from "../src/ui/undoStack";
 import {
@@ -444,6 +449,34 @@ let currentDialect: string | undefined = undefined;
 let currentSchemaFields:
   | ReadonlyArray<{ name?: string; type?: string; mode?: string }>
   | undefined = undefined;
+
+/**
+ * TASK-RANGE-001 — Spreadsheet-style rectangle cell-range selection.
+ *
+ * State is module-scoped (not in EditState) because it is a transient UI
+ * affordance, NOT a dirty-edit log: clearing the range on tab switch /
+ * new query is fine — there is no save payload that depends on it. AG Grid
+ * Community lacks the Enterprise "cell range selection" feature, so we
+ * implement it manually:
+ *   - `cellRange` is the active rectangle in DISPLAY coordinates
+ *     (display rowIndex × currentSpecs index). `gridApi.getDisplayedRowAtIndex`
+ *     gives us the row object whose `__rowId` we resolve at copy/paste
+ *     time, mirroring the single-anchor paste path.
+ *   - `isDraggingRange` is true between mousedown and mouseup on grid cells.
+ *   - Mouse events on the grid cells update the live range; the cellClassRules
+ *     predicate (`isCellInRange`) reads it to paint the highlight.
+ *   - Keyboard Shift+Arrow extends the range from the anchor.
+ *   - Clicking a non-cell area (header / floating filter / toolbar) clears.
+ *
+ * The range is NORMALIZED on every read so callers never have to swap
+ * start/end themselves. A single-cell range is a valid 1×1 rectangle and
+ * behaves identically to a non-range copy (controller still uses the range
+ * code path so the copy is single-cell TSV, matching Excel).
+ */
+let cellRange: CellRange | null = null;
+let cellRangeAnchor: { row: number; col: number } | null = null;
+let isDraggingRange = false;
+let suppressNextCellClickClear = false;
 /**
  * Type-narrowed accessor for the stable row identity that AG Grid's
  * getRowId/restore-style flows rely on. AG Grid calls our getRowId
@@ -463,6 +496,119 @@ function readRowId(
 function isFilterInput(t: EventTarget | null): boolean {
   if (!t) return false;
   return t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement;
+}
+
+// ---- Cell-range helpers (TASK-RANGE-001) ----------------------------------
+//
+// Spreadsheet-style rectangle selection. AG Grid Community lacks the
+// Enterprise "range selection" feature, so we maintain a single rectangle
+// in module state and render it through cellClassRules. The rectangle is
+// stored in DISPLAY coordinates (displayRowIndex × currentSpecs index)
+// so its visual position stays put through sort/filter — Excel semantics:
+// A1 stays A1 regardless of the row underneath. Copy/paste resolves back
+// to rowIds via gridApi at the moment of the action (matches the
+// single-anchor paste path that already uses targetRowIds).
+
+/** Resolve a row data's DISPLAY row index via gridApi. Returns null when
+ *  the grid is gone, the node has been evicted, or the node's rowIndex
+ *  is undefined (e.g. pinned row). The cellClassRules predicate uses this
+ *  to convert data → display coordinates for range inclusion checks. */
+function displayIndexForRowData(data: Record<string, unknown> | undefined): number | null {
+  if (!data || !gridApi) return null;
+  const id = readRowId(data);
+  if (id === undefined) return null;
+  const node = gridApi.getRowNode(String(id));
+  const idx = node?.rowIndex;
+  return typeof idx === "number" ? idx : null;
+}
+
+/** cellClassRules predicate: does the cell at (data, colIndex) fall
+ *  inside the live rectangle? Reads display coordinates via
+ *  displayIndexForRowData, then normalizes the range and checks 2-D
+ *  inclusion. Returns false when no range is set or the row was evicted. */
+function isCellInRangeByDisplay(
+  data: Record<string, unknown> | undefined,
+  colIndex: number,
+): boolean {
+  if (!cellRange) return false;
+  const displayRow = displayIndexForRowData(data);
+  if (displayRow === null) return false;
+  const n = normalizeCellRange(cellRange);
+  return (
+    displayRow >= n.startRow &&
+    displayRow <= n.endRow &&
+    colIndex >= n.startCol &&
+    colIndex <= n.endCol
+  );
+}
+
+/** Update the live range and ask AG Grid to repaint the highlight. Safe to
+ *  call from any UI handler (mousedown / mousemove / Shift+arrow). When
+ *  `range` is null, the highlight is cleared. */
+function setCellRange(range: CellRange | null): void {
+  if (range === null) {
+    if (cellRange === null) return;
+    cellRange = null;
+    cellRangeAnchor = null;
+    refreshRangeHighlight();
+    return;
+  }
+  cellRange = normalizeCellRange(range);
+  refreshRangeHighlight();
+}
+
+/** Force cellClassRules to re-evaluate. Called whenever the live range
+ *  changes (mouse drag, Shift+arrow) so the highlight follows the cursor
+ *  without forcing a full grid rebuild. refreshCells({ force: true }) is
+ *  cheap because no data is re-fetched — only the cell class name is
+ *  recomputed per cell via the predicate. */
+function refreshRangeHighlight(): void {
+  if (!gridApi) return;
+  gridApi.refreshCells({ force: true });
+}
+
+/** Resolve the focused cell's display coordinate (displayRowIndex, colIndex).
+ *  Used by the keyboard handler to anchor the next Shift+arrow extension. */
+function focusedCellCoord(): { row: number; col: number } | null {
+  if (!gridApi) return null;
+  const focused = gridApi.getFocusedCell();
+  if (!focused) return null;
+  const colField = focused.column?.getColId?.();
+  if (typeof colField !== "string") return null;
+  const colIndex = currentSpecs.findIndex((s) => s.field === colField);
+  const rowIdx = focused.rowIndex;
+  if (colIndex < 0 || typeof rowIdx !== "number") return null;
+  return { row: rowIdx, col: colIndex };
+}
+
+// ---- Scroll preservation (TASK-SCROLL-001) --------------------------------
+//
+// AG Grid v36 normally preserves scroll through `applyTransaction`, but
+// `setGridOption("rowData", …)` always resets the viewport to the top.
+// The results panel uses `setGridOption("rowData")` on every statement
+// reset / column change — fine, the grid is a fresh view anyway — but
+// also for in-place updates (e.g. a same-row-count refresh after a
+// commit echo). When such an update fires while the user has scrolled
+// deep into the table, the viewport snaps back to the first row, which
+// matches the bug report ("đừng có giật lên lại dòng đầu tiên").
+//
+// `preserveScrollAround` captures the first-visible row index BEFORE the
+// mutation and restores it via `ensureIndexVisible(idx, 'top')` AFTER the
+// mutation. If the mutation added new rows above the saved index (rare,
+// only the rowsGrew branches) the saved index still points at the same
+// underlying row (stable __rowId), so the restore puts the viewport
+// back where the user left it. For purely in-place rowData swaps, the
+// saved index resolves to the same row and the viewport stays put.
+function preserveScrollAround(mutate: () => void): void {
+  if (!gridApi) {
+    mutate();
+    return;
+  }
+  const firstVisible = gridApi.getFirstDisplayedRowIndex();
+  mutate();
+  if (typeof firstVisible === "number" && firstVisible >= 0) {
+    gridApi.ensureIndexVisible(firstVisible, "top");
+  }
 }
 
 /** onCellValueChanged handler (TASK-501). Records cell edits into the
@@ -1068,6 +1214,97 @@ function buildPersistentDom(): PersistentDom {
   const gridWrap = document.createElement("div");
   gridWrap.className = "UnicDB-grid-host";
   gridWrap.style.display = "none"; // hidden until first grid render
+
+  // ---- TASK-RANGE-001: mouse-drag cell range selection -----------------
+  // AG Grid Community has no built-in range selection, so we wire it via
+  // mousedown / mousemove / mouseup listeners on the grid wrapper. The
+  // drag handler reads the cell under the pointer by walking up to the
+  // closest `.ag-cell` (AG Grid stamps this class on every cell) and
+  // pulls the (rowIndex, colId) pair from the cell's data attributes
+  // plus the live gridApi. Shift+mousedown extends the existing range
+  // from its anchor — Excel semantics.
+  gridWrap.addEventListener("mousedown", (ev) => {
+    if (isFilterInput(ev.target)) return;
+    const cell = findCellFromEvent(ev);
+    if (!cell) return;
+    // Suppress the global range-clear on this same click (AG Grid's own
+    // cellFocus may fire first and we'd race it).
+    suppressNextCellClickClear = true;
+    if (ev.shiftKey && cellRangeAnchor) {
+      // Shift+drag extends from the existing anchor — the new end is
+      // (cell.row, cell.col); the anchor stays put.
+      setCellRange({
+        startRow: cellRangeAnchor.row,
+        startCol: cellRangeAnchor.col,
+        endRow: cell.row,
+        endCol: cell.col,
+      });
+      isDraggingRange = true;
+      ev.preventDefault();
+    } else {
+      cellRangeAnchor = { row: cell.row, col: cell.col };
+      isDraggingRange = true;
+      setCellRange({
+        startRow: cell.row,
+        startCol: cell.col,
+        endRow: cell.row,
+        endCol: cell.col,
+      });
+    }
+  });
+  gridWrap.addEventListener("mousemove", (ev) => {
+    if (!isDraggingRange) return;
+    if (isFilterInput(ev.target)) return;
+    const cell = findCellFromEvent(ev);
+    if (!cell || !cellRangeAnchor) return;
+    setCellRange({
+      startRow: cellRangeAnchor.row,
+      startCol: cellRangeAnchor.col,
+      endRow: cell.row,
+      endCol: cell.col,
+    });
+  });
+  // Bind mouseup on the WINDOW so the drag finalizes even when the user
+  // releases outside the grid wrapper (e.g. the cursor leaves the panel
+  // mid-drag). The pointermove handler keeps the range in sync until the
+  // window-level mouseup fires.
+  window.addEventListener("mouseup", () => {
+    isDraggingRange = false;
+  });
+
+  /** Walk up from a mousedown/mousemove target to the enclosing AG Grid
+   *  cell and resolve its (displayRowIndex, colIndex) using gridApi.
+   *  Returns null when the target is not a cell (e.g. header, floating
+   *  filter, empty viewport area). The `[col-id]` attribute AG Grid emits
+   *  on each cell is the column id — currentSpecs maps id → colIndex. */
+  function findCellFromEvent(ev: MouseEvent): {
+    row: number;
+    col: number;
+  } | null {
+    if (!gridApi) return null;
+    const el = ev.target as HTMLElement | null;
+    if (!el) return null;
+    const cellEl = el.closest(".ag-cell") as HTMLElement | null;
+    if (!cellEl) return null;
+    // Pinned (selection checkbox) column lives in `.ag-cell` too but
+    // should NOT anchor a range — skip when no col-id attribute is set.
+    const colId = cellEl.getAttribute("col-id");
+    if (!colId) return null;
+    const colIndex = currentSpecs.findIndex((s) => s.field === colId);
+    if (colIndex < 0) return null;
+    // Resolve rowIndex from the row attribute (AG Grid stamps `row-index`
+    // on every cell element). Falls back to walking to the parent row.
+    const rowAttr = cellEl.getAttribute("row-index");
+    let rowIdx = rowAttr !== null ? Number(rowAttr) : NaN;
+    if (!Number.isInteger(rowIdx)) {
+      const rowEl = cellEl.closest(".ag-row") as HTMLElement | null;
+      const alt = rowEl?.getAttribute("row-index");
+      rowIdx = alt !== null && alt !== undefined ? Number(alt) : NaN;
+    }
+    if (!Number.isInteger(rowIdx)) return null;
+    return { row: rowIdx, col: colIndex };
+  }
+
   // Listen on the outer container so Ctrl/Cmd+C is caught whether the event
   // is dispatched on the container itself (test) or bubbled from inner AG Grid
   // cells (real interaction). useCapture=true ensures we see the event before
@@ -1136,6 +1373,52 @@ function buildPersistentDom(): PersistentDom {
   gridWrap.addEventListener(
     "paste",
     (ev) => onGridPaste(ev as ClipboardEvent),
+    true,
+  );
+  // TASK-RANGE-001: Shift+Arrow extends the cell range from the anchor.
+  // Excel semantics — pressing Shift+Down/Up/Left/Right grows or shrinks
+  // the rectangle by one cell per keystroke; Shift+Home/End jumps the
+  // end-axis to the grid edge. The capture-phase listener runs before
+  // AG Grid's own navigation so we can call setCellRange in lock-step
+  // with the focused cell's move.
+  gridWrap.addEventListener(
+    "keydown",
+    (ev) => {
+      if (isFilterInput(ev.target)) return;
+      if (!ev.shiftKey) return;
+      if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+      const anchor = cellRangeAnchor ?? focusedCellCoord();
+      if (!anchor) return;
+      const totalRows = gridApi?.getDisplayedRowCount() ?? 0;
+      const totalCols = currentSpecs.length;
+      if (totalRows <= 0 || totalCols <= 0) return;
+      const cur = cellRange ? normalizeCellRange(cellRange) : null;
+      // End-of-range coordinate: default to the anchor for a fresh range.
+      const end = cur
+        ? { row: cur.endRow, col: cur.endCol }
+        : { row: anchor.row, col: anchor.col };
+      const k = ev.key;
+      let handled = true;
+      if (k === "ArrowDown") end.row = Math.min(totalRows - 1, end.row + 1);
+      else if (k === "ArrowUp") end.row = Math.max(0, end.row - 1);
+      else if (k === "ArrowRight") end.col = Math.min(totalCols - 1, end.col + 1);
+      else if (k === "ArrowLeft") end.col = Math.max(0, end.col - 1);
+      else if (k === "Home") end.col = 0;
+      else if (k === "End") end.col = totalCols - 1;
+      else if (k === "PageDown") end.row = Math.min(totalRows - 1, end.row + 10);
+      else if (k === "PageUp") end.row = Math.max(0, end.row - 10);
+      else handled = false;
+      if (!handled) return;
+      cellRangeAnchor = anchor;
+      setCellRange({
+        startRow: anchor.row,
+        startCol: anchor.col,
+        endRow: end.row,
+        endCol: end.col,
+      });
+      ev.preventDefault();
+      ev.stopPropagation();
+    },
     true,
   );
   // TASK-504 / TASK-005 — WHERE/ORDER BY "Re-Run" bar moved out of gridWrap
@@ -2011,6 +2294,12 @@ function renderGrid(): void {
       // when AG Grid calls `api.refreshCells({ rowNodes, force: true })` —
       // we trigger that from onCellValueChangedHandler, onAddRowClick, and
       // onDeleteRowClick so the highlight follows the user's edits live.
+      //
+      // TASK-RANGE-001: cellClassRules ALSO paints `UnicDB-cell-range`
+      // whenever the cell's display-row/colIndex is inside the live
+      // `cellRange` rectangle. The predicate runs at full re-render too
+      // (column drag / sort / filter), so the highlight survives viewport
+      // changes without an explicit refresh.
       cellClassRules: {
         "UnicDB-cell-dirty": (params: {
           data?: Record<string, unknown> | undefined;
@@ -2020,6 +2309,17 @@ function renderGrid(): void {
           const id = readRowId(data);
           if (id === undefined) return false;
           return editState.isCellDirty(id, colIndex);
+        },
+        "UnicDB-cell-range": (params: {
+          data?: Record<string, unknown> | undefined;
+        }): boolean => {
+          if (!cellRange) return false;
+          // colIndex resolves directly against currentSpecs (the column
+          // ordering is captured at column-def construction time and never
+          // shifts between renders — column drag-reorder would mutate the
+          // live getColumnDefs but each colDef's cellClassRules callback
+          // already binds the correct colIndex via closure).
+          return isCellInRangeByDisplay(params.data, colIndex);
         },
       },
       cellStyle:
@@ -2095,6 +2395,13 @@ function renderGrid(): void {
     newRowCount = 0;
     highestAllocatedId = -1;
     colFilterActive = false;
+    // TASK-RANGE-001 — clear the live cell rectangle so a stale highlight
+    // doesn't follow the user to a different result set / column layout.
+    // Without this, a range drawn on the previous tab would briefly
+    // highlight the wrong rows on the freshly mounted grid.
+    cellRange = null;
+    cellRangeAnchor = null;
+    isDraggingRange = false;
     // Clear the server-id → source-index map BEFORE rowsToObjects
     // repopulates. Stale entries from a prior statement would let undo
     // read the wrong row's value after a tab switch (R3 finding #1).
@@ -2242,6 +2549,11 @@ function renderGrid(): void {
     undoStack.clear();
     newRowCount = 0;
     highestAllocatedId = -1;
+    // TASK-RANGE-001 — drop the stale rectangle; column count may have
+    // changed and a range drawn on a different schema is meaningless.
+    cellRange = null;
+    cellRangeAnchor = null;
+    isDraggingRange = false;
     // Clear the server-id → source-index map BEFORE rowsToObjects
     // repopulates (same reason as the first-render branch — stale
     // entries from the previous state would let undo read the wrong
@@ -2257,7 +2569,15 @@ function renderGrid(): void {
       colFilterActive = gridApi!.isColumnFilterPresent();
       lastColumnCount = specs.length;
     }
-    gridApi!.setGridOption("rowData", rowsToObjects(r.result.rows, specs));
+    // TASK-SCROLL-001 — `setGridOption("rowData", …)` resets the viewport
+    // to the top. Wrap in preserveScrollAround so a same-row-count refresh
+    // that lands while the user is scrolled deep into the table does not
+    // snap the viewport back to row 0. The first-visible index resolves
+    // back to the same row because the underlying rowData is keyed by
+    // stable __rowId.
+    preserveScrollAround(() => {
+      gridApi!.setGridOption("rowData", rowsToObjects(r.result.rows, specs));
+    });
     statementRows.set(activeTab, r.result.rows.slice());
     // Re-seed the high-water mark after the rowData swap. New server rows
     // may have arrived (the user clicked Refresh), so the mark moves with
@@ -2291,7 +2611,12 @@ function renderGrid(): void {
     undoStack.clear();
     newRowCount = 0;
     serverIndexByRowId.clear();
-    gridApi!.setGridOption("rowData", rowsToObjects(r.result.rows, specs));
+    // TASK-SCROLL-001 — setGridOption("rowData") resets the viewport;
+    // preserve scroll through the same-row-count refresh so a phantom
+    // placeholder cleanup doesn't snap the user back to row 0.
+    preserveScrollAround(() => {
+      gridApi!.setGridOption("rowData", rowsToObjects(r.result.rows, specs));
+    });
     statementRows.set(activeTab, r.result.rows.slice());
     highestAllocatedId = r.result.rows.length - 1;
     refreshUndoRedoButtons();
@@ -2341,7 +2666,15 @@ function renderGrid(): void {
         previousRows.length,
       );
       const addIndex = previousRows.length;
-      gridApi!.applyTransaction({ add: newRowObjects, addIndex });
+      // TASK-SCROLL-001 — applyTransaction normally preserves scroll, but
+      // some AG Grid builds still reset when the row model size grows.
+      // Capture the first-visible row before, restore after, so a loadMore
+      // landing near the bottom of the table does not snap the viewport
+      // back to row 0 (the reported bug: "đừng có giật lên lại dòng đầu
+      // tiên").
+      preserveScrollAround(() => {
+        gridApi!.applyTransaction({ add: newRowObjects, addIndex });
+      });
       for (const obj of newRowObjects) {
         const id = obj.__rowId;
         if (typeof id === "number" && id > highestAllocatedId) {
@@ -2377,7 +2710,14 @@ function renderGrid(): void {
       previousRows.length,
     );
     const addIndex = previousRows.length;
-    gridApi!.applyTransaction({ add: newRowObjects, addIndex });
+    // TASK-SCROLL-001 — ordinary loadMore append path. Defensive scroll
+    // preservation; on most AG Grid builds this is a no-op because
+    // applyTransaction already preserves scroll, but the restore is cheap
+    // and protects against regression if AG Grid changes its scroll
+    // semantics.
+    preserveScrollAround(() => {
+      gridApi!.applyTransaction({ add: newRowObjects, addIndex });
+    });
     for (const obj of newRowObjects) {
       const id = obj.__rowId;
       if (typeof id === "number" && id > highestAllocatedId) {
@@ -2398,7 +2738,12 @@ function renderGrid(): void {
     // "reset" — dirty/undo/local-row state is left alone; by the time a
     // commit's echo arrives, saveResult ok:true has already cleared
     // editState/undoStack via its own handler.
-    gridApi!.setGridOption("rowData", rowsToObjects(r.result.rows, specs));
+    // TASK-SCROLL-001 — setGridOption("rowData") resets the viewport;
+    // preserve the user's scroll position through a commit-echo / refresh
+    // that lands while they are deep in the table.
+    preserveScrollAround(() => {
+      gridApi!.setGridOption("rowData", rowsToObjects(r.result.rows, specs));
+    });
     statementRows.set(activeTab, r.result.rows.slice());
   }
   lastRenderedIndex = activeTab;
@@ -2934,6 +3279,14 @@ function onGridPaste(ev: ClipboardEvent): void {
   ev.stopPropagation();
   const parsed = parseTsvPaste(text);
   if (parsed.length === 0) return;
+  // TASK-RANGE-001 — when a cell range is active, paste fills the
+  // rectangle from its top-left corner. The clipboard is TILED into the
+  // range (clipboard 1×1 repeats, clipboard 3×3 into 2×2 clips). When no
+  // range is set, fall back to the original focused-cell paste path.
+  if (cellRange) {
+    pasteIntoRange(cellRange, parsed);
+    return;
+  }
   // Anchor at the focused cell; fall back to (0,0). We use the row's
   // STABLE identity (__rowId) — display rowIndex would shift with sort/
   // filter and would misaddress the same row on every re-render.
@@ -3013,6 +3366,106 @@ function onGridPaste(ev: ClipboardEvent): void {
         colIndex: targetCol,
         oldValue,
         newValue: row[c],
+      });
+    }
+  }
+  gridApi.refreshCells({ force: true });
+  updateFooterNow();
+}
+
+/** TASK-RANGE-001 — paste the parsed clipboard into a rectangle starting
+ *  at its top-left corner. Tiles the clipboard when smaller than the
+ *  range; clips when larger. Mirror of the single-anchor paste path:
+ *  - resolve target row ids via `getDisplayedRowAtIndex` from the
+ *    range's start row (display coordinates),
+ *  - skip locally-added rows (R3 finding #2 invariant),
+ *  - apply via `applyRangePasteToDirty` (handles tiling + clipping),
+ *  - mirror each dirty cell onto `ref.data` and push a `cell-edit`
+ *    onto the undo stack — matches the focused-cell paste behavior.
+ *  Hidden columns inside the range are EXCLUDED so the user never
+ *  edits data they cannot see. */
+function pasteIntoRange(range: CellRange, parsed: string[][]): void {
+  if (!gridApi) return;
+  if (parsed.length === 0) return;
+  const n = normalizeCellRange(range);
+  const totalRows = gridApi.getDisplayedRowCount();
+  const rangeRows = Math.max(0, Math.min(totalRows, n.endRow + 1) - n.startRow);
+  if (rangeRows <= 0) return;
+  const colCount = currentSpecs.length;
+  // Hidden columns inside the range are SKIPPED — they aren't visible
+  // and the user shouldn't be able to silently mutate them via paste.
+  const visibleColsInRange: number[] = [];
+  for (let c = n.startCol; c <= n.endCol && c < colCount; c++) {
+    if (c < 0) continue;
+    const spec = currentSpecs[c];
+    if (!spec || spec.hidden === true) continue;
+    visibleColsInRange.push(c);
+  }
+  if (visibleColsInRange.length === 0) return;
+  // Build a rectangle-only range for the helper so it only marks the
+  // visible columns. We collapse the column span to the contiguous block
+  // of visible columns and rely on `applyRangePasteToDirty` clipping
+  // by colCount — but since hidden columns are EXCLUDED, we need a
+  // finer control. Easiest: call the helper for each visible column
+  // using a 1-column-wide sub-range, with the same clipboard tiling.
+  // Collect targetRowIds ONCE — they are the same for every column.
+  const targetRowIds: number[] = [];
+  const targetNodes: Array<{ id: number; data: Record<string, unknown> }> = [];
+  for (let r = 0; r < rangeRows; r++) {
+    const node = gridApi.getDisplayedRowAtIndex(n.startRow + r);
+    if (!node?.data) break;
+    const id = readRowId(node.data);
+    if (id === undefined) continue;
+    if (serverIndexByRowId.get(id) === undefined) break; // local row
+    targetRowIds.push(id);
+    targetNodes.push({ id, data: node.data });
+  }
+  if (targetRowIds.length === 0) return;
+  // For each visible column inside the range, dispatch a single-column
+  // paste with the matching slice of the clipboard. The clipboard rows
+  // tile across rows; the column slice is one column wide. This keeps
+  // the helper's `colCount`-based clipping correct (we never address a
+  // hidden column because we never pass its colIndex).
+  const activeResult = results[activeTab];
+  for (const targetCol of visibleColsInRange) {
+    const srcColOffset = targetCol - n.startCol;
+    // Slice each clipboard row to the source column. If the row is too
+    // short we fall back to "" — applyRangePasteToDirty pads via tile.
+    const colSliced = parsed.map((row) => [row[srcColOffset] ?? ""]);
+    const subRange: CellRange = {
+      startRow: n.startRow,
+      startCol: targetCol,
+      endRow: n.startRow + targetRowIds.length - 1,
+      endCol: targetCol,
+    };
+    applyRangePasteToDirty(
+      editState,
+      colSliced,
+      subRange,
+      colCount,
+      targetRowIds.length,
+      targetRowIds,
+    );
+    // Mirror the dirty cells onto the live grid + push undo actions
+    // (parity with the single-anchor paste).
+    const spec = currentSpecs[targetCol];
+    if (!spec) continue;
+    for (let r = 0; r < targetRowIds.length; r++) {
+      const ref = targetNodes[r];
+      const srcR = r % colSliced.length;
+      const newValue = colSliced[srcR][0];
+      const si = serverIndexByRowId.get(ref.id);
+      const serverRow =
+        si !== undefined ? activeResult?.result?.rows?.[si] : undefined;
+      const oldValue =
+        serverRow !== undefined ? serverRow[targetCol] : undefined;
+      ref.data[spec.field] = newValue;
+      undoStack.push({
+        kind: "cell-edit",
+        rowId: ref.id,
+        colIndex: targetCol,
+        oldValue,
+        newValue,
       });
     }
   }
@@ -3547,6 +4000,15 @@ function onExportFileClick(): void {
 
 function copySelectionToHost(): void {
   if (!gridApi) return;
+  // TASK-RANGE-001 — when the user has dragged out a cell rectangle, the
+  // range takes precedence over the row checkbox selection AND over the
+  // focused-row fallback. Excel/Sheets semantics: drag to select cells →
+  // Ctrl+C copies ONLY the cells inside the rectangle. A 1×1 range behaves
+  // identically to a focused-cell copy (one cell into the clipboard).
+  if (cellRange) {
+    copyCellRangeToHost(cellRange);
+    return;
+  }
   // Re-shape: AG Grid returns row objects; we need arrays of original values.
   // There is no `__select__` synthetic field anymore (TASK-402 Fix #3) — just
   // pass through the known spec field names.
@@ -3587,6 +4049,47 @@ function copySelectionToHost(): void {
     return row;
   });
   const text = selectionToText(arr);
+  postToHost({ type: "copy", text });
+}
+
+/** TASK-RANGE-001 — build TSV from the live cellRange rectangle and post
+ *  to the host for clipboard write. Resolves display coordinates to
+ *  rowIds via gridApi.getDisplayedRowAtIndex at copy time so the result
+ *  matches what the user sees on screen. Hidden columns are EXCLUDED so
+ *  the clipboard never carries data the user didn't see. */
+function copyCellRangeToHost(range: CellRange): void {
+  if (!gridApi) return;
+  const n = normalizeCellRange(range);
+  const totalRows = gridApi.getDisplayedRowCount();
+  const startRow = Math.max(0, n.startRow);
+  const endRow = Math.min(totalRows - 1, n.endRow);
+  if (endRow < startRow) return;
+  // Visible-only columns: hidden columns would silently leak data into
+  // the clipboard if we iterated over every colIndex in the range.
+  // currentSpecs.filter(hidden) gives the user-visible column subset;
+  // their positions in currentSpecs ARE the colIndex we use for the range.
+  const visibleSpecs = currentSpecs.filter((s) => s.hidden !== true);
+  const visibleColIndices = visibleSpecs
+    .map((s) => currentSpecs.findIndex((x) => x.field === s.field))
+    .filter((i) => i >= 0);
+  const colStart = Math.max(0, n.startCol);
+  const colEnd = Math.min(currentSpecs.length - 1, n.endCol);
+  const colsInRange = visibleColIndices.filter(
+    (i) => i >= colStart && i <= colEnd,
+  );
+  if (colsInRange.length === 0) return;
+  const rowsOut: unknown[][] = [];
+  for (let r = startRow; r <= endRow; r++) {
+    const node = gridApi.getDisplayedRowAtIndex(r);
+    const data = node?.data as Record<string, unknown> | undefined;
+    const row: unknown[] = [];
+    for (const c of colsInRange) {
+      const field = currentSpecs[c]?.field;
+      row.push(field ? data?.[field] : undefined);
+    }
+    rowsOut.push(row);
+  }
+  const text = selectionToText(rowsOut);
   postToHost({ type: "copy", text });
 }
 

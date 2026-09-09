@@ -1,5 +1,94 @@
 # Changelog
 
+## [1.53.35] — 2026-09-09
+
+- Summary: **Cell-range copy/paste + scroll snap-back fix.** The results grid
+  now supports Excel-style rectangle selection — drag (or Shift+arrow) over a
+  cell range, Ctrl/Cmd+C copies ONLY the rectangle as TSV, Ctrl/Cmd+V pastes
+  the clipboard into the rectangle (with tiling when the clipboard is
+  smaller, clipping when it's larger; out-of-grid cells silently dropped).
+  Single-cell copy/paste still works through the same code path. The grid
+  viewport also no longer snaps back to row 0 on loadMore / commit-echo /
+  same-row-count refresh — every row mutation in the render path is now
+  wrapped in `preserveScrollAround` which captures the first-visible row
+  before the mutation and restores it after via `ensureIndexVisible`.
+- **Cell-range copy/paste (TASK-RANGE-001):**
+  - New pure helpers in `src/ui/resultsGridModel.ts`:
+    `CellRange`, `normalizeCellRange`, `cellRangeSize`,
+    `selectionRangeToText(rows, range)`,
+    `applyRangePasteToDirty(state, parsed, range, …)`. The paste helper
+    TILES the clipboard into the rectangle — a 1×1 clipboard fills a 3×4
+    range, a 3×3 clipboard into a 2×2 range is clipped to top-left 2×2.
+    Out-of-grid cells are silently dropped, matching the single-anchor
+    paste behavior.
+  - Webview wiring in `webview/main.ts`:
+    - Module-scoped `cellRange`, `cellRangeAnchor`, `isDraggingRange`
+      state; range stored in DISPLAY coordinates so it stays put
+      through sort/filter (Excel semantics — A1 stays A1).
+    - `mousedown` on a grid cell starts a range (or extends from the
+      existing anchor with Shift+mousedown). `mousemove` extends.
+      Window-level `mouseup` finalizes even when the cursor leaves the
+      panel mid-drag.
+    - Shift+Arrow / Shift+Home / Shift+End / Shift+PageUp / Shift+PageDown
+      extends the rectangle from the anchor (pure-keyboard spreadsheet
+      selection, parity with Excel/Sheets).
+    - `cellClassRules` paints `UnicDB-cell-range` on every cell inside
+      the live rectangle — distinct from the orange dirty-edit
+      highlight so a user can tell "selected" vs "unsaved edits" at
+      a glance.
+    - `copySelectionToHost` checks `cellRange` first; if set, calls
+      `copyCellRangeToHost` which extracts only the rectangle's cells
+      (hidden columns excluded — clipboard never carries data the user
+      didn't see). A 1×1 range behaves like a focused-cell copy.
+    - `onGridPaste` checks `cellRange`; if set, calls `pasteIntoRange`
+      which tiles the clipboard into the rectangle, skips hidden
+      columns, mirrors dirty cells onto the live grid, and pushes
+      `cell-edit` undo entries per pasted cell (parity with the
+      focused-anchor paste path).
+    - Range auto-clears on tab switch / new query so a stale highlight
+      doesn't follow the user to a different schema.
+  - CSS in `webview/styles.css` for `.UnicDB-cell-range` (blue tint +
+  outline). Combined rule `.UnicDB-cell-range.UnicDB-cell-dirty` wins
+  on specificity so a cell that's both selected AND dirty still shows
+  the dirty orange tint while keeping the rectangle outline.
+- **Scroll snap-back fix (TASK-SCROLL-001):**
+  - New helper `preserveScrollAround(mutate)` in `webview/main.ts` —
+  captures `getFirstDisplayedRowIndex()` BEFORE the mutation, then
+  calls `ensureIndexVisible(firstVisible, "top")` AFTER.
+  - Wrapped every row mutation in the render path: the two
+    `setGridOption("rowData", …)` paths (statement reset / columns
+    change, post-commit-echo refresh) and both `applyTransaction({ add,
+    addIndex })` paths (commit merge, ordinary loadMore append).
+  - Defensive: AG Grid v36's `applyTransaction` already preserves scroll
+    in most builds, so the restore is a no-op on healthy builds; it
+    also protects against regression if AG Grid changes its scroll
+    semantics.
+- **Files:** `src/ui/resultsGridModel.ts` (4 new exports, 117 lines);
+  `src/ui/__tests__/resultsGridModelEdit.test.ts` (+13 tests, normalize/size/
+  rangeToText/applyRangePasteToDirty); `webview/main.ts` (range state +
+  mousedown/mousemove/mouseup/Shift+arrow handlers + cellClassRules +
+  copyCellRangeToHost + pasteIntoRange + preserveScrollAround, ~270
+  lines); `webview/styles.css` (+20 lines for `.UnicDB-cell-range` and
+  combined rule); `src/ui/__tests__/aiChatPanelCloneCss.test.ts`
+  (ALLOWED_OFF_CHAT expanded with the two new non-chat selectors, per
+  the existing cycle contract); `package.json` + `package-lock.json`
+  (version 1.53.34→1.53.35); `CHANGELOG.md` (this entry).
+- **Verification:** `npx tsc --noEmit -p tsconfig.json` ✅ ·
+  `node esbuild.js` clean (dist/webview.js + dist/webview.css + extension
+  all built) · `npx vitest run` **4104 passed | 4 skipped | 0 failed**
+  (276 files; +13 vs pre-patch 4091 baseline — `vsixSecretsExclusion`
+  2/2 green · `releaseHygiene` 15/15 green · `manifestAssetRefs` 6/6
+  green · `aiChatPanelCloneCss` 8/8 green) · `npx vsce ls --tree` confirms
+  no `.secrets/` or `.pat` entry will be packaged.
+- **Behavior contract for users:** drag a rectangle (or Shift+arrow from
+  a focused cell) → Ctrl/Cmd+C → click destination cell → Ctrl/Cmd+V
+  fills the rectangle from its top-left with tiled clipboard data.
+  Single-cell copy/paste still works exactly as before. The viewport
+  no longer jumps to row 0 during loadMore / refresh / commit echo —
+  your scroll position is preserved.
+
+---
+
 ## [1.53.33] — 2026-09-08
 
 - Summary: **CRITICAL SECURITY + activity-bar hardening.** v1.53.32 shipped with

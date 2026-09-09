@@ -6,6 +6,11 @@ import {
   EditState,
   parseTsvPaste,
   applyPasteToDirty,
+  applyRangePasteToDirty,
+  selectionRangeToText,
+  normalizeCellRange,
+  cellRangeSize,
+  type CellRange,
 } from "../resultsGridModel";
 
 // =============================================================================
@@ -269,3 +274,169 @@ describe("EditState — isCellDirty (TASK-007)", () => {
     expect(s.isCellDirty(0, 1)).toBe(false);
   });
 });
+
+// =============================================================================
+// TASK-RANGE-001 — Cell-range copy/paste helpers.
+// Spreadsheet-style rectangle selection: copy range as TSV; paste tiles the
+// clipboard rows/cols across the range, clipping out-of-grid cells.
+// =============================================================================
+describe("normalizeCellRange / cellRangeSize", () => {
+  it("swaps start/end when reversed", () => {
+    const n = normalizeCellRange({ startRow: 3, startCol: 4, endRow: 1, endCol: 2 });
+    expect(n).toEqual({ startRow: 1, startCol: 2, endRow: 3, endCol: 4 });
+  });
+
+  it("clamps negative coords to 0", () => {
+    const n = normalizeCellRange({ startRow: -5, startCol: -1, endRow: 2, endCol: 3 });
+    expect(n).toEqual({ startRow: 0, startCol: 0, endRow: 2, endCol: 3 });
+  });
+
+  it("size is inclusive on both ends", () => {
+    expect(cellRangeSize({ startRow: 0, startCol: 0, endRow: 0, endCol: 0 })).toEqual({
+      rows: 1,
+      cols: 1,
+    });
+    expect(cellRangeSize({ startRow: 1, startCol: 2, endRow: 3, endCol: 4 })).toEqual({
+      rows: 3,
+      cols: 3,
+    });
+  });
+});
+
+describe("selectionRangeToText", () => {
+  it("1x1 range returns one cell", () => {
+    const rows = [[1, "a"], [2, "b"]];
+    expect(
+      selectionRangeToText(rows, { startRow: 0, startCol: 1, endRow: 0, endCol: 1 }),
+    ).toBe("a");
+  });
+
+  it("multi-row multi-col range: rows separated by \\n, cells by \\t", () => {
+    const rows = [
+      [1, "a", "x"],
+      [2, "b", "y"],
+      [3, "c", "z"],
+    ];
+    expect(
+      selectionRangeToText(rows, { startRow: 0, startCol: 0, endRow: 1, endCol: 1 }),
+    ).toBe("1\ta\n2\tb");
+  });
+
+  it("null cell → empty string in TSV", () => {
+    const rows = [
+      [1, null],
+      [null, "b"],
+    ];
+    expect(
+      selectionRangeToText(rows, { startRow: 0, startCol: 0, endRow: 1, endCol: 1 }),
+    ).toBe("1\t\n\tb");
+  });
+
+  it("range past rows.length → empty trailing cells", () => {
+    const rows = [[1, 2]];
+    expect(
+      selectionRangeToText(rows, { startRow: 0, startCol: 0, endRow: 2, endCol: 1 }),
+    ).toBe("1\t2\n\t\n\t");
+  });
+
+  it("reversed range is normalized first", () => {
+    const rows = [
+      [1, 2],
+      [3, 4],
+    ];
+    // Drag from bottom-right to top-left.
+    expect(
+      selectionRangeToText(rows, { startRow: 1, startCol: 1, endRow: 0, endCol: 0 }),
+    ).toBe("1\t2\n3\t4");
+  });
+});
+
+describe("applyRangePasteToDirty", () => {
+  it("1x1 clipboard into 3x4 range tiles the value", () => {
+    const s = new EditState();
+    const parsed = parseTsvPaste("X");
+    const range: CellRange = { startRow: 0, startCol: 0, endRow: 2, endCol: 3 };
+    applyRangePasteToDirty(s, parsed, range, /* colCount */ 4, /* rowCount */ 3);
+    expect(s.dirtyCount).toBe(12);
+    const snap = s.snapshot();
+    for (const e of snap) expect(e.value).toBe("X");
+  });
+
+  it("3x3 clipboard into 2x2 range clips to 2x2 (top-left anchored)", () => {
+    const s = new EditState();
+    const parsed = parseTsvPaste("1\t2\t3\n4\t5\t6\n7\t8\t9");
+    const range: CellRange = { startRow: 1, startCol: 1, endRow: 2, endCol: 2 };
+    applyRangePasteToDirty(s, parsed, range, /* colCount */ 4, /* rowCount */ 4);
+    // Only 4 cells land: (1,1)=1, (1,2)=2, (2,1)=4, (2,2)=5.
+    expect(s.dirtyCount).toBe(4);
+    const snap = s.snapshot();
+    const byKey: Record<string, unknown> = {};
+    for (const e of snap) byKey[`${e.rowId}:${e.colIndex}`] = e.value;
+    expect(byKey["1:1"]).toBe("1");
+    expect(byKey["1:2"]).toBe("2");
+    expect(byKey["2:1"]).toBe("4");
+    expect(byKey["2:2"]).toBe("5");
+    // Out-of-range cells must NOT be touched.
+    expect("1:3" in byKey).toBe(false);
+    expect("3:1" in byKey).toBe(false);
+  });
+
+  it("2x2 clipboard into 4x3 range tiles (paste fills)", () => {
+    const s = new EditState();
+    const parsed = parseTsvPaste("A\tB\nC\tD");
+    const range: CellRange = { startRow: 0, startCol: 0, endRow: 3, endCol: 2 };
+    applyRangePasteToDirty(s, parsed, range, /* colCount */ 3, /* rowCount */ 4);
+    // 4×3 = 12 cells, all populated with tiled A/B/C/D.
+    expect(s.dirtyCount).toBe(12);
+    const byKey: Record<string, string> = {};
+    for (const e of s.snapshot()) byKey[`${e.rowId}:${e.colIndex}`] = String(e.value);
+    expect(byKey["0:0"]).toBe("A");
+    expect(byKey["0:1"]).toBe("B");
+    expect(byKey["0:2"]).toBe("A");
+    expect(byKey["1:0"]).toBe("C");
+    expect(byKey["1:1"]).toBe("D");
+    expect(byKey["1:2"]).toBe("C");
+    expect(byKey["2:0"]).toBe("A");
+    expect(byKey["2:1"]).toBe("B");
+    expect(byKey["2:2"]).toBe("A");
+    expect(byKey["3:0"]).toBe("C");
+    expect(byKey["3:1"]).toBe("D");
+    expect(byKey["3:2"]).toBe("C");
+  });
+
+  it("range past colCount clips columns out of grid bounds", () => {
+    const s = new EditState();
+    const parsed = parseTsvPaste("A\tB\tC");
+    const range: CellRange = { startRow: 0, startCol: 1, endRow: 0, endCol: 5 };
+    applyRangePasteToDirty(s, parsed, range, /* colCount */ 3, /* rowCount */ 1);
+    // Only cols 1 and 2 fit (col 3, 4, 5 out of bounds).
+    expect(s.dirtyCount).toBe(2);
+    const snap = s.snapshot();
+    expect(snap.find((e) => e.colIndex === 1)?.value).toBe("A");
+    expect(snap.find((e) => e.colIndex === 2)?.value).toBe("B");
+  });
+
+  it("targetRowIds path resolves rows by stable id, not dense index", () => {
+    const s = new EditState();
+    // id namespace has holes: 5, 7, 9 (locally-added rows interspersed).
+    const parsed = parseTsvPaste("a\tb\nc\td");
+    const range: CellRange = { startRow: 0, startCol: 0, endRow: 1, endCol: 1 };
+    applyRangePasteToDirty(
+      s,
+      parsed,
+      range,
+      /* colCount */ 2,
+      /* rowCount */ 99,
+      /* targetRowIds */ [5, 7],
+    );
+    const snap = s.snapshot();
+    expect(snap.find((e) => e.rowId === 5 && e.colIndex === 0)?.value).toBe("a");
+    expect(snap.find((e) => e.rowId === 5 && e.colIndex === 1)?.value).toBe("b");
+    expect(snap.find((e) => e.rowId === 7 && e.colIndex === 0)?.value).toBe("c");
+    expect(snap.find((e) => e.rowId === 7 && e.colIndex === 1)?.value).toBe("d");
+    // The dense path would have written into 6 and 8 — those must be empty.
+    expect(snap.find((e) => e.rowId === 6)).toBeUndefined();
+    expect(snap.find((e) => e.rowId === 8)).toBeUndefined();
+  });
+});
+

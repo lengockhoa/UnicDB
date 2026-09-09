@@ -489,6 +489,30 @@
   opacity: 0.6;
 }
 
+/* TASK-RANGE-001 — Excel-style cell-range selection highlight.
+ * Painted by cellClassRules when a cell falls inside the live
+ * `cellRange` rectangle. The blue tint is distinct from the orange
+ * dirty-edit highlight so a user can tell at a glance: "this cell is
+ * selected" vs. "this cell has unsaved edits". Two states:
+ *   - .UnicDB-cell-range          → idle selection highlight
+ *   - .ag-cell-range-selected    → AG Grid's own focus indicator;
+ *                                   we leave that alone (focus rect
+ *                                   still useful for keyboard nav).
+ * !important matches the dirty-edit rule because AG Grid v36 paints
+ * cell backgrounds via element-level vars and the JS Theming API can
+ * stomp CSS specificity. */
+.UnicDB-cell-range {
+  background: var(--UnicDB-range-bg, rgba(0, 127, 212, 0.18)) !important;
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+/* Combined state — a cell that's BOTH edited and inside the range
+ *  should show both signals. Dirty orange wins on background, range
+ *  keeps the outline so the user still sees the rectangle boundary. */
+.UnicDB-cell-range.UnicDB-cell-dirty {
+  background: var(--UnicDB-dirty-bg, rgba(255, 166, 0, 0.35)) !important;
+}
+
 /* --- Messages tab --- */
 .UnicDB-messages {
   flex: 1;
