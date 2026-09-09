@@ -327,26 +327,26 @@ describe("webview/aiSettingsFormMain.ts bundle — TASK-GC-006 (engine + lite)",
       autocomplete: { modelId: "", vision: false },
       lite: { modelId: "", vision: false},
     },
-    engine: "builtin" as const,
+    engine: "omp" as const,
   };
 
   it("#1 Engine select renders from init", () => {
     loadBundle();
     dispatch({
       type: "init",
+      settings: { ...baseSettings, engine: "omp" },
+      hasApiKey: false,
+    });
+    // Fresh-install default is "omp"; init mirror reflects the stored value.
+    expect(selectEl("engine").value).toBe("omp");
+    dispatch({
+      type: "init",
       settings: { ...baseSettings, engine: "builtin" },
       hasApiKey: false,
     });
     expect(selectEl("engine").value).toBe("builtin");
-    dispatch({
-      type: "init",
-      settings: { ...baseSettings, engine: "omp" },
-      hasApiKey: false,
-    });
-    expect(selectEl("engine").value).toBe("omp");
   });
-
-  it("#2 save posts engine + lite", () => {
+  it("#2 save posts engine + lite (lite has no per-model engine)", () => {
     const { received } = loadBundle();
     dispatch({
       type: "init",
@@ -355,7 +355,7 @@ describe("webview/aiSettingsFormMain.ts bundle — TASK-GC-006 (engine + lite)",
         engine: "omp",
         models: {
           ...baseSettings.models,
-          lite: { modelId: "x", vision: false},
+          lite: { modelId: "x", vision: false },
         },
       },
       hasApiKey: false,
@@ -368,9 +368,10 @@ describe("webview/aiSettingsFormMain.ts bundle — TASK-GC-006 (engine + lite)",
     expect(payload.settings.engine).toBe("omp");
     const models = payload.settings.models as Record<
       string,
-      { modelId: string; vision: boolean; engine?: string }
+      { modelId: string; vision: boolean }
     >;
-    expect(models.lite).toEqual({ modelId: "x", vision: false, engine: "omp" });
+    // Lite entry carries no `engine` key — per-model engine was dropped.
+    expect(models.lite).toEqual({ modelId: "x", vision: false });
   });
 
   it("#3 regression: engine round-trip makes save host-valid", () => {
@@ -388,8 +389,7 @@ describe("webview/aiSettingsFormMain.ts bundle — TASK-GC-006 (engine + lite)",
     // Pre-GC code: payload.settings.engine was undefined → host validator
     // rejected with "Engine must be builtin or omp". This test fails on
     // pre-GC code and passes after the global Engine dropdown is wired.
-    expect(payload.settings.engine).toBeDefined();
-    expect(payload.settings.engine).toBe("builtin");
+    expect(payload.settings.engine).toBe("omp");
   });
 
   it("#4 empty Lite modelId passes gate", () => {
@@ -417,9 +417,10 @@ describe("webview/aiSettingsFormMain.ts bundle — TASK-GC-006 (engine + lite)",
     expect(payload.settings.models.lite.modelId).toBe("");
   });
 
-  it("#5 lite engine select defaults omp with legacy init (no models.lite)", () => {
+  it("#5 legacy 3-role init: engineLite select is gone; modelLite defaults empty", () => {
     loadBundle();
-    // Legacy 3-role init fixture: no `models.lite`.
+    // Legacy 3-role init fixture: no `models.lite`. The Lite Engine dropdown
+    // is removed in this cycle, so we only assert the remaining fields render.
     const legacySettings = {
       baseUrl: "https://api.openai.com/v1",
       method: "chat/completions" as const,
@@ -429,21 +430,21 @@ describe("webview/aiSettingsFormMain.ts bundle — TASK-GC-006 (engine + lite)",
         work: { modelId: "gpt-4o-mini", vision: true },
         smart: { modelId: "gpt-4o", vision: false },
       },
-      engine: "builtin" as const,
+      engine: "omp" as const,
     };
     dispatch({
       type: "init",
       settings: legacySettings as unknown as typeof baseSettings,
       hasApiKey: false,
     });
-    // Defaults for the new fields.
-    expect(selectEl("engineLite").value).toBe("omp");
+    // modelLite input renders and is empty (legacy init did not supply one).
     expect(inputEl("modelLite").value).toBe("");
-    // Gate should still pass with the lite empty + default engine.
+    // engineLite select was removed in this cycle — it must NOT exist.
+    expect(document.getElementById("engineLite")).toBeNull();
+    // Gate should still pass with the lite empty + global engine default.
     fillValid();
     expect(btn("saveBtn").disabled).toBe(false);
   });
-
   it("#6 invalid engine blocks OK with 'Engine must be builtin, omp, claude-code, or codex' error", () => {
     loadBundle();
     dispatch({

@@ -147,8 +147,6 @@ const EXPECTED_ENGINE_ORDER = ["omp", "claude-code", "codex", "builtin"];
 const EXACT_ENGINE_ERROR =
   "Engine must be builtin, omp, claude-code, or codex";
 
-// ---- tests ----------------------------------------------------------------
-
 describeIfBundle("TASK-008 four-engine webview", () => {
   itIfBundle(
     "#1 init renders global Claude Code setting + save posts engine:claude-code",
@@ -165,59 +163,19 @@ describeIfBundle("TASK-008 four-engine webview", () => {
             work: { modelId: "", vision: true },
             smart: { modelId: "", vision: false },
             autocomplete: { modelId: "", vision: false },
-            lite: { modelId: "", vision: false, engine: "omp" },
+            lite: { modelId: "", vision: false },
           },
           engine: "claude-code",
         },
         hasApiKey: false,
       });
-      // Select must reflect the init payload exactly.
       expect(selectEl("engine").value).toBe("claude-code");
-      // Fill the required fields, then save must post engine:"claude-code".
       fillRequired();
       btn("saveBtn").click();
       const saveMsgs = received.filter((m) => m.type === "save");
       expect(saveMsgs.length).toBe(1);
       const payload = saveMsgs[0] as { settings: { engine: string } };
       expect(payload.settings.engine).toBe("claude-code");
-    },
-  );
-
-  itIfBundle(
-    "#2 init/save Codex from global and lite override round-trips",
-    () => {
-      const { received } = loadBundle();
-      dispatch({
-        type: "init",
-        settings: {
-          baseUrl: "",
-          method: "chat/completions",
-          timeoutMs: 60000,
-          maxSteps: 12,
-          models: {
-            work: { modelId: "", vision: true },
-            smart: { modelId: "", vision: false },
-            autocomplete: { modelId: "", vision: false },
-            lite: { modelId: "lite-model", vision: false, engine: "codex" },
-          },
-          engine: "codex",
-        },
-        hasApiKey: false,
-      });
-      expect(selectEl("engine").value).toBe("codex");
-      expect(selectEl("engineLite").value).toBe("codex");
-      fillRequired();
-      btn("saveBtn").click();
-      const saveMsgs = received.filter((m) => m.type === "save");
-      expect(saveMsgs.length).toBe(1);
-      const payload = saveMsgs[0] as {
-        settings: {
-          engine: string;
-          models: { lite: { engine?: string } };
-        };
-      };
-      expect(payload.settings.engine).toBe("codex");
-      expect(payload.settings.models.lite.engine).toBe("codex");
     },
   );
 
@@ -236,16 +194,13 @@ describeIfBundle("TASK-008 four-engine webview", () => {
             work: { modelId: "", vision: true },
             smart: { modelId: "", vision: false },
             autocomplete: { modelId: "", vision: false },
-            lite: { modelId: "", vision: false, engine: "omp" },
+            lite: { modelId: "", vision: false },
           },
           engine: "builtin",
         },
         hasApiKey: false,
       });
       fillRequired();
-      // Strip every option so the select value falls back to "" — that's the
-      // one value the validator cannot accept; the error string must match
-      // the canonical TASK-001 message exactly.
       const engineSelect = selectEl("engine");
       while (engineSelect.options.length > 0) {
         engineSelect.remove(0);
@@ -254,7 +209,6 @@ describeIfBundle("TASK-008 four-engine webview", () => {
       expect(btn("saveBtn").disabled).toBe(true);
       btn("saveBtn").click();
       btn("testBtn").click();
-      // No provider request may be posted while the engine is invalid.
       expect(received.some((m) => m.type === "save")).toBe(false);
       expect(received.some((m) => m.type === "test")).toBe(false);
       const errors = document.getElementById("errors") as HTMLElement;
@@ -263,11 +217,9 @@ describeIfBundle("TASK-008 four-engine webview", () => {
   );
 
   itIfBundle(
-    "#4 missing engine keeps builtin default + lite omp default (legacy init)",
+    "#4 missing engine keeps 'omp' default (fresh-install behavior, legacy 2-role init)",
     () => {
       loadBundle();
-      // Legacy 3-role init fixture: no `models.lite`, no `engine`. This is
-      // the shape pre-TASK-GC-006 / pre-TASK-008 sends to a fresh user.
       const legacySettings = {
         baseUrl: "https://api.openai.com/v1",
         method: "chat/completions" as const,
@@ -283,18 +235,17 @@ describeIfBundle("TASK-008 four-engine webview", () => {
         settings: legacySettings as unknown as Record<string, unknown>,
         hasApiKey: false,
       });
-      // Defaults: global=builtin, lite=omp (must NOT be a blank selection).
-      expect(selectEl("engine").value).toBe("builtin");
-      expect(selectEl("engineLite").value).toBe("omp");
+      // engineLite select was dropped in this cycle — must NOT exist.
+      expect(document.getElementById("engineLite")).toBeNull();
+      // Fresh-install global default is "omp" now.
+      expect(selectEl("engine").value).toBe("omp");
     },
   );
 });
 
-// ---- shape contract: both selects expose the same 4 options in fixed order -
-// This is the structural assertion called out in TASK-008 Acceptance — kept
-// separate from the runtime tests so a regression is reported precisely.
+// ---- shape contract: global select exposes the same 4 options in fixed order
 describeIfBundle("TASK-008 select option shape", () => {
-  itIfBundle("global + lite selects carry the four engines in the user-confirmed order", () => {
+  itIfBundle("global select carries the four engines in the user-confirmed order", () => {
     loadBundle();
     dispatch({
       type: "init",
@@ -314,12 +265,8 @@ describeIfBundle("TASK-008 select option shape", () => {
     const globalValues = Array.from(selectEl("engine").options).map(
       (o) => o.value,
     );
-    const liteValues = Array.from(selectEl("engineLite").options).map(
-      (o) => o.value,
-    );
     expect(globalValues).toEqual(EXPECTED_ENGINE_ORDER);
-    expect(liteValues).toEqual(EXPECTED_ENGINE_ORDER);
     expect(new Set(globalValues)).toEqual(new Set(EXPECTED_ENGINE_ORDER));
-    expect(new Set(liteValues)).toEqual(new Set(EXPECTED_ENGINE_ORDER));
   });
 });
+

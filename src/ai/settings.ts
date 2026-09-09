@@ -16,8 +16,10 @@ export type AiModelRole = "work" | "smart" | "autocomplete" | "lite";
  * routing. `"builtin"` runs `runAgent` against `provider.completeStream`.
  * `"omp"` delegates to `OmpChatEngine.send` (the hostMcp bridge + ACP
  * session). `"claude-code"` and `"codex"` route to first-class Claude Code
- * and Codex chat agents added by the AGT cycle. Default is `"builtin"`
- * for back-compat with every existing config.
+ * and Codex chat agents added by the AGT cycle. Default is `"omp"` — fresh
+ * installs pick the agent engine; users who prefer the OpenAI-compatible
+ * path switch to `"builtin"` manually. Stored configs preserve whatever
+ * value they last saved.
  */
 export type AiEngine = "builtin" | "omp" | "claude-code" | "codex";
 

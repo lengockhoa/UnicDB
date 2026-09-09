@@ -130,37 +130,33 @@ commit của SCM. Bạn chỉ cần review lại rồi bấm Commit.
 - Tin nhắn được sinh bằng **Lite Model** mà bạn đã cấu hình trong AI
   Settings (mục tiếp theo). Model xử lý diff đã staged (ưu tiên) hoặc
   unstaged, có giới hạn kích thước — repo cực lớn sẽ được truncate.
-- Nếu chưa cấu hình Lite Model, nút sẽ hiện toast hướng dẫn mở AI
+- Nếu chưa cấu hình Lite Model, nút sparkle sẽ hiện toast hướng dẫn mở AI
   Settings (action `Open AI Settings`).
-
-### Lite model
 
 Trong panel **UnicDB AI Settings** có một subsection riêng tên là
 "Lite model" — đây là model thứ tư trong taxonomy
 `work | smart | autocomplete | lite`, dùng riêng cho nút sparkle ở
 Source Control.
 
-- **Model ID** — bắt buộc điền. Bỏ trống = tính năng Generate Commit
-  Message bị disable (nút sparkle sẽ báo toast khi bấm).
-- **Vision** — tick nếu model hỗ trợ ảnh (commit message không dùng đến,
-  nhưng giữ đồng nhất với các role khác).
-- **Engine** — dropdown chọn engine xử lý cho Lite Model:
-  - `omp` (mặc định) — dùng omp chat engine
-  - `builtin` — dùng provider builtin qua OpenAI-compatible API
-  - Khi engine đang chọn là `omp` nhưng omp chưa khả dụng trong máy,
-    lệnh sẽ dừng lại và thông báo thay vì tự động rơi về engine khác.
+- **Model ID** — bắt buộc điền. Bỏ trống = tính năng của nút sparkle bị
+  disable (nút sẽ báo toast khi bấm).
+> Lite section không còn dropdown Engine riêng. Nút sparkle dùng **đúng
+> engine global** đang chọn ở panel trên (xem mục dưới). Nếu global là
+> `omp` và omp khả dụng, sparkle sẽ chạy qua omp; nếu global là
+> `builtin`, sparkle sẽ gọi OpenAI-compatible provider luôn (nhanh nhất
+> cho commit message ngắn).
 
 ### Engine dropdown (global)
 
 Trên cùng panel AI Settings có một dropdown **Engine** chung cho cả
-chat:
+chat panel và nút sparkle:
 
-  - `builtin` (mặc định)
-  - `omp`
-
-Dropdown này quyết định engine dùng cho AI Chat; per-model Engine ở
-subsection "Lite model" sẽ override giá trị này nếu được chỉ định
-(khi để trống thì theo global).
+  - `omp` (mặc định cho fresh install) — dùng omp chat engine khi omp
+    CLI đã cài; nếu không sẽ tự rơi về `builtin`.
+  - `builtin` — OpenAI-compatible provider (OpenAI / Groq / LM Studio /
+    OpenRouter …).
+  - `claude-code` / `codex` — delegate sang agent ngoài khi tương ứng
+    đã cài.
 
 ## User Guide (R2)
 
@@ -180,7 +176,6 @@ phản ánh trạng thái mới — không cần bấm refresh thủ công:
 - **Empty / failed batch** — không refresh.
 
 Khi user chạy nhiều query liên tiếp, các refresh được coalesce qua
-200ms trailing debouncer — bùng nổ 5 query DML liên tiếp chỉ tốn 1
 tree refresh.
 
 ## Phím tắt

@@ -141,10 +141,15 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
     files: diff.files,
     diffText: diff.diffText,
   });
-
   let message = "";
   let rawProviderText = "";
   let cfg: AiConfig | null = null;
+  // Engine routing. The if/else shape intentionally pins a closed three-way
+  // classification so the validator (`aiSettingsErrors`) gates unknown values
+  // upstream — claude-code / codex / builtin all take the `else` branch today
+  // (commit-gen only ships omp + builtin adapters). If a future cycle adds a
+  // dedicated adapter for one of those engines, add the branch here AND
+  // update the JSDoc above to match.
   if (engine === "omp") {
     const detection = await deps.detectOmp();
     const choice = deps.resolveEngine({ detection, config: null });

@@ -14,18 +14,13 @@ consumes.
 
 ## Target Files
 
-- `src/ai/settings.ts` — `AiModelRole` += `"lite"`; `AiModelConfig` += `engine?: AiEngine`;
-  `defaultAiSettings()` gains `lite: { modelId: "", vision: false, engine: "omp" }`
-  (work/smart/autocomplete stay engine-less); `aiSettingsErrors` treats empty `lite` as
-  valid (feature disabled, same precedent as `autocomplete`) and rejects a per-model
-  `engine` that is not `"builtin" | "omp"` with the existing message "Engine must be
-  builtin or omp"; `redactAiConfig` carries `lite` + per-model engine (preserving
-  `undefined` for roles without one).
-- `src/ai/config.ts` — `loadSettings()` migration: stored configs missing `models.lite`
-  get `{ modelId: "", vision: false, engine: "omp" }` injected BEFORE validation (mirror
-  the existing `autocomplete` migration); a stored `lite` missing `engine` also gets
-  `"omp"`. `save()`'s `toPersist` literal includes `lite` + per-model `engine` fields.
-- Fixture adaptation (exact inventory from `grep -rln 'models: {' src/ --include='*.test.ts'`
+Add the **Lite Model** as a fourth model role (`"lite"`) to `AiSettings`. The
+Lite section in the AI Settings form no longer carries an Engine dropdown —
+per-model engine overrides were removed entirely. Generate Commit Message
+and the Lite model follow the global `settings.engine` (default `"omp"`,
+migrated legacy configs without `engine` normalize to `"omp"`). Migrate
+legacy stored configs without loss. This is the data model every later GC
+task consumes.
   — every file whose `AiSettings` literal fails typecheck once `Record<AiModelRole,…>`
   gains `lite`; adapt, do NOT redesign):
   `src/__tests__/extensionAutocomplete.test.ts`, `src/ai/__tests__/agent.test.ts`,

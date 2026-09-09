@@ -295,7 +295,7 @@ describe("scaffold", () => {
 
   // ===== TASK-013: UnicDB.ai.engine description copy =======================
 
-  it("Test (TASK-013) — UnicDB.ai.engine description names claude-code/codex + builtin fallback; default unchanged; JSON still valid", () => {
+  it("Test (TASK-013) — UnicDB.ai.engine description names claude-code/codex + builtin fallback; default 'omp'; JSON still valid", () => {
     const pkgPath = path.resolve(__dirname, "..", "package.json");
     // Parsing again must succeed — guards against malformed contribution JSON.
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
@@ -303,7 +303,7 @@ describe("scaffold", () => {
     const engine = pkg.contributes.configuration?.properties?.["UnicDB.ai.engine"];
     expect(engine, "UnicDB.ai.engine phải tồn tại").toBeTruthy();
     expect(engine.type).toBe("string");
-    expect(engine.default).toBe("builtin");
+    expect(engine.default).toBe("omp");
 
     const desc: string = String(engine.description ?? "");
     // Both new engine ids are named in the description (P0.3 visibility).

@@ -65,7 +65,9 @@ function loadManifest(): Manifest {
   return JSON.parse(raw) as Manifest;
 }
 
-function fakeSettings(over: Partial<AiSettings["models"]["lite"]> = {}): AiSettings {
+function fakeSettings(
+  over: Partial<Pick<AiSettings, "engine"> & { lite: Partial<AiSettings["models"]["lite"]> }> = {},
+): AiSettings {
   return {
     baseUrl: "https://example.com/v1",
     method: "chat/completions",
@@ -75,9 +77,9 @@ function fakeSettings(over: Partial<AiSettings["models"]["lite"]> = {}): AiSetti
       work: { modelId: "w", vision: true },
       smart: { modelId: "s", vision: false },
       autocomplete: { modelId: "", vision: false },
-      lite: { modelId: "m", vision: false ...over },
+      lite: { modelId: "m", vision: false, ...over.lite },
     },
-    engine: "builtin",
+    engine: over.engine ?? "builtin",
   };
 }
 
@@ -144,7 +146,7 @@ describe("TASK-GC-008 #1 manifest ↔ command id agreement", () => {
 // =============================================================================
 describe("TASK-GC-008 #2 end-to-end builtin via the real handler", () => {
   it("injects the sanitized conventional message derived from the diff + provider reply", async () => {
-    const settings = fakeSettings({ modelId: "gpt-mini", engine: "builtin" });
+    const settings = fakeSettings({ engine: "builtin", lite: { modelId: "gpt-mini" } });
     const cfg = fakeConfig(settings);
     // Provider reply is fenced + has a trailing space — the sanitizer
     // (commitMessage.ts) must strip the fence and trim.
@@ -195,7 +197,7 @@ describe("TASK-GC-008 #2 end-to-end builtin via the real handler", () => {
 // =============================================================================
 describe("TASK-GC-008 #3 disabled-Lite UX contract", () => {
   it("shows the frozen toast + action, and openSettings() runs when the action resolves", async () => {
-    const settings = fakeSettings({ modelId: "", engine: "omp" });
+    const settings = fakeSettings({ engine: "omp", lite: { modelId: "" } });
 
     const showSettingsToast = vi
       .fn()
@@ -255,7 +257,7 @@ describe("TASK-GC-008 #3 disabled-Lite UX contract", () => {
 // =============================================================================
 describe("TASK-GC-008 #4 empty diff cuts the chain", () => {
   it("shows the empty-diff error toast and never invokes either engine port", async () => {
-    const settings = fakeSettings({ modelId: "lite-1", engine: "builtin" });
+    const settings = fakeSettings({ engine: "builtin", lite: { modelId: "lite-1" } });
     const showError = vi.fn();
     const builtinComplete = vi.fn(async () => providerOk("unused"));
     const buildOmpEngine = vi.fn(async () => fakeOmpOneShot("unused"));
@@ -297,7 +299,7 @@ describe("TASK-GC-008 #4 empty diff cuts the chain", () => {
 // =============================================================================
 describe("TASK-GC-008 #5 engine routing switches with config", () => {
   it("omp-engine lite routes through buildOmpEngine and never touches builtinComplete", async () => {
-    const settings = fakeSettings({ modelId: "lite-1", engine: "omp" });
+    const settings = fakeSettings({ engine: "omp", lite: { modelId: "lite-1" } });
     const detection: OmpDetection = {
       available: true,
       ok: true,
@@ -344,7 +346,7 @@ describe("TASK-GC-008 #5 engine routing switches with config", () => {
   });
 
   it("builtin-engine lite routes through builtinComplete and never touches buildOmpEngine", async () => {
-    const settings = fakeSettings({ modelId: "lite-1", engine: "builtin" });
+    const settings = fakeSettings({ engine: "builtin", lite: { modelId: "lite-1" } });
     const cfg = fakeConfig(settings);
 
     const builtinComplete = vi.fn(

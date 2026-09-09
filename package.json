@@ -789,8 +789,8 @@
             "claude-code",
             "codex"
           ],
-          "default": "builtin",
-          "description": "Cycle AE — chat engine selection. \"omp\" routes the AI Chat panel through the in-process OmpChatEngine (requires the `omp` CLI installed and >= 17.0.0). \"claude-code\" and \"codex\" delegate to the matching external AI assistant when the corresponding CLI/skill is available. \"builtin\" runs runAgent against the configured OpenAI-compatible provider. When the chosen agent (omp / claude-code / codex) is selected but is not installed, too old, or unavailable in this workspace, UnicDB silently falls back to \"builtin\" and shows a one-time install/update notice."
+          "default": "omp",
+          "description": "Cycle AE — chat engine selection. \"omp\" routes the AI Chat panel through the in-process OmpChatEngine (requires the `omp` CLI installed and >= 17.0.0). \"claude-code\" and \"codex\" delegate to the matching external AI assistant when the corresponding CLI/skill is available. \"builtin\" runs runAgent against the configured OpenAI-compatible provider. When the chosen agent (omp / claude-code / codex) is selected but is not installed, too old, or unavailable in this workspace, UnicDB silently falls back to \"builtin\" and shows a one-time install/update notice. Default \"omp\" — fresh installs pick the agent engine unless you have a reason to switch."
         }
       }
     },

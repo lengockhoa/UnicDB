@@ -7,11 +7,15 @@
 
 ## Goal
 
-Two user-visible fixes in one webview: (a) the **global Engine dropdown** is currently
-missing — `readSettings()` never posts `settings.engine`, so the host validator rejects every
-save with "Engine must be builtin or omp" (the exact bug the user reported); (b) add the
-**"Lite model" section** below Autocomplete: Model ID, Vision toggle, and its own Engine
-dropdown defaulting to `omp`, posting `models.lite` per the GC-001 shape.
+Two user-visible fixes in one webview: (a) the **global Engine dropdown** is
+currently missing — `readSettings()` never posts `settings.engine`, so the host
+validator rejects every save with "Engine must be builtin or omp" (the exact
+bug the user reported); (b) add the **"Lite model"** section below
+Autocomplete: Model ID + Vision toggle. The Lite section originally shipped
+with its own Engine dropdown, but that was removed in a follow-up cycle
+(per-model engine overrides were dropped — see `docs/AI_HANDOFF/tasks/TASK-GC-006-followup.md`
+or the corresponding PR). Generate Commit Message now follows the global
+`settings.engine` directly.
 
 ## Target Files
 

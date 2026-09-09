@@ -1,17 +1,35 @@
 # Changelog
 
-## [1.53.38] — 2026-09-09
+## [Unreleased]
 
-- Summary: **Collapse results toolbar to a single row.** The query
-  toolbar (icon buttons + WHERE / ORDER BY inputs + export controls +
-  schema chip + Search) now stays on ONE row at every viewport width.
-  Earlier cycles (TASK-RES-001/002) deliberately wrapped the toolbar
-  with `flex-wrap: wrap` and gave each requery input `flex: 1 1 100%`
-  so they would drop to their own lines on narrow widths; users
-  reported that reflow looked broken / jerky and asked to revert to
-  the single-row layout.
-- **Bug fix (TASK-COLLAPSE-001):**
-  - `webview/styles.css`:
+- Summary: **Unify AI engine selection.** Drop per-model `engine` overrides
+  entirely; the global `UnicDB.ai.engine` dropdown is now the **only** engine
+  control in the AI Settings webview. Generate Commit Message follows the
+  same engine as the chat panel (no Lite section dropdown anymore). Fresh
+  installs default to `omp` (was `builtin`).
+- **Data model (`src/ai/settings.ts` + `src/ai/config.ts`):**
+  - `AiModelConfig.engine?` field deleted. No validator rule, no migration
+    backfill, no save-time persistence for per-model engine.
+  - `defaultAiSettings()` now returns `engine: "omp"` and `models.lite`
+    without an `engine` key. `loadSettings()` migrates legacy configs that
+    lack `engine` to `"omp"` (existing configs with a stored `engine` keep
+    it). Legacy stored configs whose `models.*` entries still carry a stale
+    `engine` key have it stripped on load.
+- **Webview (`webview/aiSettingsFormMain.ts`):**
+  - Lite section no longer renders an Engine dropdown — only Model ID +
+    Vision toggle. The global Engine dropdown now defaults to `omp` in HTML
+    and in the init mirror.
+  - Validator mirror and `readSettings()` drop the per-model engine branch.
+- **Commit gen (`src/ai/commitGenCommand.ts`):**
+  - `engine` is now read from `settings.engine` (global) — `models.lite.engine`
+    is no longer consulted. Behavior is unchanged when global is `builtin`
+    (provider.complete path) or `omp` (one-shot OmpChatEngine.generate).
+    `claude-code` / `codex` at the global level fall through to builtin
+    since commit-gen only ships omp + builtin adapters today.
+- **`package.json`:** `UnicDB.ai.engine.default` updated to `"omp"`; copy
+  refreshed to note the new default.
+
+## [1.53.38] — 2026-09-09
     - `.UnicDB-toolbar` switched from `flex-wrap: wrap` to
       `flex-wrap: nowrap` and now has `overflow: hidden` so any
       horizontal overflow from the inputs is clipped instead of

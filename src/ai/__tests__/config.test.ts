@@ -242,8 +242,7 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
     global._setRaw("UnicDB.ai.settings", legacy);
     const loaded = await store.loadSettings();
     expect(loaded).not.toBeNull();
-    expect(loaded!.models.lite).toEqual({ modelId: "", vision: false, engine: "omp" });
-    // work/smart/autocomplete unchanged.
+    expect(loaded!.models.lite).toEqual({ modelId: "", vision: false });
     expect(loaded!.models.work.modelId).toBe("gpt-4o-mini");
     expect(loaded!.models.smart.modelId).toBe("gpt-4o");
     expect(loaded!.models.autocomplete.modelId).toBe("vendor/free-fast-sql");
@@ -266,11 +265,10 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
     const loaded = await store.loadSettings();
     expect(loaded).not.toBeNull();
     expect(loaded!.models.autocomplete).toEqual({ modelId: "", vision: false });
-    expect(loaded!.models.lite).toEqual({ modelId: "", vision: false, engine: "omp" });
+    expect(loaded!.models.lite).toEqual({ modelId: "", vision: false });
     // No field lost.
     expect(loaded!.baseUrl).toBe("https://api.openai.com/v1");
     expect(loaded!.engine).toBe("builtin");
-    expect(loaded!.models.work.modelId).toBe("gpt-4o-mini");
     expect(loaded!.models.smart.modelId).toBe("gpt-4o");
   });
 
@@ -289,18 +287,19 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
     const storedRaw = global.get<unknown>("UnicDB.ai.settings");
     expect(storedRaw).toBeDefined();
     const stored = storedRaw as Record<string, unknown>;
-    expect(stored.engine).toBe("builtin");
+    expect(stored.engine).toBe("omp");
     const models = stored.models as Record<string, Record<string, unknown>>;
-    expect(models.lite).toEqual({ modelId: "vendor/lite-fast", vision: false, engine: "omp" });
+    expect(models.lite).toEqual({ modelId: "vendor/lite-fast", vision: false });
     // work/smart/autocomplete preserved without engine key.
     expect("engine" in models.work).toBe(false);
     expect("engine" in models.smart).toBe(false);
     expect("engine" in models.autocomplete).toBe(false);
+    expect("engine" in models.lite).toBe(false);
 
     // Load round-trip.
     const loaded = await store.loadSettings();
-    expect(loaded!.models.lite).toEqual({ modelId: "vendor/lite-fast", vision: false, engine: "omp" });
-    expect(loaded!.engine).toBe("builtin");
+    expect(loaded!.models.lite).toEqual({ modelId: "vendor/lite-fast", vision: false });
+    expect(loaded!.engine).toBe("omp");
   });
 
   // ---- TASK-001: AiEngine widens to 4 values (builtin/omp/claude-code/codex)

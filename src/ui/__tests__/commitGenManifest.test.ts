@@ -168,14 +168,14 @@ describe("TASK-GC-004 — package.json manifest guards for the Generate Commit M
   // ===== TASK-013: four engines and two agent commands ====================
 
   // ---- Case 1 (TASK-013) — happy ------------------------------------------
-  it("TASK-013 case 1: UnicDB.ai.engine enum exposes four values (builtin, omp, claude-code, codex) and default remains builtin", () => {
+  it("TASK-013 case 1: UnicDB.ai.engine enum exposes four values (builtin, omp, claude-code, codex); default 'omp' (fresh install picks agent engine)", () => {
     const json = loadManifest();
     const properties = json.contributes.configuration?.properties ?? {};
     const engine = properties["UnicDB.ai.engine"];
     expect(engine, "UnicDB.ai.engine phải tồn tại trong configuration.properties").toBeDefined();
     expect(engine!.type).toBe("string");
     expect(engine!.enum).toEqual(["builtin", "omp", "claude-code", "codex"]);
-    expect(engine!.default).toBe("builtin");
+    expect(engine!.default).toBe("omp");
   });
 
   // ---- Case 2 (TASK-013) — happy ------------------------------------------
