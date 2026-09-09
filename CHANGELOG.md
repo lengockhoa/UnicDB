@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.53.35] — 2026-09-09
+## [1.53.36] — 2026-09-09
 
 - Summary: **Cell-range copy/paste + scroll snap-back fix.** The results grid
   now supports Excel-style rectangle selection — drag (or Shift+arrow) over a
