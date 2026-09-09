@@ -95,19 +95,9 @@
   installer (needs a GitHub release per Ship Constraint).
 
 ## Session Handoff
-- Last worked on: 2026-09-08 — **SECURITY INCIDENT + FIX**: `.secrets/.pat` (Azure
-  DevOps PAT) leaked into `UnicDB-1.53.32.vsix` because `vsce package` does NOT
-  read `.gitignore`. User rotated PAT; v1.53.33 shipped with `.vscodeignore` fix
-  + new regression guard `vsixSecretsExclusion.test.ts` (real `vsce package`
-  round-trip asserting no `.secrets/` in archive). v1.53.33 LIVE on GitHub
-  Releases + VS Code Marketplace. Also includes activity-bar icon fixes (RGBA
-  PNG, `UnicDB.preferPrimarySidebar` setting, `UnicDB.moveToPrimarySidebar`
-  command, `ensurePrimarySidebar(context)` auto-move on first activation).
-- Next step: user verifies on separate test machine that activity-bar icon now
-  shows on PRIMARY sidebar (left) after v1.53.33 install. The auto-move runs on
-  first activation via `workbench.action.moveViewsToPrimarySidebar`; if it
-  fails (older VS Code), user can right-click activity bar > toggle UnicDB, or
-  run command `UnicDB: Move to Primary Sidebar` manually.
+- Last worked on: 2026-09-09 — RES2ROW toolbar shipped with exactly two rows; AI Chat routing fixed to honor persisted `AiSettings.engine`, including `omp` selection. Released as v1.53.40 on GitHub Releases and the VS Code Marketplace with `.secrets/**` excluded from the VSIX.
+- Verification: extension suite 184/184, AI/settings/chat integration 250/250, `npm run typecheck`, and `npm run compile` passed. Handoff `RUN.md` is `Phase: done`; no active product patch remains.
+- Next step: none unless a new user-visible change is requested. For a new user-visible change, run the normal verification gate and atomic `npm run bump` release workflow.
 
 ## Completed Milestones
 
