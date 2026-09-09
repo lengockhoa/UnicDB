@@ -4177,7 +4177,7 @@ describe("TASK-ARP02-004 — host-integration: runStatements finally + deactivat
     return { ext, runQueryCalls };
   }
 
-  it("Gap #2 — overlapping runQuery: the stale invocation's finally must NOT clear the live run's busy state", async () => {
+  it("Gap #2 — overlapping runQuery: the stale invocation must short-circuit before touching busy state (TASK-QBUSY-001)", async () => {
     const { runQueryCalls } = await activateFresh004();
     setSqlEditor("SELECT 1;");
 
@@ -4186,6 +4186,10 @@ describe("TASK-ARP02-004 — host-integration: runStatements finally + deactivat
     vi.spyOn(panelMod.ResultsPanel.prototype, "setBusy").mockImplementation(
       setBusySpy as never,
     );
+    const showInfoSpy = vi.mocked(vscodeMock.window.showInformationMessage);
+    const showErrorSpy = vi.mocked(vscodeMock.window.showErrorMessage);
+    showInfoSpy.mockClear();
+    showErrorSpy.mockClear();
 
     // Park the adapter so run #1 stays in flight (runner.isRunning() === true).
     runGate = new Promise<void>((r) => { releaseRun = r; });
@@ -4196,23 +4200,48 @@ describe("TASK-ARP02-004 — host-integration: runStatements finally + deactivat
     // fired and the shared QueryRunner is owned by run #1.
     await until(() => runQueryCalls.length >= 1, "run #1 to reach the adapter");
 
-    // Overlapping invocation #2: the shared runner REJECTS its run() with
-    // "QueryRunner is already running". Its runStatements finally is the
-    // stale one: it fires while run #1 still owns the runner.
+    // Take a snapshot of busy-state AFTER run #1 claimed it but BEFORE run #2
+    // gets a chance. The TASK-QBUSY-001 early-return at runStatements top
+    // means the second invocation must NOT add any new setBusy(true) or
+    // setBusy(false) call — closing the original gap ("stale finally clears
+    // live busy state") AT THE SOURCE rather than relying on the `ownsRun`
+    // gate to filter its finally.
+    const trueBeforeRun2 = setBusySpy.mock.calls.filter((c) => c[0] === true).length;
+    const falseBeforeRun2 = setBusySpy.mock.calls.filter((c) => c[0] === false).length;
+
+    // Overlapping invocation #2: runStatements detects `runner.isRunning()` and
+    // shows a friendly information message instead of forwarding the call to
+    // runner.run() (which would have thrown "QueryRunner is already running"
+    // and surfaced as a scary error toast, see extension.ts:3491).
     const p2 = (runQuery as () => Promise<void>)();
-    await until(
-      () => setBusySpy.mock.calls.filter((c) => c[0] === true).length >= 2,
-      "run #2 to fire setBusy(true)",
-    );
-    // Let invocation #2 settle completely (catch + finally included) before
-    // judging: p2's promise resolves only after its finally ran.
     await expect(p2).resolves.toBeUndefined();
 
-    // THE GAP: with the stale finally unguarded, setBusy(false) has fired
-    // while run #1 is still in flight — the live session's busy state was
-    // cleared by a dead invocation.
-    const falseDuringRun1 = setBusySpy.mock.calls.filter((c) => c[0] === false);
-    expect(falseDuringRun1).toHaveLength(0);
+    // Run #2's early-return MUST NOT touch busy state at all — neither claim
+    // nor release it. This is strictly stronger than the old `ownsRun` gate
+    // (which only blocked setBusy(false)); the user-visible UI never flickers.
+    const trueAfterRun2 = setBusySpy.mock.calls.filter((c) => c[0] === true).length;
+    const falseAfterRun2 = setBusySpy.mock.calls.filter((c) => c[0] === false).length;
+    expect(trueAfterRun2, "run #2 must not call panel.setBusy(true)").toBe(trueBeforeRun2);
+    expect(falseAfterRun2, "run #2 must not call panel.setBusy(false)").toBe(falseBeforeRun2);
+
+    // No scary "QueryRunner is already running" error toast for run #2.
+    const busyErrorCalls = showErrorSpy.mock.calls.filter((c) =>
+      typeof c[0] === "string" && /already running/i.test(c[0]),
+    );
+    expect(
+      busyErrorCalls,
+      "run #2 must NOT surface an error toast about an in-flight runner",
+    ).toHaveLength(0);
+
+    // A friendly information message IS shown so the user knows the keystroke
+    // was registered and why no result appeared.
+    const friendlyInfoCalls = showInfoSpy.mock.calls.filter((c) =>
+      typeof c[0] === "string" && /already running/i.test(c[0]),
+    );
+    expect(
+      friendlyInfoCalls.length,
+      "run #2 must show a friendly showInformationMessage about the busy runner",
+    ).toBeGreaterThanOrEqual(1);
 
     // Release run #1; its OWN finally is the live one and must clear busy
     // exactly once.

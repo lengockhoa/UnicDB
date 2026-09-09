@@ -3359,6 +3359,26 @@ export async function runStatements(
   opts: { useLegacySql?: boolean; pageSize?: number; clearOnStart?: boolean } = {},
 ): Promise<void> {
   const active = mgr.getActive();
+  // TASK-QBUSY-001 — early guard for the shared QueryRunner. A second
+  // concurrent run() throws "QueryRunner is already running"; the outer
+  // catch then surfaces that string verbatim as an error toast
+  // (`UnicDB: QueryRunner is already running`), which the user reads as
+  // a hang/crash and tries again — producing a cascade of identical
+  // toasts on every Cmd+Enter / Run-click while the first query is in
+  // flight. Detect the busy state BEFORE keyword qualify / header build
+  // / panel.setBusy(true) so the rejected caller doesn't briefly
+  // toggle busy UI either. The friendly message matches what users
+  // expect from a single-rail SQL client: only one query at a time,
+  // the rest must wait. (A future cycle can add a FIFO queue so
+  // multi-statement submission actually queues; for now we surface the
+  // wait and return — the user can press Cmd+Enter again to retry
+  // once the first run settles.)
+  if (runner.isRunning()) {
+    void vscode.window.showInformationMessage(
+      "UnicDB: a query is already running. Please wait for it to finish, then press Run again.",
+    );
+    return;
+  }
   // TASK-TABCLEAR-001 — auto-clear at the start of the run (BEFORE confirm, so
   // a cancelled dangerous-Statement also drops stale tabs). Refuses silently
   // if a previous run is still in-flight (QueryRunner would throw below too);

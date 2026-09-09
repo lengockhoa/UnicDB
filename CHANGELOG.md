@@ -1,5 +1,60 @@
 # Changelog
 
+## [1.53.37] — 2026-09-09
+
+- Summary: **Fix "QueryRunner is already running" toast on every SQL Run.**
+  Pressing Run / Cmd+Enter while a previous query is still in flight no
+  longer surfaces a scary error toast — instead it shows a friendly
+  information message asking the user to wait for the live run to
+  finish, and returns without touching the panel's busy state.
+- **Bug fix (TASK-QBUSY-001):**
+  - Root cause: `QueryRunner.run()` is single-rail — a second concurrent
+    invocation throws `Error("QueryRunner is already running")`. The
+    host's outer catch (extension.ts:3491) caught that string and
+    surfaced it verbatim via `vscode.window.showErrorMessage`. Users
+    reading "UnicDB: QueryRunner is already running" interpreted it as
+    a hang / crash, pressed Run again, and got the same toast — a
+    cascade of identical error popups until the first run settled.
+  - Fix: `runStatements` now checks `runner.isRunning()` as its FIRST
+    statement (before confirm-dangerous / keyword-qualify / setBusy /
+    runner.run). If the shared runner is busy, it shows
+    `vscode.window.showInformationMessage("UnicDB: a query is already
+    running. Please wait for it to finish, then press Run again.")`
+    and returns. The friendly UX matches what users expect from a
+    single-rail SQL client.
+  - The early-return is strictly stronger than the old `ownsRun` gate
+    (which only blocked `setBusy(false)` in the stale invocation's
+    finally): by returning before `setBusy(true)` even fires, the
+    overlapping invocation never toggles the busy UI at all. The
+    live run's busy state cannot be disturbed by a dead caller.
+  - The same guard handles the multi-query cascade symptom from the
+    bug report: pressing Run many times in a row during a slow query
+    fires one info message per overlap, never an error toast, and
+    the panel stays in the busy state throughout.
+- **Test update (TASK-QBUSY-001):**
+  - `src/extension.test.ts` — rewrote the `Gap #2` case of
+    `TASK-ARP02-004` to assert the new friendly behavior end-to-end:
+    run #2 resolves cleanly with no `panel.setBusy(true|false)` calls,
+    no scary error toast mentioning "already running", and a
+    `showInformationMessage` IS fired with the friendly text. Live
+    run #1 still completes with exactly one busy cycle.
+  - Gap #1 (deactivate ordering) and Regression #4 (RLX-02 cancel
+    await semantics) are unchanged and still GREEN.
+- **Files:** `src/extension.ts` (+19 lines for the early-return block
+  + comment block); `src/extension.test.ts` (Gap #2 rewrite, ~40
+  lines net); `package.json` + `package-lock.json` (1.53.36 → 1.53.37);
+  `CHANGELOG.md` (this entry).
+- **Verification:** `npx tsc --noEmit -p tsconfig.json` ✅ ·
+  `npx vitest run` **4104 passed | 4 skipped | 0 failed** (276 files,
+  same as v1.53.36 baseline).
+- **Behavior contract for users:** pressing Run / Cmd+Enter while a
+  query is in flight now shows a single non-modal info toast:
+  "UnicDB: a query is already running. Please wait for it to finish,
+  then press Run again." — and the run that was already in flight
+  continues normally. No more error popups, no more busy-state flicker.
+
+---
+
 ## [1.53.36] — 2026-09-09
 
 - Summary: **Cell-range copy/paste + scroll snap-back fix.** The results grid
