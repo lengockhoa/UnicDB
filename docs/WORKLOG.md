@@ -644,3 +644,4 @@ User asked "vậy còn gì nữa không" after cycle AGT-UI cleanup pass → lis
 - Handoff cursor synchronization is complete; `docs/AI_HANDOFF/RUN.md` remains `Phase: done` and no new product patch is pending.
 - Latest documentation closeout commit: `db302eb`; no source, manifest, lockfile, or release artifact changed afterward.
 - Terminal state: no active handoff task, product patch, or release follow-up remains.
+- Durable memory now records the AI engine source-of-truth rule alongside the shipped release evidence.
