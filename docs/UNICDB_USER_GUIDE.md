@@ -54,6 +54,17 @@ Cây schema bên trái hiển thị:
 
 ## SQL Console
 
+Mở SQL Console từ Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`) bằng lệnh
+**`UnicDB: Open Console`**, hoặc dùng menu context **Open Console for Object**
+trên table/view/function để mở tab có SQL được điền sẵn.
+
+Trong Console:
+
+- Gõ SQL vào editor rồi bấm **Run** hoặc nhấn `Cmd+Enter` (macOS) / `Ctrl+Enter` (Windows/Linux).
+- Bôi đen một đoạn SQL rồi dùng **Run Selection** để chỉ chạy đoạn đã chọn.
+- Dùng **+ Tab** để mở buffer SQL mới; mỗi connection giữ một console panel riêng.
+- **History**, **Format**, **Explain**, **Explain Analyze** và **Save** có sẵn trên toolbar.
+
 Mỗi connection có một console panel riêng (singleton) với:
 
 - **Tabs** — mỗi tab là một buffer SQL độc lập
