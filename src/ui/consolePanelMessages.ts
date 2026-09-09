@@ -51,7 +51,12 @@ export type ConsoleToHostMessage =
   | { type: "clearAutocomplete"; tabId: string }
   // ARP-08 TASK-ARP08-001 — Clear all persisted drafts. Intentionally
   // type-only: the host ignores any extra payload, mirroring `historyList`.
-  | { type: "clearDrafts" };
+  | { type: "clearDrafts" }
+  // ACTIVE-SCHEMA chip — user clicked the schema chip in the console
+  // toolbar. The host re-runs `UnicDB.selectActiveSchema` for the
+  // active connection; the store mutation re-broadcasts as a
+  // `schemaChanged` message back to every webview.
+  | { type: "pickActiveSchema" };
 
 /** Runtime guard for untrusted webview postMessage data. Rejects null,
  *  non-object carriers, unknown discriminants, and non-string fields BEFORE
@@ -118,6 +123,8 @@ export function isConsoleToHostMessage(
       return typeof msg.tabId === "string";
     case "clearDrafts":
       return true;
+    case "pickActiveSchema":
+      return true;
     default:
       return false;
   }
@@ -147,7 +154,15 @@ export type ConsoleHostToWebviewMessage =
   | { type: "autocompleteClear"; tabId: string }
   // ARP-08 TASK-ARP08-001 — Acknowledgement for `clearDrafts` so the webview
   // can reset its draft-memento state after the host wipes storage.
-  | { type: "draftsCleared" };
+  | { type: "draftsCleared" }
+  // ACTIVE-SCHEMA chip — fan-out from `ActiveSchemaStore.onDidChange` +
+  // `mgr.onDidChangeActive`. The webview keeps its toolbar chip label
+  // in sync with the active connection's pinned schema.
+  | {
+      type: "schemaChanged";
+      schema: string | undefined;
+      connectionId: string | undefined;
+    };
 
 // ---- Helpers ----------------------------------------------------------------
 

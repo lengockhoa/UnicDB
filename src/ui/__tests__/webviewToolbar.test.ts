@@ -184,8 +184,11 @@ function clickButton(b: HTMLButtonElement): void {
 // toolbar row, slot: between export-format and export-header. The two
 // inputs are children of the toolbar — they are NOT icon buttons, so the
 // toolbar `.UnicDB-btn` census rises from 10 to 12 (Re-Run + Clear join
-// the existing 10 buttons). The full toolbar DOM order pin lives in the
-// resolver's helper below.
+// the existing 10 buttons). The ACTIVE-SCHEMA chip (`.UnicDB-schema-chip`)
+// rides in the toolbar too — it sits between the Clear button and the
+// export-header checkbox so it stays visible regardless of how the
+// requery-input wrap below behaves. The full toolbar DOM order pin lives
+// in the resolver's helper below.
 const EXPECTED_ORDER = [
   "UnicDB-btn-danger", // Cancel (query group)
   "UnicDB-btn", // Refresh (query)
@@ -205,6 +208,7 @@ const EXPECTED_ORDER = [
   "UnicDB-export-header",
   "UnicDB-export-copy",
   "UnicDB-export-file",
+  "UnicDB-schema-chip", // ACTIVE-SCHEMA chip (toolbar slot)
   "UnicDB-search-input",
 ];
 
@@ -352,6 +356,7 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
         if (c.classList.contains("UnicDB-export-header")) return "UnicDB-export-header";
         if (c.classList.contains("UnicDB-export-copy")) return "UnicDB-export-copy";
         if (c.classList.contains("UnicDB-export-file")) return "UnicDB-export-file";
+        if (c.classList.contains("UnicDB-schema-chip")) return "UnicDB-schema-chip";
         if (c.classList.contains("UnicDB-search-input")) return "UnicDB-search-input";
         if (c.classList.contains("UnicDB-toolbar-sep")) return "UnicDB-toolbar-sep";
         if (c.classList.contains("UnicDB-btn")) return "UnicDB-btn";
@@ -362,14 +367,15 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
   );
 
   itIfBundle(
-    "4. styles.css pins .UnicDB-toolbar to flex-wrap: nowrap (no wrap at any width)",
+    "4. styles.css pins .UnicDB-toolbar to flex-wrap: wrap (so WHERE / ORDER BY inputs can drop to their own rows)",
     () => {
       if (!stylesSrc) {
         throw new Error("webview/styles.css missing");
       }
-      // The rule MUST match. Wrapping would require removing this.
-      const re = /\.UnicDB-toolbar\s*\{[^}]*flex-wrap:\s*nowrap/;
-      expect(re.test(stylesSrc), "styles.css must pin .UnicDB-toolbar flex-wrap: nowrap").toBe(
+      // The rule MUST match. Reverting to `nowrap` would shove WHERE /
+      // ORDER BY back onto the icon row.
+      const re = /\.UnicDB-toolbar\s*\{[^}]*flex-wrap:\s*wrap/;
+      expect(re.test(stylesSrc), "styles.css must pin .UnicDB-toolbar flex-wrap: wrap").toBe(
         true,
       );
       // Buttons must size SVGs at 16×16 to keep the compact 24–26px height.

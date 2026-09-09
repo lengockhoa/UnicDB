@@ -540,6 +540,10 @@ interface PersistentDom {
   toolbar: HTMLDivElement;
   cancelBtn: HTMLButtonElement;
   refreshBtn: HTMLButtonElement;
+  /** ACTIVE-SCHEMA chip — toolbar button mirroring the status-bar /
+   * AI-chat-composer / console chips. Click posts `pickActiveSchema`;
+   * host fans the resulting store mutation back as `schemaChanged`. */
+  schemaChip: HTMLButtonElement;
   addRowBtn: HTMLButtonElement;
   deleteRowBtn: HTMLButtonElement;
   undoBtn: HTMLButtonElement;
@@ -556,6 +560,10 @@ interface PersistentDom {
   exportHeader: HTMLInputElement;
   exportCopyBtn: HTMLButtonElement;
   exportFileBtn: HTMLButtonElement;
+  /** ACTIVE-SCHEMA chip — pinned to the right of the export controls so it
+   *  stays visible regardless of the requery-input wrap below. Same role
+   *  as the AI-chat-composer + console chips. */
+  schemaChip: HTMLButtonElement;
   searchInput: HTMLInputElement;
   tabs: HTMLDivElement;
   /** Slot where the active panel renders. The grid host and messages live
@@ -581,6 +589,9 @@ interface PersistentDom {
   requeryRunBtn: HTMLButtonElement;
   /** TASK-504 — Clear button that resets both inputs. */
   requeryClearBtn: HTMLButtonElement;
+  /** ACTIVE-SCHEMA chip — toolbar button mirroring the status-bar /
+   *  AI-chat-composer / console chips. */
+  schemaChip: HTMLButtonElement;
 }
 let dom: PersistentDom | null = null;
 let firstRender = true;
@@ -1003,6 +1014,22 @@ function buildPersistentDom(): PersistentDom {
   });
   exportFormat.addEventListener("change", updateExportHeaderState);
   updateExportHeaderState();
+  // ACTIVE-SCHEMA chip — toolbar button mirroring the status-bar /
+  // AI-chat-composer / console chips. Disabled when no connection is
+  // active; click posts `pickActiveSchema`; the host's fan-out
+  // subscriber updates the label via the `schemaChanged` postMessage.
+  const schemaChip = document.createElement("button");
+  schemaChip.type = "button";
+  schemaChip.id = "schemaChip";
+  schemaChip.className = "UnicDB-schema-chip";
+  schemaChip.setAttribute("aria-label", "Active schema");
+  schemaChip.title = "Active schema — click to change. CREATE FUNCTION / unqualified SELECT run here.";
+  schemaChip.textContent = "$(symbol-namespace) default";
+  schemaChip.addEventListener("click", () => {
+    if (schemaChip.disabled) return;
+    postToHost({ type: "pickActiveSchema" });
+  });
+  toolbar.appendChild(schemaChip);
   const searchInput = document.createElement("input");
   searchInput.type = "text";
   searchInput.placeholder = "Search…";
@@ -1168,6 +1195,7 @@ function buildPersistentDom(): PersistentDom {
     requeryOrderBy,
     requeryRunBtn,
     requeryClearBtn,
+    schemaChip,
   };
 }
 
@@ -3901,6 +3929,32 @@ window.addEventListener("message", (ev: MessageEvent) => {
     // structurally (DistinctValuesMsg above), so no union widening of
     // HostMsg is needed for an additive message type.
     handleDistinctValues(msg as unknown as DistinctValuesMsg);
+  } else if (
+    (msg as { type?: string }).type === "schemaChanged"
+  ) {
+    // ACTIVE-SCHEMA chip — host fans every store/connection change out
+    // to keep every panel's chip in sync. Update the toolbar chip label
+    // directly without re-rendering the (expensive) result grid.
+    const sc = msg as {
+      type: "schemaChanged";
+      schema: string | undefined;
+      connectionId: string | undefined;
+    };
+    const chip = dom?.schemaChip;
+    if (chip) {
+      const hasConn = sc.connectionId !== undefined;
+      chip.disabled = !hasConn;
+      chip.textContent = hasConn
+        ? sc.schema
+          ? `$(symbol-namespace) ${sc.schema}`
+          : "$(symbol-namespace) default"
+        : "$(symbol-namespace) no connection";
+      chip.title = hasConn
+        ? sc.schema
+          ? `Active schema: ${sc.schema} — click to change.`
+          : "No schema pinned — SQL runs with the server default search_path. Click to pin one."
+        : "No active connection. Open a connection to pin a schema.";
+    }
   }
 });
 

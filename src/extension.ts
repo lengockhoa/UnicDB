@@ -597,6 +597,45 @@ export async function activate(
   );
   context.subscriptions.push(schemaStatusItem);
 
+  // ACTIVE-SCHEMA chip — fan-out subscriber (subscription only; the
+  // eager initial seed is deferred to AFTER every panel is constructed
+  // because `panel` / `aiChatPanel` / `consolePanel` live in later
+  // `let` bindings — see below).
+  //
+  // Every time the active connection's pinned schema changes (or the
+  // user switches connections, since pinned schema is per-connection)
+  // we push a `schemaChanged` message to every open webview so its
+  // chip stays in sync with the source of truth
+  // (`ActiveSchemaStore`). Each panel's `postActiveSchema` is a no-op
+  // before its webview is resolved, so calling them eagerly is safe.
+  //
+  // Reads happen through a closure on `mgr` (NOT captured in the
+  // subscriber) — the schema is looked up FRESH on every event so a
+  // same-connection pin flip and a connection swap both surface the
+  // right value. The webview also receives `connectionId` and ignores
+  // stale updates when the user has since moved on.
+  const broadcastSchema = (connectionId: string | undefined): void => {
+    const schema = connectionId ? mgr.getActiveSchema(connectionId) : undefined;
+    panel.postActiveSchema(schema, connectionId);
+    aiChatPanel?.postActiveSchema(schema, connectionId);
+    consolePanel?.postActiveSchema(schema, connectionId);
+  };
+  context.subscriptions.push(
+    mgr.onDidChangeActive(() => broadcastSchema(mgr.getActive()?.id)),
+  );
+  context.subscriptions.push(
+    activeSchemaStore.onDidChange((evt) =>
+      // Only forward when the change touches the active connection —
+      // a pin flip on a non-active connection has no effect on the
+      // currently-running queries (they wrap runQuery at execute time,
+      // not at pin time) and would mislead the chip into showing a
+      // stale value.
+      broadcastSchema(
+        mgr.getActive()?.id === evt.connectionId ? evt.connectionId : undefined,
+      ),
+    ),
+  );
+
   // ---- Results panel + query runner ----
   const runner = new QueryRunner(() => mgr.getAdapter(), {
     batchSize:
@@ -635,7 +674,23 @@ export async function activate(
       }
     },
   };
-  const panel = new ResultsPanel({ runner, saveContext });
+  const panel = new ResultsPanel({
+    runner,
+    saveContext,
+    // ACTIVE-SCHEMA chip — toolbar click re-runs the global selectActiveSchema
+    // command (no argument → uses the currently active connection, same as
+    // the status-bar chip). The resulting store mutation re-broadcasts to
+    // every panel via the fan-out subscriber installed below.
+    onPickSchema: () => {
+      void vscode.commands.executeCommand("UnicDB.selectActiveSchema");
+    },
+    // ACTIVE-SCHEMA chip — initial seed so the chip shows the right label
+    // before any user interaction. `resolveWebviewView` calls this once.
+    initialActiveSchema: () => {
+      const id = mgr.getActive()?.id;
+      return { schema: id ? mgr.getActiveSchema(id) : undefined, connectionId: id };
+    },
+  });
   panel.setExtensionUri(context.extensionUri);
   // TASK-RP-001 — register the panel as a `WebviewViewProvider` whose view
   // lives in the bottom panel container (next to Terminal). The legacy
@@ -2163,6 +2218,21 @@ async function commandOpenAiChat(
     onDispose: () => {
       aiChatPanel = null;
     },
+    // ACTIVE-SCHEMA chip — composer chip click re-runs the global
+    // selectActiveSchema command (no argument → active connection, same
+    // as the status-bar chip). The fan-out subscriber installed below
+    // picks up the resulting store mutation and posts `schemaChanged`
+    // back to every webview.
+    onPickSchema: () => {
+      void vscode.commands.executeCommand("UnicDB.selectActiveSchema");
+    },
+    // ACTIVE-SCHEMA chip — initial seed so the composer chip shows the
+    // right label before any user interaction. `show()` calls this
+    // once when the panel mounts.
+    initialActiveSchema: () => {
+      const id = mgr.getActive()?.id;
+      return { schema: id ? mgr.getActiveSchema(id) : undefined, connectionId: id };
+    },
   });
   aiChatPanel.show();
 }
@@ -2689,6 +2759,20 @@ function commandOpenConsole(
       // ride `workspaceState` under CONSOLE_DRAFTS_KEY while query history
       // stays global under CONSOLE_HISTORY_KEY (the `memento` option above).
       draftMemento,
+      // ACTIVE-SCHEMA chip — toolbar chip click re-runs the global
+      // selectActiveSchema command. Same path as the results + chat
+      // panels; the fan-out subscriber picks up the resulting store
+      // mutation.
+      onPickSchema: () => {
+        void vscode.commands.executeCommand("UnicDB.selectActiveSchema");
+      },
+      // ACTIVE-SCHEMA chip — initial seed so the toolbar chip shows
+      // the right label before any user interaction. `show()` calls
+      // this once when the panel mounts.
+      initialActiveSchema: () => {
+        const id = mgr.getActive()?.id;
+        return { schema: id ? mgr.getActiveSchema(id) : undefined, connectionId: id };
+      },
       // Cycle AIC TASK-AIC-005 — Console ghost-text autocomplete. Routes
       // through the AIC-002 service via the AIC-005 registration; per-tab
       // sequence and cancellation stay on the host.

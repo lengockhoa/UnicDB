@@ -60,7 +60,23 @@ export type HostMessage =
   | BusyMessage
   | SaveResultMessage
   | TransactionStatusMessage
-  | DistinctValuesMessage;
+  | DistinctValuesMessage
+  | SchemaChangedMessage;
+
+/** ACTIVE-SCHEMA chip — host → webview. Posted whenever the active
+ *  connection's pinned schema changes (either via the existing
+ *  `UnicDB.selectActiveSchema` command, or when the user switches
+ *  connections). The webview renders this in the toolbar chip so the
+ *  user can switch schemas while working, not just at register-connection
+ *  time. Absent / undefined `schema` means "no pin — server default". */
+export interface SchemaChangedMessage {
+  type: "schemaChanged";
+  schema: string | undefined;
+  /** The connection id the schema belongs to. Absent when there is no
+   *  active connection. The webview uses this to ignore stale updates
+   *  for a connection the user has since switched away from. */
+  connectionId: string | undefined;
+}
 
 // ---- Webview → Host --------------------------------------------------------
 
@@ -104,7 +120,21 @@ export type WebviewMessage =
   // own the state mutation.
   | CloseTabMessage
   | CloseAllTabsMessage
-  | CloseOthersTabsMessage;
+  | CloseOthersTabsMessage
+  // ACTIVE-SCHEMA chip — user clicked the schema chip in the toolbar.
+  // The host re-runs `UnicDB.selectActiveSchema` (QuickPick of schemas on
+  // the active connection); the resulting store mutation re-broadcasts as
+  // a `schemaChanged` message back to every webview so all chips stay in
+  // sync without each webview having to know about the others.
+  | PickActiveSchemaMessage;
+
+/** ACTIVE-SCHEMA chip — webview → host. No payload: the chip always
+ *  targets the active connection (mirrors the status-bar behaviour). The
+ *  host resolves the active connection itself; an absent/no-active
+ *  connection is a host-side no-op (QuickPick never opens). */
+export interface PickActiveSchemaMessage {
+  type: "pickActiveSchema";
+}
 
 /** TASK-UX3-003 — close a single tab by index. */
 export interface CloseTabMessage {

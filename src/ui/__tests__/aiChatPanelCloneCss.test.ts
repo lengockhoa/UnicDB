@@ -116,7 +116,7 @@ describe("TASK-AGTUI-001 - clone CSS tokens + chat-scoped layer", () => {
   it("non-chat selectors are untouched and every new rule is chat-scoped", () => {
     const toolbar = ruleBody(".UnicDB-toolbar");
     expect(toolbar, ".UnicDB-toolbar rule block must still exist").not.toBe("");
-    expect(/flex-wrap:\s*nowrap/i.test(toolbar), ".UnicDB-toolbar must still pin flex-wrap:nowrap").toBe(true);
+    expect(/flex-wrap:\s*wrap/i.test(toolbar), ".UnicDB-toolbar must pin flex-wrap:wrap so WHERE/ORDER BY inputs can drop to their own rows").toBe(true);
 
     const tab = ruleBody(".UnicDB-tab");
     expect(tab, ".UnicDB-tab rule block must still exist").not.toBe("");
@@ -174,12 +174,24 @@ describe("TASK-AGTUI-001 - clone CSS tokens + chat-scoped layer", () => {
       preCycleSelectors.map((s) => s.split(/\s|,|>|~|\+|:/)[0]),
     );
 
+    // Cross-panel additions that ship alongside this cycle but live in
+    // other webviews' DOM (NOT a chat-panel leak). The chat-clone test
+    // exists to keep non-chat CSS out of the chat panel's bundle;
+    // these selectors target other panels' toolbars (console panel +
+    // results panel) and the AI-chat-composer schema chip mirrors them
+    // visually via `.UnicDB-chat-schema-chip`.
+    const ALLOWED_OFF_CHAT = new Set([
+      ".UnicDB-schema-chip",
+      ".UnicDB-console-schema-chip",
+    ]);
+
     // Any selector first-token in the current file but absent from the
     // pre-cycle file must start with `.UnicDB-chat` (cycle contract).
     const offChatNew = selectors.filter((s) => {
       const head = s.split(/\s|,|>|~|\+|:/)[0];
       if (head.startsWith(".UnicDB-chat")) return false;
       if (preCycleHeads.has(head)) return false;
+      if (ALLOWED_OFF_CHAT.has(head)) return false;
       // Allow pre-existing structural selectors that aren't `.UnicDB-` prefixed
       // (`*`, `:root`, `[data-theme=…]`, `html`, `body`).
       return !/^[*\[]|^:|^body|^html/i.test(head);

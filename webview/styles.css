@@ -24,14 +24,17 @@
   margin-bottom: 8px;
 }
 
-/* --- Toolbar (TASK-603: single non-wrapping icon row) ---
- * `flex-wrap: nowrap` is pinned structurally — the test 4 assertion reads
- * this regex from the source. Removing it would let buttons wrap at narrow
- * widths and the structural guarantee would be lost.
+/* --- Toolbar (TASK-603: icon row + WHERE/ORDER BY inputs) ---
+ * `flex-wrap: wrap` lets the two requery inputs drop to their own lines
+ * (each input is `flex: 1 1 100%`) without breaking the toolbar icon
+ * contract — icon buttons stay fixed-size on the first row. The wrap
+ * assertion is pinned structurally (test 4 reads this regex from the
+ * source); swapping back to `nowrap` would force WHERE / ORDER BY back
+ * into the icon row.
  */
 .UnicDB-toolbar {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   min-width: 0;
@@ -1270,13 +1273,61 @@
   outline: 1px solid var(--vscode-focusBorder, #007fd4);
   border-color: var(--vscode-focusBorder, #007fd4);
 }
+
+/* --- ACTIVE-SCHEMA chip (results toolbar) ------------------------------
+ * Mirrors the AI-chat-composer / console / status-bar chips. Click
+ * posts `pickActiveSchema`; the host fans the resulting store mutation
+ * back as `schemaChanged` so every chip stays in sync. The chip sits
+ * inline with the toolbar buttons (next to the export controls). The
+ * textContent is plain (the `$(symbol-namespace)` glyph is rendered as
+ * the literal codepoint by the browser; the host's status bar uses the
+ * same format for visual consistency).
+ */
+.UnicDB-schema-chip {
+  height: 24px;
+  line-height: 22px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  margin: 0 2px;
+  background: var(--vscode-button-secondaryBackground, #3a3d41);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  flex: 0 0 auto;
+  /* TASK-SCHEMA-001: keep the chip stable on the toolbar row so the
+   * wrap (flex-wrap: wrap) introduced by TASK-RES-002 cannot push it
+   * onto a fresh row when the requery inputs wrap to their own line.
+   * Without `flex-shrink: 0` a narrow viewport would compress it before
+   * the export buttons, breaking the visual contract. */
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.UnicDB-schema-chip:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground, #45494e);
+}
+.UnicDB-schema-chip:focus {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
+}
+.UnicDB-schema-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* TASK-RES-002: stack each requery input on its own row inside the
+ * wrapping toolbar. `flex: 1 1 100%` claims the full toolbar width;
+ * `min-width: 0` lets the input shrink below its content width so it
+ * does not push siblings off-row. `box-sizing: border-box` (from the
+ * base rule above) keeps the 24px height with the border included. */
 .UnicDB-requery-input.UnicDB-requery-where {
-  flex: 0 1 140px;
-  min-width: 90px;
+  flex: 1 1 100%;
+  min-width: 0;
 }
 .UnicDB-requery-input.UnicDB-requery-order {
-  flex: 0 1 140px;
-  min-width: 90px;
+  flex: 1 1 100%;
+  min-width: 0;
 }
 button.UnicDB-requery-run,
 button.UnicDB-requery-clear {
@@ -1357,6 +1408,11 @@ button.UnicDB-requery-clear:disabled {
   display: flex;
   gap: 6px;
   align-items: center;
+  /* Allow the schema chip to push to the right edge when the row is
+   * wide. `margin-left: auto` on the chip below does the actual
+   * alignment — this rule just keeps the toolbar a single wrapping
+   * row when the viewport narrows. */
+  flex-wrap: wrap;
 }
 .UnicDB-console-toolbar button {
   padding: 4px 12px;
@@ -1369,6 +1425,20 @@ button.UnicDB-requery-clear:disabled {
 .UnicDB-console-primary {
   background: var(--vscode-button-background, #0e639c) !important;
   color: var(--vscode-button-foreground, #ffffff) !important;
+}
+/* ACTIVE-SCHEMA chip — console toolbar variant. Right-aligned via
+ * `margin-left: auto` so it stays visible regardless of how many
+ * toolbar buttons wrap. Visual contract mirrors the results toolbar
+ * `.UnicDB-schema-chip` and the AI-chat-composer
+ * `.UnicDB-chat-schema-chip`. */
+.UnicDB-console-schema-chip {
+  margin-left: auto;
+  font-family: inherit;
+  font-size: 12px;
+}
+.UnicDB-console-schema-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .UnicDB-console-editor {
   flex: 1;
@@ -2111,6 +2181,15 @@ body.UnicDB-chat-body {
 }
 .UnicDB-chat-chip:hover {
   border-color: var(--UnicDB-chat-accent-hover, #60a5fa);
+}
+/* ACTIVE-SCHEMA chip — composer variant. Inherits the pill shape from
+ * `.UnicDB-chat-chip`; the additional class only adds the disabled
+ * state so a panel without an active connection (or while the host
+ * has not yet pushed a schemaChanged frame) reads as inert instead of
+ * silently clickable. */
+.UnicDB-chat-schema-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .UnicDB-chat-chipmenu {
   position: absolute;

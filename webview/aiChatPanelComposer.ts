@@ -34,6 +34,9 @@ export interface ComposerCallbacks {
   onModelSelect(role: string): void;
   onBypassChange(enabled: boolean): void;
   onAttachPicker(): void; // "+" click — main owns the hidden file input
+  // ACTIVE-SCHEMA chip — click on the schema chip; main posts
+  // `pickActiveSchema` to the host.
+  onPickSchema(): void;
 }
 
 export interface UnicDBComposer {
@@ -42,6 +45,14 @@ export interface UnicDBComposer {
   setModels(entries: ComposerModelEntry[], active: string): void;
   setBypass(enabled: boolean): void;
   setVisionCapable(capable: boolean): void;
+  /**
+   * ACTIVE-SCHEMA chip — push the host's authoritative schema state
+   * into the composer label. `schema === undefined` means "no pin —
+   * server default search_path" and renders as `$(symbol-namespace) default`.
+   * `connectionId === undefined` means "no active connection" and the
+   * chip disables itself.
+   */
+  setActiveSchema(schema: string | undefined, connectionId: string | undefined): void;
   value(): string;
   setValue(v: string): void;
   attachments(): ComposerAttachment[];
@@ -201,6 +212,22 @@ export function renderComposer(
   chipMenu.id = "modelChipMenu";
   chipMenu.style.display = "none";
   wrap.appendChild(chipMenu);
+
+  // --- ACTIVE-SCHEMA chip --------------------------------------------------
+  // Sits to the right of the model chip in the same `actions` row. Click
+  // posts `{type:"pickActiveSchema"}` to the host, which re-runs
+  // `UnicDB.selectActiveSchema` and fans the resulting store mutation
+  // back as `schemaChanged`. While the chip text updates from the host's
+  // authoritative state, the click path goes through the store so the
+  // status bar + console + results chips all stay coherent.
+  const schemaChipBtn = document.createElement("button");
+  schemaChipBtn.type = "button";
+  schemaChipBtn.id = "schemaChipBtn";
+  schemaChipBtn.className = "UnicDB-chat-chip UnicDB-chat-schema-chip";
+  schemaChipBtn.setAttribute("aria-label", "Active schema");
+  schemaChipBtn.title = "Active schema — click to change. CREATE FUNCTION / unqualified SELECT run here.";
+  schemaChipBtn.textContent = "$(symbol-namespace) default";
+  actions.appendChild(schemaChipBtn);
 
   // --- Slash affordance (`/N`) --------------------------------------------
   const slashHintBtn = document.createElement("button");
@@ -438,6 +465,16 @@ export function renderComposer(
     }
   });
 
+  // ACTIVE-SCHEMA chip — single click posts `pickActiveSchema` to the
+  // host, which runs the same QuickPick flow as the status-bar chip. No
+  // local menu: the chip is a single affordance and the picker is a
+  // shared host resource (so every chip in every panel sees the same
+  // list of schemas for the same connection).
+  schemaChipBtn.addEventListener("click", () => {
+    if (schemaChipBtn.disabled) return;
+    cb.onPickSchema();
+  });
+
   // Outside-click + Escape close the menu.
   document.addEventListener("click", (ev) => {
     const t = ev.target as Node | null;
@@ -489,6 +526,30 @@ export function renderComposer(
     setVisionCapable(capable: boolean): void {
       visionCapable = capable;
       applyBusyVisual();
+    },
+    setActiveSchema(
+      schema: string | undefined,
+      connectionId: string | undefined,
+    ): void {
+      // No active connection → chip is inert. The host still sends the
+      // message so a fresh panel without any connection starts in the
+      // correct disabled state without waiting for the next event.
+      const hasConn = connectionId !== undefined;
+      schemaChipBtn.disabled = !hasConn;
+      // `$(symbol-namespace)` is rendered as a plain glyph by VS Code's
+      // markdown / status-bar pipeline, NOT by the browser. The webview
+      // shows the codepoint literally so users see a stable label
+      // across themes; the host's status bar mirrors the same format.
+      schemaChipBtn.textContent = hasConn
+        ? schema
+          ? `$(symbol-namespace) ${schema}`
+          : "$(symbol-namespace) default"
+        : "$(symbol-namespace) no connection";
+      schemaChipBtn.title = hasConn
+        ? schema
+          ? `Active schema: ${schema} — click to change.`
+          : "No schema pinned — SQL runs with the server default search_path. Click to pin one."
+        : "No active connection. Open a connection to pin a schema.";
     },
     value(): string {
       return prompt.value;

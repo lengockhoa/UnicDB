@@ -169,6 +169,11 @@ function readRuleBody(src: string, selector: string): string {
 // height to 24px so it lines up with the 24-26px .UnicDB-btn height in
 // the same flex row. The buttons are .UnicDB-btn (height from the shared
 // rule) and need no extra height override.
+//
+// TASK-RES-002: each input now claims its own row inside the wrapping
+// toolbar (`flex: 1 1 100%; min-width: 0`) so WHERE and ORDER BY stack
+// vertically instead of cramming onto the icon row. The test asserts the
+// new full-width claim, not the old `flex: 0 1 140px / min-width: 90px`.
 
 describe("TASK-RES-001 — requery input CSS alignment (toolbar slot)", () => {
   it(".UnicDB-requery-input sets height:24px + box-sizing:border-box", () => {
@@ -178,18 +183,18 @@ describe("TASK-RES-001 — requery input CSS alignment (toolbar slot)", () => {
     expect(body).toMatch(/box-sizing\s*:\s*border-box/);
   });
 
-  it(".UnicDB-requery-input.UnicDB-requery-where is shrinkable (flex 0 1 + min-width)", () => {
+  it(".UnicDB-requery-input.UnicDB-requery-where claims a full toolbar row (flex 1 1 100% + min-width 0)", () => {
     const body = readRuleBody(stylesSrc, ".UnicDB-requery-input.UnicDB-requery-where");
     expect(body, "rule body for .UnicDB-requery-input.UnicDB-requery-where").not.toBe("");
-    expect(body).toMatch(/flex\s*:\s*0\s+1\s+140px/);
-    expect(body).toMatch(/min-width\s*:\s*90px/);
+    expect(body).toMatch(/flex\s*:\s*1\s+1\s+100\s*%/);
+    expect(body).toMatch(/min-width\s*:\s*0/);
   });
 
-  it(".UnicDB-requery-input.UnicDB-requery-order is shrinkable (flex 0 1 + min-width)", () => {
+  it(".UnicDB-requery-input.UnicDB-requery-order claims a full toolbar row (flex 1 1 100% + min-width 0)", () => {
     const body = readRuleBody(stylesSrc, ".UnicDB-requery-input.UnicDB-requery-order");
     expect(body, "rule body for .UnicDB-requery-input.UnicDB-requery-order").not.toBe("");
-    expect(body).toMatch(/flex\s*:\s*0\s+1\s+140px/);
-    expect(body).toMatch(/min-width\s*:\s*90px/);
+    expect(body).toMatch(/flex\s*:\s*1\s+1\s+100\s*%/);
+    expect(body).toMatch(/min-width\s*:\s*0/);
   });
 
   it("button.UnicDB-requery-run + button.UnicDB-requery-clear set flex:0 0 auto", () => {

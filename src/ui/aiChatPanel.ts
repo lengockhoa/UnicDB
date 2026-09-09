@@ -632,6 +632,24 @@ export interface AiChatPanelOptions {
    */
   onDispose?: () => void;
   /**
+   * ACTIVE-SCHEMA chip — fired when the user clicks the schema chip in
+   * the composer. extension.ts wires this to
+   * `vscode.commands.executeCommand("UnicDB.selectActiveSchema", undefined)`
+   * (no argument → uses the active connection, same as the status-bar
+   * chip). Optional so existing test doubles keep compiling — without
+   * it the chip click is a silent no-op.
+   */
+  onPickSchema?: () => void;
+  /**
+   * ACTIVE-SCHEMA chip — initial-state seed. Called when the chat panel
+   * mounts so the composer chip shows the right label before any user
+   * interaction.
+   */
+  initialActiveSchema?: () => {
+    schema: string | undefined;
+    connectionId: string | undefined;
+  };
+  /**
    * Cycle AE TASK-003 — when the engine is "omp", the chat panel
    * delegates `handleSend` to `OmpChatEngine.send(text, events)` instead
    * of the raw ACP session/prompt path. Wire `createOmpChatEngine()` in
@@ -1508,6 +1526,13 @@ export class AiChatPanel {
       },
     );
     this.panel.webview.html = this.buildHtml(this.panel.webview);
+    // ACTIVE-SCHEMA chip — seed the composer chip with whatever is
+    // currently pinned. The fan-out subscriber keeps it in sync.
+    const seedFn = this.options.initialActiveSchema;
+    if (seedFn) {
+      const seed = seedFn();
+      this.postActiveSchema(seed.schema, seed.connectionId);
+    }
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage(
         (msg: AiChatPanelWebviewMessage) => this.handleMessage(msg),
@@ -1705,6 +1730,14 @@ export class AiChatPanel {
         // off (default-OFF). No confirmation frame: the composer chip
         // already reflects the state (the webview owns its own visual).
         this.bypassPermissions = msg.enabled;
+        return;
+      // ACTIVE-SCHEMA chip — composer schema chip click. Delegates to the
+      // imperative `onPickSchema` hook installed by extension.ts so unit
+      // tests stay decoupled from the global command registration; the
+      // resulting store mutation re-broadcasts as `schemaChanged` to every
+      // webview via the extension-level fan-out subscriber.
+      case "pickActiveSchema":
+        this.options.onPickSchema?.();
         return;
     }
   }
@@ -4395,6 +4428,19 @@ export class AiChatPanel {
 
   private post(msg: AiChatPanelHostMessage): void {
     void this.panel?.webview.postMessage(msg);
+  }
+
+  /**
+   * ACTIVE-SCHEMA chip — fan-out entry point. `extension.ts`'s
+   * schema-subscriber calls this on every `ActiveSchemaStore.onDidChange`
+   * and every `mgr.onDidChangeActive`. No-op before the panel is shown
+   * (no live webview) and after dispose.
+   */
+  public postActiveSchema(
+    schema: string | undefined,
+    connectionId: string | undefined,
+  ): void {
+    this.post({ type: "schemaChanged", schema, connectionId });
   }
 
   /**

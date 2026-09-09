@@ -17,6 +17,14 @@ let history: string[] = [];
 let historyIndex = -1;
 let plan = "";
 
+// ---- ACTIVE-SCHEMA chip ---------------------------------------------------
+// Single source of truth mirrored from the host's `schemaChanged` posts
+// (driven by `ActiveSchemaStore.onDidChange` + `mgr.onDidChangeActive`).
+// `null` ⇒ no pin (server default); `connectionId === undefined` ⇒ no
+// active connection (chip disables itself).
+let activeSchema: string | null | undefined = undefined;
+let activeSchemaConnectionId: string | undefined = undefined;
+
 // ---- ARP-08 TASK-ARP08-003 draft-recovery state -----------------------------
 // Single trailing-edge debounce timer (~500ms, latest-wins) plus a per-tab
 // dirty set. `flushPending()` is the ONE flush function — shared by the
@@ -110,6 +118,7 @@ function render(): void {
       <button id="consoleNewTabBtn" class="UnicDB-console-secondary">+ Tab</button>
       <button id="consoleHistoryBtn" class="UnicDB-console-secondary">History</button>
       <button id="consoleClearDraftsBtn" class="UnicDB-console-secondary" title="Clear all saved console drafts">Clear drafts</button>
+      <button id="consoleSchemaBtn" class="UnicDB-console-schema-chip" title="Active schema — click to change" aria-label="Active schema">$(symbol-namespace) default</button>
     </div>
     <div class="UnicDB-console-editor-wrap">
       <textarea id="consoleSqlEditor" class="UnicDB-console-editor" rows="12" placeholder="Type SQL here…" spellcheck="false"></textarea>
@@ -209,6 +218,14 @@ function wireControls(): void {
     cancelPendingFlush();
     post({ type: "clearDrafts" });
   });
+  // ACTIVE-SCHEMA chip — click delegates to the same QuickPick flow the
+  // status-bar chip uses. The chip is disabled when no connection is
+  // active; the host-side guard skips the picker in that case too.
+  document.getElementById("consoleSchemaBtn")?.addEventListener("click", () => {
+    if (activeSchemaConnectionId === undefined) return;
+    post({ type: "pickActiveSchema" });
+  });
+  renderSchemaChip();
   e?.addEventListener("input", () => {
     activeTab().buffer = e.value;
     // ARP-08: arm/re-arm the trailing-edge debounce (latest-wins) so the
@@ -456,7 +473,37 @@ window.addEventListener("message", (ev: MessageEvent<Msg>) => {
     render();
     return;
   }
+  // ACTIVE-SCHEMA chip — host fans every store/connection change out to
+  // keep every panel's chip in sync.
+  if (msg.type === "schemaChanged") {
+    activeSchema = (typeof msg.schema === "string" ? msg.schema : null);
+    activeSchemaConnectionId =
+      typeof msg.connectionId === "string" ? msg.connectionId : undefined;
+    renderSchemaChip();
+    return;
+  }
 });
+
+/** Apply the current `activeSchema` / `activeSchemaConnectionId` mirror
+ *  into the chip button. Pure DOM — called both after `schemaChanged`
+ *  posts AND on first render so the chip shows the right label before
+ *  the host pushes the first frame. */
+function renderSchemaChip(): void {
+  const btn = document.getElementById("consoleSchemaBtn") as HTMLButtonElement | null;
+  if (!btn) return;
+  const hasConn = activeSchemaConnectionId !== undefined;
+  btn.disabled = !hasConn;
+  btn.textContent = hasConn
+    ? activeSchema
+      ? `$(symbol-namespace) ${activeSchema}`
+      : "$(symbol-namespace) default"
+    : "$(symbol-namespace) no connection";
+  btn.title = hasConn
+    ? activeSchema
+      ? `Active schema: ${activeSchema} — click to change.`
+      : "No schema pinned — SQL runs with the server default search_path. Click to pin one."
+    : "No active connection. Open a connection to pin a schema.";
+}
 
 // ARP-08 — belt for abrupt webview death: flush the pending buffer when the
 // page hides (user switched away / closed the editor) or unloads. Both share

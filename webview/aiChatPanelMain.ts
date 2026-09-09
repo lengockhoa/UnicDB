@@ -734,6 +734,12 @@ function buildComposerCallbacks(): ComposerCallbacks {
         | null;
       fi?.click();
     },
+    // ACTIVE-SCHEMA chip — composer chip click. Host runs the same
+    // QuickPick flow as the status-bar chip; the resulting store
+    // mutation re-broadcasts as `schemaChanged` to every webview.
+    onPickSchema() {
+      post({ type: "pickActiveSchema" });
+    },
   };
 }
 
@@ -2039,6 +2045,18 @@ function renderHistory(msg: HistoryMsg): void {
     case "models":
       applyModels(msg);
       return;
+    // ACTIVE-SCHEMA chip — host fans out every store/connection change
+    // to keep every panel's chip in sync. Forward to the composer; the
+    // console + results webviews own their own listeners and DOM.
+    case "schemaChanged": {
+      const sm = msg as {
+        type: "schemaChanged";
+        schema: string | undefined;
+        connectionId: string | undefined;
+      };
+      composer?.setActiveSchema(sm.schema, sm.connectionId);
+      return;
+    }
   }
 });
 

@@ -89,6 +89,24 @@ export interface ConsolePanelOptions {
    * only (hydrate/persist no-op).
    */
   draftMemento?: vscode.Memento;
+  /**
+   * ACTIVE-SCHEMA chip — fired when the user clicks the schema chip in
+   * the console toolbar. extension.ts wires this to
+   * `vscode.commands.executeCommand("UnicDB.selectActiveSchema", undefined)`
+   * (no argument → uses the active connection, same as the status-bar
+   * chip). Optional so test doubles keep compiling — without it the
+   * click is a no-op.
+   */
+  onPickSchema?: () => void;
+  /**
+   * ACTIVE-SCHEMA chip — initial-state seed. Called once when the
+   * console panel mounts so the toolbar chip shows the right label
+   * before any user interaction.
+   */
+  initialActiveSchema?: () => {
+    schema: string | undefined;
+    connectionId: string | undefined;
+  };
 }
 
 /** Detect `EXPLAIN ANALYZE` (or ANALYSE) at depth 0 — the only EXPLAIN form
@@ -154,6 +172,12 @@ export class ConsolePanel {
   /** ARP-08 — draft persistence Memento; in-memory-only drafts when absent. */
   private readonly draftMemento: vscode.Memento | undefined;
   private readonly onAutocomplete: ConsolePanelOptions["onAutocomplete"];
+  /** ACTIVE-SCHEMA chip — toolbar click hook. */
+  private readonly onPickSchema: (() => void) | undefined;
+  /** ACTIVE-SCHEMA chip — initial-state seed hook. */
+  private readonly initialActiveSchema:
+    | (() => { schema: string | undefined; connectionId: string | undefined })
+    | undefined;
   /** Per-tab AbortController for the in-flight autocomplete request. */
   private readonly acControllers = new Map<string, AbortController>();
   /** Per-tab last requestId — late results are dropped if it changed. */
@@ -173,6 +197,8 @@ export class ConsolePanel {
     this.memento = options.memento;
     this.draftMemento = options.draftMemento;
     this.onAutocomplete = options.onAutocomplete;
+    this.onPickSchema = options.onPickSchema;
+    this.initialActiveSchema = options.initialActiveSchema;
     this.options = options;
     this.tabs.push({ id: newTabId(), name: "Query 1", buffer: "" });
     this.activeTabId = this.tabs[0].id;
@@ -209,6 +235,12 @@ export class ConsolePanel {
     this.panel.webview.html = this.buildHtml(this.panel.webview);
     // Send the initial state once the bundle is ready.
     this.postState();
+    // ACTIVE-SCHEMA chip — seed the toolbar chip with whatever is
+    // currently pinned. The fan-out subscriber keeps it in sync.
+    if (this.initialActiveSchema) {
+      const seed = this.initialActiveSchema();
+      this.postActiveSchema(seed.schema, seed.connectionId);
+    }
     this.disposables.push(
       this.panel.webview.onDidReceiveMessage((msg: unknown) => {
         // SECURITY: webview postMessage data is untrusted runtime input —
@@ -506,6 +538,25 @@ export class ConsolePanel {
     void this.panel.webview.postMessage(msg);
   }
 
+  /**
+   * ACTIVE-SCHEMA chip — fan-out entry point. `extension.ts`'s
+   * schema-subscriber calls this on every `ActiveSchemaStore.onDidChange`
+   * and every `mgr.onDidChangeActive`. No-op before the panel is shown
+   * (no live webview) and after dispose.
+   */
+  public postActiveSchema(
+    schema: string | undefined,
+    connectionId: string | undefined,
+  ): void {
+    if (!this.panel) return;
+    const msg: ConsoleHostToWebviewMessage = {
+      type: "schemaChanged",
+      schema,
+      connectionId,
+    };
+    void this.panel.webview.postMessage(msg);
+  }
+
   private async handleMessage(msg: ConsoleToHostMessage): Promise<void> {
     switch (msg.type) {
       case "runConsole":
@@ -587,6 +638,13 @@ export class ConsolePanel {
         return;
       case "clearAutocomplete":
         this.handleClearAutocomplete(msg.tabId);
+        return;
+      // ACTIVE-SCHEMA chip — console toolbar schema chip click. Delegates
+      // to the imperative `onPickSchema` hook so unit tests stay decoupled
+      // from the global command registration; the resulting store mutation
+      // is fanned back out via `postActiveSchema` (called by extension.ts).
+      case "pickActiveSchema":
+        this.options.onPickSchema?.();
         return;
     }
   }

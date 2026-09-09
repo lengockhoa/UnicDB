@@ -110,6 +110,28 @@ export interface ResultsPanelOptions {
   title?: string;
   /** Save flow dependencies — must be supplied when SaveEdits is wired in. */
   saveContext?: SaveContext;
+  /**
+   * ACTIVE-SCHEMA chip — fired when the user clicks the schema chip in
+   * the results toolbar. extension.ts wires this to
+   * `vscode.commands.executeCommand("UnicDB.selectActiveSchema", undefined)`
+   * (passes no argument → uses the currently active connection, same as
+   * the status-bar chip). Optional so existing test doubles keep
+   * compiling — without it the chip click is a no-op.
+   */
+  onPickSchema?: () => void;
+  /**
+   * ACTIVE-SCHEMA chip — initial state seed. Called once when the
+   * webview view resolves so the chip shows the right label before
+   * any user interaction. extension.ts wires this to
+   * `mgr.getActiveSchema(mgr.getActive()?.id)` + the active id. Optional
+   * so unit tests keep compiling — without it the chip shows the
+   * hardcoded `$(symbol-namespace) default` placeholder until the first
+   * store/connection event.
+   */
+  initialActiveSchema?: () => {
+    schema: string | undefined;
+    connectionId: string | undefined;
+  };
 }
 
 /** TASK-RP-001 — ResultsPanel is a `WebviewViewProvider` whose view lives
@@ -128,6 +150,14 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
   private readonly runner: QueryRunner;
   private readonly saveContext: SaveContext | null;
   private readonly title: string;
+  /** ACTIVE-SCHEMA chip — toolbar click hook. extension.ts wires this to
+   *  the global selectActiveSchema command; absent in unit tests
+   *  (chip click is a no-op). */
+  private readonly onPickSchema: (() => void) | undefined;
+  /** ACTIVE-SCHEMA chip — initial-state seed hook (see options doc). */
+  private readonly initialActiveSchema:
+    | (() => { schema: string | undefined; connectionId: string | undefined })
+    | undefined;
   /** TASK-RP-001 — the live webview view, null until VS Code resolves it
    *  via `resolveWebviewView`. Replaces the old `this.panel` (WebviewPanel)
    *  from the editor-area shell. */
@@ -216,6 +246,8 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
     this.runner = options.runner;
     this.saveContext = options.saveContext ?? null;
     this.title = options.title ?? "UnicDB Results";
+    this.onPickSchema = options.onPickSchema;
+    this.initialActiveSchema = options.initialActiveSchema;
   }
 
   /**
@@ -254,6 +286,18 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
       localResourceRoots: [vscode.Uri.joinPath(this.extensionUri(), "dist")],
     };
     view.webview.html = this.buildHtml(view.webview);
+
+    // ACTIVE-SCHEMA chip — seed the chip label with whatever is
+    // currently pinned. Runs AFTER `view` is set so the postMessage
+    // lands. The fan-out subscriber keeps it in sync afterwards.
+    if (this.initialActiveSchema) {
+      const seed = this.initialActiveSchema();
+      this.postMessage({
+        type: "schemaChanged",
+        schema: seed.schema,
+        connectionId: seed.connectionId,
+      });
+    }
 
     // Listen messages từ webview.
     this.disposables.push(
@@ -481,6 +525,24 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
 
   private isManualCommitEnabled(): boolean {
     return this.saveContext?.getManualCommit?.() === true;
+  }
+
+  /**
+   * ACTIVE-SCHEMA chip — fan-out entry point. `extension.ts`'s
+   * schema-subscriber calls this on every `ActiveSchemaStore.onDidChange`
+   * and every `mgr.onDidChangeActive`. Safe to call when the view has
+   * not been resolved yet (no-op via postMessage's null guard) and safe
+   * to call after dispose (same guard + no live webview).
+   *
+   * `connectionId` may be undefined when there is no active connection —
+   * the webview still receives the message so the chip can show the
+   * "default" placeholder instead of stale schema text.
+   */
+  public postActiveSchema(
+    schema: string | undefined,
+    connectionId: string | undefined,
+  ): void {
+    this.postMessage({ type: "schemaChanged", schema, connectionId });
   }
 
   /**
@@ -1013,6 +1075,17 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
           busy: this.busy,
         });
         this.postTransactionStatus();
+        break;
+      // ACTIVE-SCHEMA chip — results toolbar schema chip click.
+      // The host has no per-panel "open QuickPick" affordance (it lives
+      // centrally on `UnicDB.selectActiveSchema`), so the webview just
+      // signals intent here; the extension's fan-out subscriber picks up
+      // the resulting store mutation and posts `schemaChanged` back to
+      // every webview. We delegate via the imperative `onPickSchema`
+      // hook installed by extension.ts so unit tests stay decoupled from
+      // the global command registration.
+      case "pickActiveSchema":
+        this.onPickSchema?.();
         break;
       // TASK-UX3-003 — message wiring for tab close affordances. The
       // webview's × button + right-click menu post these; the host methods

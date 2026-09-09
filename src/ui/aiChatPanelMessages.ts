@@ -280,7 +280,22 @@ export type AiChatPanelHostMessage =
   | AiChatPanelAttachError
   | AiChatPanelGroundingState
   | AiChatPanelUsage
-  | AiChatPanelModels;
+  | AiChatPanelModels
+  | AiChatPanelSchemaChanged;
+
+/** ACTIVE-SCHEMA chip — host → chat webview. Posted whenever the
+ *  active connection's pinned schema changes (status-bar click, the
+ *  chat chip itself, or any other surface that mutates
+ *  `ActiveSchemaStore`). The webview keeps the composer chip label
+ *  in sync; the click handler routes back to `UnicDB.selectActiveSchema`
+ *  which goes through the same store, so all chips stay coherent. */
+export interface AiChatPanelSchemaChanged {
+  type: "schemaChanged";
+  schema: string | undefined;
+  /** Connection id the schema belongs to. Undefined when there is no
+   *  active connection (webview should show "default"). */
+  connectionId: string | undefined;
+}
 
 /** TASK-005: host answer for `mention_list` (≤30 DB objects + ≤20 files).
  * Each item carries `kind` discriminator (table|view|routine|file), a
@@ -449,7 +464,12 @@ export type AiChatPanelWebviewMessage =
   | AiChatPanelMentionList
   | AiChatPanelPlanApprove
   | AiChatPanelPlanReject
-  | { type: "grounding_toggle"; enabled: boolean };
+  | { type: "grounding_toggle"; enabled: boolean }
+  // ACTIVE-SCHEMA chip — chat composer schema chip click. Mirrors
+  // `PickActiveSchemaMessage` in `messages.ts`; typed inline (instead
+  // of imported) so the chat webview bundle keeps its own narrow
+  // message contract.
+  | { type: "pickActiveSchema" };
 
 /** TASK-005: webview opened the @-mention dropdown. `query` is the
  * substring after the leading `@` (e.g. "pu" or ""). The host responds
