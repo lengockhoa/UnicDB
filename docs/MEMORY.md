@@ -58,6 +58,7 @@
   **GitHub Releases and VS Code Marketplace are kept in lockstep by this script** — every
   bump ships to both channels at the same version, no manual `git tag` / `gh release
   create` / `vsce publish` separated run.
+- **AI engine source of truth:** `src/extension.ts` reads persisted `AiSettings.engine` from `AiConfigStore` before consulting the legacy `UnicDB.ai.engine` configuration fallback. Selecting `omp` in AI Settings therefore controls AI Chat; unavailable OMP explicitly falls back to builtin.
 
 ## Known Bugs & Root Causes
 
