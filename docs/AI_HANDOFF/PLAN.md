@@ -1,269 +1,273 @@
-# PLAN — Cycle RES-BAR: WHERE / ORDER BY inputs in the Results toolbar (Enter = re-run)
+# PLAN — Cycle RES2ROW: split the Results toolbar into exactly 2 rows
 
 ## §1 Intent
 
-**Problem (user, verbatim):** "Ở chỗ result này, trên table, có cái ô where và order by.
-Sau khi tôi thêm thông tin vào đây. gõ enter thì phải search ra kết quả cho tôi nhé"
-("In the results area, on the table, there should be WHERE and ORDER BY boxes. After I
-type into them and press Enter, it should re-search and show me results.")
+**Problem (user, verbatim):** "Chia đôi cho tôi menu này. Từ Where là đưa xuống dòng dưới.
+TÔi cần 2 dòng" ("Split this menu in half for me. From WHERE onwards, put it on the line
+below. I need 2 lines.")
 
-**Locked P0 answers (from the orchestrator's one-time question window — treat as fixed):**
-1. **Execution mode:** Re-run SQL on the database (server-side). NOT client-side filtering.
-2. **Input format:** Free SQL fragment. WHERE box = boolean expression body, no leading
-   `WHERE` keyword. ORDER BY box = ORDER BY body (column list + directions), no leading
-   `ORDER BY` keyword.
-3. **Placement:** In the existing toolbar row, between the `tsv` dropdown and the existing
-   `Search...` input (slot: right after `tsv ▼`, before the header checkbox). Two narrow
-   text inputs with placeholders `WHERE …` and `ORDER BY …`. Toolbar height must remain
-   stable.
+**Context:** the results webview toolbar is currently a single clipped row (post
+v1.53.38 / TASK-COLLAPSE-001): 18 controls, no truncation, but crowded. The user wants a
+deterministic 2-row split at the WHERE input.
 
-   **Toolbar DOM order pinned (so the two shorthand wordings above resolve to one slot):**
-   `[close | refresh | separator | upload | delete | undo | redo | ✓ | grid | tsv ▼ |
-   WHERE … | ORDER BY … | ☐ header | copy | download | Search…]`. P0's "between tsv
-   dropdown and Search..." and §2's "after `exportFormat`, before `exportHeader`" describe
-   the SAME two-slot gap: WHERE input is the first child immediately after
-   `.UnicDB-export-format`; ORDER BY input is the second; the empty `.UnicDB-export-header`
-   checkbox is the third; `.UnicDB-search-input` remains the last.
+**Split point (vision-analyst verified against the live toolbar):** after the `tsv`
+dropdown, before the `WHERE …` input. Row 1 = the 8 icon buttons (cancel, refresh,
+add-row, delete-row, undo, redo, commit, csv-toggle) + 2 separators + `tsv` select.
+Row 2 = `WHERE …` input, `ORDER BY …` input, ▶ Re-Run, ✕ Clear, ☐ header checkbox, Copy,
+Export-file, `$(symbol-namespace)` schema chip, `Search…` input — 9 controls, balanced
+against row 1.
 
-**Success looks like:** the Results webview toolbar carries the two inputs in the P0 slot;
-pressing Enter inside either one re-runs the statement's ORIGINAL SQL with the typed
-fragments applied (server-side, same connection), and the grid re-renders the new rows;
-full suite + typecheck + compile green.
+**Success looks like:** the toolbar always renders EXACTLY 2 rows at every viewport width —
+no third line ever appears (narrow widths clip within a row instead of reflowing), no
+horizontal scrollbar, and every existing behavior (requery Enter, export, quick filter,
+commit, transaction controls) keeps working. Typecheck + compile + targeted tests + full
+suite green.
 
-**Planner grounding correction (verified against working tree @ accf1b5):** the
-server-side re-run pipeline the caller expected to build (tasks RES-003/RES-004) **already
-exists and is fully tested** — heritage of TASK-504/TASK-004/TASK-005/TASK-006:
-- webview posts `{type:"requery", index, where, orderBy}` (`webview/main.ts:3294`
-  `onRequeryClick`), message type declared at `webview/main.ts:171-176`.
-- host `handleRequery` (`src/ui/resultsPanel.ts:1843`) validates ORDER BY with the live
-  dialect (`parseOrderBy`, `src/ui/queryComposer.ts:306`), rewrites the ORIGINAL cached
-  statement SQL via `composeRequery` (`src/ui/resultsGridModel.ts:1326`) /
-  `composeSortQuery` / multi-term wrap / paging lane (`resultsPanel.ts:1764-1841`), routes
-  through the same transaction/connection handle, posts `running → done` state so the grid
-  fully re-renders, and surfaces errors (invalid ORDER BY → synthetic error statement +
-  toast; missing statement → toast, `resultsPanel.ts:1853-1857`).
-The real gaps vs the user request + P0 are webview-side placement/Enter (TASK-RES-001) and
-one input-hardening gap (TASK-RES-002): a user typing the natural `WHERE id>5` into the box
-today produces `… WHERE WHERE id>5` (or a parseOrderBy rejection for a leading `ORDER BY`)
-— a confusing raw DB error. P0 answer 2 defines the fragment contract; RES-002 enforces it
-defensively.
+**Supersession:** this cycle REVERSES the RES-BAR / TASK-COLLAPSE-001 single-row contract
+(`.UnicDB-toolbar { flex-wrap: nowrap }` + `overflow: hidden` + requery inputs
+`flex: 1 1 140px; min-width: 80px`). The pins live in 3 test files and MUST be flipped, not
+silently deleted: `src/ui/__tests__/webviewToolbar.test.ts` (test #4 nowrap regex + the
+px-basis assertions, AND test #3's flat-children census — a fourth flip discovered during
+planner grounding), `tests/webviewRequeryAlignment.test.ts` (2 `it()` bodies), and
+`src/ui/__tests__/aiChatPanelCloneCss.test.ts` (line 119).
 
 ## §2 Scope
 
-**In scope:**
-- Relocate the existing WHERE / ORDER BY inputs (plus their Re-Run + Clear buttons) from
-  the standalone requery bar (`webview/main.ts:1066-1104`, rendered inside `gridWrap`
-  under the toolbar) into the toolbar row, slot: after `exportFormat` (`tsv` select),
-  before `exportHeader` (checkbox) — exactly the P0 slot.
-- Placeholders `WHERE …` / `ORDER BY …`; labels carried by placeholder + aria-label
-  (toolbar has no room for text labels).
-- Enter key on either input triggers the requery exactly once per keydown (debounce-free;
-  IME-composition guard).
-- CSS: narrow toolbar inputs matching the existing `.UnicDB-search-input` sizing pattern;
-  toolbar height stable (`flex-wrap: nowrap` is pinned by a structural test — keep it).
-- Remove the now-empty standalone requery bar (DOM + its CSS block).
-- Update the tests that pin the old layout.
-- Extension: strip one leading clause keyword at the `handleRequery` message boundary
-  (pure helpers in `queryComposer.ts`) so the P0 input format is enforced defensively.
-- **Fold-in (orchestrator-appended after P0 closed): user reported toolbar hover is
-  non-responsive — tooltip appears slowly and icons jerk on mouseover. Root cause:
-  `makeIconButton` (`webview/main.ts:680`) sets both `btn.title` (1-3s native delay)
-  AND `data-tooltip` (instant CSS pseudo at `webview/styles.css:78-115`), so two
-  tooltips fire per hover; background-color flash on `:hover` has no `transition`. Fix:
-  drop the native `title` and add an 80ms ease transition on the background. Sequenced
-  after RES-001 in wave 2 because they share `webview/main.ts` + `webview/styles.css`.**
+**In scope (single task — TASK-COLLAPSE-002 — all edits share 2 source files):**
+- `webview/styles.css`: `.UnicDB-toolbar` becomes `display: flex; flex-direction: column;
+  gap: 4px; min-width: 0; overflow: hidden; margin-bottom: 8px;` (drop `flex-wrap: nowrap`);
+  new `.UnicDB-toolbar-row` rule `display: flex; flex-wrap: nowrap; align-items: center;
+  gap: 4px; min-width: 0; overflow: hidden;`; `.UnicDB-requery-where/-order` become
+  `flex: 1 1 100%; min-width: 0` (inside a nowrap row this means "split the leftover space",
+  NOT "own a full line"); update the stale TASK-COLLAPSE-001 comment block.
+- `webview/main.ts` `buildPersistentDom()` (lines ~932-1210): wrap toolbar children in two
+  `.UnicDB-toolbar-row` divs. Row 1 appends: cancelBtn, refreshBtn, sep, addRowBtn,
+  deleteRowBtn, undoBtn, redoBtn, commitBtn, csvToggleBtn, sep, exportFormat. Row 2 appends:
+  requeryWhere, requeryOrderBy, requeryRunBtn, requeryClearBtn, exportHeader, exportCopyBtn,
+  exportFileBtn, schemaChip, searchInput (still last child of row 2).
+- `webview/main.ts` line 817-820 (`render()`): `dom.toolbar.insertBefore(
+  dom.transactionControls, dom.csvToggleBtn)` THROWS under the wrapper strategy (ref node's
+  parent is row 1, not toolbar). Add `toolbarRow1: HTMLDivElement` to the `PersistentDom`
+  interface and re-target to `dom.toolbarRow1.insertBefore(...)`.
+- Flip/rewrite the pinned tests: `webviewToolbar.test.ts` (EXPECTED_ORDER split into
+  per-row constants; test #3 becomes a two-row census; test #4 nowrap→column flip),
+  `webviewRequeryAlignment.test.ts` (2 `it()` bodies + stale comments), 
+  `aiChatPanelCloneCss.test.ts` (line 119 assertion).
 
 **Out of scope:**
-- Any new webview→extension message type (rejected — see §3).
-- Client-side filtering, SQL parsing beyond the existing helpers, parametrized rewrites
-  (composeRequery's documented injection policy is unchanged: fragments are user-intended
-  SQL in a SQL client).
-- The existing Re-Run button / Clear button click behavior (kept; only relocated).
-- Sort-on-column-click requery, set-filter, paging lanes (already shipped; only verified
-  as regressions).
+- Any change to what the controls DO (handlers, messages, requery pipeline, export) —
+  layout only.
+- The `data-tooltip` pseudo-element block (`webview/styles.css:98-123`) — off-limits.
+- Any third row, responsive collapse, or media query — user demanded exactly 2.
+- Version bump / release (maintainer folds into next release).
+- The AI-chat panel's own toolbar (aiChatPanelCloneCss.test.ts only READS styles.css as a
+  regression mirror; no chat CSS changes).
+- No version bump inside any task this cycle. The patch bump (v1.53.39) + Marketplace
+  publish happens at pipeline R5 per the RUN.md USER OVERRIDE (`must finish including version
+  bump`); executor / reviewer never bump versions. This supersedes the prior
+  "maintainer folds into next release" default.
 
-**Same-wave file rule:** TASK-RES-001 and TASK-RES-002 share **no** file (webview/* vs
-src/ui/{queryComposer,resultsPanel}.ts; disjoint test files). Both run in wave 1 parallel.
-No demotions were necessary. (An earlier draft split the webview work into
-"DOM elements" + "Enter handler" tasks, but both would modify `webview/main.ts` — merged
-into TASK-RES-001 per the conflict rule.)
-
-**Folded-in task (TASK-RES-003 — toolbar hover polish):** drops `btn.title` from
-`makeIconButton` and adds a short `transition: background-color 80ms ease-out` to
-`.UnicDB-btn` so the two-tooltip flicker and the instant background flash disappear.
-Shares `webview/main.ts` + `webview/styles.css` with TASK-RES-001 → sequenced into
-**wave 2** with `Dependencies: TASK-RES-001`. Touches only CSS rules outside RES-001's
-.toolbar-context input rule and only one line of `makeIconButton` (the `btn.title` delete).
+**Same-wave file rule:** one task, wave 1 — no collision possible. (A draft split
+"CSS task + main.ts task" was rejected: both would touch `webview/styles.css` AND the bundle
+tests eval `dist/webview.js` built from both, so no reviewer could approve one while
+rejecting the other.)
 
 ## §3 Approach
 
-**Grounded delta, not the suggested 4-task split.** The orchestrator's suggested
-TASK-RES-003 (extension SQL-rewrite handler) and TASK-RES-004 (re-render pipeline) are
-pre-existing, shipped, and pinned by tests (`resultsPanelRequery.test.ts`,
-`resultsPanelOrderBy.test.ts`, `resultsGridModelRequery.test.ts`, and the bundle tests in
-`webviewRequery.test.ts` including the equal-row-count reset fix). Re-implementing them or
-adding a new `unicdb/results/whereOrderBy` message discriminator would fork the `requery`
-contract that `handleRequery` already consumes. **Rejected alternative:** new message type
-+ new handler → duplicate pipeline, double the review surface, zero user value. The Enter
-handler simply calls the existing `onRequeryClick()` (`webview/main.ts:3294`).
+**Option A (chosen): fixed two-row wrappers.** `.UnicDB-toolbar` → `flex-direction: column`
+containing exactly two `.UnicDB-toolbar-row` children; each row is `flex-wrap: nowrap` +
+`overflow: hidden`. Row membership is decided in `buildPersistentDom()` by which wrapper an
+element is appended to, so the split is structural (DOM), not emergent (CSS width math).
 
-**TASK-RES-001 (webview):** move the four existing elements (`requeryWhere`,
-`requeryOrderBy`, `requeryRunBtn`, `requeryClearBtn` — same class names
-`.UnicDB-requery-where/-order/-run/-clear`, which `webviewPostCommit.test.ts` and
-`webviewRequery.test.ts` select on) into the toolbar between `exportFormat` and
-`exportHeader`; change placeholders to `WHERE …` / `ORDER BY …`; add one `keydown`
-listener per input: `if (ev.key !== "Enter" || ev.isComposing) return; ev.preventDefault();
-onRequeryClick();`. Delete the `UnicDB-requery-bar` wrapper + labels; restyle inputs with a
-toolbar-context rule (flex `0 1 140px`, min-width `90px`, height aligned to
-`.UnicDB-btn`/`.UnicDB-search-input`) so the toolbar stays one row tall. Buttons keep
-`makeIconButton` (svg + title + aria-label contract, `webview/main.ts:674`).
+- Why it guarantees "exactly 2 rows": a nowrap row can never gain a line; at narrow widths
+  its `overflow: hidden` clips tail content instead of spawning a third line or scrollbar —
+  the same clip-don't-jerk behavior users accepted in TASK-COLLAPSE-001, now per row.
+- The flexible elements absorb the squeeze in row 2: WHERE + ORDER BY at
+  `flex: 1 1 100%; min-width: 0` shrink first (buttons/chip/select all keep
+  `flex-shrink: 0`), so clipping bites the two inputs' widths before any button hides.
+- `transactionControls` re-parenting: `toolbarRow1` is exposed on `PersistentDom` and the
+  render-time `insertBefore` targets it; the guard `!dom.transactionControls.parentElement`
+  keeps working. Without this fix the manual-transaction path throws `NotFoundError` on
+  first transaction open — grounding found this at `webview/main.ts:818`.
 
-**TASK-RES-002 (extension hardening):** new pure exported helper
-`stripLeadingClauseKeyword(fragment: string, keyword: "WHERE" | "ORDER BY"): string` in
-`src/ui/queryComposer.ts` — returns `fragment.trim()`, and when `fragment.trim()` starts
-with the keyword case-insensitively followed by a whitespace boundary (or is exactly the
-keyword), removes that ONE keyword and returns the rest trimmed. Called exactly twice, in
-`handleRequery` (`resultsPanel.ts:1850-1851`) where `msg.where`/`msg.orderBy` enter the
-host — the single choke point covering all four downstream composition lanes
-(`composeRequery` line 1774/1786, `composeSortQuery` line 1798, multi-term wrap line 1803,
-`combinedWhere` line 1779). `parseOrderBy` and `composeRequery` stay untouched (their
-unit tests stay byte-identical green). **Rejected alternative:** stripping inside
-`composeRequery` only → misses the dialect lanes (`composeSortQuery`, wrap, paging); the
-double-strip would also be non-idempotent across lanes.
+**Option B (rejected): single container, `flex-wrap: wrap` + WHERE `flex: 1 1 100%`.**
+Row 2's 9 items are emergent: if they exceed the row width the container wraps to a THIRD
+line — exactly what the user forbade ("TÔi cần 2 dòng" is emphatic). The caller's §4 sketch
+(`flex-wrap: wrap` happy pin) is this option; grounded refinement: under Option A the
+container pin is `flex-direction: column`, and `wrap` appears nowhere in the toolbar.
 
-**Accepted behaviors recorded (not bugs):**
-- Inputs are now visible in the empty state (toolbar is persistent; the old bar was hidden
-  inside `gridWrap`). Enter with no active statement → existing host guard toasts
-  "UnicDB: requery failed — no statement at index N." (`resultsPanel.ts:1853-1857`).
-- Holding Enter fires repeated keydowns → repeated posts; host `requerySeq` guard
-  (`resultsPanel.ts:1868-1870`) drops stale runs. Debounce-free per instruction.
+**Option C (rejected): WHERE and ORDER BY both `flex: 1 1 100%` in a wrapping container.**
+Reproduces the original 4-row layout TASK-COLLAPSE-001 collapsed.
 
-**TASK-RES-003 (wave 2 — toolbar hover polish):** removes the ONLY second source of the
-two-tooltip flicker — `btn.title` — so `data-tooltip` is the sole tooltip provider. Adds
-`transition: background-color 80ms ease-out, box-shadow 80ms ease-out` to `.UnicDB-btn`
-so the `:hover` background-color swap fades instead of cutting. Does NOT touch the
-`data-tooltip` pseudo-element block (`webview/styles.css:78-115`) — that block is already
-instant and correctly z-indexed (`z-index: 1000`); regex-pinned by TASK-RES-003 tests #5,#7.
-**Rejected alternative:** removing `data-tooltip` and keeping `title` only → re-introduces
-the 1-3s VS Code-webview tooltip delay. **Rejected alternative:** adding `transition: all`
-→ would also ease layout-triggering properties (width/padding/border) and reintroduce the
-very jitter this task exists to remove.
+**Trade-off accepted:** Option A can clip row-2 tail content (Search input) at very narrow
+widths (< ~600px) instead of wrapping. This is strictly better than the alternatives (3rd
+line, scrollbar, or the pre-COLLAPSE reflow jitter) and matches the established
+clip-don't-jerk contract; `min-width: 0` on the two requery inputs keeps the clip point as
+far right as possible.
 
 ## §4 Test Plan
 
-Existing fixtures: bundle tests eval `dist/webview.js` into jsdom with a stubbed
-`acquireVsCodeApi` + `selectState()` (rows `[[1,"alpha"],[2,"beta"]]`) — pattern of
-`webviewRequery.test.ts`. Host tests reuse the FakeWebview/FakeWebviewPanel + mocked
-QueryRunner harness of `resultsPanelRequery.test.ts`. Bundle tests REQUIRE
-`npm run compile` first (they eval `dist/webview.js` and self-skip when it is missing —
-never accept a silent skip as green).
+Fixtures: bundle tests eval `dist/webview.js` into jsdom (stubbed `acquireVsCodeApi`) —
+pattern of `webviewToolbar.test.ts`; CSS assertions are source-regex on `webview/styles.css`
+(jsdom does not layout). Bundle tests REQUIRE `npm run compile` first; silent self-skips are
+NOT green.
 
 | Type | Test Name | Expected |
 |------|-----------|----------|
-| happy (webview) | Enter keydown on WHERE input (values `id > 1` / `id DESC`) → posts `requery` | exactly 1 message `{type:"requery", index:0, where:"id > 1", orderBy:"id DESC"}` |
-| happy (webview) | Enter keydown on ORDER BY input (both boxes filled) | exactly 1 requery post carrying both values |
-| happy (webview) | Toolbar placement | `.UnicDB-requery-where` and `.UnicDB-requery-order` are children of `.UnicDB-toolbar`, ordered after `.UnicDB-export-format` and before `.UnicDB-export-header`; no `[data-UnicDB-requery-bar]` element exists |
-| happy (ext) | `stripLeadingClauseKeyword("WHERE id > 5", "WHERE")` | returns `"id > 5"` |
-| happy (ext) | `stripLeadingClauseKeyword("ORDER BY id DESC", "ORDER BY")` then `parseOrderBy(out, dialect)` | `"id DESC"`; parse ok with 1 term, column `id` |
-| happy (ext) | handler: requery msg `where:"WHERE a>1"` on fixture `SELECT a FROM t` | composed SQL sent to the runner contains `WHERE a>1` exactly once — no `WHERE WHERE` substring |
-| edge (input-kind, webview) | keydown `"a"` then `"Escape"` in WHERE input | zero requery posts |
-| edge (IME-kind, webview) | Enter keydown with `isComposing: true` | zero requery posts |
-| edge (boundary, ext) | `"WHEREx"`, `"ORDER BYid"` (no whitespace after keyword) | returned unchanged (no strip) |
-| edge (empty, ext) | `"WHERE"` alone → `""`; `"ORDER BY"` alone → `""`; `""` → `""` | all `""`; `composeRequery(sql,"","")` path returns original SQL |
-| edge (case, ext) | `"where a=1"`, `"Where a=1"` | stripped (case-insensitive) |
-| edge (repeat-input, ext) | `"WHERE WHERE x=1"` | `"WHERE x=1"` — exactly one strip, deterministic |
-| regression (webview) | existing cases: Re-Run click posts, empty boxes post `{where:"",orderBy:""}`, Clear empties | unchanged GREEN (class names + click path preserved) |
-| regression (webview) | toolbar icon-button census | `.UnicDB-toolbar .UnicDB-btn` buttons = 12 (was 10), each with svg + currentColor + title + aria-label; `flex-wrap: nowrap` structural regex still green |
-| regression (webview) | old layout pins REWRITTEN: toolbar < gridWrap/gridHost document order; inputs present in empty state | updated assertions GREEN (old cases 5-7 replaced, not deleted silently) |
-| regression (ext) | `resultsPanelRequery` "empty WHERE/ORDER BY emits the literal statement (no `;` corruption)" + `resultsPanelOrderBy` compose cases | unchanged GREEN — keyword-free fragments byte-identical |
-| happy (RES-003 webview) | `makeIconButton` no longer sets `btn.title` | first `.UnicDB-btn` rendered in jsdom: `title` attr missing; `data-tooltip` and `aria-label` present | bundle compile, render stub |
-| happy (RES-003 webview) | `.UnicDB-btn:hover:not(:disabled)` style block does not change any layout-triggering property | parse the CSS block; assert its declarations list EXCLUDES `width`, `height`, `padding`, `margin`, `border`, `top`, `left`, `right`, `bottom` (background-color + box-shadow only) | webview/styles.css |
-| edge (RES-003 css) | `.UnicDB-btn` carries a `transition` rule | source regex matches `\.\s*UnicDB-btn\s*\{[^}]*transition\s*:` | webview/styles.css |
-| edge (RES-003 css) | the transition contains NO layout-triggering property | parsed value excludes `width`/`height`/`top`/`left`/`margin`/`padding` | parsed CSS |
-| edge (RES-003 css) | `data-tooltip` pseudo keeps `z-index: 1000` | source regex matches `\.UnicDB-btn\[data-tooltip\][^{]*\{[^}]*z-index\s*:\s*1000` | webview/styles.css |
-| regression (RES-003 webview) | every toolbar button still has `data-tooltip` and `aria-label` matching its provided title text | for each rendered `.UnicDB-btn`: `getAttribute("data-tooltip")` and `getAttribute("aria-label")` both equal the original `title` arg | bundle compile |
-| regression (RES-003 webview) | wave-1 toolbar icon-button census rewrites the `title` clause | the wave-1 census test (`.UnicDB-toolbar .UnicDB-btn` count = 12) keeps the `svg + currentColor + aria-label` pins but its `+ title` clause is removed in wave 2; REWRITTEN, not silently deleted (same pattern as the wave-1 layout-pin rewrites in row :169) | webviewToolbar.test.ts |
-| regression (RES-003 css) | instant tooltip pseudo-element block (`UnicDB-btn[data-tooltip]:not(:disabled):hover::after`) intact | source regex finds the block and `content: attr(data-tooltip)` inside | webview/styles.css |
+| happy (css) | `.UnicDB-toolbar` rule pins the 2-row column contract | source regex: `/\.UnicDB-toolbar\s*\{[^}]*flex-direction:\s*column/` matches; `/flex-wrap:\s*nowrap/` does NOT match inside the `.UnicDB-toolbar` block |
+| happy (css) | `.UnicDB-toolbar-row` rule exists and locks its line | regex: `/\.UnicDB-toolbar-row\s*\{[^}]*flex-wrap:\s*nowrap/` matches AND same block contains `overflow:\s*hidden` |
+| happy (webview, bundle) | toolbar renders exactly 2 rows with the agreed split | `toolbar.children.length === 2`, both `.UnicDB-toolbar-row`; row 1 order = `[btn-danger, btn, sep, btn, btn, btn, btn, commit, btn, sep, export-format]`; row 2 order = `[requery-where, requery-order, btn(Re-Run), btn(Clear), export-header, export-copy, export-file, schema-chip, search-input]`, search LAST |
+| edge (structural split point) | `.UnicDB-requery-where` is the FIRST child of row 2 | `row2.firstElementChild.classList.contains("UnicDB-requery-where")` — the break is where the user pointed: "Từ Where" |
+| edge (overflow/boundary, css) | rows clip instead of scrolling; inputs absorb the squeeze | `.UnicDB-requery-where/-order` bodies match `flex:\s*1\s+1\s+100\s*%` + `min-width:\s*0` and do NOT match `140px`/`80px`; `.UnicDB-toolbar` + `.UnicDB-toolbar-row` both pin `overflow: hidden` (no horizontal scrollbar at any width) |
+| edge (state/re-parenting, bundle) | manual transaction open → controls insert into ROW 1 | dispatch a transaction-open state; render completes WITHOUT throwing; `.UnicDB-transaction-controls.parentElement` is the row-1 `.UnicDB-toolbar-row` wrapper AND `transactionControls.nextElementSibling === csvToggleBtn` (insertBefore anchor preserved) |
+| regression (webview, bundle) | requery behavior unchanged | Enter in WHERE posts exactly 1 `{type:"requery", index, where, orderBy}`; Clear empties both inputs; existing `webviewToolbar.test.ts` test #5 + `webviewRequeryAlignment` bundle cases stay GREEN untouched |
+| regression (webview, bundle) | toolbar census + tooltip contract survive the re-parenting | `.UnicDB-toolbar .UnicDB-btn` button count still 12 (descendant selector crosses row wrappers), each with svg + aria-label; `aiChatPanelCloneCss` non-chat-selector checks (`.UnicDB-btn`, `.UnicDB-tab`, `.UnicDB-grid-host`) stay GREEN |
+| regression (css) | RES-BAR hover polish intact | `.UnicDB-btn` block still has `transition: background-color …, box-shadow …`; `data-tooltip` pseudo block (`styles.css:98-123`) byte-untouched — no edit may appear between those lines |
 
-No bugfix against shipped behavior is claimed (the WHERE/WHERE duplication is a live UX
-defect but no regression test can fail against pre-cycle code for the webview move; for
-RES-002 the new edge cases DO fail against today's `handleRequery`, which passes fragments
-through untouched).
+No bugfix regression-against-today is possible for the layout itself (today's code is the
+single-row state this cycle deliberately reverses — the "RED before GREEN" step is the
+flipped pins failing against the new CSS/TS before they are updated). The
+transaction-insert edge case DOES fail against today's `webview/main.ts:818` (toolbar-level
+insertBefore), so it doubles as the RED proof for the re-target.
 
 ## §5 Verification
 
 ```bash
-npm run typecheck
+npm run typecheck      # tsc --noEmit — MUST exit 0
 npm run compile        # REQUIRED before any bundle (webview*) test — they eval dist/webview.js
-# Wave 1 (TASK-RES-001 + TASK-RES-002 in parallel)
-npx vitest run src/ui/__tests__/webviewRequery.test.ts src/ui/__tests__/webviewToolbar.test.ts
-npx vitest run src/ui/__tests__/requeryClauseNormalize.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts src/ui/__tests__/resultsGridModelRequery.test.ts
-# Wave 2 (TASK-RES-003 after RES-001)
-npm run compile        # REQUIRED again — RES-003 edits webview/main.ts + webview/styles.css; a stale dist/webview.js will make the bundle tests self-skip
-npx vitest run src/ui/__tests__/webviewRequery.test.ts src/ui/__tests__/webviewToolbar.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/requeryClauseNormalize.test.ts
-npm test               # full-suite final gate
+npx vitest run src/ui/__tests__/webviewToolbar.test.ts tests/webviewRequeryAlignment.test.ts src/ui/__tests__/aiChatPanelCloneCss.test.ts
+npm test               # full-suite final gate (expect ≥ 4104 passed | 0 failed)
 ```
 
-`npm run lint` does not exist in this repo (package.json scripts: compile, watch, test,
-test:integration, typecheck, package, publish:*, verify:fast, verify:release, profile:*);
+`npm run lint` does NOT exist in this repo (package.json scripts: compile, watch, test,
+test:integration, typecheck, package, publish:*, verify:fast, verify:release, profile:*).
 `npm run typecheck` is the lint-equivalent gate and is mandatory. Bundle-eval tests
 self-skip when `dist/webview.js` is missing — an executor that skips them without
-`npm run compile` has NOT verified anything.
+`npm run compile` has NOT verified anything. Re-run `npm run compile` after ANY
+`webview/main.ts` / `webview/styles.css` edit before re-running the targeted tests.
 
 ## §6 Acceptance
 
 - [ ] `npm run typecheck` exits 0.
-- [ ] `npx vitest run src/ui/__tests__/webviewRequery.test.ts src/ui/__tests__/webviewToolbar.test.ts` — all GREEN with the NEW assertions (bundle actually evaluated: no `skipped` blocks counted as pass). Includes RES-003 hover-polish cases.
-- [ ] `npx vitest run src/ui/__tests__/requeryClauseNormalize.test.ts src/ui/__tests__/resultsPanelRequery.test.ts src/ui/__tests__/resultsPanelOrderBy.test.ts src/ui/__tests__/resultsGridModelRequery.test.ts` — all GREEN.
-- [ ] `npm test` full suite GREEN.
-- [ ] Manual smoke (executor, from VS Code dev host or documented equivalent): run a SELECT, type `id > 1` in WHERE + `id DESC` in ORDER BY, press Enter in each → grid re-renders filtered/sorted rows; invalid fragment (`WHERE (`) surfaces a DB error state, panel stays usable.
-- [ ] Manual smoke (RES-003): hover each toolbar icon — ONE tooltip appears instantly (the `data-tooltip` pseudo); NO second tooltip arrives ~1.5 s later; icon background fades smoothly on mouse-in/mouse-out instead of flashing.
-- [ ] Post-merge: `grep -nE 'btn\.title\s*=\s*title' webview/main.ts` returns 0 matches.
-- [ ] Post-merge: `grep -nE 'transition\s*:' webview/styles.css` shows at least one match inside the `.UnicDB-btn { ... }` block.
-- [ ] No file outside the Target Files lists of TASK-RES-001/002/003 modified.
+- [ ] `npm run compile` clean; bundle tests actually evaluated (no `skipped` counted).
+- [ ] Targeted run GREEN: `npx vitest run src/ui/__tests__/webviewToolbar.test.ts tests/webviewRequeryAlignment.test.ts src/ui/__tests__/aiChatPanelCloneCss.test.ts` — with the NEW assertions.
+- [ ] Full `npm test` GREEN (baseline ≥ 4104 passed | 0 failed at base 7e29d2e).
+- [ ] Toolbar renders exactly 2 rows: row 1 = icons + tsv, row 2 = WHERE…Search (bundle census).
+- [ ] No horizontal scrollbar; narrow widths clip within a row (overflow: hidden pinned on both toolbar and rows).
+- [ ] Manual smoke (executor, dev host): run a SELECT → 2-row toolbar; open a manual transaction → commit/rollback icons appear in ROW 1 without error; Enter in WHERE/ORDER BY still re-runs; hover tooltips instant.
+- [ ] The 5 pin assertions across 3 test sites are REWRITTEN with updated comments, not silently deleted (webviewToolbar #3+#4, requeryAlignment ×2, cloneCss ×1).
+- [ ] No file outside TASK-COLLAPSE-002's Target Files modified.
 
 ## §7 Global Constraints
 
-- No new npm dependencies; no new webview→extension message discriminator — the `requery` type (`webview/main.ts:171-176`) is the only contract.
-- Placeholders exactly `WHERE …` and `ORDER BY …` (U+2026, matching the existing `Search…` style).
-- Preserve class names `.UnicDB-requery-where`, `.UnicDB-requery-order`, `.UnicDB-requery-run`, `.UnicDB-requery-clear` (webviewPostCommit + webviewRequery tests select them).
-- `.UnicDB-toolbar { flex-wrap: nowrap }` must remain — pinned by a structural source-regex test.
-- Normalization strips exactly ONE leading clause keyword (case-insensitive, whitespace-bounded); never recursive.
-- composeRequery's documented injection policy is unchanged (fragments are user-intended SQL).
+- Preserve class names: `.UnicDB-requery-where`, `.UnicDB-requery-order`,
+  `.UnicDB-requery-run`, `.UnicDB-requery-clear`, `.UnicDB-toolbar`, `.UnicDB-search-input`,
+  `.UnicDB-export-*`, `.UnicDB-schema-chip` (tests + postMessage tests select them). NEW
+  class allowed: `.UnicDB-toolbar-row` (exactly this name).
+- Do NOT touch the `data-tooltip` pseudo-element block (`webview/styles.css:98-134`,
+  covers both ::after tooltip body 98-122 and ::before arrow 124-134).
+- NEVER `transition: all`; the RES-BAR `.UnicDB-btn` transition stays as-is.
+- No version bump inside any task; orchestrator (R5) bumps to v1.53.39 + publishes to
+  Marketplace per the RUN.md USER OVERRIDE.
+- No new npm dependencies; no new webview→extension message types.
+- Placeholders stay exactly `WHERE …` / `ORDER BY …` (U+2026) and `Search…`.
 - Bundle tests require `npm run compile`; treat self-skips as failures in review.
-- RES-003: the `transition` added to `.UnicDB-btn` MUST list only `background-color` and `box-shadow` (composited properties — no layout trigger). NEVER `transition: all`; NEVER transition `width`/`height`/`padding`/`margin`/`top`/`left`.
-- RES-003: do NOT touch the `.UnicDB-btn[data-tooltip]:not(:disabled):hover::after` pseudo-element block at `webview/styles.css:78-115`; tests #5 and #7 regex-pin it.
-- No version bump / release (maintainer folds into the next release).
+- Toolbar height may grow by one row (that IS the feature); row heights must stay stable
+  (24-26px controls, `gap: 4px` between rows).
 
 ## Planner Report
-PLANNER_MODEL: unic-smart + orchestrator-append RES-003 (unic-code)
-PLAN_REVIEW: Approved by unic-smart (Round 1, 4 minor doc-fixes applied — compile-on-wave-2, property-level hover assertion, wave-1 census `title`-clause rewrite, toolbar DOM-order pin)
+PLANNER_MODEL: unic-smart
+PLAN_REVIEW: Approved by unic-smart (Round 1, 2026-09-09)
 
 ## Planner Self-Audit
-Checklist: 12/12 pass for RES-001 + RES-002 (planner session); RES-003 added by the
-orchestrator after P0 closed, with its own Task Gate fields populated, wave-structure
-sequenced (wave 2 after RES-001), file-collision re-checked, and §7 constraints extended
-to forbid `transition: all` / layout-triggering properties.
-Fixed during audit: merged the drafted "DOM elements" + "Enter handler" webview tasks into one TASK-RES-001 (same-file collision on webview/main.ts); replaced the suggested extension handler tasks RES-003/004 with a grounded §1 correction (pipeline already shipped at accf1b5) instead of planning duplicate work; added the missing-owner test files for the toolbar button-census change (webviewToolbar.test.ts must move 10→12). For RES-003: pinned the data-tooltip pseudo-element as off-limits (tests #5 + #7), rejected `transition: all` as a re-introduction of layout jitter.
-Known gaps: no automated visual/CSS assertion that the toolbar height is pixel-stable (verified structurally via nowrap pin + flex/min-width values; manual smoke in §6 covers it); empty-state Enter surfaces the existing host toast rather than a disabled input — accepted, recorded in §3; no pixel-level measure of `getBoundingClientRect()` before/after hover in jsdom (jsdom does not layout, so the test asserts property-level absence of layout-triggering transitions rather than runtime rect equality — accepted as the best achievable via the harness).
+Checklist: 12/12 pass.
+1 §6 criteria → tasks: all 9 map to TASK-COLLAPSE-002's Acceptance Criteria (1:1). 2 every
+task traces to §1: single task, entire §2 in-scope list. 3 delivers §1 fully: exactly-2-rows
+guarantee + all behaviors kept + 5 pin assertions across 3 test sites flipped. 4 unhappy path planned: narrow-width
+clipping (edge overflow), transaction re-parent throw (edge state), stale-dist self-skip
+guard. 5 all Target Files verified by open/read this session (styles.css rules at :27-49,
+:1350-1371; main.ts buildPersistentDom :932-1210, insertBefore :818; all 3 test files read
+at the exact pin lines). 6 all commands verified against package.json scripts. 7 single
+task → no same-wave collision. 8 no dependency on un-created symbols — `toolbarRow1` is
+produced by this same task. 9 edge kinds genuinely different: structural (split point) +
+overflow/boundary (clip contract) + state/re-parenting (transaction insert). 10 every
+Expected is a concrete regex/DOM assertion or exact message payload. 11 n/a (not a bugfix;
+RED step = flipped pins failing pre-flip, stated in §4). 12 no test passes against an empty
+impl — the two-row census and column/nowrap regexes all fail on today's single-row code.
+Fixed during audit: added the 4th pin flip (webviewToolbar test #3 flat-children census +
+EXPECTED_ORDER split) — the caller's brief listed only 3 flips; grounding showed the
+wrapper strategy breaks test #3's `toolbar.children` walk and `search is last` assertion.
+Also added the `PersistentDom.toolbarRow1` interface change + insertBefore re-target after
+finding main.ts:818, and replaced the caller's Option-B `flex-wrap: wrap` happy pin with
+the Option-A `flex-direction: column` pin (rationale in §3).
+Known gaps: no pixel-level jsdom layout assertion (jsdom does not layout — the 2-row
+guarantee is asserted structurally via DOM census + CSS regexes; manual smoke in §6 covers
+the visual). Row-2 clipping at < ~600px viewport is accepted behavior (§3 trade-off),
+asserted only as "overflow: hidden present", not as a pixel clip point.
 
 ## Plan Review Log
 
-### Round 1 — 2026-09-08 · unic-smart
-REVIEWER_MODEL: unic-smart
-Status: Approved
-
-COMPLETENESS:
-  - PLAN.md:193 — Wave-2 command block (and the §6 checklist item at :206) does not re-run `npm run compile` after RES-003 edits `webview/main.ts`; §4/:151 and §7/:223 make compile mandatory before any bundle test, so add the compile line to the wave-2 block to prevent a stale-`dist/webview.js` run.
-  - none otherwise — intent, locked P0s, test matrix, verification, acceptance, and known gaps are all present.
-CONSISTENCY:
-  - PLAN.md:172 vs :237 — §4 RES-003 hover test asserts `getBoundingClientRect()` width/height equality before/after hover, but the Self-Audit says jsdom cannot measure rects and the test asserts property-level absence of layout-triggering transitions instead; align the §4 row with the property-level assertion actually planned so the implementing task copies one contract, not two.
-  - PLAN.md:168 vs :171/:176 — the wave-1 census test pins `title` present on all 12 toolbar buttons while wave-2 RES-003 deletes `btn.title`; state explicitly that the census test's title clause is rewritten in wave 2 (same "REWRITTEN, not silently deleted" pattern used for the layout pins at :169).
-CLARITY:
-  - PLAN.md:16 vs :48 — placement is described both as "between the `tsv` dropdown and the `Search…` input" and "after `exportFormat`, before `exportHeader`"; add one sentence pinning the full toolbar DOM order so both wordings are verifiably the same slot.
-SCOPE:
-  - none — one focused cycle; explicit out-of-scope list; the RES-003 fold-in carries its own task, wave sequencing, and §7 constraints.
-YAGNI:
-  - none — new message type, duplicate requery pipeline, and `transition: all` are all explicitly rejected with reasons.
-
-NOTES: Plan-review mode has no model-isolation gate; for awareness only, planner and reviewer both self-report unic-smart (the RES-003 orchestrator append was unic-code). All findings are one-line doc fixes; none would have led to a flawed plan.
+### Round 1 — 2026-09-09 · unic-smart
+Status: Approved-with-minor
+REVIEWER_MODEL: unic-smart (matches config handoff.reviewer.model)
+MODEL_ISOLATION FLAG: PLANNER_MODEL (unic-smart) == reviewer model name. This P2.5
+review IS a separate invocation with separate context, and config binds both the plan
+hint (claude-opus-5) and reviewer to the smart tier, so no different model was
+available without a host rebind. Flagged explicitly per the P2.5 hard constraint;
+orchestrator may re-plan under a different model if stricter isolation is wanted.
+COMPLETENESS: pass — §1-§7 present and substantive. 9 tests: 3 happy / 3 edge
+(structural split point, overflow/boundary clip, state re-parenting — genuinely
+different kinds) / 3 regression; exceeds minTestsEdgeCase=2. §5 includes typecheck
+and correctly documents that npm run lint does not exist (verified vs package.json).
+CONSISTENCY: pass with 1 flag — cycle RES2ROW, base 7e29d2e (v1.53.38), 1 task,
+wave 1, no deps, and the 5-file list agree across PLAN / TASK-002 / INDEX / ACTIVE /
+RUN; row composition identical everywhere. FLAG: PLAN §2 (line 62) + §7 (line 165)
+say "no version bump / release this cycle (maintainer folds into next release)" while
+RUN.md line 6 records the user override "patch v1.53.39 + publish at R5".
+CLARITY: pass — user quote verbatim; every cited line number verified against source
+(main.ts:818 insertBefore, buildPersistentDom 932-1203 order matches the row lists
+exactly, styles.css:41-49 + 1350-1371, webviewToolbar EXPECTED_ORDER 181-216 + tests
+#3/#4 at 321-400, requeryAlignment 188-206, cloneCss:119); every Expected is a
+concrete regex / DOM census / message payload; commands verified vs package.json.
+SCOPE: pass — single task, single wave, no file collision; layout-only boundary
+explicit (no handler/message changes); 2-task split rejection documented.
+YAGNI: pass — Option A is the minimal structure that guarantees the hard "exactly 2
+rows" constraint. Option B rejection is technically correct: overflow:hidden clips
+but does NOT prevent flex-wrap line breaks, so a wrap-based row 2 can still spawn a
+3rd line. No media queries, no JS layout measurement, no new deps. Both planner
+finds are real (verified): test #3 flat census breaks structurally under wrappers
+(toolbar.children becomes [row1,row2]; last-child + EXPECTED_ORDER walk fail), and
+main.ts:818 dom.toolbar.insertBefore(transactionControls, csvToggleBtn) throws
+NotFoundError once csvToggleBtn lives in row 1.
+FINDINGS:
+  critical: none
+  important:
+    - PLAN.md §2 (line 62) + §7 (line 165) vs RUN.md line 6 — version bump/release
+      wording contradicts the RUN.md USER OVERRIDE (v1.53.39 + publish at R5).
+      Executor instructions are unaffected (no task bumps a version either way), but
+      a literal read of PLAN §7 could cancel the user-requested R5 publish. Fix:
+      one-line reword — "no version bump inside any task this cycle; the v1.53.39
+      patch + publish happens at pipeline R5 per the RUN.md override". Does not gate P3.
+  minor:
+    - TASK-COLLAPSE-002 "Test Files": case #2 (.UnicDB-toolbar-row rule pin) is not
+      assigned to any file in the per-file list (webviewToolbar line says "cases 3,
+      4, 6, 7, 8"); its assertions live only in the test-#4 rewrite prose. Add case 2.
+    - "4 flipped pins" label vs the enumeration webviewToolbar #3+#4 +
+      requeryAlignment ×2 + cloneCss ×1 = 5 assertion sites. Identical in all 5 docs
+      so no executor confusion; suggest "5 pin assertions across 4 test sites".
+    - TASK case #6 fixture: name the exact message — dispatchState({ type:
+      "transactionStatus", open: true }) (webview/main.ts:4424-4427). Also note its
+      RED mode vs today is an assertion failure (parentElement is .UnicDB-toolbar),
+      not the NotFoundError throw (that only occurs post-wrapper without the
+      re-target) — PLAN §3 already words this correctly.
+    - data-tooltip do-not-touch range cited as styles.css:98-123, but the
+      pseudo-tooltip pattern extends through line 134 (the ::before arrow block,
+      124-134). Widen the cited range to 98-134.
+    - PersistentDom.toolbarRow2 is unconsumed (only toolbarRow1 feeds the
+      insertBefore re-target; bundle tests query the DOM, not the interface). Keep
+      for contract symmetry or drop; keep §Interfaces in sync with the choice.
+OVERALL: Approved-with-minor
+NOTES: All planner grounding claims re-verified against source and accurate,
+including the two finds the P1 brief missed. The one important finding is
+doc-wording only (PLAN vs RUN release note) and does not affect the executor or
+test plan.
