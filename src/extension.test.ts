@@ -3235,24 +3235,30 @@ describe("TASK-003 — UnicDB.openConsole wiring", () => {
     expect(state.registeredCommands.has("UnicDB.openConsole")).toBe(true);
   });
 
-  it("#C2 package.json contributes 'UnicDB: Open Console' with matching activationEvent", () => {
-    interface CmdEntry { command: string; title?: string; category?: string }
+  it("#C2 package.json exposes console shortcuts for schema-tree nodes and title icon", () => {
+    interface CmdEntry { command: string; title?: string; category?: string; icon?: string }
     const commands = pkgJson.contributes.commands as CmdEntry[];
     const entry = commands.find((c) => c.command === "UnicDB.openConsole");
     expect(entry).toBeDefined();
     expect(entry!.title).toMatch(/Open Console/i);
     expect(entry!.category).toBe("UnicDB");
-    // Palette-only per plan §3.3: no view/title or other menu entry.
+    expect(entry!.icon).toBe("$(terminal)");
+
     const menus = pkgJson.contributes.menus as Record<
       string,
-      Array<{ command: string }>
+      Array<{ command: string; when?: string; group?: string }>
     >;
-    for (const [menu, entries] of Object.entries(menus)) {
-      expect(
-        entries.some((m) => m.command === "UnicDB.openConsole"),
-        `UnicDB.openConsole must not appear in ${menu}`,
-      ).toBe(false);
-    }
+    const title = menus["view/title"]?.find((m) => m.command === "UnicDB.openConsole");
+    expect(title).toMatchObject({
+      when: "view == UnicDB.schemaTree",
+      group: "navigation",
+    });
+    const objectShortcut = menus["view/item/context"]?.find(
+      (m) => m.command === "UnicDB.openConsoleForObject",
+    );
+    expect(objectShortcut?.when).toBe(
+      "view == UnicDB.schemaTree && (viewItem == connection || viewItem == schema || viewItem == category || viewItem == table || viewItem == view)",
+    );
     const evts = pkgJson.activationEvents as string[];
     expect(evts).toContain("onCommand:UnicDB.openConsole");
   });
@@ -5732,7 +5738,7 @@ describe("UnicDB.openConsoleForObject — right-click table/view → Console tab
     );
     expect(menu).toBeDefined();
     expect(menu!.when).toBe(
-      "view == UnicDB.schemaTree && (viewItem == table || viewItem == view)",
+      "view == UnicDB.schemaTree && (viewItem == connection || viewItem == schema || viewItem == category || viewItem == table || viewItem == view)",
     );
     expect(menu!.group).toBe("inline");
   });
@@ -5790,6 +5796,52 @@ describe("UnicDB.openConsoleForObject — right-click table/view → Console tab
     expect(activeTab).toBeDefined();
     expect(activeTab!.name).toBe("Query sales.orders");
     expect(activeTab!.buffer).toBe("SELECT * FROM sales.orders LIMIT 100;");
+  });
+  it("connection context opens a blank Console for the selected database", async () => {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "UnicDB.connections") {
+        return [{ id: "c1", name: "c", driver: "postgres", host: "h", port: 5432, user: "u", database: "d" }];
+      }
+      if (key === "UnicDB.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+    await activateFresh(ctx);
+    const fn = state.registeredCommands.get("UnicDB.openConsoleForObject");
+    await fn!({
+      contextValue: "connection",
+      meta: { connection: { id: "c1" } },
+    });
+
+    expect(state.createdWebviewPanels.length).toBeGreaterThanOrEqual(1);
+    const panel = state.createdWebviewPanels[0]!;
+    const webview = panel.webview as unknown as { postMessage: Mock };
+    const stateCalls = webview.postMessage.mock.calls.filter(
+      (c) => (c[0] as { type?: string })?.type === "state",
+    );
+    const last = stateCalls[stateCalls.length - 1]![0] as {
+      tabs: Array<{ buffer: string; active: boolean }>;
+    };
+    expect(last.tabs.find((t) => t.active)?.buffer).toBe("");
+  });
+
+  it("schema and category contexts pin their schema before opening", async () => {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "UnicDB.connections") {
+        return [{ id: "c1", name: "c", driver: "postgres", host: "h", port: 5432, user: "u", database: "d" }];
+      }
+      if (key === "UnicDB.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+    await activateFresh(ctx);
+    const fn = state.registeredCommands.get("UnicDB.openConsoleForObject");
+    await fn!({ contextValue: "schema", meta: { connection: { id: "c1" }, schema: "sales" } });
+    await fn!({ contextValue: "category", meta: { connection: { id: "c1" }, schema: "analytics", category: "tables" } });
+
+    expect(ctx.workspaceState.update).toHaveBeenCalledWith("unicDb.activeSchema.c1", "sales");
+    expect(ctx.workspaceState.update).toHaveBeenCalledWith("unicDb.activeSchema.c1", "analytics");
+    expect(state.createdWebviewPanels.length).toBe(1);
   });
 
   it("argument shape không hợp lệ → showInformationMessage, KHÔNG mở panel mới", async () => {

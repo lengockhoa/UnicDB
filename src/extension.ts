@@ -2825,14 +2825,18 @@ function commandOpenConsoleCreateTab(): void {
 }
 
 /**
- * Resolve a qualified name out of the argument shape used by view/item
- * context-menu commands (string when invoked from a programmatic caller,
- * `{ meta: { schema, objectName } }` when invoked from the schema tree).
- * Returns undefined when the shape doesn't carry an objectName.
+ * Resolve a qualified object or a schema-tree container target. Container
+ * nodes intentionally return an empty table so callers can open a blank tab.
  */
 function resolveQualifiedFromArg(
   qualifiedOrNode: unknown,
-): { qualified: string; schema: string; table: string } | undefined {
+): {
+  qualified: string;
+  schema: string;
+  table: string;
+  connectionId?: string;
+  contextValue?: string;
+} | undefined {
   if (typeof qualifiedOrNode === "string" && qualifiedOrNode.length > 0) {
     const lastDot = qualifiedOrNode.lastIndexOf(".");
     if (lastDot < 0) {
@@ -2845,21 +2849,42 @@ function resolveQualifiedFromArg(
     };
   }
   if (
-    qualifiedOrNode &&
-    typeof qualifiedOrNode === "object" &&
-    "meta" in qualifiedOrNode
+    !qualifiedOrNode ||
+    typeof qualifiedOrNode !== "object" ||
+    !("meta" in qualifiedOrNode)
   ) {
-    const meta = (qualifiedOrNode as {
-      meta?: { schema?: string; objectName?: string };
-    }).meta;
-    if (meta?.objectName) {
-      const schema = meta.schema ?? "";
-      return {
-        qualified: schema ? `${schema}.${meta.objectName}` : meta.objectName,
-        schema,
-        table: meta.objectName,
-      };
-    }
+    return undefined;
+  }
+  const node = qualifiedOrNode as {
+    contextValue?: unknown;
+    meta?: {
+      connection?: { id?: unknown };
+      schema?: unknown;
+      objectName?: unknown;
+    };
+  };
+  const meta = node.meta;
+  if (!meta) return undefined;
+  const schema = typeof meta.schema === "string" ? meta.schema : "";
+  const connectionId =
+    meta.connection && typeof meta.connection.id === "string"
+      ? meta.connection.id
+      : undefined;
+  const contextValue =
+    typeof node.contextValue === "string" ? node.contextValue : undefined;
+  const objectName =
+    typeof meta.objectName === "string" ? meta.objectName : undefined;
+  if (objectName) {
+    return {
+      qualified: schema ? `${schema}.${objectName}` : objectName,
+      schema,
+      table: objectName,
+      connectionId,
+      contextValue,
+    };
+  }
+  if (contextValue === "connection" || contextValue === "schema" || contextValue === "category") {
+    return { qualified: "", schema, table: "", connectionId, contextValue };
   }
   return undefined;
 }
@@ -2870,20 +2895,33 @@ function resolveQualifiedFromArg(
  * Falls back to a plain postgres-style snippet if the active connection has
  * no driver yet — the snippet is editable, never auto-executed.
  */
-function commandOpenConsoleForObject(
+async function commandOpenConsoleForObject(
   mgr: ConnectionManager,
   runner: QueryRunner,
   panel: ResultsPanel,
   statusBar: StatusBarWrapper,
   qualifiedOrNode: unknown,
   mem: { globalState: vscode.Memento; workspaceState: vscode.Memento },
-): void {
+): Promise<void> {
   const resolved = resolveQualifiedFromArg(qualifiedOrNode);
   if (!resolved) {
     void vscode.window.showInformationMessage(
-      "UnicDB: right-click a table or view in the schema tree to open the Console for it.",
+      "UnicDB: right-click a database, schema, table, or view in the schema tree to open the Console.",
     );
     return;
+  }
+  if (resolved.connectionId && mgr.getActive()?.id !== resolved.connectionId) {
+    try {
+      await mgr.setActive(resolved.connectionId);
+    } catch (err) {
+      void vscode.window.showErrorMessage(
+        `UnicDB: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+  }
+  if (resolved.connectionId && resolved.schema) {
+    mgr.setActiveSchema(resolved.connectionId, resolved.schema);
   }
   // Reuse the singleton seeder so the panel + onRun + draft/autocomplete
   // wiring stays exactly the same as `UnicDB.openConsole`.
@@ -2896,7 +2934,10 @@ function commandOpenConsoleForObject(
     mem.workspaceState,
   );
   if (!consolePanel) {
-    // commandOpenConsole is sync and sets the singleton; defensive guard.
+    return;
+  }
+  if (!resolved.table) {
+    consolePanel.show();
     return;
   }
   const driver = mgr.getActive()?.driver ?? "postgres";
@@ -2905,10 +2946,6 @@ function commandOpenConsoleForObject(
     table: resolved.table,
     schema: resolved.schema,
   });
-  // seedTab creates a new tab + pre-fills the buffer + pushes one `state`
-  // postMessage so the webview editor shows the snippet. setBuffer would be
-  // the WRONG call here — it is the silent webview→host echo path (ARP-08
-  // #30) and the snippet would never reach the visible webview.
   consolePanel.seedTab(`Query ${resolved.qualified}`, snippet);
   consolePanel.show();
 }

@@ -645,3 +645,9 @@ User asked "vậy còn gì nữa không" after cycle AGT-UI cleanup pass → lis
 - Latest documentation closeout commit: `db302eb`; no source, manifest, lockfile, or release artifact changed afterward.
 - Terminal state: no active handoff task, product patch, or release follow-up remains.
 - Durable memory now records the AI engine source-of-truth rule alongside the shipped release evidence.
+
+## 2026-09-09 — Schema Explorer SQL Console shortcuts
+- Added a Schema Explorer title-bar terminal icon and expanded the existing `UnicDB.openConsoleForObject` context menu to connection, schema, category, table, and view nodes.
+- Container nodes open a blank Console tab; table/view nodes retain driver-aware SELECT seeding. Schema-scoped nodes pin the clicked schema, and non-active connection nodes activate their connection first.
+- Files changed: `package.json`, `src/extension.ts`, `src/extension.test.ts`, `docs/UNICDB_USER_GUIDE.md`.
+- Verification: focused console/menu tests passed (7/7). Typecheck and compile remain pending before the patch release bump.

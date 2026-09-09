@@ -330,7 +330,7 @@
         "command": "UnicDB.openConsole",
         "title": "UnicDB: Open Console",
         "category": "UnicDB",
-        "icon": "$(window)"
+        "icon": "$(terminal)"
       },
       {
         "command": "UnicDB.consoleNewTab",
@@ -549,7 +549,7 @@
         },
         {
           "command": "UnicDB.openConsoleForObject",
-          "when": "view == UnicDB.schemaTree && (viewItem == table || viewItem == view)",
+          "when": "view == UnicDB.schemaTree && (viewItem == connection || viewItem == schema || viewItem == category || viewItem == table || viewItem == view)",
           "group": "inline"
         },
         {
@@ -651,6 +651,11 @@
         }
       ],
       "view/title": [
+        {
+          "command": "UnicDB.openConsole",
+          "when": "view == UnicDB.schemaTree",
+          "group": "navigation"
+        },
         {
           "command": "UnicDB.refreshSchema",
           "when": "view == UnicDB.schemaTree",
