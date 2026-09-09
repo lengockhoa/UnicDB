@@ -639,4 +639,4 @@ User asked "vậy còn gì nữa không" after cycle AGT-UI cleanup pass → lis
 - Fixed AI Chat routing to prefer persisted `AiSettings.engine`; selecting `omp` in AI Settings now reaches the OMP chat engine instead of the stale builtin fallback. Fresh-install fallback is consistently `omp` and unavailable OMP still falls back to builtin.
 - Verification: extension suite `184/184` passed; AI/settings/chat integration `250/250` passed; `npm run typecheck` and `npm run compile` passed.
 - Released `v1.53.40` to GitHub and VS Code Marketplace with `UnicDB-1.53.40.vsix`; `.vsix` inspection found no `.secrets` or `.pat` entries.
-- HEAD: `9ba4ac1` on `main`, pushed to `origin/main`; working tree clean.
+- HEAD: `a26ce21` on `main`, pushed to `origin/main`; working tree clean.
