@@ -29,6 +29,14 @@
 - **`package.json`:** `UnicDB.ai.engine.default` updated to `"omp"`; copy
   refreshed to note the new default.
 
+## [1.53.40] — 2026-09-09
+
+- Summary: Honor the AI Settings engine selection in AI Chat: persisted omp now routes chat through omp instead of the stale builtin fallback; fresh installs consistently default to omp.
+- Files: src/extension.ts, src/extension.test.ts, src/ai/config.ts, src/ai/settings.ts, package.json, CHANGELOG.md
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.40.vsix packaged
+
+---
+
 ## [1.53.39] — 2026-09-09
 
 - Split the results toolbar into exactly two rows at the WHERE input: row 1 keeps the
