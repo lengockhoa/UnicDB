@@ -24,20 +24,27 @@
   margin-bottom: 8px;
 }
 
-/* --- Toolbar (TASK-603: icon row + WHERE/ORDER BY inputs) ---
- * `flex-wrap: wrap` lets the two requery inputs drop to their own lines
- * (each input is `flex: 1 1 100%`) without breaking the toolbar icon
- * contract — icon buttons stay fixed-size on the first row. The wrap
- * assertion is pinned structurally (test 4 reads this regex from the
- * source); swapping back to `nowrap` would force WHERE / ORDER BY back
- * into the icon row.
+/* --- Toolbar (TASK-603 + TASK-COLLAPSE-001: single-row layout) ---
+ * `flex-wrap: nowrap` keeps the entire toolbar (icon buttons + WHERE /
+ * ORDER BY inputs + export controls + schema chip + Search) on a SINGLE
+ * row at every viewport width — wrapping is impossible by construction.
+ * `overflow: hidden` clips any horizontal overflow from the inputs
+ * rather than spawning a scrollbar (the old `wrap` behavior used to
+ * drop WHERE / ORDER BY onto their own lines on narrow widths, which
+ * users read as "jerky" because the toolbar kept reflowing). Icon
+ * buttons + schema chip + export select keep `flex-shrink: 0` so they
+ * stay visible; the requery inputs + Search input share the leftover
+ * space with sensible `flex: 1 1 …` + `min-width` floors so they cannot
+ * disappear entirely on a tiny viewport. The wrap assertion is pinned
+ * structurally (test 4 reads this regex from the source).
  */
 .UnicDB-toolbar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
   min-width: 0;
+  overflow: hidden;
   margin-bottom: 8px;
 }
 
@@ -1321,11 +1328,11 @@
   font-size: 12px;
   cursor: pointer;
   flex: 0 0 auto;
-  /* TASK-SCHEMA-001: keep the chip stable on the toolbar row so the
-   * wrap (flex-wrap: wrap) introduced by TASK-RES-002 cannot push it
-   * onto a fresh row when the requery inputs wrap to their own line.
-   * Without `flex-shrink: 0` a narrow viewport would compress it before
-   * the export buttons, breaking the visual contract. */
+  /* TASK-SCHEMA-001 / TASK-COLLAPSE-001: keep the chip stable on the
+   * single-row toolbar so the nowrap container cannot compress it before
+   * the export buttons. Without `flex-shrink: 0` a narrow viewport would
+   * squash the namespace label and break the visual contract — that's
+   * what users read as "jerky" when the panel resizes. */
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -1340,18 +1347,23 @@
   opacity: 0.5;
   cursor: default;
 }
-/* TASK-RES-002: stack each requery input on its own row inside the
- * wrapping toolbar. `flex: 1 1 100%` claims the full toolbar width;
- * `min-width: 0` lets the input shrink below its content width so it
- * does not push siblings off-row. `box-sizing: border-box` (from the
- * base rule above) keeps the 24px height with the border included. */
+/* TASK-RES-002 / TASK-COLLAPSE-001: requery inputs SHARE the icon row
+ * instead of stacking onto their own lines. `flex: 1 1 140px` gives
+ * each input a 140px starting size, lets it grow into the leftover
+ * space (the WHERE / ORDER BY inputs ARE the wide flexible elements in
+ * this toolbar — they're where the user reads & writes their filter
+ * fragment), and lets it shrink down to `min-width: 80px` so a tiny
+ * viewport cannot push the icon buttons off-row. `min-width: 0` lets
+ * the input shrink below its content width (placeholder text doesn't
+ * dictate minimum size). `box-sizing: border-box` (from the base rule
+ * above) keeps the 24px height with the border included. */
 .UnicDB-requery-input.UnicDB-requery-where {
-  flex: 1 1 100%;
-  min-width: 0;
+  flex: 1 1 140px;
+  min-width: 80px;
 }
 .UnicDB-requery-input.UnicDB-requery-order {
-  flex: 1 1 100%;
-  min-width: 0;
+  flex: 1 1 140px;
+  min-width: 80px;
 }
 button.UnicDB-requery-run,
 button.UnicDB-requery-clear {

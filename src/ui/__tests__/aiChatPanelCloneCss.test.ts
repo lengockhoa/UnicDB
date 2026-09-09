@@ -116,7 +116,7 @@ describe("TASK-AGTUI-001 - clone CSS tokens + chat-scoped layer", () => {
   it("non-chat selectors are untouched and every new rule is chat-scoped", () => {
     const toolbar = ruleBody(".UnicDB-toolbar");
     expect(toolbar, ".UnicDB-toolbar rule block must still exist").not.toBe("");
-    expect(/flex-wrap:\s*wrap/i.test(toolbar), ".UnicDB-toolbar must pin flex-wrap:wrap so WHERE/ORDER BY inputs can drop to their own rows").toBe(true);
+    expect(/flex-wrap:\s*nowrap/i.test(toolbar), ".UnicDB-toolbar must pin flex-wrap:nowrap (TASK-COLLAPSE-001: single-row layout) so WHERE/ORDER BY inputs stay on the icon row").toBe(true);
 
     const tab = ruleBody(".UnicDB-tab");
     expect(tab, ".UnicDB-tab rule block must still exist").not.toBe("");

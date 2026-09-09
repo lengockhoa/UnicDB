@@ -12,7 +12,7 @@
 //      the search input is the last child, and group order is
 //      query│edit│export.
 //   3. styles.css pins `flex-wrap: nowrap` so wrapping is impossible by
-//      construction at any width.
+//      construction at any width (TASK-COLLAPSE-001 — single-row layout).
 //   4. Requery-bar `Re-Run` and `Clear` buttons are iconified; clicking
 //      them still posts the right messages / empties the inputs.
 //
@@ -367,17 +367,30 @@ describeIfBundle("webview/main.ts icon toolbar + single-row layout (TASK-603)", 
   );
 
   itIfBundle(
-    "4. styles.css pins .UnicDB-toolbar to flex-wrap: wrap (so WHERE / ORDER BY inputs can drop to their own rows)",
+    "4. styles.css pins .UnicDB-toolbar to flex-wrap: nowrap (TASK-COLLAPSE-001 — single-row layout, no jerky reflow)",
     () => {
       if (!stylesSrc) {
         throw new Error("webview/styles.css missing");
       }
-      // The rule MUST match. Reverting to `nowrap` would shove WHERE /
-      // ORDER BY back onto the icon row.
-      const re = /\.UnicDB-toolbar\s*\{[^}]*flex-wrap:\s*wrap/;
-      expect(re.test(stylesSrc), "styles.css must pin .UnicDB-toolbar flex-wrap: wrap").toBe(
+      // The rule MUST match. The toolbar is single-row by construction at
+      // any viewport width — WHERE / ORDER BY inputs share the icon row
+      // with sensible `min-width` floors so they cannot disappear.
+      const re = /\.UnicDB-toolbar\s*\{[^}]*flex-wrap:\s*nowrap/;
+      expect(re.test(stylesSrc), "styles.css must pin .UnicDB-toolbar flex-wrap: nowrap").toBe(
         true,
       );
+      // The requery inputs must NOT use `flex: 1 1 100%` (which would claim
+      // a full row); they should share the row with a flexible basis.
+      const whereRe = /\.UnicDB-requery-input\.UnicDB-requery-where\s*\{[^}]*flex:\s*1\s+1\s+(\d+)px/;
+      const orderRe = /\.UnicDB-requery-input\.UnicDB-requery-order\s*\{[^}]*flex:\s*1\s+1\s+(\d+)px/;
+      expect(
+        whereRe.test(stylesSrc),
+        "styles.css must give .UnicDB-requery-where a px-based flex basis (not 100%)",
+      ).toBe(true);
+      expect(
+        orderRe.test(stylesSrc),
+        "styles.css must give .UnicDB-requery-order a px-based flex basis (not 100%)",
+      ).toBe(true);
       // Buttons must size SVGs at 16×16 to keep the compact 24–26px height.
       expect(
         /\.UnicDB-btn[^}]*\.UnicDB-btn\s+svg|\.UnicDB-btn\s+svg/.test(stylesSrc),

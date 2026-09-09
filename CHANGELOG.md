@@ -1,5 +1,70 @@
 # Changelog
 
+## [1.53.38] — 2026-09-09
+
+- Summary: **Collapse results toolbar to a single row.** The query
+  toolbar (icon buttons + WHERE / ORDER BY inputs + export controls +
+  schema chip + Search) now stays on ONE row at every viewport width.
+  Earlier cycles (TASK-RES-001/002) deliberately wrapped the toolbar
+  with `flex-wrap: wrap` and gave each requery input `flex: 1 1 100%`
+  so they would drop to their own lines on narrow widths; users
+  reported that reflow looked broken / jerky and asked to revert to
+  the single-row layout.
+- **Bug fix (TASK-COLLAPSE-001):**
+  - `webview/styles.css`:
+    - `.UnicDB-toolbar` switched from `flex-wrap: wrap` to
+      `flex-wrap: nowrap` and now has `overflow: hidden` so any
+      horizontal overflow from the inputs is clipped instead of
+      spawning a horizontal scrollbar (the scrollbar is what users
+      were reading as "jerky").
+    - `.UnicDB-requery-input.UnicDB-requery-where` /
+      `.UnicDB-requery-order` switched from `flex: 1 1 100%;
+      min-width: 0` to `flex: 1 1 140px; min-width: 80px`. They now
+      SHARE the icon row instead of claiming full rows; the 140px
+      basis gives them comfortable typing width, and the 80px floor
+      prevents them from disappearing entirely on a tiny viewport.
+    - `.UnicDB-schema-chip` flex-shrink comment refreshed (it still
+      pins `flex-shrink: 0` so the chip cannot be squashed by the
+      inputs on narrow widths — also what users read as "jerky").
+  - Icon buttons (.UnicDB-btn) + export select + requery run/clear
+    buttons + export header checkbox all keep `flex-shrink: 0` so
+    they stay visible at every width. The Search input keeps
+    `flex: 0 1 180px; min-width: 120px` from the prior cycle.
+- **Test updates (TASK-COLLAPSE-001):**
+  - `src/ui/__tests__/aiChatPanelCloneCss.test.ts` — assertion
+    flipped from `flex-wrap: wrap` to `flex-wrap: nowrap` + comment
+    updated to point at the new contract.
+  - `src/ui/__tests__/webviewToolbar.test.ts` — test #4 header
+    comment (line 14) and the standalone test (lines 369-401)
+    flipped to assert `flex-wrap: nowrap`, plus two new sub-checks
+    that the requery inputs use a px-based flex basis (not `100%`).
+  - `tests/webviewRequeryAlignment.test.ts` — both
+    `UnicDB-requery-where` / `-order` assertions flipped to
+    `flex: 1 1 140px; min-width: 80px`, with explicit
+    `not.toMatch(/flex\s*:\s*1\s+1\s+100\s*%/)` guards so any future
+    regression to the old "stacks vertically" contract fails loudly.
+- **Files:** `webview/styles.css` (~25 lines net: header comments +
+  rule updates for `.UnicDB-toolbar`, requery inputs, schema-chip
+  comment); `src/ui/__tests__/aiChatPanelCloneCss.test.ts` (1 line
+  flipped); `src/ui/__tests__/webviewToolbar.test.ts` (3 regions
+  updated, +15 net lines for new sub-checks);
+  `tests/webviewRequeryAlignment.test.ts` (2 test bodies rewritten,
+  describe header + comment refreshed); `package.json` +
+  `package-lock.json` (1.53.37 → 1.53.38); `CHANGELOG.md` (this entry).
+- **Verification:** `npx tsc --noEmit -p tsconfig.json` ✅ ·
+  `npx vitest run` **4104 passed | 4 skipped | 0 failed** (276 files,
+  same baseline as v1.53.37; all three pinned-CSS tests green with
+  the new assertions).
+- **Behavior contract for users:** the results toolbar stays on a
+  single row at any panel width. WHERE / ORDER BY inputs grow into
+  the available space (140px starting, grows with viewport) and
+  shrink down to 80px before stopping; they never wrap to a new row
+  and never spawn a horizontal scrollbar. Icon buttons + schema chip
+  stay full-size at every width. No more reflow on resize / no more
+  "jerky" toolbar.
+
+---
+
 ## [1.53.37] — 2026-09-09
 
 - Summary: **Fix "QueryRunner is already running" toast on every SQL Run.**
