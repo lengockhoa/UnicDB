@@ -54,6 +54,11 @@ export interface TransactionStatusMessage {
   open: boolean;
 }
 
+export interface ClipboardTextMessage {
+  type: "clipboardText";
+  text: string;
+}
+
 export type HostMessage =
   | InitMessage
   | StateMessage
@@ -61,7 +66,8 @@ export type HostMessage =
   | SaveResultMessage
   | TransactionStatusMessage
   | DistinctValuesMessage
-  | SchemaChangedMessage;
+  | SchemaChangedMessage
+  | ClipboardTextMessage;
 
 /** ACTIVE-SCHEMA chip — host → webview. Posted whenever the active
  *  connection's pinned schema changes (either via the existing
@@ -103,6 +109,10 @@ export interface ExportFileMessage {
 export interface ReadyMessage {
   type: "ready";
 }
+export interface ReadClipboardMessage {
+  type: "readClipboard";
+}
+
 export type WebviewMessage =
   | LoadMoreMessage
   | CancelMessage
@@ -115,18 +125,11 @@ export type WebviewMessage =
   | CommitTransactionMessage
   | RollbackTransactionMessage
   | RequestDistinctValuesMessage
-  // TASK-UX3-003 — tab close affordances (× button + right-click menu).
-  // Webview posts these; ResultsPanel.closeTab / closeAllTabs / closeOthersTabs
-  // own the state mutation.
   | CloseTabMessage
   | CloseAllTabsMessage
   | CloseOthersTabsMessage
-  // ACTIVE-SCHEMA chip — user clicked the schema chip in the toolbar.
-  // The host re-runs `UnicDB.selectActiveSchema` (QuickPick of schemas on
-  // the active connection); the resulting store mutation re-broadcasts as
-  // a `schemaChanged` message back to every webview so all chips stay in
-  // sync without each webview having to know about the others.
-  | PickActiveSchemaMessage;
+  | PickActiveSchemaMessage
+  | ReadClipboardMessage;
 
 /** ACTIVE-SCHEMA chip — webview → host. No payload: the chip always
  *  targets the active connection (mirrors the status-bar behaviour). The

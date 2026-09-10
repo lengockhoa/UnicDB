@@ -106,6 +106,15 @@ interface TransactionStatusMsg {
   open: boolean;
 }
 
+interface ClipboardTextMsg {
+  type: "clipboardText";
+  text: string;
+}
+
+interface ReadClipboardMsg {
+  type: "readClipboard";
+}
+
 interface SaveResultMsg {
   type: "saveResult";
   index: number;
@@ -126,7 +135,7 @@ interface SaveResultMsg {
   rowErrors?: Array<{ rowId: number; error: string }>;
 }
 
-type HostMsg = StateMsg | BusyMsg | SaveResultMsg | TransactionStatusMsg;
+type HostMsg = StateMsg | BusyMsg | SaveResultMsg | TransactionStatusMsg | ClipboardTextMsg;
 
 
 interface StatementResult {
@@ -220,11 +229,10 @@ type WebviewMsg =
   | RequestDistinctValuesMsg
   | ReadyMsg
   // TASK-UX3-001 — tab close affordances (× button + right-click menu).
-  // Host side (TASK-UX3-002/003) owns the actual close logic.
   | CloseTabMsg
   | CloseAllTabsMsg
-  | CloseOthersTabsMsg;
-
+  | CloseOthersTabsMsg
+  | ReadClipboardMsg;
 /** Webview → host: close a single tab by index. */
 interface CloseTabMsg {
   type: "closeTab";
@@ -302,6 +310,21 @@ function postToHost(msg: WebviewMsg): void {
 // ---- App state -------------------------------------------------------------
 
 const root = document.getElementById("UnicDB-root") as HTMLDivElement;
+// Clipboard reads must round-trip through the extension host: VS Code webviews
+// do not reliably expose navigator.clipboard.readText(). Keep this listener on
+// the persistent root so Cmd/Ctrl+V also works before a result grid is mounted.
+root.addEventListener(
+  "keydown",
+  (ev) => {
+    if (isFilterInput(ev.target)) return;
+    if (!(ev.ctrlKey || ev.metaKey) || ev.key.toLowerCase() !== "v") return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    postToHost({ type: "readClipboard" });
+  },
+  true,
+);
+
 let headerText = "";
 let results: StatementResult[] = [];
 let busy = false;
@@ -547,10 +570,10 @@ function isCellInRangeByDisplay(
  *  `range` is null, the highlight is cleared. */
 function setCellRange(range: CellRange | null): void {
   if (range === null) {
-    if (cellRange === null) return;
+    const hadRange = cellRange !== null || cellRangeAnchor !== null;
     cellRange = null;
     cellRangeAnchor = null;
-    refreshRangeHighlight();
+    if (hadRange) refreshRangeHighlight();
     return;
   }
   cellRange = normalizeCellRange(range);
@@ -1299,6 +1322,19 @@ function buildPersistentDom(): PersistentDom {
   window.addEventListener("mouseup", () => {
     isDraggingRange = false;
   });
+  // AG Grid may focus a cell before its own click bookkeeping runs. The
+  // range drag marks that same mousedown as safe; every later non-cell click
+  // consumes the flag and clears the stale rectangle.
+  document.addEventListener("mousedown", (ev) => {
+    const suppressClear = suppressNextCellClickClear;
+    suppressNextCellClickClear = false;
+    if (suppressClear) return;
+    if (isFilterInput(ev.target)) return;
+    const target = ev.target;
+    if (target instanceof HTMLElement && target.closest(".ag-cell")) return;
+    setCellRange(null);
+  });
+
 
   /** Walk up from a mousedown/mousemove target to the enclosing AG Grid
    *  cell and resolve its (displayRowIndex, colIndex) using gridApi.
@@ -3402,6 +3438,13 @@ function onGridPaste(ev: ClipboardEvent): void {
   gridApi.refreshCells({ force: true });
   updateFooterNow();
 }
+function pasteClipboardText(text: string): void {
+  const ev = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "clipboardData", {
+    value: { getData: (_type: string) => text },
+  });
+  onGridPaste(ev as ClipboardEvent);
+}
 
 /** TASK-RANGE-001 — paste the parsed clipboard into a rectangle starting
  *  at its top-left corner. Tiles the clipboard when smaller than the
@@ -3461,7 +3504,9 @@ function pasteIntoRange(range: CellRange, parsed: string[][]): void {
     const srcColOffset = targetCol - n.startCol;
     // Slice each clipboard row to the source column. If the row is too
     // short we fall back to "" — applyRangePasteToDirty pads via tile.
-    const colSliced = parsed.map((row) => [row[srcColOffset] ?? ""]);
+    const colSliced = parsed.map((row) => [
+      row.length > 0 ? row[srcColOffset % row.length] ?? "" : "",
+    ]);
     const subRange: CellRange = {
       startRow: n.startRow,
       startCol: targetCol,
@@ -4455,6 +4500,8 @@ window.addEventListener("message", (ev: MessageEvent) => {
     transactionOpen = msg.open;
     render();
     updateFooterNow();
+  } else if (msg.type === "clipboardText") {
+    pasteClipboardText(msg.text);
   } else if (
     (msg as { type?: string }).type === "distinctValues"
   ) {
@@ -4543,6 +4590,10 @@ function debugSetSpecs(specs: readonly ColumnSpec[]): void {
     return currentSpecs;
   },
   debugSetSpecs,
+  debugClipboard: {
+    simulatePaste: pasteClipboardText,
+    getCellRange: () => cellRange,
+  },
   /** TASK-003 — host-driven column-state restore (sort replay after a
    *  requery). Guarded by suppressSortRequery so onSortChanged, which AG
    *  Grid also fires for programmatic applies, does not re-post. Tests use

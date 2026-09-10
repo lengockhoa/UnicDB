@@ -1034,6 +1034,11 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         // Copy text do webview build sẵn (tab-separated). Ghi vào clipboard.
         await vscode.env.clipboard.writeText(msg.text);
         break;
+      case "readClipboard": {
+        const text = await vscode.env.clipboard.readText();
+        this.postMessage({ type: "clipboardText", text });
+        break;
+      }
       case "exportFile":
         await this.handleExportFile(msg.format, msg.text);
         break;

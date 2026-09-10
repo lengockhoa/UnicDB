@@ -39,7 +39,12 @@ interface EditStateHandle {
   dirtyCount: number;
 }
 
-interface UnicDBApi {
+interface ClipboardDebug {
+  simulatePaste?: (text: string) => void;
+  getCellRange?: () => unknown;
+}
+
+interface UnicDBApiHandle {
   postMessage: (msg: unknown) => void;
   commit?: () => void;
   simulateCellEdit?: (
@@ -58,7 +63,8 @@ interface UnicDBDebug {
   gridApi?: GridApi | null;
   editState?: EditStateHandle;
   commit?: () => void;
-  simulateCellEdit?: UnicDBApi["simulateCellEdit"];
+  simulateCellEdit?: UnicDBApiHandle["simulateCellEdit"];
+  debugClipboard?: ClipboardDebug;
 }
 
 function UnicDBApi(): UnicDBDebug | null {
@@ -68,6 +74,30 @@ function UnicDBApi(): UnicDBDebug | null {
 function getEditState(): EditStateHandle | null {
   return UnicDBApi()?.editState ?? null;
 }
+
+function dispatchPaste(target: EventTarget, text: string): void {
+  const ev = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "clipboardData", {
+    value: { getData: (_type: string) => text },
+  });
+  target.dispatchEvent(ev);
+}
+
+function dispatchClipboardShortcut(
+  target: EventTarget,
+  options: { ctrlKey?: boolean; metaKey?: boolean } = {},
+): KeyboardEvent {
+  const ev = new KeyboardEvent("keydown", {
+    key: "v",
+    ctrlKey: options.ctrlKey ?? false,
+    metaKey: options.metaKey ?? false,
+    bubbles: true,
+    cancelable: true,
+  });
+  target.dispatchEvent(ev);
+  return ev;
+}
+
 
 beforeAll(() => {
   // jsdom doesn't ship these by default — AG Grid requires them.
@@ -100,15 +130,17 @@ const distPath = resolve(process.cwd(), "dist", "webview.js");
 const bundleSrc = existsSync(distPath) ? readFileSync(distPath, "utf8") : null;
 
 interface LoadResult {
-  received: { type?: string }[];
+  received: Array<{ type?: string; [key: string]: unknown }>;
 }
 
 function loadBundle(): LoadResult {
   // Make vscode API a sink for this test.
-  const received: { type?: string }[] = [];
+  const received: Array<{ type?: string; [key: string]: unknown }> = [];
   (globalThis as { acquireVsCodeApi?: unknown }).acquireVsCodeApi = () => ({
     postMessage: (msg: unknown) => {
-      received.push(msg as { type?: string });
+      if (msg && typeof msg === "object") {
+        received.push(msg as { type?: string; [key: string]: unknown });
+      }
     },
   });
   // Reset DOM so each test starts clean.
@@ -255,6 +287,113 @@ describeIfBundle("webview/main.ts — keybinding filter (Fix R1)", () => {
 
     const saveMsgs = received.filter((m) => m.type === "saveEdits");
     expect(saveMsgs.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describeIfBundle("webview/main.ts — Cmd/Ctrl+V clipboard round-trip", () => {
+  itIfBundle("Cmd+V pastes host clipboard text through the round-trip exactly once", async () => {
+    const { received } = loadBundle();
+    dispatchState();
+    await flush();
+    const api = UnicDBApi()!;
+    api.gridApi!.setFocusedCell(0, "id");
+    received.length = 0;
+
+    const wrap = document.querySelector(".UnicDB-grid-host") as HTMLElement;
+    const ev = dispatchClipboardShortcut(wrap, { metaKey: true });
+    expect(ev.defaultPrevented).toBe(true);
+    expect(received.filter((m) => m.type === "readClipboard")).toHaveLength(1);
+
+    dispatchHost({ type: "clipboardText", text: "7\tseven" });
+    await flush();
+    expect(api.editState!.dirtyCount).toBe(2);
+    expect(api.gridApi!.getRowNode("0")!.data.id).toBe("7");
+    expect(api.gridApi!.getRowNode("0")!.data.name).toBe("seven");
+  });
+
+  itIfBundle("Ctrl+V behaves identically to Cmd+V", async () => {
+    const { received } = loadBundle();
+    dispatchState();
+    await flush();
+    const api = UnicDBApi()!;
+    api.gridApi!.setFocusedCell(0, "id");
+    received.length = 0;
+
+    dispatchClipboardShortcut(document.querySelector(".UnicDB-grid-host")!, { ctrlKey: true });
+    expect(received.filter((m) => m.type === "readClipboard")).toHaveLength(1);
+    dispatchHost({ type: "clipboardText", text: "8\teight" });
+    await flush();
+    expect(api.editState!.dirtyCount).toBe(2);
+    expect(api.gridApi!.getRowNode("0")!.data.id).toBe("8");
+  });
+
+  itIfBundle("clicking a non-cell clears stale range before paste", async () => {
+    const { received } = loadBundle();
+    dispatchState();
+    await flush();
+    const api = UnicDBApi()!;
+    const wrap = document.querySelector(".UnicDB-grid-host") as HTMLElement;
+    const first =
+      (wrap.querySelector('.ag-cell[row-index="0"][col-id="id"]') as HTMLElement | null) ??
+      (wrap.querySelector('.ag-row[row-index="0"] .ag-cell[col-id="id"]') as HTMLElement | null);
+    const last =
+      (wrap.querySelector('.ag-cell[row-index="1"][col-id="name"]') as HTMLElement | null) ??
+      (wrap.querySelector('.ag-row[row-index="1"] .ag-cell[col-id="name"]') as HTMLElement | null);
+    expect(first).toBeTruthy();
+    expect(last).toBeTruthy();
+    first.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    last.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    expect(api.debugClipboard?.getCellRange?.()).not.toBeNull();
+
+    const toolbar = document.querySelector(".UnicDB-toolbar") as HTMLElement;
+    toolbar.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(api.debugClipboard?.getCellRange?.()).toBeNull();
+    api.gridApi!.setFocusedCell(0, "id");
+    received.length = 0;
+    dispatchPaste(wrap, "focused");
+    await flush();
+    expect(api.editState!.dirtyCount).toBe(1);
+    expect(api.gridApi!.getRowNode("0")!.data.id).toBe("focused");
+    expect(api.gridApi!.getRowNode("1")!.data.name).toBe("b");
+  });
+
+  itIfBundle("Cmd+V in a filter input is not intercepted", async () => {
+    const { received } = loadBundle();
+    dispatchState();
+    await flush();
+    const wrap = document.querySelector(".UnicDB-grid-host") as HTMLElement;
+    const input = document.createElement("input");
+    wrap.appendChild(input);
+    input.focus();
+    received.length = 0;
+    dispatchClipboardShortcut(input, { metaKey: true });
+    await flush();
+    expect(received.filter((m) => m.type === "readClipboard")).toHaveLength(0);
+    expect(getEditState()!.dirtyCount).toBe(0);
+  });
+
+  itIfBundle("clipboardText with empty text is a silent no-op", async () => {
+    const { received } = loadBundle();
+    dispatchState();
+    await flush();
+    received.length = 0;
+    const wrap = document.querySelector(".UnicDB-grid-host") as HTMLElement;
+    dispatchClipboardShortcut(wrap, { metaKey: true });
+    dispatchHost({ type: "clipboardText", text: "" });
+    await flush();
+    expect(getEditState()!.dirtyCount).toBe(0);
+  });
+
+  itIfBundle("clipboard round-trip without state is a safe no-op", async () => {
+    const { received } = loadBundle();
+    received.length = 0;
+    const root = document.getElementById("UnicDB-root")!;
+    dispatchClipboardShortcut(root, { ctrlKey: true });
+    expect(received.filter((m) => m.type === "readClipboard")).toHaveLength(1);
+    dispatchHost({ type: "clipboardText", text: "orphan" });
+    await flush();
+    expect(getEditState()!.dirtyCount).toBe(0);
   });
 });
 

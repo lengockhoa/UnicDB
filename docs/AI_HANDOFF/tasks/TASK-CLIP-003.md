@@ -146,7 +146,57 @@ unchanged.
 
 ## Executor Report
 
-(appended by Phase 3)
+EXECUTOR_TOOL: omp
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: ImplementClipboardWiring
+RED_OUTPUT:
+```text
+Command: npx vitest run src/ui/__tests__/webviewKeybinding.test.ts --reporter=verbose
+Exit code: 1
+× Cmd+V pastes host clipboard text through the round-trip exactly once → expected false to be true
+× Ctrl+V behaves identically to Cmd+V → expected [] to have a length of 1 but got +0
+× clicking a non-cell clears stale range before paste → expected null to be truthy
+× clipboard round-trip without state is a safe no-op → expected [] to have a length of 1 but got +0
+Test Files 1 failed (1); 4 failed, 7 passed
+```
+Verification Output:
+```text
+$ npm run typecheck
+> UnicDB@1.53.42 typecheck
+> tsc --noEmit
+exit 0
+
+$ npm run compile
+> node esbuild.js
+dist/comparePanel.js 4.5kb
+dist/comparePanel.js.map 9.1kb
+exit 0
+
+$ npx vitest run src/ui/__tests__/webviewKeybinding.test.ts
+Test Files 1 passed (1)
+Tests 11 passed (11)
+exit 0
+
+$ npx vitest run src/ui/__tests__/webviewClipboardPaste.test.ts
+Test Files 1 passed (1)
+Tests 9 passed (9)
+exit 0
+
+$ npx vitest run src/ui/__tests__/webviewKeybinding.test.ts src/ui/__tests__/webviewClipboardPaste.test.ts src/ui/__tests__/webviewBundle.test.ts tests/webviewEditHighlight.test.ts src/ui/__tests__/aiChatPanelCloneCss.test.ts
+Test Files 5 passed (5)
+Tests 44 passed (44)
+exit 0
+```
+Status: PASS
+Summary: Fixed active-range column tiling, added host-mediated Cmd/Ctrl+V with clipboardText routing, consumed stale range clear state, and exposed the debugClipboard seam. Added six keybinding regression cases covering both modifiers, stale ranges, filter inputs, empty clipboard, and no-state safety.
+Files Changed:
+  - webview/main.ts: active-range tiling, shortcut/host round-trip, stale-range clearing, debug seam
+  - src/ui/messages.ts: additive readClipboard/clipboardText unions
+  - src/ui/resultsPanel.ts: host clipboard read handler
+  - src/ui/__tests__/webviewKeybinding.test.ts: Cmd/Ctrl+V and edge-case regression tests
+Tests Added:
+  - src/ui/__tests__/webviewKeybinding.test.ts: Cmd+V round-trip, Ctrl+V variant, stale range clear, filter guard, empty clipboard, no-state safety
+Note: npm emitted the existing ES2024 target warning during Vitest; all required commands passed.
 
 ## Reviewer Verdict
 
