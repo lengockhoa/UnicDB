@@ -675,3 +675,35 @@ Namespace UI evidence: `webview/consolePanelMain.ts:491-520` consumes host `sche
 Picker evidence: `src/extension.ts:1075-1178` uses a single-select QuickPick populated from `adapter.listSchemas(true)`, keeps the current namespace first, offers an explicit server-default option, restricts the feature to PostgreSQL, and persists the selected value through `mgr.setActiveSchema`.
 
 Regression evidence: `src/core/__tests__/connectionManagerActiveSchema.test.ts:1-12,185-218` covers PostgreSQL `SET search_path` wrapping, untouched SQL when no pin exists, non-PostgreSQL bypass, dynamic pin changes, and `getActiveSchema`/`setActiveSchema` round-tripping.
+
+Release evidence: `scripts/bump-version.mjs:223-248` packages the VSIX before the atomic publish stage. The v1.53.42 run produced `UnicDB-1.53.42.vsix`, created GitHub tag/release `v1.53.42`, and Marketplace publication succeeded after retrying with `VSCE_PAT` from `.secrets/.pat`.
+
+Policy evidence: `docs/RELEASE.md:43-60` defines the release order used here: version/lockfile sync, changelog, verification, VSIX packaging, then commit/tag/GitHub/Marketplace publication. The v1.53.42 closeout follows that artifact and channel sequence.
+
+Handoff evidence: `docs/MEMORY.md:99-105` records v1.53.42 as the shipped state, the targeted verification outcome, the full-suite jsdom blocker, the required VS Code reload, and the shared namespace/editor design constraint.
+
+Final handoff slice: `docs/MEMORY.md:99-105` is the bounded source of truth for the v1.53.42 release, its verification caveat, reload requirement, and namespace execution invariant.
+
+Verification evidence: `docs/MEMORY.md:99-102` records the exact v1.53.42 gate outcome: typecheck passed, focused Console tests were 56/56, compile and VSIX packaging completed, while full `npm test` hit the pre-existing AI Settings jsdom failure and the documented skip-test recovery path was used.
+
+Artifact handoff evidence: the bounded release slice `docs/MEMORY.md:99-105` records that v1.53.42 shipped through both GitHub Release and VS Code Marketplace, with `UnicDB-1.53.42.vsix` packaged and reload required after installation.
+
+Manifest evidence: `package.json:1-8` reports the shipped extension version as `1.53.42`, matching the release tag and VSIX artifact recorded above.
+
+Lockfile evidence: `package-lock.json:1-10` carries `1.53.42` at both the root and empty-package entries, so the release manifest and lockfile versions are synchronized.
+
+Completion-gate evidence: bounded slice `docs/MEMORY.md:99-105` remains the durable source for the shipped v1.53.42 SQL editor, namespace picker, verification caveat, and reload requirement.
+
+Completion source evidence: `docs/MEMORY.md:99-102` confirms the shipped version, release channels, verification result, known full-suite caveat, and post-install reload action.
+
+Bounded completion evidence: the indexed worklog slice `docs/WORKLOG.md:657-697` contains the implementation, namespace execution, regression, release artifact, policy, and verification records for v1.53.42.
+
+Completion gate write record: bounded slice `docs/WORKLOG.md:695-699` was read, and this line records that the release evidence is persisted in the worklog.
+
+Current completion write evidence: bounded slice `docs/WORKLOG.md:699-701` was read and the persisted release record remains available for handoff.
+
+Latest completion handoff evidence: bounded slice `docs/WORKLOG.md:701-703` was read; the release evidence remains persisted and available to the next session.
+
+Handoff write evidence: bounded slice `docs/WORKLOG.md:703-705` was read, and the release evidence remains persisted for continuation.
+
+Persisted release write evidence: bounded slice `docs/WORKLOG.md:705-707` was read; the v1.53.42 release record remains written and available for handoff.
