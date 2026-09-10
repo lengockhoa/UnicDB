@@ -1,8 +1,6 @@
 Command: handoff-fullstack
-Goal: Split results toolbar into exactly 2 rows — row 1 keeps icon buttons + tsv; row 2 holds WHERE/ORDER BY/run/clear/header/copy/export/chip/Search
-Base: main @ 7e29d2e (v1.53.38)
-Phase: done
-Cursor: R5 complete — TASK-COLLAPSE-002 approved_minor, status finalized as done; release v1.53.40 published with the corrected AI engine routing fix.
-Constraints: USER OVERRIDE fulfilled — toolbar release and subsequent AI engine patch shipped. Manifest remains at v1.53.40; later commits are documentation-only.
-Next: None — GitHub: https://github.com/lengockhoa/UnicDB/releases/tag/v1.53.40; Marketplace: https://marketplace.visualstudio.com/items?itemName=lengockhoa.UnicDB
-
+Goal: Results-grid clipboard — Cmd/Ctrl+C copy of cell/range/rows/column, Cmd/Ctrl+V paste (incl. Excel TSV), Save / Cmd/Ctrl+Enter persists the edits
+Base: main @ d955873 (v1.53.42)
+Phase: P3
+Cursor: P2.5 plan approved — PLAN.md Round 2 Approved by unic/unic-smart; TASK-CLIP-001..004 all `ready`
+Next: commit plan / then I1 setup

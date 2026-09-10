@@ -1,273 +1,317 @@
-# PLAN — Cycle RES2ROW: split the Results toolbar into exactly 2 rows
+# PLAN — Cycle CLIPGRID: results-grid clipboard copy/paste (Cmd/Ctrl+C, Cmd/Ctrl+V, Excel paste, Cmd/Ctrl+Enter save)
 
 ## §1 Intent
 
-**Problem (user, verbatim):** "Chia đôi cho tôi menu này. Từ Where là đưa xuống dòng dưới.
-TÔi cần 2 dòng" ("Split this menu in half for me. From WHERE onwards, put it on the line
-below. I need 2 lines.")
+**Problem (user):** In the data results table the user wants spreadsheet clipboard semantics:
+select one cell, a rectangular range, rows, or a column → **Cmd/Ctrl+C** copies the copied
+matrix as TSV; select a destination cell → **Cmd/Ctrl+V** pastes the copied matrix starting
+at that cell; **pasting content copied in Excel** (tab/newline clipboard text) must land in
+the results table as edits; **Save or Cmd/Ctrl+Enter** persists the edits to the database.
 
-**Context:** the results webview toolbar is currently a single clipped row (post
-v1.53.38 / TASK-COLLAPSE-001): 18 controls, no truncation, but crowded. The user wants a
-deterministic 2-row split at the WHERE input.
+**Success looks like:**
+1. Any selection shape (1 cell / rectangle / row checkboxes / a column strip) + Cmd/Ctrl+C
+   → exactly one `copy` message whose `text` is the TSV matrix of the selection.
+2. Cmd/Ctrl+V with TSV text on the OS clipboard → cells starting at the focused cell (or the
+   active range's top-left) become dirty edits, visibly highlighted, mirrored into the grid.
+3. Excel-origin paste (multi-row × multi-col, CRLF line endings, trailing newline) parses and
+   lands with the same semantics.
+4. Cmd/Ctrl+Enter or the existing Commit (✓) button posts one `saveEdits` batch; on
+   `saveResult ok` the dirty highlights clear (new baseline). Existing refusals/errors flow
+   through the save banner unchanged.
 
-**Split point (vision-analyst verified against the live toolbar):** after the `tsv`
-dropdown, before the `WHERE …` input. Row 1 = the 8 icon buttons (cancel, refresh,
-add-row, delete-row, undo, redo, commit, csv-toggle) + 2 separators + `tsv` select.
-Row 2 = `WHERE …` input, `ORDER BY …` input, ▶ Re-Run, ✕ Clear, ☐ header checkbox, Copy,
-Export-file, `$(symbol-namespace)` schema chip, `Search…` input — 9 controls, balanced
-against row 1.
+**Planner grounding note (verified against working tree @ d955873, base `main`):** nearly the
+whole pipeline ALREADY EXISTS — heritage of TASK-501/TASK-502/TASK-RANGE-001/TASK-503:
+- Range selection: `webview/main.ts:476-558` (`cellRange`, `setCellRange`,
+  `normalizeCellRange`), drag wiring at `main.ts:1254-1301`, Shift+Arrow at `main.ts:1412-1451`,
+  highlight via `cellClassRules` → `UnicDB-cell-range` (`main.ts:2343-2353`, `styles.css:518`).
+- Copy: `copySelectionToHost()` (`main.ts:4031`) — range takes precedence over row-checkbox
+  selection over focused-row fallback; posts `{type:"copy", text}`; host writes the OS
+  clipboard at `resultsPanel.ts:1033-1036` (`vscode.env.clipboard.writeText`).
+- Paste: capture-phase `paste` listener (`main.ts:1401-1405`) → `onGridPaste`
+  (`main.ts:3300`): `parseTsvPaste` → focused-cell anchor path or `pasteIntoRange`
+  (`main.ts:3417`); pure helpers `parseTsvPaste` / `applyPasteToDirty` /
+  `applyRangePasteToDirty` in `src/ui/resultsGridModel.ts:1226/1261/1387`.
+- Save: Cmd/Ctrl+Enter capture listener (`main.ts:1355-1370`) → `onCommitClick()`
+  (`main.ts:3782`) posts one `saveEdits` batch → `handleSaveEdits` (`resultsPanel.ts:1040`).
 
-**Success looks like:** the toolbar always renders EXACTLY 2 rows at every viewport width —
-no third line ever appears (narrow widths clip within a row instead of reflowing), no
-horizontal scrollbar, and every existing behavior (requery Enter, export, quick filter,
-commit, transaction controls) keeps working. Typecheck + compile + targeted tests + full
-suite green.
+The real GAPS this cycle closes, each verified in source:
+1. **No keyboard Cmd/Ctrl+V wiring.** The bundle handles only the `paste` ClipboardEvent;
+   `gridApi.processCellFromClipboard` / a Cmd/Ctrl+V keydown path does not exist. On hosts
+   where the webview never receives a trusted `paste` event on a non-editable grid, Cmd/Ctrl+V
+   is a no-op. Fix: Cmd/Ctrl+V keydown (capture phase, `isFilterInput` guard) synthesizes the
+   same paste dispatch after an async clipboard read.
+2. **Column-strip / whole-column copy parity.** `copySelectionToHost` handles range +
+   full-row checkbox selection + focused row, but a user selecting a COLUMN (drag down one
+   column, no checkbox) is naturally expressed as a 1-column-wide range — that works today —
+   yet a row-rectangle where the user dragged ACROSS only part of the grid relies on range
+   coords; both need one bundle test suite to pin shape semantics (rows / columns / 1×1 /
+   N×M) — currently only `selectionRangeToText` unit tests exist, zero bundle tests for
+   copy of a range.
+3. **`suppressNextCellClickClear` is set but never read** (`main.ts:479,1260` — only 2
+   occurrences). The documented "clicking a non-cell area clears the range" behavior
+   (comment `main.ts:469`) is not wired, so a stale rectangle survives clicks on the
+   toolbar and silently redirects the next copy/paste. This is a live correctness gap for
+   "select a destination cell" — if the user's last range lingers, paste goes to the OLD
+   range instead of the newly focused cell. Fix: read the flag in a capture-phase
+   `mousedown`/`cellClicked` clear path (only this task may touch this wiring).
 
-**Supersession:** this cycle REVERSES the RES-BAR / TASK-COLLAPSE-001 single-row contract
-(`.UnicDB-toolbar { flex-wrap: nowrap }` + `overflow: hidden` + requery inputs
-`flex: 1 1 140px; min-width: 80px`). The pins live in 3 test files and MUST be flipped, not
-silently deleted: `src/ui/__tests__/webviewToolbar.test.ts` (test #4 nowrap regex + the
-px-basis assertions, AND test #3's flat-children census — a fourth flip discovered during
-planner grounding), `tests/webviewRequeryAlignment.test.ts` (2 `it()` bodies), and
-`src/ui/__tests__/aiChatPanelCloneCss.test.ts` (line 119).
+Task sizing: pure-model helpers are done and tested; the work is bundle-level wiring +
+pinning tests + one real defect fix (stale-range clear). No new npm deps, no schema
+changes; the ONLY new host message types are the §7-sanctioned `readClipboard`
+(webview→host) / `clipboardText` (host→webview) round-trip pair added by TASK-CLIP-003 —
+every other discriminator (`copy`, `saveEdits`, `retryFailedRows`) is unchanged.
 
 ## §2 Scope
 
-**In scope (single task — TASK-COLLAPSE-002 — all edits share 2 source files):**
-- `webview/styles.css`: `.UnicDB-toolbar` becomes `display: flex; flex-direction: column;
-  gap: 4px; min-width: 0; overflow: hidden; margin-bottom: 8px;` (drop `flex-wrap: nowrap`);
-  new `.UnicDB-toolbar-row` rule `display: flex; flex-wrap: nowrap; align-items: center;
-  gap: 4px; min-width: 0; overflow: hidden;`; `.UnicDB-requery-where/-order` become
-  `flex: 1 1 100%; min-width: 0` (inside a nowrap row this means "split the leftover space",
-  NOT "own a full line"); update the stale TASK-COLLAPSE-001 comment block.
-- `webview/main.ts` `buildPersistentDom()` (lines ~932-1210): wrap toolbar children in two
-  `.UnicDB-toolbar-row` divs. Row 1 appends: cancelBtn, refreshBtn, sep, addRowBtn,
-  deleteRowBtn, undoBtn, redoBtn, commitBtn, csvToggleBtn, sep, exportFormat. Row 2 appends:
-  requeryWhere, requeryOrderBy, requeryRunBtn, requeryClearBtn, exportHeader, exportCopyBtn,
-  exportFileBtn, schemaChip, searchInput (still last child of row 2).
-- `webview/main.ts` line 817-820 (`render()`): `dom.toolbar.insertBefore(
-  dom.transactionControls, dom.csvToggleBtn)` THROWS under the wrapper strategy (ref node's
-  parent is row 1, not toolbar). Add `toolbarRow1: HTMLDivElement` to the `PersistentDom`
-  interface and re-target to `dom.toolbarRow1.insertBefore(...)`.
-- Flip/rewrite the pinned tests: `webviewToolbar.test.ts` (EXPECTED_ORDER split into
-  per-row constants; test #3 becomes a two-row census; test #4 nowrap→column flip),
-  `webviewRequeryAlignment.test.ts` (2 `it()` bodies + stale comments), 
-  `aiChatPanelCloneCss.test.ts` (line 119 assertion).
+**In scope:**
+- Cmd/Ctrl+V keydown handler on `gridWrap` (capture phase) that routes into the existing
+  paste pipeline (`onGridPaste` semantics) after reading the OS clipboard; `isFilterInput`
+  guard; `preventDefault`/`stopPropagation` on the handled path.
+- Paste-event hardening: ignore multi-part / non-plain clipboard payloads explicitly
+  (`getData("text/plain")` empty → no-op) — behavior pin, not new logic.
+- Column-strip copy parity test coverage (1-col range copy through `copySelectionToHost`).
+- Fix the stale-range defect: `suppressNextCellClickClear` consumed; clicking a non-cell
+  area (toolbar, header, footer) clears `cellRange`/`cellRangeAnchor`; clicking a cell
+  after a drag starts a new anchor (flag suppresses the spurious clear from AG Grid focus).
+- Excel-paste matrix semantics pinned: CRLF, trailing newline, jagged rows padded, clip at
+  grid edge, tile inside range (already implemented — tests pin them at bundle level).
+- Save contract pinned at bundle level: Cmd/Ctrl+Enter + commit button post exactly one
+  `saveEdits` with `edits[]` = snapshot; `saveResult ok:true` clears highlights.
+- New bundle test files for the above (paths in §4 / task files).
 
 **Out of scope:**
-- Any change to what the controls DO (handlers, messages, requery pipeline, export) —
-  layout only.
-- The `data-tooltip` pseudo-element block (`webview/styles.css:98-123`) — off-limits.
-- Any third row, responsive collapse, or media query — user demanded exactly 2.
-- Version bump / release (maintainer folds into next release).
-- The AI-chat panel's own toolbar (aiChatPanelCloneCss.test.ts only READS styles.css as a
-  regression mirror; no chat CSS changes).
-- No version bump inside any task this cycle. The patch bump (v1.53.39) + Marketplace
-  publish happens at pipeline R5 per the RUN.md USER OVERRIDE (`must finish including version
-  bump`); executor / reviewer never bump versions. This supersedes the prior
-  "maintainer folds into next release" default.
+- Any new webview→host message discriminator EXCEPT the §7-sanctioned `readClipboard`, and
+  any new host→webview discriminator EXCEPT its `clipboardText` reply (both TASK-CLIP-003
+  only; `copy`, `saveEdits`, `retryFailedRows` unchanged); no host-side save-statement
+  changes (`src/core/saveStatements.ts` untouched).
+- Enterprise-style "copy with headers", cut, drag-fill, cross-tab clipboard history.
+- Local Add-Row paste targeting (paste already stops at locally-added rows by design —
+  `main.ts:3351`, pinned as-is).
+- No-PK ctid save bug (tracked separately in queue spec GRID-EXCEL-OVERHAUL A).
+- Console panel / AI chat clipboard (different surfaces).
 
-**Same-wave file rule:** one task, wave 1 — no collision possible. (A draft split
-"CSS task + main.ts task" was rejected: both would touch `webview/styles.css` AND the bundle
-tests eval `dist/webview.js` built from both, so no reviewer could approve one while
-rejecting the other.)
+**CONSTRAINT — same-wave file rule:** wave 1 = TASK-CLIP-001 (tests for pure+bundle copy
+matrix shapes) ∥ TASK-CLIP-002 (paste path tests) — disjoint test files. Wave 2 =
+TASK-CLIP-003 (Cmd/Ctrl+V wiring + stale-range fix, owns `webview/main.ts`) → wave 3 =
+TASK-CLIP-004 (save-path pin — tests-only, does NOT edit `webview/main.ts`; consumes
+CLIP-003's `debugClipboard.simulatePaste` seam). Any two tasks that would both edit
+`webview/main.ts` are sequenced, never parallel.
 
 ## §3 Approach
 
-**Option A (chosen): fixed two-row wrappers.** `.UnicDB-toolbar` → `flex-direction: column`
-containing exactly two `.UnicDB-toolbar-row` children; each row is `flex-wrap: nowrap` +
-`overflow: hidden`. Row membership is decided in `buildPersistentDom()` by which wrapper an
-element is appended to, so the split is structural (DOM), not emergent (CSS width math).
+**TASK-CLIP-001 (copy matrix shapes — tests only):** add
+`src/ui/__tests__/webviewClipboardCopy.test.ts` (jsdom bundle-eval, harness pattern of
+`webviewBundle.test.ts` / `webviewKeybinding.test.ts`: stub `acquireVsCodeApi`, eval
+`dist/webview.js`, dispatch a 3×2 state, drive `api.forEachNode(setSelected)` / synthetic
+`mousedown`+`mousemove` on `.ag-cell` elements to build ranges, dispatch Cmd/Ctrl+C
+`keydown` on `.UnicDB-grid-host`, assert the posted `copy` messages). Pins: 1×1 cell; N×M
+rectangle; full-row checkboxes; single column strip (drag down col `name`); hidden-column
+exclusion (via `debugSetSpecs` seam `main.ts:4510`); focused-row fallback. Pure-side
+`selectionRangeToText` shape cases (row-major, `\t`/`\n` joins) extend
+`resultsGridModelEdit.test.ts` only where a shape lacks coverage (column-strip = 1-wide
+range). **No production edits.**
 
-- Why it guarantees "exactly 2 rows": a nowrap row can never gain a line; at narrow widths
-  its `overflow: hidden` clips tail content instead of spawning a third line or scrollbar —
-  the same clip-don't-jerk behavior users accepted in TASK-COLLAPSE-001, now per row.
-- The flexible elements absorb the squeeze in row 2: WHERE + ORDER BY at
-  `flex: 1 1 100%; min-width: 0` shrink first (buttons/chip/select all keep
-  `flex-shrink: 0`), so clipping bites the two inputs' widths before any button hides.
-- `transactionControls` re-parenting: `toolbarRow1` is exposed on `PersistentDom` and the
-  render-time `insertBefore` targets it; the guard `!dom.transactionControls.parentElement`
-  keeps working. Without this fix the manual-transaction path throws `NotFoundError` on
-  first transaction open — grounding found this at `webview/main.ts:818`.
+**TASK-CLIP-002 (paste matrix semantics — tests only):** add
+`src/ui/__tests__/webviewClipboardPaste.test.ts` (same bundle harness). Pins the EXISTING
+paths so the CLIP-003 wiring cannot regress them: paste event with `clipboardData` text →
+`editState.dirtyCount` grows by the in-bounds cell count; anchor at focused cell; range
+present → tiling into rectangle (`parsed[r % rows][c % cols]`), over-paste clipped;
+CRLF + trailing-newline normalization (via `parseTsvPaste` direct unit rows already present
+in `resultsGridModelEdit.test.ts` — bundle-level asserts end-state only); locally-added row
+stop (`serverIndexByRowId` miss breaks the walk); undo stack receives one `cell-edit` per
+pasted cell; empty text / filter-input target → zero dirty. **No production edits.**
 
-**Option B (rejected): single container, `flex-wrap: wrap` + WHERE `flex: 1 1 100%`.**
-Row 2's 9 items are emergent: if they exceed the row width the container wraps to a THIRD
-line — exactly what the user forbade ("TÔi cần 2 dòng" is emphatic). The caller's §4 sketch
-(`flex-wrap: wrap` happy pin) is this option; grounded refinement: under Option A the
-container pin is `flex-direction: column`, and `wrap` appears nowhere in the toolbar.
+**TASK-CLIP-003 (webview wiring + stale-range fix — the only task editing
+`webview/main.ts` this wave):**
+1. Add a capture-phase `keydown` Cmd/Ctrl+V listener on `gridWrap`, modeled on the existing
+   Cmd/Ctrl+C listener (`main.ts:1340-1348`): guard `isFilterInput(ev.target)`; on hit
+   `ev.preventDefault(); ev.stopPropagation();` then obtain text. Webviews cannot rely on a
+   trusted `paste` event arriving on a non-editable grid, and `navigator.clipboard.readText`
+   requires focus/permission the webview may lack — so the handler posts a NEW
+   host round-trip: `postToHost({ type: "copy", text: "" })` is WRONG (would clobber the
+   clipboard); instead the host already exposes `vscode.env.clipboard`. **Chosen seam:** add
+   the minimal new host→webview pull message `readClipboard` (webview→host) + reply
+   `clipboardText` (host→webview) in `src/ui/messages.ts`, handled at
+   `resultsPanel.ts:handleMessage` with `vscode.env.clipboard.readText()`; the webview
+   dispatches a synthetic `ClipboardEvent("paste", {clipboardData})` into `onGridPaste`'s
+   existing listener path. Message union grows additively; unknown-type fall-through
+   (`main.ts` host switch default) keeps old bundles safe. **Rejected alternative:** making
+   the keydown handler call `navigator.clipboard.readText()` directly — fails silently in
+   VS Code webviews without clipboard permissions and cannot be tested in jsdom; the host
+   round-trip is one `await` and matches the existing `copy` write path symmetry
+   (`resultsPanel.ts:1035`).
+2. Wire the stale-range clear: in the capture `mousedown` listener on `gridWrap`
+   (`main.ts:1254`), when `findCellFromEvent` returns null (toolbar/header/footer click),
+   call `setCellRange(null)` unless `suppressNextCellClickClear` is true; consume the flag
+   (set to false) after any mousedown that read it, so the documented
+   "clicking a non-cell area clears" contract (`main.ts:469`) finally holds and a lingering
+   rectangle can never redirect the next paste.
+3. Expose a `__UnicDB.debugClipboard` test seam (pattern: `main.ts:4523`) —
+   `simulatePaste(text: string)` that funnels into the same `onGridPaste` dispatch the real
+   events use, and `getCellRange(): {startRow,startCol,endRow,endCol} | null` so tests can
+   assert clears without DOM poking. Both are test-only additions to the existing debug
+   object.
 
-**Option C (rejected): WHERE and ORDER BY both `flex: 1 1 100%` in a wrapping container.**
-Reproduces the original 4-row layout TASK-COLLAPSE-001 collapsed.
-
-**Trade-off accepted:** Option A can clip row-2 tail content (Search input) at very narrow
-widths (< ~600px) instead of wrapping. This is strictly better than the alternatives (3rd
-line, scrollbar, or the pre-COLLAPSE reflow jitter) and matches the established
-clip-don't-jerk contract; `min-width: 0` on the two requery inputs keeps the clip point as
-far right as possible.
+**TASK-CLIP-004 (save persistence pin — wave 3, after CLIP-003):** add
+`src/ui/__tests__/webviewClipboardSave.test.ts`: dirty cells from a paste → Cmd/Ctrl+Enter
+keydown (meta AND ctrl variants) posts exactly ONE `saveEdits` whose `edits` match the
+dirty snapshot and carry `serverIndexByRowId`; empty-dirty Cmd/Ctrl+Enter posts nothing
+(no-op guard `main.ts:3783`); `saveResult ok:true` → `dirtyCount === 0` and no
+`UnicDB-cell-dirty` cells remain; `refused:true` → banner shows reason, dirty cleared.
+Bundle test file only; production untouched — this is the acceptance pin that Cmd/Ctrl+Enter
+persists pasted edits end-to-end at the webview level (host side already covered by
+`resultsPanelSaveEdits.test.ts`).
 
 ## §4 Test Plan
 
-Fixtures: bundle tests eval `dist/webview.js` into jsdom (stubbed `acquireVsCodeApi`) —
-pattern of `webviewToolbar.test.ts`; CSS assertions are source-regex on `webview/styles.css`
-(jsdom does not layout). Bundle tests REQUIRE `npm run compile` first; silent self-skips are
-NOT green.
+Harness: bundle tests eval `dist/webview.js` into jsdom — `npm run compile` is REQUIRED
+first; a silent self-skip is NOT green. Pure-logic tests extend the existing vitest node
+files.
 
 | Type | Test Name | Expected |
 |------|-----------|----------|
-| happy (css) | `.UnicDB-toolbar` rule pins the 2-row column contract | source regex: `/\.UnicDB-toolbar\s*\{[^}]*flex-direction:\s*column/` matches; `/flex-wrap:\s*nowrap/` does NOT match inside the `.UnicDB-toolbar` block |
-| happy (css) | `.UnicDB-toolbar-row` rule exists and locks its line | regex: `/\.UnicDB-toolbar-row\s*\{[^}]*flex-wrap:\s*nowrap/` matches AND same block contains `overflow:\s*hidden` |
-| happy (webview, bundle) | toolbar renders exactly 2 rows with the agreed split | `toolbar.children.length === 2`, both `.UnicDB-toolbar-row`; row 1 order = `[btn-danger, btn, sep, btn, btn, btn, btn, commit, btn, sep, export-format]`; row 2 order = `[requery-where, requery-order, btn(Re-Run), btn(Clear), export-header, export-copy, export-file, schema-chip, search-input]`, search LAST |
-| edge (structural split point) | `.UnicDB-requery-where` is the FIRST child of row 2 | `row2.firstElementChild.classList.contains("UnicDB-requery-where")` — the break is where the user pointed: "Từ Where" |
-| edge (overflow/boundary, css) | rows clip instead of scrolling; inputs absorb the squeeze | `.UnicDB-requery-where/-order` bodies match `flex:\s*1\s+1\s+100\s*%` + `min-width:\s*0` and do NOT match `140px`/`80px`; `.UnicDB-toolbar` + `.UnicDB-toolbar-row` both pin `overflow: hidden` (no horizontal scrollbar at any width) |
-| edge (state/re-parenting, bundle) | manual transaction open → controls insert into ROW 1 | dispatch a transaction-open state; render completes WITHOUT throwing; `.UnicDB-transaction-controls.parentElement` is the row-1 `.UnicDB-toolbar-row` wrapper AND `transactionControls.nextElementSibling === csvToggleBtn` (insertBefore anchor preserved) |
-| regression (webview, bundle) | requery behavior unchanged | Enter in WHERE posts exactly 1 `{type:"requery", index, where, orderBy}`; Clear empties both inputs; existing `webviewToolbar.test.ts` test #5 + `webviewRequeryAlignment` bundle cases stay GREEN untouched |
-| regression (webview, bundle) | toolbar census + tooltip contract survive the re-parenting | `.UnicDB-toolbar .UnicDB-btn` button count still 12 (descendant selector crosses row wrappers), each with svg + aria-label; `aiChatPanelCloneCss` non-chat-selector checks (`.UnicDB-btn`, `.UnicDB-tab`, `.UnicDB-grid-host`) stay GREEN |
-| regression (css) | RES-BAR hover polish intact | `.UnicDB-btn` block still has `transition: background-color …, box-shadow …`; `data-tooltip` pseudo block (`styles.css:98-123`) byte-untouched — no edit may appear between those lines |
-
-No bugfix regression-against-today is possible for the layout itself (today's code is the
-single-row state this cycle deliberately reverses — the "RED before GREEN" step is the
-flipped pins failing against the new CSS/TS before they are updated). The
-transaction-insert edge case DOES fail against today's `webview/main.ts:818` (toolbar-level
-insertBefore), so it doubles as the RED proof for the re-target.
+| happy (CLIP-001 bundle) | Cmd+C with 1×1 range (mousedown+mouseup single cell) | exactly 1 `copy` msg; `text` === the single formatted cell, no `\t`/`\n` |
+| happy (CLIP-001 bundle) | Cmd+C with 2×2 drag rectangle rows [[1,alpha],[2,beta]] | 1 `copy` msg; `text` === `"1\talpha\n2\tbeta"` |
+| happy (CLIP-001 bundle) | Cmd+C with rows 0-1 selected via checkboxes (no range) | 1 `copy` msg; 2 lines, both tab-joined (row-copy parity with `webviewBundle.test.ts` #3) |
+| happy (CLIP-001 bundle) | column strip: drag down the single column `name`, rows 0-2 | 1 `copy` msg; `text` === `"alpha\nbeta\ngamma"` (1-wide TSV) |
+| edge (CLIP-001 shape) | 2×2 range with col `id` hidden via `debugSetSpecs` | copy excludes hidden column: `text` === `"alpha\nbeta"` (no `1\t` leak) |
+| edge (CLIP-001 shape) | Cmd+C with no selection AND no focused cell | zero `copy` posts (`main.ts:4065` guard) |
+| edge (CLIP-001 boundary) | range extending past last row (drag below grid) | copy clipped to displayed rows (`copyCellRangeToHost` clamps `endRow`) |
+| regression (CLIP-001) | existing `webviewBundle.test.ts` #3 + `webviewExport.test.ts` #3 copy cases | unchanged GREEN |
+| happy (CLIP-002 bundle) | paste event, text `"10\tx\n20\ty"`, focused cell (0,0) on col `id` | dirtyCount 4; dirty snapshot exactly (0,0)=`"10"`, (0,1)=`"x"`, (1,0)=`"20"`, (1,1)=`"y"`; grid cells of rows 0-1 mirror the values after refresh |
+| happy (CLIP-002 bundle) | Excel-origin paste: `"1\r\n2\r\n"` (CRLF + trailing newline) focused (0,0) | dirtyCount 2, col 0 rows 0-1 = `"1"`,`"2"` (trailing empty row dropped) |
+| happy (CLIP-002 bundle) | paste into active 2×2 range with 1×1 clipboard `"z"` | all 4 range cells = `"z"` (tile) |
+| edge (CLIP-002 shape) | paste 3×3 clipboard into 2×2 range | over-paste clipped — only 4 dirty cells |
+| edge (CLIP-002 empty) | paste event with empty `getData("text/plain")` | zero dirty; no preventDefault side effects asserted via no `copy`/`saveEdits` posts |
+| edge (CLIP-002 target) | paste event dispatched on a filter `<input>` inside gridWrap | zero dirty (user's local typing untouched) |
+| edge (CLIP-002 boundary) | paste 2 rows at last displayed row (1 row left) | only 1 row dirtied (bottom-edge break `main.ts:3348`) |
+| regression (CLIP-002) | existing `resultsGridModelEdit.test.ts` parse/apply cases | unchanged GREEN |
+| happy (CLIP-003 bundle) | Cmd+V keydown on gridHost → webview posts `{type:"readClipboard"}`; test host stub replies `{type:"clipboardText", text:"7\tseven"}`; `debugClipboard.simulatePaste` asserted NOT called | exactly ONE paste application at the focused anchor — dirtyCount 2 ((anchor)=`"7"`, right neighbor=`"seven"`); no double-fire (keydown + native paste) |
+| happy (CLIP-003 bundle) | Ctrl+V variant (windows/Linux chord) | same as Cmd+V |
+| edge (CLIP-003 stale-range) | drag a range; click toolbar (non-cell); Cmd+V | range is null after the non-cell click → paste anchors at focused cell, NOT the stale rectangle |
+| edge (CLIP-003 input) | Cmd+V while focus is in filter input | zero dirty; native input paste not intercepted |
+| edge (CLIP-003 permission) | host replies `clipboardText` with empty string | zero dirty, no state change |
+| regression (CLIP-003) | Shift+Arrow / mousemove range wiring (existing drag tests) + `aiChatPanelCloneCss.test.ts` range-CSS pin | unchanged GREEN |
+| happy (CLIP-004 bundle) | paste 2 cells then Cmd+Enter | exactly 1 `saveEdits`; `edits.length === 2`; `index === 0`; `serverIndexByRowId` present |
+| happy (CLIP-004 bundle) | Ctrl+Enter variant posts identically | 1 `saveEdits` per dispatch |
+| edge (CLIP-004 noop) | Cmd+Enter with dirtyCount 0 | zero `saveEdits` (guard) |
+| edge (CLIP-004 refused) | `saveResult {ok:true, refused:true, reason}` | banner shows reason; dirty cleared; no retry button state |
+| regression (CLIP-004) | `saveResult ok:true` → `dirtyCount === 0`, no `.UnicDB-cell-dirty` in DOM | mirrors existing `webviewEditHighlight.test.ts` #5 for the paste-origin path |
+| regression (CLIP-004) | existing `webviewKeybinding.test.ts` K1-K3 (input-focus guard, dirty commit) | unchanged GREEN |
 
 ## §5 Verification
 
 ```bash
-npm run typecheck      # tsc --noEmit — MUST exit 0
-npm run compile        # REQUIRED before any bundle (webview*) test — they eval dist/webview.js
-npx vitest run src/ui/__tests__/webviewToolbar.test.ts tests/webviewRequeryAlignment.test.ts src/ui/__tests__/aiChatPanelCloneCss.test.ts
-npm test               # full-suite final gate (expect ≥ 4104 passed | 0 failed)
+npm run typecheck
+npm run compile        # REQUIRED before any bundle test — they eval dist/webview.js
+# Wave 1 (TASK-CLIP-001 ∥ TASK-CLIP-002)
+npx vitest run src/ui/__tests__/webviewClipboardCopy.test.ts src/ui/__tests__/resultsGridModelEdit.test.ts
+npx vitest run src/ui/__tests__/webviewClipboardPaste.test.ts
+# Wave 2 (TASK-CLIP-003 — recompile first: webview/main.ts + messages.ts changed)
+npm run typecheck && npm run compile
+npx vitest run src/ui/__tests__/webviewClipboardCopy.test.ts src/ui/__tests__/webviewClipboardPaste.test.ts src/ui/__tests__/webviewKeybinding.test.ts src/ui/__tests__/webviewBundle.test.ts tests/webviewEditHighlight.test.ts
+# Wave 3 (TASK-CLIP-004 — recompile first)
+npm run typecheck && npm run compile
+npx vitest run src/ui/__tests__/webviewClipboardSave.test.ts src/ui/__tests__/webviewKeybinding.test.ts
+npm test               # full-suite final gate
 ```
 
-`npm run lint` does NOT exist in this repo (package.json scripts: compile, watch, test,
+Lint: this repo has NO `lint` script (package.json scripts: compile, watch, test,
 test:integration, typecheck, package, publish:*, verify:fast, verify:release, profile:*).
-`npm run typecheck` is the lint-equivalent gate and is mandatory. Bundle-eval tests
-self-skip when `dist/webview.js` is missing — an executor that skips them without
-`npm run compile` has NOT verified anything. Re-run `npm run compile` after ANY
-`webview/main.ts` / `webview/styles.css` edit before re-running the targeted tests.
+`npm run typecheck` (`tsc --noEmit`) is the lint-equivalent gate and is mandatory in every
+wave. Bundle tests self-skip without `dist/webview.js` — an executor that skips them has
+NOT verified anything (treat self-skips as failures in review).
 
 ## §6 Acceptance
 
-- [ ] `npm run typecheck` exits 0.
-- [ ] `npm run compile` clean; bundle tests actually evaluated (no `skipped` counted).
-- [ ] Targeted run GREEN: `npx vitest run src/ui/__tests__/webviewToolbar.test.ts tests/webviewRequeryAlignment.test.ts src/ui/__tests__/aiChatPanelCloneCss.test.ts` — with the NEW assertions.
-- [ ] Full `npm test` GREEN (baseline ≥ 4104 passed | 0 failed at base 7e29d2e).
-- [ ] Toolbar renders exactly 2 rows: row 1 = icons + tsv, row 2 = WHERE…Search (bundle census).
-- [ ] No horizontal scrollbar; narrow widths clip within a row (overflow: hidden pinned on both toolbar and rows).
-- [ ] Manual smoke (executor, dev host): run a SELECT → 2-row toolbar; open a manual transaction → commit/rollback icons appear in ROW 1 without error; Enter in WHERE/ORDER BY still re-runs; hover tooltips instant.
-- [ ] The 5 pin assertions across 3 test sites are REWRITTEN with updated comments, not silently deleted (webviewToolbar #3+#4, requeryAlignment ×2, cloneCss ×1).
-- [ ] No file outside TASK-COLLAPSE-002's Target Files modified.
+- [ ] `npm run typecheck` exits 0 after every wave.
+- [ ] CLIP-001: all copy-shape cases GREEN — 1×1, N×M, row-checkbox, column strip, hidden-col exclusion, no-selection no-op.
+- [ ] CLIP-002: all paste-semantics cases GREEN — anchor, range tiling/clipping, CRLF+trailing newline, empty text, filter-input, locally-added-row stop.
+- [ ] CLIP-003: Cmd+V and Ctrl+V through the host round-trip apply exactly one paste; stale range cleared by non-cell click; `npm run compile` re-run before its tests.
+- [ ] CLIP-004: paste → Cmd/Ctrl+Enter posts one `saveEdits` batch; `ok` clears highlights; refused shows banner.
+- [ ] `npm test` full suite GREEN at closeout (wave-boundary regression net).
+- [ ] No file outside the four tasks' Target Files lists modified; no new npm dependency.
+- [ ] Manual smoke (executor): run a SELECT, drag a 2×2 range, Cmd+C, click another cell, Cmd+V → two cells dirty; paste a real Excel 2×3 block → lands as edits; Cmd+Enter → save banner clears highlights on success.
 
 ## §7 Global Constraints
 
-- Preserve class names: `.UnicDB-requery-where`, `.UnicDB-requery-order`,
-  `.UnicDB-requery-run`, `.UnicDB-requery-clear`, `.UnicDB-toolbar`, `.UnicDB-search-input`,
-  `.UnicDB-export-*`, `.UnicDB-schema-chip` (tests + postMessage tests select them). NEW
-  class allowed: `.UnicDB-toolbar-row` (exactly this name).
-- Do NOT touch the `data-tooltip` pseudo-element block (`webview/styles.css:98-134`,
-  covers both ::after tooltip body 98-122 and ::before arrow 124-134).
-- NEVER `transition: all`; the RES-BAR `.UnicDB-btn` transition stays as-is.
-- No version bump inside any task; orchestrator (R5) bumps to v1.53.39 + publishes to
-  Marketplace per the RUN.md USER OVERRIDE.
-- No new npm dependencies; no new webview→extension message types.
-- Placeholders stay exactly `WHERE …` / `ORDER BY …` (U+2026) and `Search…`.
-- Bundle tests require `npm run compile`; treat self-skips as failures in review.
-- Toolbar height may grow by one row (that IS the feature); row heights must stay stable
-  (24-26px controls, `gap: 4px` between rows).
+- No new npm dependencies. Bundle tests require `npm run compile`; treat self-skips as failures.
+- New message discriminators allowed ONLY: `readClipboard` (webview→host) and `clipboardText` (host→webview), additive to `WebviewMessage`/`HostMessage` unions; unknown-type fall-through must keep stale bundles safe.
+- Cmd/Ctrl+C and Cmd/Ctrl+V each bind in exactly ONE capture-phase listener on `gridWrap` (A16 double-fire rule, `main.ts:2505-2509`).
+- `isFilterInput` guard on every new keydown/paste entry point (filter/search typing is never a grid edit).
+- Preserve existing class names: `UnicDB-cell-range`, `UnicDB-cell-dirty`, `UnicDB-grid-host`, `UnicDB-save-banner` (pinned by existing tests).
+- Paste must never target locally-added rows (`serverIndexByRowId` miss = stop) — INSERT marker integrity.
+- Coordinates stay in the established namespaces: display rows via `getDisplayedRowAtIndex`, cols via `currentSpecs` index (never live `getColumnDefs`).
+- No version bump / release this cycle (maintainer folds into next release).
 
 ## Planner Report
-PLANNER_MODEL: unic-smart
-PLAN_REVIEW: Approved by unic-smart (Round 1, 2026-09-09)
+PLANNER_MODEL: unic/unic-smart
+PLAN_REVIEW: Approved by unic/unic-smart
 
 ## Planner Self-Audit
-Checklist: 12/12 pass.
-1 §6 criteria → tasks: all 9 map to TASK-COLLAPSE-002's Acceptance Criteria (1:1). 2 every
-task traces to §1: single task, entire §2 in-scope list. 3 delivers §1 fully: exactly-2-rows
-guarantee + all behaviors kept + 5 pin assertions across 3 test sites flipped. 4 unhappy path planned: narrow-width
-clipping (edge overflow), transaction re-parent throw (edge state), stale-dist self-skip
-guard. 5 all Target Files verified by open/read this session (styles.css rules at :27-49,
-:1350-1371; main.ts buildPersistentDom :932-1210, insertBefore :818; all 3 test files read
-at the exact pin lines). 6 all commands verified against package.json scripts. 7 single
-task → no same-wave collision. 8 no dependency on un-created symbols — `toolbarRow1` is
-produced by this same task. 9 edge kinds genuinely different: structural (split point) +
-overflow/boundary (clip contract) + state/re-parenting (transaction insert). 10 every
-Expected is a concrete regex/DOM assertion or exact message payload. 11 n/a (not a bugfix;
-RED step = flipped pins failing pre-flip, stated in §4). 12 no test passes against an empty
-impl — the two-row census and column/nowrap regexes all fail on today's single-row code.
-Fixed during audit: added the 4th pin flip (webviewToolbar test #3 flat-children census +
-EXPECTED_ORDER split) — the caller's brief listed only 3 flips; grounding showed the
-wrapper strategy breaks test #3's `toolbar.children` walk and `search is last` assertion.
-Also added the `PersistentDom.toolbarRow1` interface change + insertBefore re-target after
-finding main.ts:818, and replaced the caller's Option-B `flex-wrap: wrap` happy pin with
-the Option-A `flex-direction: column` pin (rationale in §3).
-Known gaps: no pixel-level jsdom layout assertion (jsdom does not layout — the 2-row
-guarantee is asserted structurally via DOM census + CSS regexes; manual smoke in §6 covers
-the visual). Row-2 clipping at < ~600px viewport is accepted behavior (§3 trade-off),
-asserted only as "overflow: hidden present", not as a pixel clip point.
+Checklist: 12/12 pass
+Fixed during audit: (1) merged a drafted "copy tests" + "hidden-column tests" task into CLIP-001 (same test-file collision); (2) the initial CLIP-003 draft called `navigator.clipboard.readText()` directly — rejected after grounding (silent permission failure in VS Code webviews, untestable in jsdom) and replaced with the minimal `readClipboard`/`clipboardText` host round-trip, recorded as the §3 rejected alternative; (3) discovered `suppressNextCellClickClear` is written but never read (2 occurrences, `main.ts:479,1260`) — promoted from "test gap" to an explicit CLIP-003 production fix with its own edge case, since a stale rectangle silently misdirects the next paste; (4) split save-pin into wave-3 CLIP-004 because it re-edits test files only but its scenarios depend on CLIP-003's seam — dependency recorded instead of a same-file race.
+Known gaps: jsdom fires no trusted `paste`/`clipboard` events, so the real OS-clipboard hop is exercised only via the host round-trip stub + the manual smoke in §6; pixel-level range-highlight visuals are pinned structurally (CSS class presence + existing CSS pin in `aiChatPanelCloneCss.test.ts`), not visually. Column-header CLICK (not drag) column selection is not an AG Grid Community feature — out of scope, documented in §2.
 
 ## Plan Review Log
 
-### Round 1 — 2026-09-09 · unic-smart
-Status: Approved-with-minor
-REVIEWER_MODEL: unic-smart (matches config handoff.reviewer.model)
-MODEL_ISOLATION FLAG: PLANNER_MODEL (unic-smart) == reviewer model name. This P2.5
-review IS a separate invocation with separate context, and config binds both the plan
-hint (claude-opus-5) and reviewer to the smart tier, so no different model was
-available without a host rebind. Flagged explicitly per the P2.5 hard constraint;
-orchestrator may re-plan under a different model if stricter isolation is wanted.
-COMPLETENESS: pass — §1-§7 present and substantive. 9 tests: 3 happy / 3 edge
-(structural split point, overflow/boundary clip, state re-parenting — genuinely
-different kinds) / 3 regression; exceeds minTestsEdgeCase=2. §5 includes typecheck
-and correctly documents that npm run lint does not exist (verified vs package.json).
-CONSISTENCY: pass with 1 flag — cycle RES2ROW, base 7e29d2e (v1.53.38), 1 task,
-wave 1, no deps, and the 5-file list agree across PLAN / TASK-002 / INDEX / ACTIVE /
-RUN; row composition identical everywhere. FLAG: PLAN §2 (line 62) + §7 (line 165)
-say "no version bump / release this cycle (maintainer folds into next release)" while
-RUN.md line 6 records the user override "patch v1.53.39 + publish at R5".
-CLARITY: pass — user quote verbatim; every cited line number verified against source
-(main.ts:818 insertBefore, buildPersistentDom 932-1203 order matches the row lists
-exactly, styles.css:41-49 + 1350-1371, webviewToolbar EXPECTED_ORDER 181-216 + tests
-#3/#4 at 321-400, requeryAlignment 188-206, cloneCss:119); every Expected is a
-concrete regex / DOM census / message payload; commands verified vs package.json.
-SCOPE: pass — single task, single wave, no file collision; layout-only boundary
-explicit (no handler/message changes); 2-task split rejection documented.
-YAGNI: pass — Option A is the minimal structure that guarantees the hard "exactly 2
-rows" constraint. Option B rejection is technically correct: overflow:hidden clips
-but does NOT prevent flex-wrap line breaks, so a wrap-based row 2 can still spawn a
-3rd line. No media queries, no JS layout measurement, no new deps. Both planner
-finds are real (verified): test #3 flat census breaks structurally under wrappers
-(toolbar.children becomes [row1,row2]; last-child + EXPECTED_ORDER walk fail), and
-main.ts:818 dom.toolbar.insertBefore(transactionControls, csvToggleBtn) throws
-NotFoundError once csvToggleBtn lives in row 1.
-FINDINGS:
-  critical: none
-  important:
-    - PLAN.md §2 (line 62) + §7 (line 165) vs RUN.md line 6 — version bump/release
-      wording contradicts the RUN.md USER OVERRIDE (v1.53.39 + publish at R5).
-      Executor instructions are unaffected (no task bumps a version either way), but
-      a literal read of PLAN §7 could cancel the user-requested R5 publish. Fix:
-      one-line reword — "no version bump inside any task this cycle; the v1.53.39
-      patch + publish happens at pipeline R5 per the RUN.md override". Does not gate P3.
-  minor:
-    - TASK-COLLAPSE-002 "Test Files": case #2 (.UnicDB-toolbar-row rule pin) is not
-      assigned to any file in the per-file list (webviewToolbar line says "cases 3,
-      4, 6, 7, 8"); its assertions live only in the test-#4 rewrite prose. Add case 2.
-    - "4 flipped pins" label vs the enumeration webviewToolbar #3+#4 +
-      requeryAlignment ×2 + cloneCss ×1 = 5 assertion sites. Identical in all 5 docs
-      so no executor confusion; suggest "5 pin assertions across 4 test sites".
-    - TASK case #6 fixture: name the exact message — dispatchState({ type:
-      "transactionStatus", open: true }) (webview/main.ts:4424-4427). Also note its
-      RED mode vs today is an assertion failure (parentElement is .UnicDB-toolbar),
-      not the NotFoundError throw (that only occurs post-wrapper without the
-      re-target) — PLAN §3 already words this correctly.
-    - data-tooltip do-not-touch range cited as styles.css:98-123, but the
-      pseudo-tooltip pattern extends through line 134 (the ::before arrow block,
-      124-134). Widen the cited range to 98-134.
-    - PersistentDom.toolbarRow2 is unconsumed (only toolbarRow1 feeds the
-      insertBefore re-target; bundle tests query the DOM, not the interface). Keep
-      for contract symmetry or drop; keep §Interfaces in sync with the choice.
-OVERALL: Approved-with-minor
-NOTES: All planner grounding claims re-verified against source and accurate,
-including the two finds the P1 brief missed. The one important finding is
-doc-wording only (PLAN vs RUN release note) and does not affect the executor or
-test plan.
+### Round 1 — 2026-09-10 · unic/unic-smart
+Status: Issues Found
+
+COMPLETENESS:
+  - none — Test Plan §4 gives every task ≥1 happy + ≥2 edge cases; §5 mandates `npm run typecheck` as the lint-equivalent gate (repo has no lint script); §6 acceptance gates + manual smoke are concrete and testable.
+CONSISTENCY:
+  - §1 (Task sizing) says "No new host message types" and §2 (Out of scope) excludes "Any new webview→host message discriminator", but §3 TASK-CLIP-003 introduces two new discriminators (`readClipboard` webview→host, `clipboardText` host→webview) and §7 explicitly sanctions exactly that pair. Fix: amend §1 and §2 to "…except the §7-sanctioned `readClipboard`/`clipboardText` pair" so the P5 diff reviewer cannot false-block CLIP-003's seam as out-of-scope.
+  - §2 wave rule says TASK-CLIP-004 "re-touches `webview/main.ts` after CLIP-003 lands", but §3 TASK-CLIP-004 states "production untouched — bundle test file only" and Planner Self-Audit item 4 confirms tests-only. Fix: change the §2 parenthetical to "tests-only pin, depends on CLIP-003's seam; does not edit `webview/main.ts`".
+CLARITY:
+  - §4 CLIP-002 row 1 expected cell ends with an ellipsis ("(1,1)=`"y"…`") — replace with the complete literal expectation ("(1,1)=`\"y\"`; dirty snapshot matches") so the executor has one unambiguous target.
+  - §4 CLIP-003 first happy row phrasing "after `debugClipboard.simulatePaste` seam not used — via host round-trip" is ambiguous; rewrite as "drive Cmd+V keydown; test host stub replies `clipboardText`; assert the `simulatePaste` seam was NOT used".
+SCOPE:
+  - none — single surface (results-grid clipboard copy/paste + save pin), explicit out-of-scope list (headers-copy, cut, drag-fill, No-PK ctid, other panels), clean wave/file-disjointness plan.
+YAGNI:
+  - none — `readClipboard`/`clipboardText` is a minimal seam with a recorded rejected alternative; `debugClipboard` follows the existing `__UnicDB.debug*` seam pattern; no speculative features.
+
+NOTES: Both consistency findings are stale §1/§2 summary text contradicting the operative §3/§7 detail — surgical one-line edits, no re-planning required. Model transparency: reviewer runs as unic/unic-smart (= config `handoff.reviewer.model`); planner self-reported the same gateway model — config `mustDifferFromExecutor` binds at P5 vs the executor (hint `unic-code`), which this plan review does not gate.
+
+### Round 1 Revision — 2026-09-10 · planner (unic/unic-smart)
+Status: all findings resolved — resubmitted for re-review
+
+1. RESOLVED (consistency): §1 task-sizing + §2 out-of-scope now exempt exactly the
+   §7-sanctioned `readClipboard` (webview→host) / `clipboardText` (host→webview) pair;
+   all other discriminators (`copy`, `saveEdits`, `retryFailedRows`) remain unchanged.
+2. RESOLVED (consistency): §2 wave rule corrected — TASK-CLIP-004 is tests-only and does
+   NOT edit `webview/main.ts`; it consumes TASK-CLIP-003's `debugClipboard.simulatePaste`
+   seam (now consistent with §3 and Self-Audit item 4).
+3. RESOLVED (clarity): §4 CLIP-002 happy row rewritten as a complete literal expectation.
+   Grounding note: the reviewer's sketch kept dirtyCount 2 with (1,1)=`"y"`, which is
+   unreachable — with the 2-col fixture, (1,1)=`"y"` (= parsed[1][1]) requires anchor
+   col 0 (`onGridPaste` anchor math, `webview/main.ts:3329-3333`; col clip in
+   `applyPasteToDirty`, `src/ui/resultsGridModel.ts:1289-1292`), which yields dirtyCount 4
+   — matching TASK-CLIP-002 test #1 verbatim, so §4 now states that exact expectation.
+4. RESOLVED (clarity): §4 CLIP-003 happy row rewritten as a literal host round-trip:
+   Cmd+V keydown → `readClipboard` post → stub replies `clipboardText "7\tseven"` →
+   exactly one paste application at the focused anchor, with `simulatePaste` asserted
+   NOT used (matches TASK-CLIP-003 test #1).
+
+Task files: no edits required — TASK-CLIP-002 #1 and TASK-CLIP-003 #1 already carried the
+literal expectations these findings ask for; PLAN §4 now matches them. Dependency graph,
+waves, and task statuses (`ready`) untouched.
+### Round 2 — 2026-09-10 · unic/unic-smart (config handoff.reviewer.model: unic-smart)
+Status: Approved
+
+COMPLETENESS:
+  - none — §4 gives every task ≥1 happy + ≥2 edge cases; §5 correctly documents the no-lint-script state and mandates `npm run typecheck` per wave (verified package.json: compile/test/typecheck present, no lint); every regression file the plan cites exists (webviewBundle, webviewKeybinding, webviewExport, resultsGridModelEdit, tests/webviewEditHighlight, aiChatPanelCloneCss, resultsPanelSaveEdits); no TODO/TBD/placeholder in the document.
+CONSISTENCY:
+  - Round 1 finding 1 RESOLVED — §1 task-sizing and §2 out-of-scope now exempt exactly the §7-sanctioned readClipboard/clipboardText pair ("every other discriminator (copy, saveEdits, retryFailedRows) is unchanged"); the §3/§7 contradiction is gone.
+  - Round 1 finding 2 RESOLVED — §2 wave rule now reads CLIP-004 "tests-only, does NOT edit webview/main.ts; consumes CLIP-003's debugClipboard.simulatePaste seam", matching §3, §5 wave-3 commands, and Self-Audit item 4.
+  - none remaining — waves ↔ task ownership ↔ §5 per-wave commands ↔ §6 acceptance agree; §4 numeric expectations internally consistent (2×2 paste → dirtyCount 4; CRLF 2×1 → dirtyCount 2).
+CLARITY:
+  - Round 1 finding 3 RESOLVED — §4 CLIP-002 row 1 is a complete literal expectation (dirtyCount 4; (0,0)="10",(0,1)="x",(1,0)="20",(1,1)="y"); the planner's anchor-math grounding makes it consistent with the tile/clip rows.
+  - Round 1 finding 4 RESOLVED — §4 CLIP-003 happy row is a literal round-trip script (keydown → readClipboard post → stub replies clipboardText → exactly one paste at focused anchor; simulatePaste asserted NOT called).
+  - none remaining — residual informal phrasing ("right neighbor") is unambiguous given the stated 2-col fixture and anchor.
+SCOPE:
+  - none — single surface (results-grid clipboard copy/paste + save pin), explicit out-of-scope list, file-disjoint waves preserved.
+YAGNI:
+  - none — readClipboard/clipboardText is a minimal seam with a recorded rejected alternative; both debugClipboard accessors are consumed by named tests; no speculative features.
+
+NOTES: Approved — proceed to implementation (wave 1 = TASK-CLIP-001 ∥ TASK-CLIP-002). Reviewer runs as unic/unic-smart = config handoff.reviewer.model; planner self-reported the same gateway model, which plan review does not gate (mustDifferFromExecutor binds at P5 vs the executor).

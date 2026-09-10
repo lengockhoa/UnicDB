@@ -1,23 +1,33 @@
 # Handoff INDEX
 
-## Cycle RES2ROW — split the Results toolbar into exactly 2 rows
+## Cycle CLIPGRID — results-grid clipboard copy/paste + Excel paste + Cmd/Ctrl+Enter save
 
-Base: main @ 7e29d2e (v1.53.38). Cycle kicked off 2026-09-09: user asked to split the
-results toolbar in half — "Từ Where là đưa xuống dòng dưới" (from WHERE onwards moves to
-a second line). Row 1 keeps the 8 icon buttons + `tsv` dropdown; row 2 holds WHERE,
-ORDER BY, Re-Run, Clear, header checkbox, Copy, Export-file, schema chip, Search.
+Base: main @ d955873 (v1.53.42, working tree at plan time; `docs/WORKLOG.md` dirty —
+unrelated doc edit). Cycle kicked off 2026-09-10: user wants spreadsheet clipboard
+semantics on the data results table — select cell/range/rows/column → Cmd/Ctrl+C copies
+the TSV matrix; Cmd/Ctrl+V pastes the copied matrix at a destination cell; Excel
+tab/newline clipboard paste lands as grid edits; Save or Cmd/Ctrl+Enter persists.
 
-Supersedes the RES-BAR single-row contract (`.UnicDB-toolbar { flex-wrap: nowrap }`,
-pinned by TASK-COLLAPSE-001 tests). Prior cycle archived at `INDEX_RES.md` / `ACTIVE_RES.md`
-/ `PLAN_RES.md`.
+Prior cycle RES2ROW (TASK-COLLAPSE-002, done, released v1.53.40) archived at
+`INDEX_RES2ROW.md` / `ACTIVE_RES2ROW.md` / `PLAN_RES2ROW.md`.
+
+Grounding note: the copy/paste/save pipeline largely EXISTS (TASK-501/502/RANGE-001/503
+heritage). This cycle pins it with tests and closes two real gaps: Cmd/Ctrl+V keyboard
+wiring via a host clipboard read round-trip, and the never-read
+`suppressNextCellClickClear` stale-range defect.
 
 | Task | Title | Status | Deps | Files | Reviewer |
 |------|-------|--------|------|-------|----------|
-| TASK-COLLAPSE-002 | Webview: enforce exactly 2-row toolbar — `.UnicDB-toolbar` column + two `.UnicDB-toolbar-row` wrappers; WHERE/ORDER BY `flex: 1 1 100%` in row 2; re-target transactionControls insertBefore; flip 4 test pins | done | none | webview/main.ts, webview/styles.css, src/ui/__tests__/webviewToolbar.test.ts, tests/webviewRequeryAlignment.test.ts, src/ui/__tests__/aiChatPanelCloneCss.test.ts, src/ui/__tests__/webviewRequery.test.ts | unic-smart |
+| TASK-CLIP-001 | Copy matrix shapes — bundle + pure test pin (1×1, N×M, rows, column strip, hidden cols, no-selection guard) | ready | none | src/ui/__tests__/webviewClipboardCopy.test.ts (new), src/ui/__tests__/resultsGridModelEdit.test.ts | - |
+| TASK-CLIP-002 | Paste matrix semantics — Excel TSV → grid edits; bundle + pure test pin | ready | none | src/ui/__tests__/webviewClipboardPaste.test.ts (new) | - |
+| TASK-CLIP-003 | Webview: Cmd/Ctrl+V keydown paste wiring via readClipboard/clipboardText host round-trip + stale-range clear fix (suppressNextCellClickClear consumed) | ready | TASK-CLIP-002 | webview/main.ts, src/ui/messages.ts, src/ui/resultsPanel.ts, src/ui/__tests__/webviewKeybinding.test.ts | - |
+| TASK-CLIP-004 | Save persistence pin — paste → Cmd/Ctrl+Enter posts one saveEdits batch; ok clears highlights; refused shows banner | ready | TASK-CLIP-003 | src/ui/__tests__/webviewClipboardSave.test.ts (new) | - |
 
-Waves: **wave 1 = TASK-COLLAPSE-002** (single task — all edits share webview/main.ts +
-webview/styles.css, so no parallel split is possible).
+Waves: **wave 1 = TASK-CLIP-001 ∥ TASK-CLIP-002** (tests-only, disjoint files) ·
+**wave 2 = TASK-CLIP-003** (owns webview/main.ts + messages.ts + resultsPanel.ts) ·
+**wave 3 = TASK-CLIP-004** (tests-only, needs CLIP-003's debugClipboard seam).
 
-Wave-boundary gates: `npm run typecheck` exit 0 · `npm run compile` clean (before any
-bundle-eval test — they eval `dist/webview.js` and self-skip without it) · targeted
-`npx vitest run …` GREEN · full `npm test` GREEN at closeout.
+Wave-boundary gates: `npm run typecheck` exit 0 · `npm run compile` clean before ANY
+bundle test (they eval `dist/webview.js` and self-skip without it — a skip is NOT green) ·
+targeted `npx vitest run …` GREEN · full `npm test` GREEN at closeout. No `lint` script
+exists in this repo.
