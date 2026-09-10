@@ -7,7 +7,7 @@ across every selection shape the user asked for. No production file is touched, 
 run in wave 1 fully parallel with TASK-CLIP-002.
 -->
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (TASK-CLIP-001), §4 rows CLIP-001, §5 wave 1
@@ -83,7 +83,53 @@ module-scope `cellRange` (not exported); the DOM path is the same one users driv
 
 ## Executor Report
 
-(appended by Phase 3)
+STATUS: DONE
+EXECUTOR_TOOL: other
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: ImplementClipboardCopyTests
+SUMMARY: Added the jsdom bundle copy-shape suite for 1x1, 2x2, checkbox-row, single-column, hidden-column, no-selection, and displayed-row-boundary cases. Added the missing pure-model single-column strip assertion; no production files changed.
+TEST_PLAN_FOLLOWED: task §Test Cases / TDD RED-GREEN
+FILES_CHANGED:
+  - src/ui/__tests__/webviewClipboardCopy.test.ts: added seven bundle-eval clipboard copy shape tests and shared DOM/event fixtures.
+  - src/ui/__tests__/resultsGridModelEdit.test.ts: added the pure selectionRangeToText single-column strip case.
+  - docs/AI_HANDOFF/tasks/TASK-CLIP-001.md: appended this executor report.
+TESTS_ADDED:
+  - src/ui/__tests__/webviewClipboardCopy.test.ts: `1x1 range Cmd+C copies the single cell`; `2x2 rectangle copies rows tab-joined, lines newline-joined`; `checkbox row selection copies 2 rows`; `single-column strip drag copies one column`; `hidden column excluded from range copy`; `Cmd+C with no selection and no focused cell posts nothing`; `range clipped to displayed rows`.
+  - src/ui/__tests__/resultsGridModelEdit.test.ts: `single-column strip returns one value per line`.
+RED_OUTPUT: |
+  npx vitest run src/ui/__tests__/webviewClipboardCopy.test.ts src/ui/__tests__/resultsGridModelEdit.test.ts (exit 1)
+  ❯ src/ui/__tests__/webviewClipboardCopy.test.ts  (7 tests | 1 failed) 765ms
+  ❯ src/ui/__tests__/webviewClipboardCopy.test.ts > webview/main.ts clipboard copy shapes (TASK-CLIP-001) > 1x1 range Cmd+C copies the single cell
+  ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+  FAIL  src/ui/__tests__/webviewClipboardCopy.test.ts > webview/main.ts clipboard copy shapes (TASK-CLIP-001) > 1x1 range Cmd+C copies the single cell
+  AssertionError: expected 'alpha' to be 'not-alpha' // Object.is equality
+  ❯ src/ui/__tests__/webviewClipboardCopy.test.ts:180:28
+  Test Files 1 failed | 1 passed (2)
+VERIFICATION:
+  command: npm run typecheck
+  result: exit 0
+  output_excerpt: |
+    > UnicDB@1.53.42 typecheck
+    > tsc --noEmit
+    Wall time: 1.42s
+  command: npm run compile
+  result: exit 0
+  output_excerpt: |
+    > node esbuild.js
+    dist/renameForm.js 6.2kb
+    dist/renameForm.js.map 13.0kb
+  command: npx vitest run src/ui/__tests__/webviewClipboardCopy.test.ts src/ui/__tests__/resultsGridModelEdit.test.ts
+  result: 41 pass, 0 fail, exit 0
+  output_excerpt: |
+    ✓ src/ui/__tests__/resultsGridModelEdit.test.ts  (34 tests) 4ms
+    ✓ src/ui/__tests__/webviewClipboardCopy.test.ts  (7 tests) 824ms
+    Test Files 2 passed (2)
+    Tests 41 passed (41)
+    Duration 1.28s
+    Warning: Unrecognized target environment "ES2024" (tsconfig.json)
+ISSUES: TypeScript emits the existing ES2024 target warning during Vitest transform; typecheck, compile, and all targeted tests pass.
+HANDOFF_TO_REVIEWER: no — reviewer is not assigned for this tests-only task (Reviewer: -).
+NEXT: Ready for wave 1 integration and main-agent review.
 
 ## Reviewer Verdict
 

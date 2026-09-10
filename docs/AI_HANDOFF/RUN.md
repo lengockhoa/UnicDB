@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Results-grid clipboard — Cmd/Ctrl+C copy of cell/range/rows/column, Cmd/Ctrl+V paste (incl. Excel TSV), Save / Cmd/Ctrl+Enter persists the edits
 Base: main @ d955873 (v1.53.42)
-Phase: P3
-Cursor: P2.5 plan approved — PLAN.md Round 2 Approved by unic/unic-smart; TASK-CLIP-001..004 all `ready`
-Next: commit plan / then I1 setup
+Phase: I3
+Cursor: wave 1 executed — TASK-CLIP-001 PASS (41 tests) and TASK-CLIP-002 tests-only PARTIAL (8/9) both landed on main; CLIP-002 exposed a REAL `pasteIntoRange` 1×1→2×2 active-range tiling defect, so the plan was adapted: TASK-CLIP-003 now owns that production fix and its Dependencies is `none` (CLIP-002's suite is a required verification target, not a gate). CLIP-001/CLIP-002 moved to `pending_review` so the executed wave is not re-run. Waves: 2 = TASK-CLIP-003 (sole production task), 3 = TASK-CLIP-004.
+Next: I3 wave 2 — spawn feature-implementer for TASK-CLIP-003 (tiling fix first → CLIP-002 suite GREEN; then Cmd/Ctrl+V host round-trip, stale-range clear, debugClipboard seam); gate on `npm run typecheck` + `npm run compile` + `npx vitest run src/ui/__tests__/webviewKeybinding.test.ts src/ui/__tests__/webviewClipboardPaste.test.ts src/ui/__tests__/webviewBundle.test.ts tests/webviewEditHighlight.test.ts src/ui/__tests__/aiChatPanelCloneCss.test.ts`; then wave 3 TASK-CLIP-004.

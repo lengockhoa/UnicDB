@@ -6,7 +6,7 @@ parseTsvPaste / applyPasteToDirty / applyRangePasteToDirty) so wave-2 wiring (TA
 cannot regress it. Disjoint test files from TASK-CLIP-001 → wave 1 parallel.
 -->
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (TASK-CLIP-002), §4 rows CLIP-002, §5 wave 1
@@ -78,11 +78,68 @@ npx vitest run src/ui/__tests__/webviewClipboardPaste.test.ts src/ui/__tests__/r
 "clipboardData", {value: {getData: () => text}})`. The bundle reads only
 `getData("text/plain")` (`webview/main.ts:3305`).
 
+### 2026-09-10 · executor · unic-code
+The required bundle contract test for `1x1 clipboard tiles into active 2x2 range` exposes an existing production mismatch: `pasteIntoRange` marks the two column-1 cells dirty with `""` instead of tiling `"z"`. The task is tests-only, so production code was not changed; the required test remains contract-correct and verification is PARTIAL until the existing behavior is fixed in a production-owned task.
+
+### 2026-09-10 · planner · unic/unic-smart — implementation-discovery revision
+-> @reviewer/@executor: this task stays tests-only and its target file is unchanged. Its
+executor report above is PRESERVED as historical partial evidence — 8/9 GREEN, with the
+9th case (`1x1 clipboard tiles into active 2x2 range`) failing against real production
+behaviour in `pasteIntoRange` (`webview/main.ts:3464` pads overhang columns with `""`).
+The failing case is a correct contract, not a bad test, so it was NOT relaxed or deleted.
+Ownership of the fix moved to TASK-CLIP-003 (now `Dependencies: none`), which re-runs this
+whole suite as a required verification target. Re-verification here is gated on
+TASK-CLIP-003 landing; this task is `pending_review` (not `ready`) so the executed wave is
+not re-run.
+
 ---
 
 ## Executor Report
 
-(appended by Phase 3)
+STATUS: PARTIAL
+EXECUTOR_TOOL: other
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ImplementClipboardPasteTests
+SUMMARY: Added the jsdom dist-bundle clipboard-paste matrix covering focused-cell TSV paste, CRLF/trailing newline normalization, active-range tiling/clipping, empty/filter/boundary/local-row guards, and Cmd/Ctrl+Z undo parity. No production files were modified.
+TEST_PLAN_FOLLOWED: task §Test Cases / inline — all required cases #1-#8 and #10 are represented in the new bundle suite; the existing behavior mismatch is recorded above rather than changing production code.
+FILES_CHANGED:
+  - src/ui/__tests__/webviewClipboardPaste.test.ts: new bundle-eval paste matrix test suite
+  - docs/AI_HANDOFF/tasks/TASK-CLIP-002.md: Discussion and Executor Report appended
+TESTS_ADDED:
+  - src/ui/__tests__/webviewClipboardPaste.test.ts: 9 tests covering required cases #1-#8 and #10
+RED_OUTPUT: |
+  Command: npx vitest run src/ui/__tests__/webviewClipboardPaste.test.ts
+  Exit code: 1
+  Test Files: 1 failed (1)
+  Tests: 9 failed
+  Failure reason: dist/webview.js missing — run npm run compile before this test (all 9 tests failed at loadBundle as intended; the harness does not silently skip a missing bundle).
+  After compiling the existing bundle, the behavior RED was:
+  FAIL  1x1 clipboard tiles into active 2x2 range
+  Expected: 0:0=z, 0:1=z, 1:0=z, 1:1=z
+  Received: 0:0=z, 0:1="", 1:0=z, 1:1=""
+  This is an existing production mismatch in pasteIntoRange; production code was intentionally not modified by this tests-only task.
+VERIFICATION:
+  command: npm run typecheck
+  result: exit 0
+  output_excerpt: |
+    > UnicDB@1.53.42 typecheck
+    > tsc --noEmit
+  command: npm run compile
+  result: exit 0
+  output_excerpt: |
+    > node esbuild.js
+    > dist/schemaForm.js 3.0kb
+    > dist/schemaForm.js.map 6.7kb
+  command: npx vitest run src/ui/__tests__/webviewClipboardPaste.test.ts src/ui/__tests__/resultsGridModelEdit.test.ts
+  result: exit 1 (8/9 clipboard tests pass; pure model file passes; 1 clipboard test fails)
+  output_excerpt: |
+    FAIL  src/ui/__tests__/webviewClipboardPaste.test.ts > ... > 1x1 clipboard tiles into active 2x2 range
+    AssertionError: expected { '0:0': 'z', '1:0': 'z', …(2) } to match object { '0:0': 'z', '0:1': 'z', …(2) }
+    Test Files 1 failed | 1 passed (2)
+    Exit code 1
+ISSUES: Required 1x1 range tiling contract fails against current production behavior; no production edit permitted by TASK-CLIP-002. All other required bundle cases and existing resultsGridModelEdit tests pass.
+HANDOFF_TO_REVIEWER: no — verification is PARTIAL due to the pre-existing production mismatch and task scope forbids fixing production.
+NEXT: Production owner must correct pasteIntoRange 1x1 tiling before this contract can be green and reviewed.
 
 ## Reviewer Verdict
 

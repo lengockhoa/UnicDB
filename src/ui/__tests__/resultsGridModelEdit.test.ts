@@ -310,6 +310,12 @@ describe("selectionRangeToText", () => {
       selectionRangeToText(rows, { startRow: 0, startCol: 1, endRow: 0, endCol: 1 }),
     ).toBe("a");
   });
+  it("single-column strip returns one value per line", () => {
+    const rows = [[1, "alpha"], [2, "beta"], [3, "gamma"]];
+    expect(
+      selectionRangeToText(rows, { startRow: 0, startCol: 1, endRow: 2, endCol: 1 }),
+    ).toBe("alpha\nbeta\ngamma");
+  });
 
   it("multi-row multi-col range: rows separated by \\n, cells by \\t", () => {
     const rows = [

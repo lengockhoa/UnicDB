@@ -54,9 +54,17 @@ The real GAPS this cycle closes, each verified in source:
    "select a destination cell" — if the user's last range lingers, paste goes to the OLD
    range instead of the newly focused cell. Fix: read the flag in a capture-phase
    `mousedown`/`cellClicked` clear path (only this task may touch this wiring).
+4. **Active-range tiling is column-blind (found during implementation).** `pasteIntoRange`
+   (`main.ts:3417`) builds each target column's slice with `row[srcColOffset] ?? ""`
+   (`main.ts:3464`), so a clipboard NARROWER than the active range stamps `""` into the
+   overhang columns instead of tiling the source value. TASK-CLIP-002's wave-1 bundle suite
+   proved it: a 1×1 `"z"` into a 2×2 active range yields `0:0="z", 0:1="", 1:0="z", 1:1=""`.
+   Row tiling already works (`applyRangePasteToDirty`, `resultsGridModel.ts:1408`); column
+   tiling is missing. Fix: tile the source column, keeping the CLIP-002 contract GREEN and
+   multi-column / hidden-column / clipping behaviour unchanged.
 
 Task sizing: pure-model helpers are done and tested; the work is bundle-level wiring +
-pinning tests + one real defect fix (stale-range clear). No new npm deps, no schema
+pinning tests + two real defect fixes (stale-range clear, active-range column tiling). No new npm deps, no schema
 changes; the ONLY new host message types are the §7-sanctioned `readClipboard`
 (webview→host) / `clipboardText` (host→webview) round-trip pair added by TASK-CLIP-003 —
 every other discriminator (`copy`, `saveEdits`, `retryFailedRows`) is unchanged.
@@ -73,8 +81,13 @@ every other discriminator (`copy`, `saveEdits`, `retryFailedRows`) is unchanged.
 - Fix the stale-range defect: `suppressNextCellClickClear` consumed; clicking a non-cell
   area (toolbar, header, footer) clears `cellRange`/`cellRangeAnchor`; clicking a cell
   after a drag starts a new anchor (flag suppresses the spurious clear from AG Grid focus).
+- Fix the discovered active-range tiling defect in `pasteIntoRange`: a 1×1 clipboard value
+  must tile across every visible cell in a multi-cell active range. The already-written
+  CLIP-002 bundle regression is the contract; its `"z"` → 2×2 case is currently RED and
+  remains required verification after the production repair.
 - Excel-paste matrix semantics pinned: CRLF, trailing newline, jagged rows padded, clip at
-  grid edge, tile inside range (already implemented — tests pin them at bundle level).
+  grid edge, and range tiling (CLIP-002 remains tests-only; CLIP-003 owns this production
+  correction).
 - Save contract pinned at bundle level: Cmd/Ctrl+Enter + commit button post exactly one
   `saveEdits` with `edits[]` = snapshot; `saveResult ok:true` clears highlights.
 - New bundle test files for the above (paths in §4 / task files).
@@ -90,12 +103,13 @@ every other discriminator (`copy`, `saveEdits`, `retryFailedRows`) is unchanged.
 - No-PK ctid save bug (tracked separately in queue spec GRID-EXCEL-OVERHAUL A).
 - Console panel / AI chat clipboard (different surfaces).
 
-**CONSTRAINT — same-wave file rule:** wave 1 = TASK-CLIP-001 (tests for pure+bundle copy
-matrix shapes) ∥ TASK-CLIP-002 (paste path tests) — disjoint test files. Wave 2 =
-TASK-CLIP-003 (Cmd/Ctrl+V wiring + stale-range fix, owns `webview/main.ts`) → wave 3 =
-TASK-CLIP-004 (save-path pin — tests-only, does NOT edit `webview/main.ts`; consumes
-CLIP-003's `debugClipboard.simulatePaste` seam). Any two tasks that would both edit
-`webview/main.ts` are sequenced, never parallel.
+**CONSTRAINT — same-wave file rule and execution order:** CLIP-001 and CLIP-002 own
+disjoint test files; CLIP-003 exclusively owns `webview/main.ts`, `src/ui/messages.ts`,
+`src/ui/resultsPanel.ts`, and `webviewKeybinding.test.ts`; CLIP-004 owns its new save test.
+After wave-1 test work, CLIP-003 is intentionally the sole **wave-2 production batch** and
+CLIP-004 remains wave 3. CLIP-003 has `Dependencies: none` because the CLIP-002 regression
+already exists on main and must be repaired, not discarded; its wave-2 placement is an
+operational serialization point, not a graph dependency.
 
 ## §3 Approach
 
@@ -119,11 +133,19 @@ present → tiling into rectangle (`parsed[r % rows][c % cols]`), over-paste cli
 CRLF + trailing-newline normalization (via `parseTsvPaste` direct unit rows already present
 in `resultsGridModelEdit.test.ts` — bundle-level asserts end-state only); locally-added row
 stop (`serverIndexByRowId` miss breaks the walk); undo stack receives one `cell-edit` per
-pasted cell; empty text / filter-input target → zero dirty. **No production edits.**
+pasted cell; empty text / filter-input target → zero dirty. **No production edits.** Its
+1×1-to-2×2 test correctly exposes that `pasteIntoRange` currently pads the second column
+with `""`; the test remains historical partial evidence and is re-verified by CLIP-003.
 
-**TASK-CLIP-003 (webview wiring + stale-range fix — the only task editing
-`webview/main.ts` this wave):**
-1. Add a capture-phase `keydown` Cmd/Ctrl+V listener on `gridWrap`, modeled on the existing
+**TASK-CLIP-003 (webview wiring + stale-range clear + active-range tiling fix — the only
+wave-2 production task):**
+1. Correct `pasteIntoRange` in `webview/main.ts` so clipboard columns tile as well as rows:
+   for every visible active-range target column, select `row[srcColOffset % row.length]`
+   (with the established empty-row fallback) rather than padding a past-the-end column with
+   `""`. This makes a 1×1 clipboard `"z"` populate every cell of a 2×2 active range while
+   preserving multi-column selection, hidden-column exclusion, row tiling, and clipping.
+   The existing CLIP-002 bundle suite is the regression proof and MUST pass after this fix.
+2. Add a capture-phase `keydown` Cmd/Ctrl+V listener on `gridWrap`, modeled on the existing
    Cmd/Ctrl+C listener (`main.ts:1340-1348`): guard `isFilterInput(ev.target)`; on hit
    `ev.preventDefault(); ev.stopPropagation();` then obtain text. Webviews cannot rely on a
    trusted `paste` event arriving on a non-editable grid, and `navigator.clipboard.readText`
@@ -140,13 +162,13 @@ pasted cell; empty text / filter-input target → zero dirty. **No production ed
    VS Code webviews without clipboard permissions and cannot be tested in jsdom; the host
    round-trip is one `await` and matches the existing `copy` write path symmetry
    (`resultsPanel.ts:1035`).
-2. Wire the stale-range clear: in the capture `mousedown` listener on `gridWrap`
+3. Wire the stale-range clear: in the capture `mousedown` listener on `gridWrap`
    (`main.ts:1254`), when `findCellFromEvent` returns null (toolbar/header/footer click),
    call `setCellRange(null)` unless `suppressNextCellClickClear` is true; consume the flag
    (set to false) after any mousedown that read it, so the documented
    "clicking a non-cell area clears" contract (`main.ts:469`) finally holds and a lingering
    rectangle can never redirect the next paste.
-3. Expose a `__UnicDB.debugClipboard` test seam (pattern: `main.ts:4523`) —
+4. Expose a `__UnicDB.debugClipboard` test seam (pattern: `main.ts:4523`) —
    `simulatePaste(text: string)` that funnels into the same `onGridPaste` dispatch the real
    events use, and `getCellRange(): {startRow,startCol,endRow,endCol} | null` so tests can
    assert clears without DOM poking. Both are test-only additions to the existing debug
@@ -180,18 +202,19 @@ files.
 | regression (CLIP-001) | existing `webviewBundle.test.ts` #3 + `webviewExport.test.ts` #3 copy cases | unchanged GREEN |
 | happy (CLIP-002 bundle) | paste event, text `"10\tx\n20\ty"`, focused cell (0,0) on col `id` | dirtyCount 4; dirty snapshot exactly (0,0)=`"10"`, (0,1)=`"x"`, (1,0)=`"20"`, (1,1)=`"y"`; grid cells of rows 0-1 mirror the values after refresh |
 | happy (CLIP-002 bundle) | Excel-origin paste: `"1\r\n2\r\n"` (CRLF + trailing newline) focused (0,0) | dirtyCount 2, col 0 rows 0-1 = `"1"`,`"2"` (trailing empty row dropped) |
-| happy (CLIP-002 bundle) | paste into active 2×2 range with 1×1 clipboard `"z"` | all 4 range cells = `"z"` (tile) |
+| regression (CLIP-002 → CLIP-003) | paste 1×1 clipboard `"z"` into active 2×2 range | all 4 range cells = `"z"`; this existing CLIP-002 test is RED before CLIP-003 (`0:1`/`1:1` were `""`) and MUST be GREEN after its production fix |
 | edge (CLIP-002 shape) | paste 3×3 clipboard into 2×2 range | over-paste clipped — only 4 dirty cells |
 | edge (CLIP-002 empty) | paste event with empty `getData("text/plain")` | zero dirty; no preventDefault side effects asserted via no `copy`/`saveEdits` posts |
 | edge (CLIP-002 target) | paste event dispatched on a filter `<input>` inside gridWrap | zero dirty (user's local typing untouched) |
 | edge (CLIP-002 boundary) | paste 2 rows at last displayed row (1 row left) | only 1 row dirtied (bottom-edge break `main.ts:3348`) |
 | regression (CLIP-002) | existing `resultsGridModelEdit.test.ts` parse/apply cases | unchanged GREEN |
 | happy (CLIP-003 bundle) | Cmd+V keydown on gridHost → webview posts `{type:"readClipboard"}`; test host stub replies `{type:"clipboardText", text:"7\tseven"}`; `debugClipboard.simulatePaste` asserted NOT called | exactly ONE paste application at the focused anchor — dirtyCount 2 ((anchor)=`"7"`, right neighbor=`"seven"`); no double-fire (keydown + native paste) |
+| happy (CLIP-003 production) | 1×1 clipboard `"z"` pasted into active 2×2 range | all four visible range cells are `"z"`; column tiling uses the clipboard width modulo and no second-column `""` edits are created |
 | happy (CLIP-003 bundle) | Ctrl+V variant (windows/Linux chord) | same as Cmd+V |
 | edge (CLIP-003 stale-range) | drag a range; click toolbar (non-cell); Cmd+V | range is null after the non-cell click → paste anchors at focused cell, NOT the stale rectangle |
 | edge (CLIP-003 input) | Cmd+V while focus is in filter input | zero dirty; native input paste not intercepted |
 | edge (CLIP-003 permission) | host replies `clipboardText` with empty string | zero dirty, no state change |
-| regression (CLIP-003) | Shift+Arrow / mousemove range wiring (existing drag tests) + `aiChatPanelCloneCss.test.ts` range-CSS pin | unchanged GREEN |
+| regression (CLIP-003) | CLIP-002 paste suite (including 1×1 → 2×2 tiling), Shift+Arrow / mousemove range wiring, and `aiChatPanelCloneCss.test.ts` range-CSS pin | all GREEN after the production correction |
 | happy (CLIP-004 bundle) | paste 2 cells then Cmd+Enter | exactly 1 `saveEdits`; `edits.length === 2`; `index === 0`; `serverIndexByRowId` present |
 | happy (CLIP-004 bundle) | Ctrl+Enter variant posts identically | 1 `saveEdits` per dispatch |
 | edge (CLIP-004 noop) | Cmd+Enter with dirtyCount 0 | zero `saveEdits` (guard) |
@@ -204,10 +227,9 @@ files.
 ```bash
 npm run typecheck
 npm run compile        # REQUIRED before any bundle test — they eval dist/webview.js
-# Wave 1 (TASK-CLIP-001 ∥ TASK-CLIP-002)
-npx vitest run src/ui/__tests__/webviewClipboardCopy.test.ts src/ui/__tests__/resultsGridModelEdit.test.ts
-npx vitest run src/ui/__tests__/webviewClipboardPaste.test.ts
-# Wave 2 (TASK-CLIP-003 — recompile first: webview/main.ts + messages.ts changed)
+# Wave 2 (TASK-CLIP-003 — operationally serialized after wave 1; it has no task dependency)
+# Recompile first: webview/main.ts + messages.ts changed. The CLIP-002 suite is REQUIRED:
+# it carries the formerly RED 1×1 → active-range tiling regression.
 npm run typecheck && npm run compile
 npx vitest run src/ui/__tests__/webviewClipboardCopy.test.ts src/ui/__tests__/webviewClipboardPaste.test.ts src/ui/__tests__/webviewKeybinding.test.ts src/ui/__tests__/webviewBundle.test.ts tests/webviewEditHighlight.test.ts
 # Wave 3 (TASK-CLIP-004 — recompile first)
@@ -226,12 +248,12 @@ NOT verified anything (treat self-skips as failures in review).
 
 - [ ] `npm run typecheck` exits 0 after every wave.
 - [ ] CLIP-001: all copy-shape cases GREEN — 1×1, N×M, row-checkbox, column strip, hidden-col exclusion, no-selection no-op.
-- [ ] CLIP-002: all paste-semantics cases GREEN — anchor, range tiling/clipping, CRLF+trailing newline, empty text, filter-input, locally-added-row stop.
-- [ ] CLIP-003: Cmd+V and Ctrl+V through the host round-trip apply exactly one paste; stale range cleared by non-cell click; `npm run compile` re-run before its tests.
+- [ ] CLIP-002: remains test-only with its executor report preserved; all paste-semantics cases, including the formerly RED 1×1 → active-2×2 tiling regression, are GREEN when re-run after CLIP-003.
+- [ ] CLIP-003: corrects active-range column tiling; Cmd+V and Ctrl+V through the host round-trip apply exactly one paste; stale range cleared by non-cell click; `npm run compile` re-run before its tests.
 - [ ] CLIP-004: paste → Cmd/Ctrl+Enter posts one `saveEdits` batch; `ok` clears highlights; refused shows banner.
 - [ ] `npm test` full suite GREEN at closeout (wave-boundary regression net).
 - [ ] No file outside the four tasks' Target Files lists modified; no new npm dependency.
-- [ ] Manual smoke (executor): run a SELECT, drag a 2×2 range, Cmd+C, click another cell, Cmd+V → two cells dirty; paste a real Excel 2×3 block → lands as edits; Cmd+Enter → save banner clears highlights on success.
+- [ ] Manual smoke (executor): run a SELECT, drag a 2×2 range, Cmd+C, click another cell, Cmd+V → two cells dirty; paste a real Excel 2×3 block → lands as edits; paste a single clipboard cell into a selected 2×2 range → all four cells update; Cmd+Enter → save banner clears highlights on success.
 
 ## §7 Global Constraints
 
@@ -242,6 +264,7 @@ NOT verified anything (treat self-skips as failures in review).
 - Preserve existing class names: `UnicDB-cell-range`, `UnicDB-cell-dirty`, `UnicDB-grid-host`, `UnicDB-save-banner` (pinned by existing tests).
 - Paste must never target locally-added rows (`serverIndexByRowId` miss = stop) — INSERT marker integrity.
 - Coordinates stay in the established namespaces: display rows via `getDisplayedRowAtIndex`, cols via `currentSpecs` index (never live `getColumnDefs`).
+- TASK-CLIP-002's `src/ui/__tests__/webviewClipboardPaste.test.ts` is FROZEN contract: TASK-CLIP-003 satisfies it by fixing production (`pasteIntoRange` column tiling) and never by editing the test — a failure there means the fix is wrong, not the test.
 - No version bump / release this cycle (maintainer folds into next release).
 
 ## Planner Report
@@ -315,3 +338,19 @@ YAGNI:
   - none — readClipboard/clipboardText is a minimal seam with a recorded rejected alternative; both debugClipboard accessors are consumed by named tests; no speculative features.
 
 NOTES: Approved — proceed to implementation (wave 1 = TASK-CLIP-001 ∥ TASK-CLIP-002). Reviewer runs as unic/unic-smart = config handoff.reviewer.model; planner self-reported the same gateway model, which plan review does not gate (mustDifferFromExecutor binds at P5 vs the executor).
+
+## Implementation-Discovery Revision — 2026-09-10 · planner · unic/unic-smart
+
+The wave-1, tests-only TASK-CLIP-002 suite exposed an existing production defect rather
+than a test defect: `pasteIntoRange` slices clipboard columns with
+`row[srcColOffset] ?? ""`, so a 1×1 clipboard fills the first column of a 2×2 active range
+with `"z"` and incorrectly fills the second with `""`. TASK-CLIP-003 now explicitly owns
+the `webview/main.ts` column-tiling correction alongside its planned keyboard/host-message
+and stale-range work. Its `Dependencies` is relaxed to `none`: CLIP-002's regression is
+already written on main and must be re-run by CLIP-003, not waited on or discarded. It stays
+the sole operational wave-2 production task; TASK-CLIP-004 remains wave 3. TASK-CLIP-002
+remains tests-only, with its PARTIAL executor report preserved as historical evidence.
+
+Plan review reached its two-round cap before this implementation discovery (Round 2:
+Approved). This adaptation is applied without another plan-review invocation; the targeted
+CLIP-002 suite is now a mandatory CLIP-003 verification gate.
