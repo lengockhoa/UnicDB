@@ -23,7 +23,7 @@ across a 2×2 active range) that TASK-CLIP-002's wave-1 run exposed.
 | TASK-CLIP-001 | Copy matrix shapes — bundle + pure test pin (1×1, N×M, rows, column strip, hidden cols, no-selection guard) | pending_review | none | src/ui/__tests__/webviewClipboardCopy.test.ts (new), src/ui/__tests__/resultsGridModelEdit.test.ts | - |
 | TASK-CLIP-002 | Paste matrix semantics — Excel TSV → grid edits; bundle + pure test pin (tests-only; PARTIAL report preserved) | pending_review | none | src/ui/__tests__/webviewClipboardPaste.test.ts (new) | - |
 | TASK-CLIP-003 | Webview: `pasteIntoRange` active-range column tiling fix (turns the CLIP-002 RED case GREEN) + Cmd/Ctrl+V keydown wiring via readClipboard/clipboardText host round-trip + stale-range clear fix | ready | none | webview/main.ts, src/ui/messages.ts, src/ui/resultsPanel.ts, src/ui/__tests__/webviewKeybinding.test.ts | - |
-| TASK-CLIP-004 | Save persistence pin — paste → Cmd/Ctrl+Enter posts one saveEdits batch; ok clears highlights; refused shows banner | ready | TASK-CLIP-003 | src/ui/__tests__/webviewClipboardSave.test.ts (new) | - |
+| TASK-CLIP-004 | Save persistence pin — paste → Cmd/Ctrl+Enter posts one saveEdits batch; ok clears highlights; refused shows banner | pending_review | TASK-CLIP-003 | src/ui/__tests__/webviewClipboardSave.test.ts (new) | - |
 
 Waves: **wave 1 = TASK-CLIP-001 ∥ TASK-CLIP-002** (executed: CLIP-001 GREEN + integrated on
 main; CLIP-002 PARTIAL — its 1×1 → 2×2 tiling regression is preserved, not discarded) ·

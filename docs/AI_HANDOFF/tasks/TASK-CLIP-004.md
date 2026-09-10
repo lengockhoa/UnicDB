@@ -81,7 +81,56 @@ Map snapshot order is not contractual.
 
 ## Executor Report
 
-(appended by Phase 3)
+STATUS: DONE
+EXECUTOR_TOOL: other
+EXECUTOR_MODEL: unic/unic-code
+EXECUTOR_SUBAGENT: ImplementClipboardSaveTests
+SUMMARY: Added the jsdom bundle-eval save persistence pin for paste-origin edits. The suite covers Cmd/Ctrl+Enter, commit(), no-op saves, refusal/error banners, retry preservation, and successful dirty-highlight clearing.
+TEST_PLAN_FOLLOWED: task §4
+FILES_CHANGED:
+  - src/ui/__tests__/webviewClipboardSave.test.ts: Added seven paste-origin save persistence tests using debugClipboard.simulatePaste.
+  - docs/AI_HANDOFF/tasks/TASK-CLIP-004.md: Appended this executor report.
+TESTS_ADDED:
+  - src/ui/__tests__/webviewClipboardSave.test.ts: paste 2 cells then Cmd+Enter posts exactly one saveEdits; Ctrl+Enter (ctrlKey variant) posts identically; commit ✓ button persists pasted edits identically; Cmd+Enter with zero dirty posts nothing; refused saveResult shows banner reason and clears dirty; failed save shows errors and preserves dirty edits for retry; saveResult ok:true clears paste-origin highlights.
+RED: confirmed
+RED_OUTPUT: |
+  npx vitest run src/ui/__tests__/webviewClipboardSave.test.ts (exit 1)
+  ❯ src/ui/__tests__/webviewClipboardSave.test.ts  (7 tests | 1 failed) 879ms
+  ❯ src/ui/__tests__/webviewClipboardSave.test.ts > webview/main.ts bundle (TASK-CLIP-004 save persistence) > paste 2 cells then Cmd+Enter posts exactly one saveEdits
+  ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+  FAIL  src/ui/__tests__/webviewClipboardSave.test.ts > webview/main.ts bundle (TASK-CLIP-004 save persistence) > paste 2 cells then Cmd+Enter posts exactly one saveEdits
+  AssertionError: expected [ …(2) ] to have a length of 3 but got 2
+  ❯ src/ui/__tests__/webviewClipboardSave.test.ts:208:27
+  Test Files 1 failed (1)
+  Tests 1 failed (6 passed)
+VERIFY: 3 commands, all pass
+VERIFICATION:
+  command: npm run typecheck
+  result: exit code 0
+  full_output: |
+    > UnicDB@1.53.42 typecheck
+    > tsc --noEmit
+    Wall time: 1.49 seconds
+  command: npm run compile
+  result: exit code 0
+  full_output: |
+    > node esbuild.js
+    dist/comparePanel.js 4.5kb
+    dist/comparePanel.js.map 9.1kb
+  command: npx vitest run src/ui/__tests__/webviewClipboardSave.test.ts src/ui/__tests__/webviewKeybinding.test.ts tests/webviewEditHighlight.test.ts src/ui/__tests__/webviewSaveEdits.test.ts
+  result: 32 passed, 0 failed, exit code 0
+  full_output: |
+    ▲ [WARNING] Unrecognized target environment "ES2024" [tsconfig.json]
+    Test Files 4 passed (4)
+    Tests 32 passed (32)
+    Start at 12: 55: 31
+    Duration 1.99s (transform 114ms, setup 0ms, collect 182ms, tests 4.65s, environment 1.50s, prepare 165ms)
+    ../../tsconfig.json: 3: 14:
+    3 │ "target": "ES2024",
+    ╵ ~~~~~~~~
+ISSUES: npm emitted the existing ES2024 target warning; no test failures.
+HANDOFF_TO_REVIEWER: yes — handoff.reviewer is enabled for this task.
+NEXT: Ready for review; production files were untouched.
 
 ## Reviewer Verdict
 
