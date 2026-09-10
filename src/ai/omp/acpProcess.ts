@@ -57,6 +57,8 @@ export interface AcpProcessOptions {
    * from `detectOmp()` so missing binaries surface as a startup error here.
    */
   ompPath?: string;
+  /** Optional model selected for the current Lite-engine invocation. */
+  modelId?: string;
   /** Workspace cwd — supplied to spawn() unconditionally. */
   cwd: string;
   /**
@@ -220,6 +222,9 @@ export class AcpProcess {
 
     const ompPath = this.opts.ompPath ?? "omp";
     const args: string[] = ["acp"];
+    if (this.opts.modelId) {
+      args.push(`--model=${this.opts.modelId}`);
+    }
     if (this.opts.supportCwdFlag) {
       args.push("--cwd", this.opts.cwd);
     }

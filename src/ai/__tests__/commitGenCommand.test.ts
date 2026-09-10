@@ -172,14 +172,16 @@ describe("ai/commitGenCommand — Test #2 omp happy path", () => {
     expect(resolveEngine).toHaveBeenCalledTimes(1);
     expect(resolveEngine.mock.calls[0][0].detection).toEqual(detection);
     expect(buildOmpEngine).toHaveBeenCalledTimes(1);
-    expect(buildOmpEngine).toHaveBeenCalledWith(choice);
+    expect(buildOmpEngine).toHaveBeenCalledWith(choice, "lite-1");
     expect(generate).toHaveBeenCalledTimes(1);
     const promptArg = generate.mock.calls[0][0];
-    expect(Array.isArray(promptArg)).toBe(true);
-    const messages = promptArg as Array<{ role: string }>;
-    expect(messages).toHaveLength(2);
-    expect(messages[0].role).toBe("system");
-    expect(messages[1].role).toBe("user");
+    expect(typeof promptArg).toBe("string");
+    expect(promptArg).toContain("You generate git commit messages");
+    expect(promptArg).toContain("Conventional Commits");
+    expect(promptArg).toContain("Repo: UnicDB");
+    expect(promptArg).toContain("src/a.ts");
+    expect(promptArg).toContain("+// new");
+    expect(promptArg).not.toContain("[object Object]");
 
     const setInputBox = deps.setInputBox as unknown as ReturnType<typeof vi.fn>;
     expect(setInputBox).toHaveBeenCalledTimes(1);

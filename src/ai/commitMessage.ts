@@ -38,6 +38,27 @@ export function buildCommitPrompt(input: CommitPromptInput): ChatMessage[] {
   ];
 }
 
+/**
+ * Render the commit chat messages as plain text for engines whose ACP prompt
+ * accepts one string rather than a ChatMessage array. The role labels keep the
+ * commit-only instruction and repository context distinct without coercing
+ * objects to `[object Object]`.
+ */
+export function serializeCommitPrompt(messages: readonly ChatMessage[]): string {
+  return messages
+    .map((message) => {
+      const content =
+        typeof message.content === "string"
+          ? message.content
+          : message.content
+              .map((part) => part.text ?? part.imageUrl ?? "")
+              .join("");
+      return `${message.role.toUpperCase()}:
+${content}`;
+    })
+    .join("\n\n");
+}
+
 // ---- sanitizeCommitMessage -------------------------------------------------
 /**
  * Normalize a model's raw reply into a single Conventional-Commits commit message.

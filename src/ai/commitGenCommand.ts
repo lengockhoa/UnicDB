@@ -13,7 +13,7 @@ import type { AiSettings, AiConfig, AiEngine } from "./settings";
 import type { EngineChoice } from "./engineChoice";
 import type { OmpDetection } from "./omp/detect";
 import type { ProviderRequest, ProviderResult } from "./provider";
-import { buildCommitPrompt, sanitizeCommitMessage } from "./commitMessage";
+import { buildCommitPrompt, sanitizeCommitMessage, serializeCommitPrompt } from "./commitMessage";
 
 // ---- frozen strings ---------------------------------------------------------
 export const TOAST_NO_LITE =
@@ -55,8 +55,8 @@ export interface CommitGenDeps {
   detectOmp(): Promise<OmpDetection>;
   /** Pure engine-resolution policy (GC-001 / engineChoice.ts). */
   resolveEngine(input: { detection: OmpDetection; config: unknown | null }): EngineChoice;
-  /** Build the omp one-shot adapter. Pure factory — no global state. */
-  buildOmpEngine(choice: EngineChoice): Promise<OmpOneShot>;
+  /** Build the omp one-shot adapter with the selected Lite model. */
+  buildOmpEngine(choice: EngineChoice, modelId: string): Promise<OmpOneShot>;
   /** Provider-port for the builtin path. Mirrors `createProviderClient(...).complete`. */
   builtinComplete(cfg: AiConfig, req: ProviderRequest): Promise<ProviderResult>;
   /** GC-002 collection port. null ⇒ no changes to summarize. */
@@ -159,8 +159,8 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
       return;
     }
     try {
-      const oneShot = await deps.buildOmpEngine(choice);
-      const raw = await oneShot.generate(prompt as unknown as string);
+      const oneShot = await deps.buildOmpEngine(choice, lite.modelId);
+      const raw = await oneShot.generate(serializeCommitPrompt(prompt));
       rawProviderText = raw;
       message = sanitizeCommitMessage(raw);
     } catch (e) {
@@ -215,7 +215,6 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
     body: rawProviderText,
     context: {
       engine,
-      modelId: lite.modelId,
       baseUrl: cfg?.baseUrl ?? "",
       method: cfg?.method ?? "",
       // The exact request body so the user can compare against Kilo Code's

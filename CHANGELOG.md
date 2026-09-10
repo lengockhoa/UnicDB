@@ -29,6 +29,14 @@
 - **`package.json`:** `UnicDB.ai.engine.default` updated to `"omp"`; copy
   refreshed to note the new default.
 
+## [1.53.43] — 2026-09-10
+
+- Summary: Generate Git Message now honors the selected `omp` engine, passes the configured Lite model, and sends meaningful Conventional Commits context; AI Settings now has one authoritative global engine selector.
+- Files: src/ai/commitGenCommand.ts, src/ai/commitMessage.ts, src/ai/omp/acpProcess.ts, src/extension.ts, webview/aiSettingsFormMain.ts, focused tests
+- Verification: npm run typecheck ✅ · npm test ✅ (4134 passed, 4 skipped) · npm run compile ✅ · UnicDB-1.53.43.vsix packaged
+
+---
+
 ## [1.53.42] — 2026-09-09
 
 - Summary: Full-height SQL Console editor with realtime syntax highlighting and namespace selection from SQL files

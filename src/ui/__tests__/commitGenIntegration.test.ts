@@ -339,7 +339,7 @@ describe("TASK-GC-008 #5 engine routing switches with config", () => {
     await runGenerateCommitMessage(deps);
 
     expect(buildOmpEngine).toHaveBeenCalledTimes(1);
-    expect(buildOmpEngine).toHaveBeenCalledWith(choice);
+    expect(buildOmpEngine).toHaveBeenCalledWith(choice, "lite-1");
     expect(builtinComplete).not.toHaveBeenCalled();
     expect(setInputBox).toHaveBeenCalledTimes(1);
     expect(setInputBox).toHaveBeenCalledWith("feat(api): route through omp");

@@ -10,7 +10,7 @@ Dependencies: `none` — CLIP-002's regression already exists on disk and must b
 GREEN here, not waited on. Wave placement is an operational serialization point.
 -->
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (TASK-CLIP-003 incl. the added tiling correction), §4 rows "regression (CLIP-002 → CLIP-003)" + CLIP-003, §5 wave 2

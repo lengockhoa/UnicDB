@@ -22,15 +22,16 @@ across a 2×2 active range) that TASK-CLIP-002's wave-1 run exposed.
 |------|-------|--------|------|-------|----------|
 | TASK-CLIP-001 | Copy matrix shapes — bundle + pure test pin (1×1, N×M, rows, column strip, hidden cols, no-selection guard) | pending_review | none | src/ui/__tests__/webviewClipboardCopy.test.ts (new), src/ui/__tests__/resultsGridModelEdit.test.ts | - |
 | TASK-CLIP-002 | Paste matrix semantics — Excel TSV → grid edits; bundle + pure test pin (tests-only; PARTIAL report preserved) | pending_review | none | src/ui/__tests__/webviewClipboardPaste.test.ts (new) | - |
-| TASK-CLIP-003 | Webview: `pasteIntoRange` active-range column tiling fix (turns the CLIP-002 RED case GREEN) + Cmd/Ctrl+V keydown wiring via readClipboard/clipboardText host round-trip + stale-range clear fix | ready | none | webview/main.ts, src/ui/messages.ts, src/ui/resultsPanel.ts, src/ui/__tests__/webviewKeybinding.test.ts | - |
+| TASK-CLIP-003 | Webview: `pasteIntoRange` active-range column tiling fix (turns the CLIP-002 RED case GREEN) + Cmd/Ctrl+V keydown wiring via readClipboard/clipboardText host round-trip + stale-range clear fix | pending_review | none | webview/main.ts, src/ui/messages.ts, src/ui/resultsPanel.ts, src/ui/__tests__/webviewKeybinding.test.ts | - |
 | TASK-CLIP-004 | Save persistence pin — paste → Cmd/Ctrl+Enter posts one saveEdits batch; ok clears highlights; refused shows banner | pending_review | TASK-CLIP-003 | src/ui/__tests__/webviewClipboardSave.test.ts (new) | - |
 
-Waves: **wave 1 = TASK-CLIP-001 ∥ TASK-CLIP-002** (executed: CLIP-001 GREEN + integrated on
-main; CLIP-002 PARTIAL — its 1×1 → 2×2 tiling regression is preserved, not discarded) ·
-**wave 2 = TASK-CLIP-003** (the only production task; owns webview/main.ts + messages.ts +
-resultsPanel.ts + its keybinding suite; `Dependencies: none` — the CLIP-002 suite is a
-required verification TARGET here, not a gate) · **wave 3 = TASK-CLIP-004** (tests-only,
-needs CLIP-003's `debugClipboard` seam).
+Waves (ALL EXECUTED 2026-09-10 — commits a7e4a98 wave 1, 1b66032 wave 2, 990ade7 wave 3):
+**wave 1 = TASK-CLIP-001 ∥ TASK-CLIP-002** — CLIP-001 PASS (41 tests GREEN + integrated
+on main); CLIP-002 PARTIAL 8/9 with its 1×1 → 2×2 tiling regression preserved as evidence ·
+**wave 2 = TASK-CLIP-003** — PASS: the production tiling fix turned CLIP-002's frozen
+suite 9/9 GREEN and the required gate suite ran 44/44 · **wave 3 = TASK-CLIP-004** —
+PASS: targeted save-pin suite 32/32 GREEN on CLIP-003's `debugClipboard` seam. All four
+tasks are `pending_review`; implementation is complete and the next phase is R1 (review).
 
 Revision 2026-09-10 (after the 2-round plan-review cap): TASK-CLIP-003 absorbed the
 `pasteIntoRange` tiling correction and dropped its TASK-CLIP-002 dependency — see PLAN.md

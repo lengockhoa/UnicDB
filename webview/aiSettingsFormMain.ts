@@ -268,9 +268,10 @@ function modelBlock(role: Role, label: string, defaultVision: boolean, opts: { p
 }
 
 /**
- * Lite model block — fourth role (TASK-GC-006). Carries its own per-model
- * `engine` override (defaults to "omp") and a vision toggle. Empty modelId
- * is valid (= feature disabled), matching the `autocomplete` precedent.
+ * Lite model block — fourth role (TASK-GC-006). Uses the global engine
+ * selection and carries only the Lite model ID plus its vision toggle.
+ * Empty modelId is valid (= feature disabled), matching the autocomplete
+ * precedent.
  */
 function liteBlock(): string {
   return `
@@ -311,15 +312,6 @@ function render(): void {
       <div class="UnicDB-field">
         <label for="engine">Engine</label>
         <select id="engine">
-          <option value="omp">omp</option>
-          <option value="claude-code">claude-code</option>
-          <option value="codex">codex</option>
-          <option value="builtin" selected>builtin</option>
-        </select>
-      </div>
-      <div class="UnicDB-field">
-        <label for="engine">Engine</label>
-        <select id="engine">
           <option value="omp" selected>omp</option>
           <option value="claude-code">claude-code</option>
           <option value="codex">codex</option>
@@ -327,9 +319,18 @@ function render(): void {
         </select>
       </div>
     </div>
+    <div class="UnicDB-row">
+      <div class="UnicDB-field">
+        <label for="timeoutMs">Timeout (ms) <span class="req">*</span></label>
+        <input id="timeoutMs" type="number" min="1000" max="600000" step="1000" value="60000" />
+      </div>
       <div class="UnicDB-field">
         <label for="maxSteps">Max steps <span class="req">*</span></label>
         <input id="maxSteps" type="number" min="1" max="100" step="1" value="12" />
+      </div>
+      <div class="UnicDB-field grow">
+        <label for="apiKey">API key</label>
+        <input id="apiKey" type="password" autocomplete="off" />
       </div>
     </div>
   </div>
@@ -387,7 +388,7 @@ function applyInit(msg: InitMsg): void {
   state.lastStatus = null;
   input("baseUrl").value = msg.settings.baseUrl;
   select("method").value = msg.settings.method;
-  select("engine").value = msg.settings.engine ?? "builtin";
+  select("engine").value = msg.settings.engine ?? "omp";
   input("timeoutMs").value = String(msg.settings.timeoutMs);
   input("modelWork").value = msg.settings.models.work.modelId;
   input("modelSmart").value = msg.settings.models.smart.modelId;

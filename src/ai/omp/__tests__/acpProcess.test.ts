@@ -171,9 +171,27 @@ describe("AcpProcess", () => {
       expect(a).not.toMatch(FORBIDDEN);
     }
   });
+  it("start passes the configured Lite model to omp ACP", async () => {
+    const proc = new AcpProcess(
+      {
+        ompPath: "omp",
+        cwd: "/tmp/proj",
+        supportCwdFlag: true,
+        modelId: "configured-lite-model",
+        execFn: async () => "omp/18.0.1\n",
+      },
+      captureSpawn(child, captured),
+    );
 
-  // Review Finding 2: on Windows, `where omp` typically resolves `omp.cmd`
-  // — a shell shim. Node >= 20.12 cannot spawn a `.cmd` file without
+    const startPromise = proc.start();
+    queueMicrotask(() => {
+      void driveHandshake(child);
+    });
+    await startPromise;
+
+    expect(captured.args).toContain("--model=configured-lite-model");
+  });
+
   // `shell: true` (CVE-2024-27980 mitigation), so a detected-usable omp
   // would die with ENOENT on every real session start. `shell` must mirror
   // `process.platform === "win32"` exactly (true on Windows, false/absent

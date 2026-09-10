@@ -6,7 +6,7 @@ Waits for TASK-CLIP-003 because it uses the debugClipboard.simulatePaste seam; i
 test file is new, so no file collision — the dependency is behavioral, not file-level.
 -->
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (TASK-CLIP-004), §4 rows CLIP-004, §5 wave 3

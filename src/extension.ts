@@ -2054,12 +2054,14 @@ function buildAcpDepsCreate(
   ompPath: string,
   cwd: string,
   mcpServers?: ReadonlyArray<Record<string, unknown>>,
+  modelId?: string,
 ): AcpProcess {
   return new AcpProcess({
     ompPath,
     cwd,
     supportCwdFlag: true,
     mcpServers,
+    modelId,
   });
 }
 async function commandOpenAiChat(
@@ -4173,11 +4175,12 @@ function buildCommitGenNoopHostMcp(): CommitGenOmpHostMcp {
  * the joined text on `onDone`. Throws on `onError`. */
 async function buildCommitGenOmpOneShot(
   ompPath: string,
+  modelId: string,
 ): Promise<OmpOneShot> {
   const cwd =
     vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
   // Fresh AcpProcess per invocation; the engine owns its own lifecycle.
-  const acpProcess = buildAcpDepsCreate(ompPath, cwd, []);
+  const acpProcess = buildAcpDepsCreate(ompPath, cwd, [], modelId);
   let handlePromise: Promise<AcpProcessHandle> | null = null;
   const ensureHandle = (): Promise<AcpProcessHandle> => {
     if (handlePromise === null) handlePromise = acpProcess.start();
@@ -4243,7 +4246,8 @@ function buildCommitGenDeps(
     loadConfig: () => aiStore.loadConfig(),
     detectOmp: () => detectOmp(),
     resolveEngine,
-    buildOmpEngine: async (choice) => buildCommitGenOmpOneShot(choice.path ?? "omp"),
+    buildOmpEngine: async (choice, modelId) =>
+      buildCommitGenOmpOneShot(choice.path ?? "omp", modelId),
     builtinComplete: (cfg, req) =>
       createProviderClient({
         baseUrl: cfg.baseUrl,
