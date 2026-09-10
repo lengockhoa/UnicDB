@@ -707,3 +707,10 @@ Latest completion handoff evidence: bounded slice `docs/WORKLOG.md:701-703` was 
 Handoff write evidence: bounded slice `docs/WORKLOG.md:703-705` was read, and the release evidence remains persisted for continuation.
 
 Persisted release write evidence: bounded slice `docs/WORKLOG.md:705-707` was read; the v1.53.42 release record remains written and available for handoff.
+
+## 2026-09-10 — Generate Git message diff-context fix
+- Confirmed root cause: `collectCommitDiff()` selected staged patch text but paired it with the union of staged, unstaged, and merge file metadata, allowing the model to describe changes absent from the supplied patch.
+- Changed `src/adapters/gitDiff.ts` to track the selected diff mode and include only matching files: `indexChanges` for staged; `workingTreeChanges` plus `mergeChanges` for unstaged fallback.
+- Added regression coverage in `src/adapters/__tests__/gitDiff.test.ts` for staged-only filtering and unstaged/merge selection with deduplication; updated the original mixed-state expectation.
+- Verification: Git diff suite 14/14 passed; commit prompt/command/integration suites 41/41 passed; `npm run typecheck` passed; `git diff --check` passed.
+- No provider payloads, credentials, or debug artifacts were exposed. Working tree contains only the two intended source/test edits.

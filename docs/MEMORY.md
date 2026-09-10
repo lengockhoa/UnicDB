@@ -63,6 +63,8 @@
 
 ## Known Bugs & Root Causes
 
+- [2026-09-10] Generate Git message context bug: `collectCommitDiff()` chose one patch body (staged first, unstaged fallback) but previously combined file metadata from staged, working-tree, and merge state. The prompt could therefore list an unstaged file beside a staged-only patch, letting the model describe a change absent from the diff. The collector now selects matching metadata only (`indexChanges` for staged; `workingTreeChanges` + `mergeChanges` for unstaged fallback). Regression coverage is in `src/adapters/__tests__/gitDiff.test.ts`; keep diff body and file metadata from the same state group.
+
 - [2026-08-25] Bug: user still saw `Error: column "ctid" does not exist` after cycle S was
   merged. Root cause: cycle S ended without a version bump/GitHub release, and the user's
   one-line installer pulls from latest Release — still v1.6.2 (pre-fix build).

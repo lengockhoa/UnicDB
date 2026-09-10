@@ -29,6 +29,14 @@
 - **`package.json`:** `UnicDB.ai.engine.default` updated to `"omp"`; copy
   refreshed to note the new default.
 
+## [1.53.44] — 2026-09-10
+
+- Summary: Keep generated Git messages aligned with the selected staged or unstaged diff
+- Files: src/adapters/gitDiff.ts, src/adapters/__tests__/gitDiff.test.ts, docs/MEMORY.md, docs/WORKLOG.md
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.44.vsix packaged
+
+---
+
 ## [1.53.43] — 2026-09-10
 
 - Summary: Generate Git Message now honors the selected `omp` engine, passes the configured Lite model, and sends meaningful Conventional Commits context; AI Settings now has one authoritative global engine selector.

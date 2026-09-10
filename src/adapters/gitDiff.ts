@@ -123,8 +123,10 @@ export function getGitApi(): GitApiLike | undefined {
  * Algorithm (frozen, PLAN §2):
  *   1. staged   = await repo.diff(true); if staged.trim() non-empty → use it.
  *   2. else     = await repo.diff();      if that trims empty → return null.
- *   3. files    = deduped repo-relative paths from state.indexChanges +
- *                 state.workingTreeChanges + state.mergeChanges.
+ *   3. files    = deduped repo-relative paths from the state group that
+ *                 corresponds to the chosen diff (indexChanges for staged,
+ *                 workingTreeChanges for unstaged); mergeChanges are included
+ *                 only when the unstaged fallback is selected.
  *   4. repoName = basename of rootUri.fsPath.
  *   5. branch   = state.HEAD?.name when present, else undefined.
  *   6. diffText = the chosen diff, truncated at GIT_DIFF_MAX_BYTES.
@@ -134,8 +136,10 @@ export async function collectCommitDiff(
 ): Promise<CommitDiffInput | null> {
   const stagedRaw = await repo.diff(true);
   let chosen: string;
+  let stagedSelected = false;
   if (typeof stagedRaw === "string" && stagedRaw.trim().length > 0) {
     chosen = stagedRaw;
+    stagedSelected = true;
   } else {
     const unstagedRaw = await repo.diff(false);
     if (typeof unstagedRaw !== "string" || unstagedRaw.trim().length === 0) {
@@ -155,9 +159,10 @@ export async function collectCommitDiff(
     seen.add(rel);
     files.push(rel);
   };
-  for (const c of state.indexChanges ?? []) push(c);
-  for (const c of state.workingTreeChanges ?? []) push(c);
-  for (const c of state.mergeChanges ?? []) push(c);
+  const selectedChanges = stagedSelected
+    ? state.indexChanges
+    : [...(state.workingTreeChanges ?? []), ...(state.mergeChanges ?? [])];
+  for (const c of selectedChanges ?? []) push(c);
 
   const branch = state.HEAD && typeof state.HEAD.name === "string" ? state.HEAD.name : undefined;
 

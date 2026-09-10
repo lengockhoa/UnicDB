@@ -85,8 +85,9 @@ describe("gitDiff — collectCommitDiff: staged preferred", () => {
     expect(result!.repoName).toBe("UnicDB");
     expect(result!.branch).toBe("main");
     expect(result!.diffText).toBe("diff --git a/src/a.ts\n+staged line\n");
-    // deduped repo-relative
-    expect(result!.files.sort()).toEqual(["src/a.ts", "src/b.ts", "src/shared.ts"]);
+    // Only files represented by the selected staged diff are included.
+    // Unstaged-only files must not be shown alongside staged patch content.
+    expect(result!.files.sort()).toEqual(["src/a.ts", "src/shared.ts"]);
   });
 });
 
@@ -112,10 +113,58 @@ describe("gitDiff — collectCommitDiff: fall back to unstaged", () => {
     const repo = makeRepo({
       staged: "",
       unstaged: "diff --git a/x.ts\n+line\n",
+      indexChanges: [
+        { uri: { fsPath: "/repo/UnicDB/staged-only.ts" } },
+      ],
+      workingTreeChanges: [
+        { uri: { fsPath: "/repo/UnicDB/x.ts" } },
+      ],
+      mergeChanges: [
+        { uri: { fsPath: "/repo/UnicDB/merge.ts" } },
+      ],
     });
     const result = await collectCommitDiff(repo);
     expect(result).not.toBeNull();
     expect(result!.diffText).toBe("diff --git a/x.ts\n+line\n");
+    expect(result!.files.sort()).toEqual(["merge.ts", "x.ts"]);
+  });
+
+  it("does not mix unstaged-only files into a selected staged diff", async () => {
+    const repo = makeRepo({
+      staged: "diff --git a/staged.ts\n+line\n",
+      unstaged: "diff --git a/unstaged.ts\n+line\n",
+      indexChanges: [
+        { uri: { fsPath: "/repo/UnicDB/staged.ts" } },
+      ],
+      workingTreeChanges: [
+        { uri: { fsPath: "/repo/UnicDB/unstaged.ts" } },
+      ],
+    });
+
+    const result = await collectCommitDiff(repo);
+
+    expect(result).not.toBeNull();
+    expect(result!.files).toEqual(["staged.ts"]);
+  });
+
+  it("deduplicates selected unstaged and merge files", async () => {
+    const repo = makeRepo({
+      staged: "",
+      unstaged: "diff --git a/working.ts\n+line\n",
+      workingTreeChanges: [
+        { uri: { fsPath: "/repo/UnicDB/shared.ts" } },
+        { uri: { fsPath: "/repo/UnicDB/working.ts" } },
+      ],
+      mergeChanges: [
+        { uri: { fsPath: "/repo/UnicDB/shared.ts" } },
+        { uri: { fsPath: "/repo/UnicDB/merge.ts" } },
+      ],
+    });
+
+    const result = await collectCommitDiff(repo);
+
+    expect(result).not.toBeNull();
+    expect(result!.files.sort()).toEqual(["merge.ts", "shared.ts", "working.ts"]);
   });
 });
 
