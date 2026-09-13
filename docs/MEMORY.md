@@ -99,9 +99,27 @@
   installer (needs a GitHub release per Ship Constraint).
 
 ## Session Handoff
-- Last worked on: 2026-09-09 — shipped the full-height SQL Console editor with realtime syntax highlighting and SQL-file namespace selection as v1.53.42. GitHub Release and VS Code Marketplace publish completed.
-- Verification: `npm run typecheck` passed; focused Console tests passed 56/56; `npm run compile` and VSIX packaging completed. Full `npm test` was attempted and hit the pre-existing AI settings jsdom failure; the release used the documented `--skip-test` recovery path after targeted verification.
-- Next step: reload VS Code after installing v1.53.42; no further product task is pending.
+- Last worked on: 2026-09-10 — shipped v1.53.45 (Generate git message: route through `settings.engine` via `resolveEngine`, plus typed-contract defence against `[object Object]` for `builtin`, `omp one-shot`, and `serializeCommitPrompt`). VS Code Marketplace publish completed: `lengockhoa.UnicDB v1.53.45` live at https://marketplace.visualstudio.com/items?itemName=lengockhoa.UnicDB.
+- Verification: focused vitest suites `commitMessage` (17), `commitGenCommand` (12), `commitGenIntegration` (7) = 36 tests pass. PAT org mismatch (PAT from `lengockhoa-unic` vs publisher `lengockhoa`) resolved on user side; `vsce publish` returned `DONE Published`.
+- Next step: reload VS Code after installing v1.53.45; no further product task is pending.
+
+## Release Protocol — Marketplace publish
+
+- **Trigger phrases** the user uses for any release action: `publish`, `push`, `up`, `lên version`, `đẩy lên marketplace`, `bump version`, `release`, `đóng gói`. Whenever a session detects one of these and the request touches `package.json` version, VS Code Marketplace publish, or VSIX packaging, **follow this protocol verbatim** instead of asking the user how to publish.
+- **PAT source (canonical):** `.secrets/.pat` at the repo root. It contains the raw Azure DevOps Personal Access Token for publisher `lengockhoa` (scope: Marketplace → Manage). Read it once per release, pass it to `vsce` via env, never print it.
+- **One-shot publish command** (from repo root):
+  ```
+  vsce package "$(jq -r .version package.json)" \
+    && VSCE_PAT="$(tr -d '\n' < .secrets/.pat)" vsce publish --no-dependencies --pat "$VSCE_PAT"
+  ```
+  Use the version that is already in `package.json` — do not bump in the same step unless the user asked for a bump. Always run package + publish together so the VSIX on disk matches what gets pushed.
+- **If publish returns 401:** the PAT is expired or revoked. Tell the user to regenerate it at https://dev.azure.com/lengockhoa/_usersSettings/tokens (scope: Marketplace → Manage), overwrite `.secrets/.pat`, and rerun the one-shot command. Do NOT debug network/TLS, do NOT switch to a different token source, do NOT upload by hand unless the user explicitly says so.
+- **Pre-publish checklist (must pass before running the command above):**
+  1. `npm run typecheck` passes.
+  2. Focused vitest suites for the change pass (`npx vitest run <touched test files>`).
+  3. `package.json` version is the target version. `CHANGELOG.md` has a matching top entry with date + summary + files + verification line.
+  4. `vsce package` succeeds and the resulting `UnicDB-<version>.vsix` sits at repo root.
+- **Privacy invariant:** the PAT must never be echoed, written to logs, committed to git, or pasted into a chat message. `vsce publish --pat "$VSCE_PAT"` keeps it off argv in any process listing beyond `vsce` itself.
 
 - [2026-09-09] Decision: Keep the SQL Console editor dependency-free by layering `webview/sqlHighlight.ts` spans under a transparent native textarea. Reason: preserves native selection, clipboard, autocomplete, draft persistence, and keyboard behavior while adding file-like syntax coloring without introducing a heavyweight editor runtime.
 - [2026-09-09] Constraint: The active namespace picker is shared across status bar, Console toolbar, and SQL file editor title menu. `ConnectionManager` reads the per-connection `ActiveSchemaStore` dynamically at execution time and prepends PostgreSQL `SET search_path`; do not duplicate namespace state in webviews or rewrite user SQL.

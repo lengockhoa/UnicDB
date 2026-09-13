@@ -152,6 +152,51 @@ describe("QueryRunner — run()", () => {
     expect(result[0].result?.commandTag).toBe("INSERT 0 5");
     expect(result[0].result?.rowCount).toBe(5);
   });
+
+  it("lock regression — a second run() during the prologue's stale-cursor sweep is rejected, not raced", async () => {
+    // Reproduce the reentrancy window: run #1 has a stale batched cursor from
+    // a previous run, so its prologue AWAITS that cursor's close() before it
+    // can seed the new results. The lock must already be claimed by then — a
+    // second run() landing inside that await must observe `running` and throw
+    // instead of clobbering the lock (the old code assigned `this.running`
+    // only AFTER the sweep, so both runs passed the guard and one run's
+    // finally freed the other's lock — a frozen busy UI + "already running").
+    const staleBatched = makeBatched(["id"], [[[1]]]);
+    // Park close() so run #1 is stuck in the sweep await.
+    let releaseClose: (() => void) | null = null;
+    staleBatched.close.mockImplementation(
+      () => new Promise<void>((resolve) => { releaseClose = resolve; }),
+    );
+    // First run seeds the stale cursor into `results` as a done+open batched
+    // statement (the sweep only targets status==="done" records).
+    const adapter = makeAdapter(async () => ({ results: [], batched: staleBatched }));
+    const runner = new QueryRunner(async () => adapter);
+    const first = await runner.run([stmt("SELECT a FROM t", 0, 15)], () => {});
+    expect(first[0].status).toBe("done");
+    // Re-arm: the seeded cursor must look OPEN for the next run's sweep.
+    first[0].cursorClosed = false;
+
+    // Run #2 — its prologue will await the stale cursor close. Swap the
+    // provider so run #2 executes against a trivial adapter while the SAME
+    // runner still holds the stale cursor the sweep targets.
+    const secondAdapter = makeAdapter(async () => okResult(["n"], [[2]]));
+    (runner as unknown as { adapterProvider: () => Promise<DbAdapter> }).adapterProvider =
+      async () => secondAdapter;
+
+    const run2 = runner.run([stmt("SELECT b FROM t", 0, 15)], () => {});
+    // Let run #2 reach the sweep await (scheduler tick), then attempt #3.
+    await new Promise((r) => setTimeout(r, 5));
+    expect(runner.isRunning()).toBe(true);
+    await expect(
+      runner.run([stmt("SELECT c FROM t", 0, 15)], () => {}),
+    ).rejects.toThrow("QueryRunner is already running");
+
+    // Release the sweep and let run #2 finish cleanly.
+    if (releaseClose) releaseClose();
+    const second = await run2;
+    expect(second[0].status).toBe("done");
+    expect(runner.isRunning()).toBe(false);
+  });
 });
 
 describe("QueryRunner — batched contract (CRITICAL #1 fix round 1)", () => {

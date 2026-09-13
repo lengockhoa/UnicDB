@@ -456,6 +456,7 @@ export class PostgresAdapter implements DbAdapter {
     if (trackedPid !== null) {
       this.activeNonCursorPids.add(trackedPid);
     }
+    let failed = false;
     try {
       const results: QueryResult[] = [];
       for (const stmt of statements) {
@@ -475,6 +476,9 @@ export class PostgresAdapter implements DbAdapter {
         });
       }
       return { results };
+    } catch (err) {
+      failed = true;
+      throw err;
     } finally {
       // TASK-RLX-001 — PID window của CHÍNH LẦN GỌI NÀY đóng: delete ĐÚNG
       // PID đã record (cả success lẫn error), KHÔNG clear-all — nếu một
@@ -483,7 +487,25 @@ export class PostgresAdapter implements DbAdapter {
       if (trackedPid !== null) {
         this.activeNonCursorPids.delete(trackedPid);
       }
-      client.release();
+      if (failed) {
+        // The save flow bundles `BEGIN; <stmts>; COMMIT;` through THIS branch
+        // (single checked-out client for the whole script). A statement
+        // failing mid-batch aborts the open transaction and rejects the loop,
+        // leaving THIS client in a failed-transaction state. pg-pool does NOT
+        // reset session state on release, so a plain release poisons the
+        // pool: the next query to reuse this client fails with "current
+        // transaction is aborted, commands ignored until end of transaction
+        // block". Best-effort ROLLBACK first (a no-op when the script opened
+        // no transaction); only destroy the connection if even that fails.
+        try {
+          await client.query("ROLLBACK");
+          client.release();
+        } catch {
+          client.release(true);
+        }
+      } else {
+        client.release();
+      }
     }
   }
 
@@ -1142,7 +1164,15 @@ export class PostgresAdapter implements DbAdapter {
     };
 
     const finalize = async (destroy: boolean): Promise<void> => {
-      if (state === "closed" || state === "eof") {
+      // Only `closed` (already finalized) and `error` (released by the catch
+      // path) short-circuit. `eof` must NOT: both EOF branches below set
+      // `state = "eof"` BEFORE calling finalize so `fetchBatch`/`close`/`cancel`
+      // return early, but the cursor is still OPEN at that point — treating
+      // `eof` as finalized skipped CLOSE + COMMIT and returned the pooled
+      // client to the pool with its BEGIN-opened transaction still live (a
+      // later save-flow BEGIN on that reused client becomes a no-op and its
+      // COMMIT closes the stale transaction).
+      if (state === "closed" || state === "error") {
         releaseClient(destroy);
         return;
       }

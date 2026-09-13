@@ -813,10 +813,22 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
     >();
     for (let i = 0; i < this.lastResults.length; i++) {
       const r = this.lastResults[i];
-      // Browse label is the host-derived identity (table name extracted
-      // from "Browse <schema>.<table> at <ISO>" headers); use it as the
-      // schema/table when present. Otherwise fall back to the label field
-      // or skip the entry (no parsed identity).
+      // Parse the surviving statement's OWN SQL first — this is exactly what
+      // render() does (host-side truth) and is the only source that works for
+      // a normal Editor result, which carries neither `browseLabel` nor
+      // `r.label`. Deriving solely from those labels (the previous behavior)
+      // left the map EMPTY for every editor statement, so after any tab close
+      // handleSaveEdits hard-refused with "has no addressable table" even
+      // though the grid was editable.
+      const parsed = parseFromClause(r.sql);
+      if (parsed) {
+        newTableByStatement.set(i, parsed);
+        continue;
+      }
+      // Fallback for browse statements whose SQL the parser cannot reduce:
+      // browse label is the host-derived identity (table name extracted from
+      // "Browse <schema>.<table> at <ISO>" headers). Otherwise fall back to
+      // the label field or skip the entry (no parsed identity).
       const browse = this.browseLabel ? this.browseLabel.split(".") : null;
       if (browse && browse.length === 2) {
         newTableByStatement.set(i, { schema: browse[0], table: browse[1] });
@@ -826,8 +838,8 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
       } else if (r.label) {
         newTableByStatement.set(i, { table: r.label });
       }
-      // No label + no browseLabel → no entry → handleSaveEdits will
-      // error out cleanly if the user tries to save edits.
+      // No parse + no label + no browseLabel → no entry → handleSaveEdits
+      // will error out cleanly if the user tries to save edits.
     }
     this.tableByStatement = newTableByStatement;
 
@@ -963,6 +975,14 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         // then must NOT overwrite the newer lastResults (mirrors the
         // requerySeq guard in handleRequery).
         const generation = this.statementGeneration;
+        // The panel array index (`msg.index`) and the runner array index
+        // (`stmt.index`) DIVERGE after a tab close: closeTab splices only
+        // `lastResults`, leaving the runner's internal array untouched. Both
+        // the runner call and the returned array must therefore be keyed by
+        // the statement's stable `index`, never by the panel position —
+        // otherwise loadMore fetches a closed/shifted statement's cursor and
+        // the whole-array assignment resurrects the closed tabs.
+        const runnerIndex = stmt.index;
         // Mark busy TRƯỚC await để webview enable Cancel button ngay khi batch
         // bắt đầu fetch qua mạng. finally đảm bảo busy:false kể cả khi reject,
         // tránh kẹt disable vĩnh viễn.
@@ -975,14 +995,23 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
         // cancel branch below.
         const limited = stmt.resultLimited === true;
         try {
-          const updated = await this.runner.loadMore(msg.index);
+          const updated = await this.runner.loadMore(runnerIndex);
           if (this.isStaleSession(epoch)) break;
           if (generation !== this.statementGeneration) break;
-          this.lastResults = updated;
+          // `updated` is the runner's FULL array, closed tabs included (the
+          // runner never dropped them). Merge only this statement's refreshed
+          // entry back into the panel array at the panel position so the
+          // closed tabs stay closed.
+          const updatedEntry = updated[runnerIndex];
+          if (updatedEntry) {
+            const next = this.lastResults.slice();
+            next[msg.index] = updatedEntry;
+            this.lastResults = next;
+          }
           this.postMessage({
             type: "state",
             header: this.header,
-            results: updated,
+            results: this.lastResults,
             busy: this.busy,
           });
         } catch (err) {
@@ -2118,9 +2147,25 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
       // Without this the entry swapped to `{ status:"done", result: undefined }`
       // and the grid blanked.
       const picked = await pickResult(runResult);
+      // A postgres single-SELECT requery returns a LIVE cursor holding a
+      // pooled client. Two early-return paths below abandon this result
+      // before it is adopted into `lastResults` — and an abandoned cursor
+      // is unreachable (nothing left references it), so it would pin a pool
+      // client forever. PG_POOL_MAX is small; a handful of superseded
+      // requeries would exhaust the pool and make every later query queue
+      // until `connectionTimeoutMillis` ("timeout exceeded when trying to
+      // connect") or hang. Close it on every path that drops the result.
+      const closeAbandonedCursor = (): void => {
+        if (runResult.batched) {
+          void runResult.batched.close().catch(() => undefined);
+        }
+      };
       // TASK-ARP02-002 — panel disposed (and possibly re-created) while the
       // requery was in flight: drop everything, silently.
-      if (this.isStaleSession(epoch)) return;
+      if (this.isStaleSession(epoch)) {
+        closeAbandonedCursor();
+        return;
+      }
       // TASK-004 (cycle Y) — hide the injected PK columns in the displayed
       // result. The FULL row (hidden values included) stays reachable only
       // through this closure for the paging key below; everything posted to
@@ -2129,7 +2174,10 @@ export class ResultsPanel implements vscode.WebviewViewProvider {
       // A newer requery already started while we were awaiting the run →
       // drop this (stale) result entirely; it must not clobber the newer
       // entry (nor adopt its cursor into the runner).
-      if (seq !== this.requerySeq) return;
+      if (seq !== this.requerySeq) {
+        closeAbandonedCursor();
+        return;
+      }
       // TASK-006 — only now (run succeeded + not superseded) record the
       // requery's source state for later distinct requests. Shallow copy of
       // the incoming filter model (the webview never mutates a posted model,

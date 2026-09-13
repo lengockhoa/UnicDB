@@ -322,39 +322,22 @@ export class QueryRunner {
     this.currentBatchedCancelDelivered = false;
     this.seamDelivered = false;
     this.loadMoreInFlight.clear();
-    // Đóng các batched cursor còn mở từ lần chạy trước (user chạy câu mới
-    // mà chưa fetch hết rows cũ). Pool Postgres max=1 — nếu không đóng,
-    // statement đầu của lần chạy này xếp hàng chờ client và fail sau
-    // connectionTimeoutMillis ("timeout exceeded when trying to connect").
-    const stale = this.results.filter(
-      (r) => r.status === "done" && r.batched && !r.cursorClosed,
-    );
-    for (const entry of stale) {
-      try {
-        await entry.batched!.close();
-      } catch {
-        // best-effort — cursor có thể đã đóng.
-      }
-      entry.cursorClosed = true;
-    }
-    const nextResults = statements.map((s, i) => ({
-      index: base + i,
-      sql: s.text,
-      status: "running" as StatementStatus,
-      durationMs: 0,
-      ...(append ? { runNo, runStmtNo: i + 1 } : {}),
-    }));
-    this.results = append ? [...this.results, ...nextResults] : nextResults;
-    onUpdate(this.results.slice());
-
-    const runPromise = this.executeAll(
-      statements,
-      onUpdate,
-      base,
+    // Root-cause fix (concurrency): claim the in-flight lock SYNCHRONOUSLY —
+    // before any await — so the `if (this.running)` guard above is atomic with
+    // the claim below. The prologue used to await the stale-cursor sweep
+    // BEFORE assigning `this.running`; an overlapping Run/browse invocation
+    // could then observe `running === null` inside that await window, pass the
+    // same guard, and clobber the lock. The result was two runs sharing
+    // `results`/`currentBatched` and one run's `finally` clearing the other's
+    // lock — a frozen busy UI plus the spurious "QueryRunner is already
+    // running" toast that a later browse surfaced.
+    const runPromise = this.runLocked(statements, onUpdate, {
       append,
+      base,
+      runNo,
       runPageSize,
       runUseLegacySql,
-    );
+    });
     this.running = runPromise;
     try {
       await runPromise;
@@ -372,6 +355,56 @@ export class QueryRunner {
       this.activeAdapter = null;
     }
     return this.results.slice();
+  }
+
+  /**
+   * Body of a `run()` that already holds `this.running`. Split out so the lock
+   * spans the ENTIRE prologue — stale-cursor sweep → results seed → the
+   * executeAll loop — instead of being claimed only after the sweep await.
+   */
+  private async runLocked(
+    statements: ParsedStatement[],
+    onUpdate: (results: StatementResult[]) => void,
+    p: {
+      append: boolean;
+      base: number;
+      runNo: number;
+      runPageSize: number | undefined;
+      runUseLegacySql: boolean | undefined;
+    },
+  ): Promise<void> {
+    // Đóng các batched cursor còn mở từ lần chạy trước (user chạy câu mới
+    // mà chưa fetch hết rows cũ). Pool Postgres max=1 — nếu không đóng,
+    // statement đầu của lần chạy này xếp hàng chờ client và fail sau
+    // connectionTimeoutMillis ("timeout exceeded when trying to connect").
+    const stale = this.results.filter(
+      (r) => r.status === "done" && r.batched && !r.cursorClosed,
+    );
+    for (const entry of stale) {
+      try {
+        await entry.batched!.close();
+      } catch {
+        // best-effort — cursor có thể đã đóng.
+      }
+      entry.cursorClosed = true;
+    }
+    const nextResults = statements.map((s, i) => ({
+      index: p.base + i,
+      sql: s.text,
+      status: "running" as StatementStatus,
+      durationMs: 0,
+      ...(p.append ? { runNo: p.runNo, runStmtNo: i + 1 } : {}),
+    }));
+    this.results = p.append ? [...this.results, ...nextResults] : nextResults;
+    onUpdate(this.results.slice());
+    await this.executeAll(
+      statements,
+      onUpdate,
+      p.base,
+      p.append,
+      p.runPageSize,
+      p.runUseLegacySql,
+    );
   }
 
   private async executeAll(

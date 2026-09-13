@@ -104,6 +104,7 @@ import { buildBrowseSelect, registerBrowseCommands } from "../browseCommands";
 
 interface FakeRunner {
   run: Mock;
+  isRunning: Mock;
 }
 
 interface FakePanel {
@@ -113,8 +114,9 @@ interface FakePanel {
   renderCalls: Array<{ results: StatementResult[]; header: string }>;
 }
 
-function makeFakeRunner(results: StatementResult[]): FakeRunner {
+function makeFakeRunner(results: StatementResult[], running = false): FakeRunner {
   return {
+    isRunning: vi.fn(() => running),
     run: vi.fn(async (_stmts: ParsedStatement[], onUpdate: (r: StatementResult[]) => void) => {
       onUpdate(results);
       return results;
@@ -236,6 +238,7 @@ describe("registerBrowseCommands", () => {
       database: "UnicDB",
     };
     const runner: FakeRunner = {
+      isRunning: vi.fn(() => false),
       run: vi.fn(async (_stmts: ParsedStatement[], onUpdate: (r: StatementResult[]) => void) => {
         onUpdate([
           {
@@ -300,6 +303,7 @@ describe("registerBrowseCommands", () => {
       order.push("setActive");
     });
     const runner: FakeRunner = {
+      isRunning: vi.fn(() => false),
       run: vi.fn(async (_stmts: ParsedStatement[], _onUpdate: (r: StatementResult[]) => void) => {
         order.push("runner.run");
         return [];
@@ -367,6 +371,7 @@ describe("registerBrowseCommands", () => {
       database: "UnicDB",
     };
     const runner: FakeRunner = {
+      isRunning: vi.fn(() => false),
       run: vi.fn(async (_stmts: ParsedStatement[], onUpdate: (r: StatementResult[]) => void) => {
         onUpdate([]);
         return [
@@ -442,6 +447,7 @@ describe("registerBrowseCommands", () => {
       database: "UnicDB",
     };
     const runner: FakeRunner = {
+      isRunning: vi.fn(() => false),
       run: vi.fn(async () => {
         throw new Error("runner boom");
       }),
@@ -483,6 +489,7 @@ it("#11 browse path applies qualifyKeywordTables — already-qualified SQL, no r
   (mgr as unknown as { getAdapter: () => Promise<unknown> }).getAdapter =
     vi.fn(async () => ({ listTables: listTablesSpy }));
   const runner: FakeRunner = {
+    isRunning: vi.fn(() => false),
     run: vi.fn(async (_stmts: ParsedStatement[], onUpdate: (r: StatementResult[]) => void) => {
       onUpdate([]);
       return [];
@@ -762,6 +769,7 @@ describe("registerBrowseCommands — TASK-BQ02-002 BigQuery wiring", () => {
       database: "proj-data",
     };
     const runner: FakeRunner = {
+      isRunning: vi.fn(() => false),
       run: vi.fn(async (_stmts: ParsedStatement[], onUpdate: (r: StatementResult[]) => void) => {
         onUpdate([
           {
@@ -818,6 +826,7 @@ describe("registerBrowseCommands — TASK-BQ02-002 BigQuery wiring", () => {
       async () => ({ listTables: listTablesSpy }),
     );
     const runner: FakeRunner = {
+      isRunning: vi.fn(() => false),
       run: vi.fn(async (_stmts: ParsedStatement[], onUpdate: (r: StatementResult[]) => void) => {
         onUpdate([]);
         return [];
@@ -885,5 +894,37 @@ describe("registerBrowseCommands — TASK-BQ02-002 BigQuery wiring", () => {
       (s) => listTablesSpy(s).then((rows) => rows.map((r) => r.name)),
     );
     expect(result.changed).toBe(false); // already qualified → no rewrite
+  });
+
+  it("#10 busy runner — browse short-circuits with an info message, no runner.run / setBusy", async () => {
+    const conn: ConnectionConfig = {
+      id: "c1",
+      name: "Test PG",
+      driver: "postgres",
+      host: "127.0.0.1",
+      port: 5432,
+      user: "UnicDB",
+      database: "UnicDB",
+    };
+    const mgr = makeFakeMgr({ activeId: "c1", active: conn });
+    // isRunning() === true — another run is in flight.
+    const runner = makeFakeRunner([], true);
+    const panel = makeFakePanel();
+    registerBrowseCommands({
+      mgr: mgr as unknown as ConnectionManager,
+      runner: runner as unknown as Parameters<typeof registerBrowseCommands>[0]["runner"],
+      panel: panel as unknown as Parameters<typeof registerBrowseCommands>[0]["panel"],
+    });
+    const fn = state.registeredCommands.get("UnicDB.browseTableData");
+    await fn!({ meta: { connection: conn, schema: "public", objectName: "users" } });
+
+    // A browse is a run: it must NOT enter runner.run (which would throw
+    // "QueryRunner is already running") and must NOT touch busy state.
+    expect(runner.run).not.toHaveBeenCalled();
+    expect(panel.setBusy).not.toHaveBeenCalled();
+    expect(panel.render).not.toHaveBeenCalled();
+    expect(state.errorMessages).toEqual([]);
+    const info = state.infoMessages.filter((m) => /already running/i.test(m));
+    expect(info.length).toBeGreaterThanOrEqual(1);
   });
 });

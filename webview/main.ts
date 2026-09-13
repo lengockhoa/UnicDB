@@ -353,6 +353,15 @@ let lastResultStatus: StatementResult["status"] | null = null;
  *  column-set changes for the same statement, not row count — row count is
  *  handled by append delta). */
 let lastColumnCount = -1;
+/** SQL of the statement last fully rendered through renderGrid. A change
+ *  here means a DIFFERENT statement now occupies the same tab slot (e.g.
+ *  browsing table B after table A at index 0), as opposed to an in-place
+ *  requery which deliberately keeps `r.sql` unchanged. Used to clear the
+ *  previous table's AG Grid filter model when the two tables happen to have
+ *  the same column count — otherwise `columnsChanged` stays false and a
+ *  stale filter (a column that does not exist on the new table) survives
+ *  and poisons the next WHERE composition. */
+let lastRenderedSql: string | null = null;
 /** AG Grid instance (one per webview lifecycle — re-used across re-renders). */
 let gridApi: GridApi | null = null;
 /** Per-statement loadMore gate model. Keyed by statement index. */
@@ -2421,6 +2430,13 @@ function renderGrid(): void {
   const previousRows = statementRows.get(activeTab) ?? [];
   const rowsGrew = r.result.rows.length > previousRows.length;
   const columnsChanged = specs.length !== lastColumnCount;
+  // A different statement now occupies this tab slot (e.g. browsing table B
+  // after table A), identified by its SQL rather than its column count — an
+  // in-place requery preserves `r.sql`, so this is false for the very
+  // requeries a filter is SUPPOSED to drive. Without this, switching between
+  // two tables of equal column count leaves `columnsChanged` false and the
+  // filter model from the previous table survives.
+  const statementChanged = lastRenderedSql !== null && lastRenderedSql !== r.sql;
 
   const model = ensureModel(activeTab);
   // TASK-ARP03-004 — a resultLimited statement has a closed cursor: force
@@ -2606,7 +2622,7 @@ function renderGrid(): void {
     // the two id spaces disjoint.
     highestAllocatedId = r.result.rows.length - 1;
     refreshUndoRedoButtons();
-  } else if (statementReset || columnsChanged || syncResult.isReset) {
+  } else if (statementReset || columnsChanged || statementChanged || syncResult.isReset) {
     // New data for the same statement (e.g. statementReset on terminal
     // status, or columnsChanged). Drop stale dirty edits and any rows
     // the user added locally — they no longer make sense for a fresh
@@ -2625,14 +2641,23 @@ function renderGrid(): void {
     // entries from the previous state would let undo read the wrong
     // row after a same-statement refresh, R3 finding #1).
     serverIndexByRowId.clear();
-    if (columnsChanged) {
-      // Column set changed → previous column filter is no longer valid.
-      // Clear the filter model (AG Grid keeps filters for surviving columns
-      // across a columnDefs swap) and re-poll the live grid state instead of
-      // trusting a local bool — a stale false here re-opens the loadMore
+    if (columnsChanged || statementChanged) {
+      // Column set changed OR a different statement now owns this slot →
+      // the previous column filter is no longer valid. Clear the filter
+      // model (AG Grid keeps filters for surviving columns across a
+      // columnDefs swap) and re-poll the live grid state instead of
+      // trusting a local bool — a stale false here re-opens the loadMore.
       gridApi!.setFilterModel(null);
-      gridApi!.setGridOption("columnDefs", colDefs);
       colFilterActive = gridApi!.isColumnFilterPresent();
+      // Drop any pending debounced filter requery so it cannot fire after
+      // this reset and re-apply the just-cleared filter to the new table.
+      if (filterRequeryTimer !== null) {
+        clearTimeout(filterRequeryTimer);
+        filterRequeryTimer = null;
+      }
+    }
+    if (columnsChanged) {
+      gridApi!.setGridOption("columnDefs", colDefs);
       lastColumnCount = specs.length;
     }
     // TASK-SCROLL-001 — `setGridOption("rowData", …)` resets the viewport
@@ -2814,6 +2839,9 @@ function renderGrid(): void {
   }
   lastRenderedIndex = activeTab;
   lastResultStatus = r.status;
+  // Advance the statement identity so the next render can tell an in-place
+  // requery (same SQL) from a different statement reusing this tab slot.
+  lastRenderedSql = r.sql;
 
   // Initial footer text.
   updateFooterNow();

@@ -265,4 +265,34 @@ describe("TASK-UX3-002 R4.5 — per-index cache rebasing", () => {
     expect((p as any).tableByStatement.size).toBe(1);
     expect((p as any).tableByStatement.get(0)).toEqual({ schema: "public", table: "users" });
   });
+
+  it("R4.5: closeTab keeps an EDITOR statement's parsed table (no browseLabel/label)", async () => {
+    // Regression: a normal Editor result carries neither browseLabel nor
+    // r.label. rebaseAfterClose used to derive identity ONLY from those, so
+    // after any tab close the map was empty and handleSaveEdits refused with
+    // "has no addressable table" even though the grid was editable. It must
+    // reparse each surviving statement's SQL, exactly like render() does.
+    const editorResults = [
+      {
+        index: 0,
+        sql: "SELECT * FROM public.accounts",
+        status: "done" as const,
+        durationMs: 1,
+      },
+      {
+        index: 1,
+        sql: "UPDATE public.orders SET total = 1 WHERE id = 2",
+        status: "done" as const,
+        durationMs: 1,
+      },
+    ] as StatementResult[];
+    const p = await makePanel(editorResults);
+    expect((p as any).browseLabel).toBeNull();
+    p.closeOthersTabs(1); // keep the UPDATE statement (now at panel index 0)
+    expect((p as any).tableByStatement.size).toBe(1);
+    expect((p as any).tableByStatement.get(0)).toEqual({
+      schema: "public",
+      table: "orders",
+    });
+  });
 });

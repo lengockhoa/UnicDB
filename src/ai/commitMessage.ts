@@ -41,18 +41,38 @@ export function buildCommitPrompt(input: CommitPromptInput): ChatMessage[] {
 /**
  * Render the commit chat messages as plain text for engines whose ACP prompt
  * accepts one string rather than a ChatMessage array. The role labels keep the
- * commit-only instruction and repository context distinct without coercing
- * objects to `[object Object]`.
+ * commit-only instruction and repository context distinct.
+ *
+ * Throws a structured Error if a `ChatContentPart` carries a non-string
+ * `text`/`imageUrl` or a `ChatMessage.content` is neither a string nor an
+ * array. Letting either case reach the template literal would silently
+ * stringify the object and emit `[object Object]` into the commit prompt.
+ * Pure commit prompts always carry plain string content, so the throw is a
+ * defence-in-depth check, not a hot path.
  */
 export function serializeCommitPrompt(messages: readonly ChatMessage[]): string {
   return messages
     .map((message) => {
-      const content =
-        typeof message.content === "string"
-          ? message.content
-          : message.content
-              .map((part) => part.text ?? part.imageUrl ?? "")
-              .join("");
+      let content: string;
+      if (typeof message.content === "string") {
+        content = message.content;
+      } else if (Array.isArray(message.content)) {
+        content = message.content
+          .map((part, index) => {
+            const text = part.text;
+            const imageUrl = part.imageUrl;
+            if (typeof text === "string") return text;
+            if (typeof imageUrl === "string") return imageUrl;
+            throw new Error(
+              `commit-gen: ChatContentPart[${index}].text/imageUrl must be a string`,
+            );
+          })
+          .join("");
+      } else {
+        throw new Error(
+          "commit-gen: ChatMessage.content must be string or string-part array",
+        );
+      }
       return `${message.role.toUpperCase()}:
 ${content}`;
     })

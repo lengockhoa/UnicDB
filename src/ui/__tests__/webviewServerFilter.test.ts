@@ -123,13 +123,13 @@ function selectState(args: {
 function rowsState(
   columns: string[],
   rows: Array<Array<unknown>>,
-  options: { batched?: boolean; rowCount?: number | null } = {},
+  options: { batched?: boolean; rowCount?: number | null; sql?: string } = {},
 ): Record<string, unknown> {
   return selectState({
     results: [
       {
         index: 0,
-        sql: "SELECT * FROM t",
+        sql: options.sql ?? "SELECT * FROM t",
         status: "done",
         result: {
           columns,
@@ -320,6 +320,40 @@ describeIfBundle("webview/main.ts bundle — TASK-005 server-side filter", () =>
       };
       expect(model.name!.typed).toBeUndefined();
       expect(model.name!.values).toEqual(["alpha", "zzz"]);
+    },
+  );
+
+  itIfBundle(
+    "15. switching to a different statement (same column count) clears the previous filter",
+    async () => {
+      // Regression: table A filtered on `depo_name`, then table B browsed at
+      // the SAME tab slot / column count. Before the fix, `columnsChanged`
+      // stayed false so the filter model survived; a later filter post would
+      // build a WHERE against a column table B does not have
+      // (`column "depo_name" does not exist`).
+      const { received } = loadBundle();
+      dispatchState(
+        rowsState(["id", "depo_name"], [[1, "Sophea"]], {
+          sql: "SELECT * FROM kpoint_redeem",
+        }),
+      );
+      await flushGridEvents();
+      const api = getGridApi();
+      expect(api).toBeTruthy();
+      api!.setFilterModel({ depo_name: { values: ["Sophea"] } });
+      await flushFilterDebounce();
+      expect(api!.isColumnFilterPresent()).toBe(true);
+
+      // New statement, SAME column count → columnsChanged is false.
+      dispatchState(
+        rowsState(["id", "note"], [[9, "x"]], {
+          sql: "SELECT * FROM kpoint_other",
+        }),
+      );
+      await flushGridEvents();
+
+      expect(api!.isColumnFilterPresent()).toBe(false);
+      expect(api!.getFilterModel()).toEqual({});
     },
   );
 });

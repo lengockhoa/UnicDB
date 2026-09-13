@@ -59,6 +59,11 @@ import {
   type CommitGenDeps,
   type OmpOneShot,
 } from "./ai/commitGenCommand";
+import {
+  answerCommitGenServerRequest,
+  driveCommitGenOneShot,
+  COMMIT_GEN_OMP_TIMEOUT_MS,
+} from "./ai/commitGenOmpOneShot";
 import { collectCommitDiff, pickRepository, getGitApi } from "./adapters/gitDiff";
 import type { AdapterFactory } from "./ai/tools/types";
 import type { AgentDeps } from "./ai/agent";
@@ -4183,7 +4188,15 @@ async function buildCommitGenOmpOneShot(
   const acpProcess = buildAcpDepsCreate(ompPath, cwd, [], modelId);
   let handlePromise: Promise<AcpProcessHandle> | null = null;
   const ensureHandle = (): Promise<AcpProcessHandle> => {
-    if (handlePromise === null) handlePromise = acpProcess.start();
+    if (handlePromise === null) {
+      // Auto-answer ACP server requests (session/request_permission) so an
+      // unattended commit-gen turn never blocks on a permission prompt that
+      // nobody can see. Without this the unbounded session/prompt never
+      // settles and the progress spinner hangs forever.
+      handlePromise = acpProcess.start({
+        onServerRequest: (call) => answerCommitGenServerRequest(call),
+      });
+    }
     return handlePromise;
   };
   const acp = adaptProcessToSession(acpProcess, ensureHandle);
@@ -4196,34 +4209,16 @@ async function buildCommitGenOmpOneShot(
   });
   return {
     async generate(prompt: string): Promise<string> {
-      let buffer = "";
-      let settled = false;
-      return await new Promise<string>((resolve, reject) => {
-        engine
-          .send(prompt, {
-            onDelta: (delta: string) => {
-              buffer += delta;
-            },
-            onDone: () => {
-              if (settled) return;
-              settled = true;
-              void engine.shutdown();
-              resolve(buffer);
-            },
-            onError: (msg: string) => {
-              if (settled) return;
-              settled = true;
-              void engine.shutdown();
-              reject(new Error(msg));
-            },
-          })
-          .catch((e: unknown) => {
-            if (settled) return;
-            settled = true;
-            void engine.shutdown();
-            reject(e);
-          });
+      // One settled outcome guaranteed: done → text, error → reject, or the
+      // bounded timeout below → reject. Never an indefinite pending promise.
+      const driver = driveCommitGenOneShot({
+        timeoutMs: COMMIT_GEN_OMP_TIMEOUT_MS,
+        onSettle: () => {
+          void engine.shutdown();
+        },
       });
+      void engine.send(prompt, driver.events).catch((e: unknown) => driver.fail(e));
+      return await driver.promise;
     },
   };
 }

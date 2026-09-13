@@ -938,3 +938,86 @@ describe("PostgresAdapter — ARP-05.1 resilience pins (TASK-ARP05-001)", () => 
     await adapter.close();
   });
 });
+
+describe("PostgresAdapter — cursor EOF finalize (transaction must not leak)", () => {
+  it("short-batch EOF (FETCH < 500) CLOSEs the cursor + COMMITs before releasing the client", async () => {
+    // Regression: both EOF branches set `state = "eof"` BEFORE calling
+    // finalize(). finalize's guard treated `eof` as "already finalized" and
+    // skipped CLOSE + COMMIT, returning the pooled client with its
+    // BEGIN-opened transaction still live (a later save-flow BEGIN on that
+    // reused client would be a no-op). 750 rows is the canonical trigger:
+    // batch 1 = 500 (state stays "open"), batch 2 = 250 (this path).
+    queue.push({ rows: [{ "?column?": 1 }] }); // connect probe
+    queue.push({ rows: [] }); // BEGIN
+    queue.push({ rows: [] }); // DECLARE CURSOR
+    queue.push({ rows: [], fields: [{ name: "id" }] }); // FETCH 0 (columns)
+    const rows250 = Array.from({ length: 250 }, (_, i) => [i]);
+    queue.push({ rows: rows250 }); // FETCH 500 → 250 rows ⇒ EOF
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+
+    const cursorClient: FakeClient = {
+      query: vi.fn(() => popNext()),
+      release: vi.fn(),
+      processID: 555,
+    };
+    lastPool().connect = vi.fn(() => Promise.resolve(cursorClient));
+
+    const run = await adapter.runQuery("SELECT id FROM big");
+    expect(run.batched).toBeDefined();
+
+    const batch = await run.batched!.fetchBatch();
+    expect(batch).toHaveLength(250);
+
+    const calledWith = (prefix: string): boolean =>
+      cursorClient.query.mock.calls.some(
+        (c) => typeof c[0] === "string" && c[0].startsWith(prefix),
+      );
+    // The transaction must be closed on EOF: CLOSE + COMMIT before release.
+    expect(calledWith("CLOSE")).toBe(true);
+    expect(calledWith("COMMIT")).toBe(true);
+    // Released (not destroyed) exactly once, back to the pool.
+    expect(cursorClient.release).toHaveBeenCalledTimes(1);
+    expect(cursorClient.release).toHaveBeenCalledWith(false);
+
+    await adapter.close();
+  });
+});
+
+describe("PostgresAdapter — multi-statement failure rolls back before release", () => {
+  it("a failing statement in BEGIN;…;COMMIT; issues ROLLBACK and releases clean (no pool poison)", async () => {
+    // Regression: the save flow bundles `BEGIN; <stmts>; COMMIT;` through the
+    // non-cursor multi-statement branch. A mid-batch failure aborted the
+    // transaction and rejected the loop, but the finally released the pooled
+    // client WITHOUT rolling back — pg-pool does not reset session state on
+    // release, so the next reuse of that client failed with "current
+    // transaction is aborted, commands ignored until end of transaction
+    // block". A plain ROLLBACK (best-effort) before release fixes it.
+    queue.push({ rows: [{ "?column?": 1 }] }); // connect probe
+    queue.push({ rows: [] }); // BEGIN
+    queue.push(new Error("syntax error at or near \"UPDTE\"")); // failing stmt
+    queue.push({ rows: [] }); // ROLLBACK (best-effort recovery)
+    const adapter = new PostgresAdapter(cfg(), "pw");
+    await adapter.connect();
+
+    const client: FakeClient = {
+      query: vi.fn(() => popNext()),
+      release: vi.fn(),
+      processID: 321,
+    };
+    lastPool().connect = vi.fn(() => Promise.resolve(client));
+
+    await expect(
+      adapter.runQuery("BEGIN;\nUPDTE t SET a = 1;\nCOMMIT;"),
+    ).rejects.toThrow(/syntax error/);
+
+    // Recovery ROLLBACK ran on the SAME client before it went back to the pool.
+    const rollbackIdx = client.query.mock.calls.findIndex((c) => c[0] === "ROLLBACK");
+    expect(rollbackIdx).toBeGreaterThanOrEqual(0);
+    expect(client.release).toHaveBeenCalledTimes(1);
+    expect(client.release).toHaveBeenCalledWith(); // clean release, not destroyed
+    expect(client.release).not.toHaveBeenCalledWith(true);
+
+    await adapter.close();
+  });
+});

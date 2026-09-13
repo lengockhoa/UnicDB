@@ -1,5 +1,19 @@
 # STATUS — 2026-09-08 (cycle AGT-UI shipped → v1.53.25 + cleanup pass → cbf277a)
 
+## IN FLIGHT — 2026-09-13 (results-grid bug family)
+- Fixed 8 root-cause bugs (uncommitted, verified; all with RED→GREEN regression tests):
+  1. QueryRunner lock race (`src/core/queryRunner.ts` `runLocked`).
+  2. Stale AG Grid filter on statement switch (`webview/main.ts` `statementChanged`).
+  3. Requery abandoned-cursor leak (`src/ui/resultsPanel.ts` `closeAbandonedCursor`).
+  4. Browse busy guard (`src/ui/browseCommands.ts`).
+  5. `loadMore` panel-vs-runner index desync after tab close — now keys the runner call by the statement's stable `index` and merges only that entry back (closed tabs stay closed).
+  6. Postgres short-batch EOF skipped CLOSE + COMMIT, returning a pooled client with a live transaction (`src/adapters/postgres.ts` `finalize` guard no longer treats `eof` as finalized).
+  7. `rebaseAfterClose` dropped editor table identity (no `browseLabel`/`label`) → save-edits refused after any tab close; now reparses SQL via `parseFromClause` like `render()`.
+  8. Postgres multi-statement `BEGIN;…;COMMIT;` failure released a client in an aborted transaction (pool poison); now best-effort ROLLBACK before release.
+- Verification: typecheck + compile clean; `npm test` 4151 passed / 4 skipped / 1 failed — the 1 failure is pre-existing `releaseHygiene` (`package.json` 1.53.45 vs untouched `package-lock.json` 1.53.44).
+- **DEFERRED:** no-PK `ctid` delete-save warning (`src/core/saveStatements.ts:488,716`) — needs a product decision on safe row addressing; not a hang.
+- **Known pre-existing flaky:** `webviewMultiRunTabs.test.ts` emits a caught-after-teardown timer warning (file still passes) — separate triage.
+
 ## Current state
 - **Cycle AGT-UI shipped as v1.53.25** on 2026-09-08. GitHub + Marketplace + `.vsix` artifact all live.
 - **Cleanup pass committed on 2026-09-08** as `cbf277a` on `main`, pushed to `origin/main`. 4 of ~10 queued minor findings resolved; typecheck clean, full test suite green (4026 passed / 4 skipped / 0 failed across 273 files). No patch release — none of the fixes are user-visible or security.

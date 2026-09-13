@@ -10,10 +10,14 @@
 // Frozen strings (PLAN §1): see TOAST_NO_LITE / TOAST_NO_CHANGES /
 // TOAST_NO_BACKEND_CONFIG / ERROR_OMP_UNAVAILABLE.
 import type { AiSettings, AiConfig, AiEngine } from "./settings";
-import type { EngineChoice } from "./engineChoice";
+import type { AgentDetections, EngineChoice } from "./engineChoice";
 import type { OmpDetection } from "./omp/detect";
 import type { ProviderRequest, ProviderResult } from "./provider";
-import { buildCommitPrompt, sanitizeCommitMessage, serializeCommitPrompt } from "./commitMessage";
+import {
+  buildCommitPrompt,
+  sanitizeCommitMessage,
+  serializeCommitPrompt,
+} from "./commitMessage";
 
 // ---- frozen strings ---------------------------------------------------------
 export const TOAST_NO_LITE =
@@ -23,7 +27,13 @@ export const TOAST_NO_CHANGES =
   "UnicDB: nothing to commit — this Git repo has no staged or unstaged changes. Stage or modify at least one file, then click again.";
 export const TOAST_NO_BACKEND_CONFIG =
   "Configure the AI backend (base URL + API key) in UnicDB AI Settings";
+export const ERROR_ENGINE_UNAVAILABLE_PREFIX = "UnicDB: ";
+export const ERROR_ENGINE_UNAVAILABLE_SUFFIX = " engine unavailable — ";
 export const ERROR_OMP_UNAVAILABLE_PREFIX = "UnicDB: omp engine unavailable — ";
+export const ERROR_NON_STRING_TEXT_BUILTIN =
+  "commit-gen: builtin provider returned non-string text";
+export const ERROR_NON_STRING_TEXT_OMP =
+  "commit-gen: omp one-shot returned non-string";
 
 // ---- structural types -------------------------------------------------------
 
@@ -54,7 +64,12 @@ export interface CommitGenDeps {
   /** Detect the local `omp` binary / version. */
   detectOmp(): Promise<OmpDetection>;
   /** Pure engine-resolution policy (GC-001 / engineChoice.ts). */
-  resolveEngine(input: { detection: OmpDetection; config: unknown | null }): EngineChoice;
+  resolveEngine(input: {
+    engine?: unknown;
+    detections?: AgentDetections;
+    detection?: OmpDetection;
+    config: unknown | null;
+  }): EngineChoice;
   /** Build the omp one-shot adapter with the selected Lite model. */
   buildOmpEngine(choice: EngineChoice, modelId: string): Promise<OmpOneShot>;
   /** Provider-port for the builtin path. Mirrors `createProviderClient(...).complete`. */
@@ -94,16 +109,15 @@ export interface CommitGenDeps {
  *   1. settings = loadSettings(); if null or lite.modelId empty → settings
  *      toast; if action picked → openSettings(); return.
  *   2. diff = collectDiff(); null → info toast; return.
- *   3. engine = settings.engine  (the global engine — same one the chat
- *      panel uses; no per-model override.)
- *        "omp"     → resolveEngine; if engine !== "omp" → error+hint; else
- *                    sanitize(await buildOmpEngine(choice).generate(prompt))
- *        "builtin" → loadConfig; null → settings toast; else
- *                    sanitize(builtinComplete(cfg, request).text)
- *        "claude-code" | "codex" → fall through to builtin (commit-gen
- *                    only ships omp + builtin today; UI exposes all four,
- *                    runtime falls back to builtin for the image-capable
- *                    agents so the sparkle still works for those users).
+ *   3. Resolve the engine via `resolveEngine({ engine: settings.engine, … })`.
+ *      The user's choice is the single source of truth:
+ *        - resolves to "omp"     → buildOmpEngine + oneShot.generate
+ *        - resolves to "builtin" → loadConfig + builtinComplete
+ *        - selected engine unavailable → showError with the engine-specific
+ *          install/update hint from resolveEngine (no silent fallback).
+ *   4. Defend the typed contract: both builtinComplete and oneShot.generate
+ *      MUST return a string. If a port ever violates it, surface a structured
+ *      Error rather than letting the object reach the sanitizer / input box.
  */
 export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<void> {
   // 1. Lite model must be configured.
@@ -128,13 +142,12 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
   // of truth — chat panel and the Generate Commit Message sparkle share it.
   // Per-model engine override was removed; the Lite section in the AI
   // Settings form no longer exposes an Engine dropdown.
-  //   "omp" → one-shot omp generate (hostMcp/ACP path)
-  //   "builtin" → provider.complete (OpenAI-compatible backend)
-  //   "claude-code" | "codex" → fall through to builtin (commit-gen only
-  //     ships omp + builtin; image-capable agents without a commit-gen
-  //     adapter still get a working sparkle via the OpenAI-compatible
-  //     backend).
-  const engine: AiEngine = settings.engine;
+  //   "omp"         → resolveEngine keeps it if the binary is installed.
+  //   "builtin"     → always honored; config may be missing (toast opens Settings).
+  //   "claude-code" / "codex" → no commit-gen adapter today; resolveEngine
+  //     returns builtin + an install hint so the user can see exactly why
+  //     their selection was rejected instead of being silently swapped.
+  const selectedEngine: AiEngine = settings.engine;
   const prompt = buildCommitPrompt({
     repoName: diff.repoName,
     ...(diff.branch !== undefined ? { branch: diff.branch } : {}),
@@ -144,15 +157,17 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
   let message = "";
   let rawProviderText = "";
   let cfg: AiConfig | null = null;
-  // Engine routing. The if/else shape intentionally pins a closed three-way
-  // classification so the validator (`aiSettingsErrors`) gates unknown values
-  // upstream — claude-code / codex / builtin all take the `else` branch today
-  // (commit-gen only ships omp + builtin adapters). If a future cycle adds a
-  // dedicated adapter for one of those engines, add the branch here AND
-  // update the JSDoc above to match.
-  if (engine === "omp") {
+  // Engine routing — closed three-way classification so the validator
+  // (`aiSettingsErrors`) gates unknown values upstream. If a future cycle
+  // adds a dedicated adapter for one of those engines, add the branch here
+  // AND update the JSDoc above to match.
+  if (selectedEngine === "omp") {
     const detection = await deps.detectOmp();
-    const choice = deps.resolveEngine({ detection, config: null });
+    const choice = deps.resolveEngine({
+      engine: selectedEngine,
+      detection,
+      config: null,
+    });
     if (choice.engine !== "omp") {
       const hint = choice.hint ?? "install omp";
       deps.showError(`${ERROR_OMP_UNAVAILABLE_PREFIX}${hint}`);
@@ -161,14 +176,19 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
     try {
       const oneShot = await deps.buildOmpEngine(choice, lite.modelId);
       const raw = await oneShot.generate(serializeCommitPrompt(prompt));
+      if (typeof raw !== "string") {
+        throw new Error(ERROR_NON_STRING_TEXT_OMP);
+      }
       rawProviderText = raw;
       message = sanitizeCommitMessage(raw);
     } catch (e) {
       deps.showError(`UnicDB: omp error — ${(e as Error).message ?? String(e)}`);
       return;
     }
-  } else {
-    // "builtin"
+  } else if (selectedEngine === "builtin") {
+    // resolveEngine is bypassed for "builtin" because the engine is always
+    // honored when selected — the only question is whether the global
+    // backend config is populated.
     cfg = await deps.loadConfig();
     if (cfg === null) {
       const action = await deps.showSettingsToast(
@@ -187,12 +207,68 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
         maxOutputTokens: 300,
         temperature: 0.2,
       });
+      if (typeof result.text !== "string") {
+        throw new Error(ERROR_NON_STRING_TEXT_BUILTIN);
+      }
       rawProviderText = result.text;
       message = sanitizeCommitMessage(result.text);
     } catch (e) {
       const err = e as Error & { bodySnippet?: string };
       const detail = err.bodySnippet ? `: ${err.bodySnippet}` : "";
       deps.showError(`UnicDB: provider error — ${err.message ?? String(e)}${detail}`);
+      return;
+    }
+  } else {
+    // "claude-code" | "codex" — commit-gen only ships omp + builtin today.
+    // resolveEngine hands us back "builtin" with a selected-engine install
+    // hint when the user's choice isn't usable, so we still run the request
+    // through the OpenAI-compatible backend AND tell them why their engine
+    // selection wasn't honored.
+    const cfgForChoice = await deps.loadConfig();
+    if (cfgForChoice === null) {
+      const action = await deps.showSettingsToast(
+        TOAST_NO_BACKEND_CONFIG,
+        ACTION_OPEN_SETTINGS,
+      );
+      if (action === ACTION_OPEN_SETTINGS) {
+        deps.openSettings();
+      }
+      return;
+    }
+    cfg = cfgForChoice;
+    const choice = deps.resolveEngine({
+      engine: selectedEngine,
+      detections: {},
+      config: cfg,
+    });
+    const hint = choice.hint;
+    const hintSuffix = hint ? ` (${hint})` : "";
+    try {
+      const result = await deps.builtinComplete(cfg, {
+        modelId: lite.modelId,
+        messages: prompt,
+        maxOutputTokens: 300,
+        temperature: 0.2,
+      });
+      if (typeof result.text !== "string") {
+        throw new Error(ERROR_NON_STRING_TEXT_BUILTIN);
+      }
+      rawProviderText = result.text;
+      message = sanitizeCommitMessage(result.text);
+      if (hint) {
+        deps.showError(
+          `${ERROR_ENGINE_UNAVAILABLE_PREFIX}${selectedEngine}${ERROR_ENGINE_UNAVAILABLE_SUFFIX}${hint}`,
+        );
+        // We still inject the sanitized message — the user explicitly asked
+        // for a generated git message and we can produce one. The toast is
+        // informational so they know their engine selection didn't take.
+      }
+    } catch (e) {
+      const err = e as Error & { bodySnippet?: string };
+      const detail = err.bodySnippet ? `: ${err.bodySnippet}` : "";
+      deps.showError(
+        `UnicDB: ${selectedEngine} commit-gen fell back to provider error — ${err.message ?? String(e)}${detail}${hintSuffix}`,
+      );
       return;
     }
   }
@@ -214,7 +290,7 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
     label: "commit-gen-empty",
     body: rawProviderText,
     context: {
-      engine,
+      engine: selectedEngine,
       baseUrl: cfg?.baseUrl ?? "",
       method: cfg?.method ?? "",
       // The exact request body so the user can compare against Kilo Code's

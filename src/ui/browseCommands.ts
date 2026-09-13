@@ -155,6 +155,17 @@ export function registerBrowseCommands(deps: RegisterBrowseDeps): void {
         return;
       }
       const { conn, schema, table } = resolved;
+      // Busy guard — a browse is a full run() through the shared QueryRunner.
+      // Firing one while another run is in flight would race the runner's
+      // single-run lock and surface `QueryRunner is already running` as a hard
+      // error toast. Mirror runStatements' friendly behaviour: tell the user
+      // and return without touching busy state or the panel.
+      if (runner.isRunning()) {
+        void vscode.window.showInformationMessage(
+          "UnicDB: a query is already running. Please wait for it to finish, then browse again.",
+        );
+        return;
+      }
       try {
         const active = mgr.getActive();
         if (!active || active.id !== conn.id) {

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.53.45] — 2026-09-10
+
+- Summary: Fix the Generate Commit Message spinner hanging forever, and honour `UnicDB.ai.engine` for that command. The SCM sparkle no longer hangs when the omp engine asks for tool permission, no longer silently rewrites non-string payloads to `[object Object]`, and now reports exactly why a non-builtin engine selection was rejected.
+- Files: `src/ai/commitGenCommand.ts`, `src/ai/commitGenOmpOneShot.ts`, `src/ai/commitMessage.ts`, `src/extension.ts`, `src/ai/__tests__/commitGenCommand.test.ts`, `src/ai/__tests__/commitGenOmpOneShot.test.ts`, `src/ai/__tests__/commitGenOmpOneShot.e2e.test.ts`, `src/ai/__tests__/commitGenOmpOneShot.live.test.ts`, `src/ai/__tests__/commitMessage.test.ts`, `CHANGELOG.md`, `package.json`.
+- Behaviour:
+  - **Hang fix.** The omp one-shot never registered an ACP server-request handler, so a `session/request_permission` from omp went unanswered; `session/prompt` is deliberately unbounded, so the turn never settled and the progress spinner hung. The one-shot now auto-answers every server request (deny — the commit prompt embeds the full repo context, so no tool is needed) and bounds the whole turn (120s) so it always settles with a real error instead of hanging.
+  - `runGenerateCommitMessage` now routes via `resolveEngine({ engine: settings.engine, … })` so `claude-code` / `codex` selections surface an engine-specific toast (install / update hint) instead of being silently swallowed.
+  - `serializeCommitPrompt` throws a structured `Error` if a `ChatContentPart.text`/`imageUrl` is not a string; `buildCommitGenOmpOneShot` ignores non-string deltas; `runGenerateCommitMessage` validates `typeof result.text === "string"` after both `builtinComplete` and `OmpOneShot.generate` so a misbehaving port can no longer leak `[object Object]` into the input box.
+  - New tests: `commitGenOmpOneShot` unit (10), deterministic end-to-end permission-hang regression (2), gated live smoke (`UnicDB_OMP_SMOKE=1`), `commitMessage` (serializeCommitPrompt happy-path + throws), and `commitGenCommand` Test #8 (builtin non-string), Test #9 (omp one-shot non-string), Test #10 (claude-code / codex fallback + hint).
+- Verification: `npx vitest run src/ai/__tests__/commitGenOmpOneShot.test.ts src/ai/__tests__/commitGenOmpOneShot.e2e.test.ts src/ai/__tests__/commitMessage.test.ts src/ai/__tests__/commitGenCommand.test.ts src/ui/__tests__/commitGenIntegration.test.ts` ✅ (121 tests across the related suites); live smoke `UnicDB_OMP_SMOKE=1` ✅.
+
 ## [Unreleased]
 
 - Summary: **Unify AI engine selection.** Drop per-model `engine` overrides

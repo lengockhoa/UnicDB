@@ -452,3 +452,188 @@ describe("ai/commitGenCommand — Test #7 omp down while lite.engine is omp", ()
     expect(deps.setInputBox).not.toHaveBeenCalled();
   });
 });
+
+// ============================================================================
+// Test #8 — defence: builtin provider returns a non-string `text`
+// ============================================================================
+describe("ai/commitGenCommand — Test #8 builtin returns non-string text", () => {
+  it("surfaces a structured Error and never writes the input box", async () => {
+    const settings = fakeSettings({ engine: "builtin", lite: { modelId: "lite" } });
+    const cfg = fakeConfig(settings);
+    const built = {
+      text: { junk: "object" }, // violates ProviderResult.text: string
+      toolCalls: [],
+      finishReason: "stop",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    } as unknown as ProviderResult;
+    const builtinComplete = vi.fn(fakeBuiltinComplete(built));
+    const setInputBox = vi.fn();
+    const showError = vi.fn();
+
+    const deps: CommitGenDeps = {
+      loadSettings: (async () => settings) as never,
+      loadConfig: (async () => cfg) as never,
+      detectOmp: (async () => ({ ok: false } as OmpDetection)) as never,
+      resolveEngine: ((_i: { detection: OmpDetection; config: unknown }) => ({
+        engine: "builtin",
+        requiresConfig: true,
+      })) as never,
+      buildOmpEngine: (async () => fakeOmpOneShot("")) as never,
+      builtinComplete: builtinComplete as never,
+      collectDiff: (async () => fakeDiff()) as never,
+      setInputBox,
+      showInfo: vi.fn(),
+      showError,
+      showSettingsToast: vi.fn().mockResolvedValue(undefined),
+      openSettings: vi.fn(),
+    };
+
+    await runGenerateCommitMessage(deps);
+
+    expect(builtinComplete).toHaveBeenCalledTimes(1);
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(showError.mock.calls[0][0]).toContain("non-string");
+    expect(setInputBox).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// Test #9 — defence: omp one-shot returns a non-string
+// ============================================================================
+describe("ai/commitGenCommand — Test #9 omp one-shot returns non-string", () => {
+  it("surfaces a structured Error and never writes the input box", async () => {
+    const settings = fakeSettings({ engine: "omp", lite: { modelId: "lite" } });
+    const detection: OmpDetection = { available: true, ok: true, path: "/usr/bin/omp", version: "18.0.1" };
+    const choice: EngineChoice = { engine: "omp", requiresConfig: false, path: "/usr/bin/omp", version: "18.0.1" };
+    const oneShot: OmpOneShot = {
+      generate: (async () => ({ oops: "object" }) as unknown as string),
+    };
+    const resolveEngine = vi.fn(() => choice);
+    const buildOmpEngine = vi.fn(async () => oneShot);
+    const setInputBox = vi.fn();
+    const showError = vi.fn();
+
+    const deps: CommitGenDeps = {
+      loadSettings: (async () => settings) as never,
+      loadConfig: (async () => fakeConfig(settings)) as never,
+      detectOmp: (async () => detection) as never,
+      resolveEngine: resolveEngine as never,
+      buildOmpEngine: buildOmpEngine as never,
+      builtinComplete: (async () => ({
+        text: "",
+        toolCalls: [],
+        finishReason: "stop",
+        usage: { inputTokens: 0, outputTokens: 0 },
+      })) as never,
+      collectDiff: (async () => fakeDiff()) as never,
+      setInputBox,
+      showInfo: vi.fn(),
+      showError,
+      showSettingsToast: vi.fn().mockResolvedValue(undefined),
+      openSettings: vi.fn(),
+    };
+
+    await runGenerateCommitMessage(deps);
+
+    expect(buildOmpEngine).toHaveBeenCalledTimes(1);
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(showError.mock.calls[0][0]).toContain("non-string");
+    expect(setInputBox).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// Test #10 — settings.engine === "claude-code" honored (falls back to
+// builtin + surfaces the engine-specific hint)
+// ============================================================================
+describe("ai/commitGenCommand — Test #10 settings.engine = claude-code / codex", () => {
+  it("claude-code: routes through builtinComplete AND emits the engine-specific toast", async () => {
+    const settings = fakeSettings({ engine: "claude-code", lite: { modelId: "lite" } });
+    const cfg = fakeConfig(settings);
+    const resolveEngine = vi.fn(() => ({
+      engine: "builtin",
+      requiresConfig: false,
+      hint: "npm i -g @anthropic-ai/claude-code",
+    }));
+    const builtinComplete = vi.fn(fakeBuiltinComplete({
+      text: "feat(api): via builtin fallback",
+      toolCalls: [],
+      finishReason: "stop",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    }));
+    const setInputBox = vi.fn();
+    const showError = vi.fn();
+    const showSettingsToast = vi.fn().mockResolvedValue(undefined);
+
+    const deps: CommitGenDeps = {
+      loadSettings: (async () => settings) as never,
+      loadConfig: (async () => cfg) as never,
+      detectOmp: (async () => ({ ok: false } as OmpDetection)) as never,
+      resolveEngine: resolveEngine as never,
+      buildOmpEngine: (async () => fakeOmpOneShot("")) as never,
+      builtinComplete,
+      collectDiff: (async () => fakeDiff()) as never,
+      setInputBox,
+      showInfo: vi.fn(),
+      showError,
+      showSettingsToast,
+      openSettings: vi.fn(),
+    };
+
+    await runGenerateCommitMessage(deps);
+
+    expect(resolveEngine).toHaveBeenCalledTimes(1);
+    expect(builtinComplete).toHaveBeenCalledTimes(1);
+    // The user's selection was honored in the sense that the engine setting
+    // was the input to resolveEngine — but the runtime routed through the
+    // builtin provider and surfaced a diagnostic toast with the install hint.
+    expect(setInputBox).toHaveBeenCalledTimes(1);
+    expect(setInputBox).toHaveBeenCalledWith("feat(api): via builtin fallback");
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(showError.mock.calls[0][0]).toContain("claude-code engine unavailable");
+    expect(showError.mock.calls[0][0]).toContain(
+      "npm i -g @anthropic-ai/claude-code",
+    );
+    expect(showSettingsToast).not.toHaveBeenCalled();
+  });
+
+  it("codex: same fallback contract, codex install hint surfaced", async () => {
+    const settings = fakeSettings({ engine: "codex", lite: { modelId: "lite" } });
+    const cfg = fakeConfig(settings);
+    const resolveEngine = vi.fn(() => ({
+      engine: "builtin",
+      requiresConfig: false,
+      hint: "npm i -g @openai/codex",
+    }));
+    const builtinComplete = vi.fn(fakeBuiltinComplete({
+      text: "feat(api): via codex fallback",
+      toolCalls: [],
+      finishReason: "stop",
+      usage: { inputTokens: 0, outputTokens: 0 },
+    }));
+    const setInputBox = vi.fn();
+    const showError = vi.fn();
+
+    const deps: CommitGenDeps = {
+      loadSettings: (async () => settings) as never,
+      loadConfig: (async () => cfg) as never,
+      detectOmp: (async () => ({ ok: false } as OmpDetection)) as never,
+      resolveEngine: resolveEngine as never,
+      buildOmpEngine: (async () => fakeOmpOneShot("")) as never,
+      builtinComplete,
+      collectDiff: (async () => fakeDiff()) as never,
+      setInputBox,
+      showInfo: vi.fn(),
+      showError,
+      showSettingsToast: vi.fn().mockResolvedValue(undefined),
+      openSettings: vi.fn(),
+    };
+
+    await runGenerateCommitMessage(deps);
+
+    expect(builtinComplete).toHaveBeenCalledTimes(1);
+    expect(setInputBox).toHaveBeenCalledWith("feat(api): via codex fallback");
+    expect(showError.mock.calls[0][0]).toContain("codex engine unavailable");
+    expect(showError.mock.calls[0][0]).toContain("npm i -g @openai/codex");
+  });
+});

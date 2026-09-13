@@ -1189,4 +1189,78 @@ describe("ResultsPanel — handleRequery strips one leading clause keyword (TASK
   });
 });
 
+// =============================================================================
+// loadMore index/array desync after tab close
+// =============================================================================
+//
+// closeTab splices ONLY the panel's `lastResults`; the runner's internal
+// array is untouched. So the panel position (`msg.index`) and the statement's
+// stable `index` diverge after a close, and the runner's returned array still
+// contains the closed statements. The old handler passed `msg.index` straight
+// to `runner.loadMore` (wrong cursor after a shift) and assigned the runner's
+// whole array back to `lastResults` (resurrecting every closed tab).
+describe("ResultsPanel — loadMore index/array desync after tab close", () => {
+  it("uses the statement's stable index and keeps closed tabs closed", async () => {
+    const stmtA: StatementResult = {
+      index: 0,
+      sql: "SELECT a FROM t",
+      status: "done",
+      result: { columns: ["a"], rows: [[1]], rowCount: 1, durationMs: 0 },
+      durationMs: 0,
+    };
+    const stmtB: StatementResult = {
+      index: 1,
+      sql: "SELECT b FROM t",
+      status: "done",
+      result: { columns: ["b"], rows: [[2]], rowCount: 1, durationMs: 0 },
+      durationMs: 0,
+    };
+    const loadMoreArgs: number[] = [];
+    const runner = {
+      loadMore: vi.fn(async (index: number): Promise<StatementResult[]> => {
+        loadMoreArgs.push(index);
+        const updatedB: StatementResult = {
+          ...stmtB,
+          result: {
+            columns: ["b"],
+            rows: [[2], [3]],
+            rowCount: 2,
+            durationMs: 0,
+          },
+        };
+        // The runner's internal array still holds BOTH statements.
+        return [stmtA, updatedB];
+      }),
+      cancel: vi.fn(async () => undefined),
+      isCancelled: () => false,
+    } as unknown as QueryRunner;
+    const panel = new ResultsPanel({ runner });
+    vscode.window.registerWebviewViewProvider(ResultsPanel.viewId, panel, {
+      webviewOptions: { retainContextWhenHidden: true },
+    });
+    panel.render([stmtA, stmtB], "hdr");
+    const fake = lastPanel.current!;
+
+    // Close statement index 0. The panel array now holds only stmtB (stable
+    // index 1) at PANEL position 0.
+    panel.closeTab(0);
+    expect((panel as any).lastResults.length).toBe(1);
+    fake.webview.postMessage.mockClear();
+
+    // The webview addresses Load More by panel position (0).
+    fake.webview.dispatch({ type: "loadMore", index: 0 });
+    for (let i = 0; i < 50; i++) await Promise.resolve();
+
+    // The runner must receive the STATEMENT's stable index (1), never the
+    // panel position (0) — 0 is the closed statement's cursor in the runner.
+    expect(loadMoreArgs).toEqual([1]);
+    // The closed tab stays closed: exactly one panel entry, holding stmtB's
+    // refreshed rows.
+    const results = (panel as any).lastResults as StatementResult[];
+    expect(results.length).toBe(1);
+    expect(results[0]!.index).toBe(1);
+    expect(results[0]!.result!.rows).toEqual([[2], [3]]);
+  });
+});
+
 

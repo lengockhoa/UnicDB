@@ -113,3 +113,57 @@ describe("ai/commitMessage — constants", () => {
     expect(COMMIT_MESSAGE_MAX_CHARS).toBe(600);
   });
 });
+
+describe("ai/commitMessage — serializeCommitPrompt", () => {
+  it("returns plain text for string content and preserves role labels", async () => {
+    const { serializeCommitPrompt } = await import("../commitMessage");
+    const out = serializeCommitPrompt([
+      { role: "system", content: "Be terse" },
+      { role: "user", content: "Diff:" },
+    ]);
+    expect(out).toBe("SYSTEM:\nBe terse\n\nUSER:\nDiff:");
+  });
+
+  it("renders typed text parts cleanly", async () => {
+    const { serializeCommitPrompt } = await import("../commitMessage");
+    const out = serializeCommitPrompt([
+      { role: "user", content: [{ type: "text", text: "alpha" }, { type: "text", text: "beta" }] },
+    ]);
+    expect(out).toBe("USER:\nalphabeta");
+  });
+
+  it("renders image_url parts via the imageUrl fallback", async () => {
+    const { serializeCommitPrompt } = await import("../commitMessage");
+    const out = serializeCommitPrompt([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "see " },
+          { type: "image_url", imageUrl: "https://x/y.png" },
+        ],
+      },
+    ]);
+    expect(out).toBe("USER:\nsee https://x/y.png");
+  });
+
+  it("throws a structured Error when a part carries a non-string text/imageUrl", async () => {
+    const { serializeCommitPrompt } = await import("../commitMessage");
+    expect(() =>
+      serializeCommitPrompt([
+        {
+          role: "user",
+          content: [{ type: "text", text: { junk: "object" } as unknown as string }],
+        },
+      ]),
+    ).toThrow(/ChatContentPart\[0\]\.text\/imageUrl must be a string/);
+  });
+
+  it("throws a structured Error when message.content is neither string nor array", async () => {
+    const { serializeCommitPrompt } = await import("../commitMessage");
+    expect(() =>
+      serializeCommitPrompt([
+        { role: "user", content: 42 as unknown as string },
+      ]),
+    ).toThrow(/must be string or string-part array/);
+  });
+});
