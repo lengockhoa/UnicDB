@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.46] — 2026-09-13
+
+- Summary: Ship the Generate Commit Message spinner-hang fix and the results-grid bug family. Marketplace 1.53.45 predates these fixes (published 2026-09-10); this bump republishes the corrected build.
+- Files: src/ai/commitGenOmpOneShot.ts, src/ai/commitGenCommand.ts, src/ai/commitMessage.ts, src/extension.ts, src/core/queryRunner.ts, src/adapters/postgres.ts, src/ui/resultsPanel.ts, src/ui/browseCommands.ts, webview/main.ts
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.46.vsix packaged
+
+---
+
 ## [1.53.45] — 2026-09-10
 
 - Summary: Fix the Generate Commit Message spinner hanging forever, and honour `UnicDB.ai.engine` for that command. The SCM sparkle no longer hangs when the omp engine asks for tool permission, no longer silently rewrites non-string payloads to `[object Object]`, and now reports exactly why a non-builtin engine selection was rejected.
