@@ -14,6 +14,12 @@
 - **DEFERRED:** no-PK `ctid` delete-save warning (`src/core/saveStatements.ts:488,716`) — needs a product decision on safe row addressing; not a hang.
 - **Known pre-existing flaky:** `webviewMultiRunTabs.test.ts` emits a caught-after-teardown timer warning (file still passes) — separate triage.
 
+## DEFERRED (this session, 2026-09-13 — next step after /compact)
+- Released **v1.53.45** (commit df180d5, pushed origin/main): Generate Commit Message spinner-hang fix (`src/ai/commitGenOmpOneShot.ts` — auto-answer ACP server requests + 120s bounded single-settle driver) + the 8-fix results-grid bug family. Full suite GREEN 4164/5 skipped/0 failed; package-lock now synced to 1.53.45 (releaseHygiene passes).
+- NEXT BUG-HUNT (user: "tiếp tục tìm bug và fix"): continue the results-grid family — candidates not yet swept: cancel/Stop teardown of a mid-flight requery, editor-tab (non-browse) save-edits after filter/order change, webview keybinding conflicts with new Cmd/Ctrl+V path, MySQL/MSSQL adapter cursor lifecycle parity with the postgres finalize/pool fixes.
+- STILL DEFERRED (product decision): no-PK `ctid` delete-save warning (`src/core/saveStatements.ts:488,716`) — safe row-addressing strategy, not a hang.
+- Known pre-existing flaky: `webviewMultiRunTabs.test.ts` timer-after-teardown warning (file still passes).
+
 ## Current state
 - **Cycle AGT-UI shipped as v1.53.25** on 2026-09-08. GitHub + Marketplace + `.vsix` artifact all live.
 - **Cleanup pass committed on 2026-09-08** as `cbf277a` on `main`, pushed to `origin/main`. 4 of ~10 queued minor findings resolved; typecheck clean, full test suite green (4026 passed / 4 skipped / 0 failed across 273 files). No patch release — none of the fixes are user-visible or security.

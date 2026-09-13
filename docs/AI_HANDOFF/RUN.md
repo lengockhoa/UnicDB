@@ -1,6 +1,6 @@
 Command: handoff-fullstack
-Goal: Results-grid clipboard — Cmd/Ctrl+C copy of cell/range/rows/column, Cmd/Ctrl+V paste (incl. Excel TSV), Save / Cmd/Ctrl+Enter persists the edits
-Base: main @ d955873 (v1.53.42)
+Goal: Continue bug-hunt + fix the Generate Commit Message hang (spinner forever)
+Base: main
 Phase: done
-Cursor: R4 CLOSEOUT COMPLETE 2026-09-10 — full `npm test` GREEN at closeout (279 files: 4134 passed, 4 skipped), satisfying the wave-boundary closeout gate; release commit cc81b71 = v1.53.43 with package.json/package-lock.json synchronized and UnicDB-1.53.43.vsix packaged successfully (abandoned worktrees removed before packaging). Reviewer verdicts unchanged: TASK-CLIP-001 APPROVED 41/41 · TASK-CLIP-002 APPROVED-WITH-MINOR 43/43 (historical wave-1 PARTIAL 8/9 resolved by CLIP-003 tiling fix 1b66032) · TASK-CLIP-003 APPROVED-WITH-MINOR 44/44 required gate · TASK-CLIP-004 APPROVED 32/32 — no changes_requested, no critical blockers. Completion-gate verification: indexed commit-routing slice `src/ai/commitGenCommand.ts:153-169` confirms selected `omp`, Lite model propagation, and serialized prompt routing; final repository state is clean at `26789d5` with tag `v1.53.43` pushed to `origin/main`.
+Cursor: 2026-09-13 — commit-gen omp one-shot hang FIXED + verified; results-grid bug family landed; released 1.53.45 at df180d5 pushed to origin/main. Full suite 4164 passed / 5 skipped / 0 failed.
 Next: none
