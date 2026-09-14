@@ -1,6 +1,6 @@
 # TASK-AICHAT-001 — Webview-layer fact-base: verify draft anchors, inventory chat webview files, gap list
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `handoff`
 - Reviewer: `code-reviewer`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (Local fact-base content), §6 AC2
@@ -98,3 +98,66 @@ out-of-scope-edit guard even though docs-only changes cannot fail it.)
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  Pre-write run of the anchor-verdict loop (note file absent), verbatim:
+  === V1 anchor bounds ===
+  ANCHOR-BOUNDS-OK
+  === V2 verdict anchors ===
+  MISSING VERDICT: aiChatPanelComposer\.ts:496[–-]504
+  (exit 1 — loop aborts on the first unresolved anchor range; expected, file did not exist yet)
+Verification Output: |
+  Post-write, all §Verification Commands (worktree /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-aichat-001):
+
+  === V1: anchor bounds ===
+  ANCHOR-BOUNDS-OK
+  === V2: 5 verdict anchors ===
+  ALL-5-VERDICTS-OK
+  === V3: >=20 file:line anchors ===
+  anchor-count=43
+  COUNT-OK
+  === V4: inventory 4 files ===
+  INVENTORY-OK
+  === V5: no placeholder prose ===
+  NO-PLACEHOLDER-OK
+  === V6: docs-only ===
+  DOCS-ONLY-OK
+
+  $ npm run typecheck
+  > UnicDB@1.53.46 typecheck
+  > tsc --noEmit
+  TYPECHECK_EXIT=0
+
+  Acceptance Criteria:
+  - [x] All 5 draft-cited webview anchors have confirms/corrects verdicts with quotes — all five
+        verdicts are `confirms`; zero `corrects` (note §1).
+  - [x] 4 webview chat files inventoried with role summaries + Glob sweep recorded incl. negative
+        results (§2).
+  - [x] 8 gaps with file:line (G1..G8), covering all 5 mandated leads (Shift+Enter in menu Enter
+        branches G1; keyup-only query-only mention detection G2; toolbar slash writing textarea.value
+        G3; innerText export announcing success without host confirmation G4; streaming render path
+        entry + message types §3e).
+  - [x] Streaming render path documented: `delta` (webview/aiChatPanelMain.ts:72-77, case 1964)
+        → `appendDelta` (1272-1320); terminal `assistant` case 1976-1991 → `appendAssistant`.
+  - [x] Facts-only, English, structured as input for TASK-004; no writes outside docs/ (V6).
+  - [x] All §Verification Commands pass; typecheck exit 0.
+
+  Milestone commit in worktree: `6b0bb95 milestone: webview fact-base note written + all 7 verification commands green` (211 lines added, note file only). No push; no commit outside the worktree.
+
+Status: PASS
+Note: |
+  All 5 draft anchors resolved to `confirms` — no anchor drift, so no `corrects` verdict exists;
+  this is a clean result, not a skipped check. Additional gaps G5 (aiChatPanelThread.ts is imported
+  by no production module; runtime uses the inline copies in aiChatPanelMain.ts), G6 (no
+  IME/composition guard), G7 (Ctrl/Cmd+Enter suppression is dropdown-state-dependent) and G8
+  (mention Enter/Tab silently closes on a token-less row) were recorded as further anchored facts.
+  Per the launch note, the mention-row attribute-read line is paraphrased in the note ("reads that
+  attribute back at lines 819-822") rather than pasted verbatim, to avoid re-triggering the
+  Secret Guard false positive. Runtime suites out of scope per task §Test Files (SPEC-ONLY docs
+  cycle); only `npm run typecheck` was run as the static gate. The note file added in this report
+  lives on the worktree branch; the orchestrator's copy-back step diffs the worktree against base.

@@ -102,3 +102,97 @@ accidental out-of-scope edits.)
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+Status: PASS
+Note: none
+
+Deliverable: `docs/AI_HANDOFF/notes/aichat-factbase-host.md` (new, 469 lines) in worktree
+`/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-aichat-002`, branch
+`handoff/task-aichat-002`, milestone commit `b461c6b`. No other file changed.
+
+### RED_OUTPUT (pre-state, before the note existed; same command block the task defines)
+
+```
+=== CMD1 anchor bounds ===
+ANCHOR-BOUNDS-OK
+exit=0
+=== CMD2 verdicts ===
+MISSING VERDICT: aiChatPanelCommands\.ts:1[–-]83
+exit=1        # loop aborts on the first missing verdict
+--- separate full sweep of all five ranges ---
+MISSING VERDICT: aiChatPanelCommands\.ts:1[–-]83
+MISSING VERDICT: aiChatPanel\.ts:1744[–-]1816
+MISSING VERDICT: aiChatPanelMessages\.ts:91[–-]106
+MISSING VERDICT: claudeCodeChatEngine\.ts:272[–-]279
+MISSING VERDICT: codexChatEngine\.ts:357[–-]364
+=== CMD4 count ===
+ugrep: warning: docs/AI_HANDOFF/notes/aichat-factbase-host.md: No such file or directory
+=== CMD5 ===
+MISSING GLOB SWEEP
+=== CMD7 docs-only ===
+DOCS-ONLY-OK
+```
+
+RED confirmed: CMD2/CMD4/CMD5 failed for the expected reason (deliverable absent). CMD1 and
+CMD7 passed pre-state by design (anchor line bounds and a clean docs-only tree are
+preconditions, not behavior under test).
+
+### Verification Output (fresh run after the note was written)
+
+```
+########## V1 ##########
+ANCHOR-BOUNDS-OK
+V1 exit=0
+########## V2 ##########
+V2 exit=0 (all 5 verdicts present)
+########## V3 ##########
+V3 exit=0 (all 4 engine rows present)
+########## V4 ##########
+V4 exit=0 count=33
+########## V5 ##########
+V5 exit=0 (glob sweep present)
+########## V6 ##########
+V6 exit=0 (no placeholder markers)
+########## V7 ##########
+DOCS-ONLY-OK
+V7 exit=0
+########## V8 typecheck ##########
+> UnicDB@1.53.46 typecheck
+> tsc --noEmit
+TYPECHECK_EXIT=0
+```
+
+8 of 8 commands pass. `npm run typecheck` exits 0 (no lint script exists in this repo).
+`git status --porcelain` is clean after the milestone commit; `git diff --name-only` against
+the previous commit lists only `docs/AI_HANDOFF/notes/aichat-factbase-host.md`.
+
+### Test-plan coverage (document-acceptance checks)
+
+| # | Type | Result |
+|---|---|---|
+| 1 | happy — Glob inventory | §1 records all eight `find` commands and their results, with a role + read-depth per file |
+| 2 | happy — anchor verdicts | §2 gives a confirms/corrects verdict with an exact quote for all 5 ranges (4 ranges corrected by 1–2 lines; substantive claims confirmed) |
+| 3 | happy — 4-engine matrix | §4 has exactly `builtin`/`omp`/`claudeCode`/`codex` × 8 named columns; every cell is `Verified (file:line)` or `absent`/`Unverified-internal` |
+| 4 | edge — absent surface | §5d and §1f record timeline/activity as `absent in current source` with the exact search terms; §3c does the same for export; no row claims unsupported capability |
+| 5 | edge — engine/command reconciliation | §7 item 1 records the `/engine builtin\|omp` parser (`src/ui/aiChatPanel.ts:1779–1781`) vs the four-engine protocol (`src/ui/aiChatPanelMessages.ts:102`) as fact, no proposed fix |
+| 6 | edge — failure path | §6 tabulates 14 distinct failure/terminal paths, each with trigger, user-visible outcome and `file:line` (≥4 required) |
+
+### Issues / deviations
+
+- Four of the five draft anchor ranges are off by 1–2 lines (`aiChatPanelCommands.ts:1–83`
+  for an 84-line file; `handleCommand` is `:1744–1817`; `AiChatPanelEngine` is `:92–107`;
+  claudeCode `resume` is `:273–281`; codex `resume` is `:358–365`). Recorded as
+  `corrects (actual: …)` per test case 2 rather than silently matching the draft.
+- The task's test-case 3 names `src/ai/engineChoice.ts:9–21` as the "real builtin selection
+  anchor". `:9–21` is the module doc-comment that names all four engines; the executable
+  selection is `AI_ENGINE_VALUES` at `:83–88` plus the `builtin` early-return at `:150–152`.
+  Both are cited in §1h.
+- `EXECUTOR_MODEL` is reported as the runtime identifier available to me (`bao-sonnet`). I
+  cannot verify the underlying provider model ID from inside the session; if the reviewer
+  needs a canonical ID, this field is the honest best-effort value, flagged as such.
+- No writes outside `docs/`; no commit outside the worktree; nothing pushed.

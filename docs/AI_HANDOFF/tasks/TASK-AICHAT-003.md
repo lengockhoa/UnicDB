@@ -1,6 +1,6 @@
 # TASK-AICHAT-003 — Extensive external research: VS Code, Copilot Chat, Cline, Continue, WAI-ARIA
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `handoff`
 - Reviewer: `code-reviewer`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (External research lane), §6 AC3
@@ -127,3 +127,108 @@ accidental out-of-scope edits.)
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+
+- **EXECUTOR_TOOL:** Claude Code (Agent tool, general-purpose / internet-research lane)
+- **EXECUTOR_MODEL:** `claude-sonnet-5` — inferred from `.ukit/storage/config.json`
+  (`defaultModel: claude-sonnet-5`; no separate default-subagent override configured, so the
+  general-purpose lane inherits the parent session model). The harness does not expose the
+  subagent's own model ID to the executor; this is the best available evidence, not a guess at a
+  different model.
+- **EXECUTOR_SUBAGENT:** general-purpose (WebSearch/WebFetch-capable lane per Discussion 2026-09-14)
+- **Deliverable:** `docs/AI_HANDOFF/notes/aichat-research-external.md` (new, only file written)
+- **Worktree:** `.worktrees/task-aichat-003` on branch `handoff/task-aichat-003`
+- **Commit:** `40df791 milestone: external research ledger Q01-Q22 with verified primary sources`
+
+### RED_OUTPUT (pre-state, pasted)
+
+`docs/AI_HANDOFF/notes/aichat-research-external.md` did not exist before this turn:
+
+```
+=== RED CHECK: note file present? ===
+ls: docs/AI_HANDOFF/notes/aichat-research-external.md: No such file or directory
+=== RED: run verification cmd 1 ===
+MISSING Q01
+```
+
+RED confirmed: verification command 1 exits non-zero with `MISSING Q01` before the write.
+
+### Verification Output (pasted full)
+
+```
+=== CMD1: Q01-Q22 headings ===
+PASS: all 22 headings
+=== CMD2: Verified-with-URL >=15 OR BLOCKED(network) ===
+Verified-with-URL lines: 25
+PASS (exit 0)
+=== CMD3: https URLs >=15 ===
+https URL lines: 53
+PASS (exit 0)
+=== CMD4: subjects ===
+PASS: all subjects
+=== CMD5: substitution ===
+PASS
+=== CMD6: no TBD/TODO ===
+PASS (exit 0)
+=== CMD7: docs-only ===
+DOCS-ONLY-OK
+=== CMD8: typecheck ===
+
+> UnicDB@1.53.46 typecheck
+> tsc --noEmit
+
+typecheck-exit=0
+```
+
+All 8 §Verification Commands pass.
+
+### Research depth (honest counts)
+
+- **Distinct URLs referenced:** 27 (24 fetched successfully; 3 attempted and recorded as HTTP 404).
+- **Q-blocks carrying `Verified-with-URL`:** 23 of 22+1 rows (Q01–Q21 verified at least in part;
+  Q22 is a synthesis row built only from fetched pages). Target was ≥15.
+- **`Could-not-verify` sub-parts (recorded, not hand-waved):** Q06 webview focus guidance,
+  Q07 send/newline keybinding, Q08 Cline `@`-mention path, Q10 (none), Q17 Continue in-IDE
+  streaming cancel — each lists the URL/query tried.
+
+### Network status (important, non-BLOCKED)
+
+- **`WebFetch`: WORKING.** Every `Verified-with-URL` row was actually fetched this session.
+- **`WebSearch`: NOT returning results.** Both attempted queries returned an empty result block
+  (the same failure signature the baseline recorded). Queries tried:
+  `"VS Code Chat participant API slash commands documentation code.visualstudio.com"` and
+  `"WAI-ARIA APG combobox pattern editable aria-activedescendant requirements"`.
+- Because `WebFetch` worked, research continued by fetching known primary doc URLs directly and by
+  reading each vendor's `sitemap.xml` (`code.visualstudio.com/sitemap.xml`,
+  `docs.cline.bot/sitemap.xml`) to discover correct paths instead of guessing — several initially
+  guessed URLs returned 404 and were corrected this way.
+- This is **not** a `BLOCKED(network)` terminal state: the ≥15 Verified-with-URL target was met
+  with real fetched sources, so no `BLOCKED(network)` marker was written to the ledger.
+
+### Subject substitution
+
+Resolved in the note's `## Subject substitution` section: the baseline's unnamed "three requested
+Marketplace extensions" are openly replaced by GitHub Copilot Chat, Cline, Continue + official
+VS Code surfaces, plus WAI-ARIA APG. The section states these are comparisons for design reasoning
+only and are not claims about, nor reconstructions of, the original unnamed extensions.
+
+### Status: PASS
+
+- [x] Q01–Q22 all answered in the required record format.
+- [x] ≥15 `Verified-with-URL` answers (23 Q-blocks; 27 distinct URLs, 24 fetched OK) with direct
+      real source pages the executor actually fetched. Not a BLOCKED(network) cycle.
+- [x] All five named subjects covered; comparative observations trace to composer, commands/context,
+      streaming, sessions, approvals/timeline, accessibility.
+- [x] Web/tool failures recorded per question (Q06, Q07, Q08, Q17) rather than globally hand-waved.
+- [x] Subject-substitution section present and resolves the baseline's dangling promise.
+- [x] All §Verification Commands pass; no writes outside `docs/`.
+
+### Note
+
+`WebSearch` is non-functional in this lane (empty result blocks) while `WebFetch` works; the note
+records this explicitly so downstream tasks (TASK-AICHAT-004/005/006) do not mistake the absent
+search results for a network outage. Highest-value comparators for the final spec: VS Code's
+**Stop and Send / Steer / Queue** run-turn model (Q10), Cline's **Checkpoint / Compare / Restore**
+timeline (Q13) and per-tool-call approval matrix (Q12), Continue's **role-vs-model** split (Q16),
+and the APG's focus-retention plus `aria-disabled`-for-discoverability guidance (Q21).

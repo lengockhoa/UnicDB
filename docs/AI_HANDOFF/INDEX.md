@@ -14,7 +14,7 @@ Prior cycle CLIPGRID archived at `INDEX_CLIP.md` / `PLAN_CLIPGRID.md` (4/4 done,
 
 | Task | Title | Status | Deps | Files | Reviewer |
 |------|-------|--------|------|-------|----------|
-| TASK-AICHAT-001 | Webview fact-base — verify draft anchors, inventory chat webview files, gap list | ready | none | docs/AI_HANDOFF/notes/aichat-factbase-webview.md (new) | unic-smart |
+| TASK-AICHAT-001 | Webview fact-base — verify draft anchors, inventory chat webview files, gap list | pending_review | none | docs/AI_HANDOFF/notes/aichat-factbase-webview.md (new) | unic-smart |
 | TASK-AICHAT-002 | Host/engine fact-base — protocol, sessions, permissions, streaming, 4-engine capability matrix | ready | none | docs/AI_HANDOFF/notes/aichat-factbase-host.md (new) | unic-smart |
 | TASK-AICHAT-003 | External research — VS Code, Copilot Chat, Cline, Continue, WAI-ARIA (Q01–Q22, evidence-labeled) | ready | none | docs/AI_HANDOFF/notes/aichat-research-external.md (new) | unic-smart |
 | TASK-AICHAT-004 | Draft upgraded composer/slash/mention/geometry-a11y sections (KBD/SLASH/MENTION/A11Y) | ready | TASK-AICHAT-001, TASK-AICHAT-002, TASK-AICHAT-003 | docs/AI_HANDOFF/notes/aichat-sections-composer.md (new) | unic-smart |
