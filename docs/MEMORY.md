@@ -59,6 +59,28 @@
   **GitHub Releases and VS Code Marketplace are kept in lockstep by this script** — every
   bump ships to both channels at the same version, no manual `git tag` / `gh release
   create` / `vsce publish` separated run.
+
+- **"1 git release = 1 Marketplace release" — non-negotiable, every bump (2026-09-15):**
+  NEVER bump the git version without publishing the matching Marketplace version. There are
+  **two** independent publishers, and either one satisfying the rule counts:
+  1. **CI (primary, no local PAT needed):** `.github/workflows/publish.yml` triggers on any
+     pushed `v*` tag and runs `vsce publish -p "$VSCE_PAT"` (repo secret). So a plain
+     `git push origin v<ver>` already publishes to the Marketplace. Many recent tags mis-read
+     as "publish failed" when actually the CI run succeeded (e.g. v1.53.47 published in 2m19s
+     — verify with `gh run list --workflow=publish.yml`, not the Gallery query, which lags a
+     few minutes after publish).
+  2. **Local (`npm run bump`):** `scripts/bump-version.mjs` step 6g publishes locally. PAT
+     resolution: `$VSCE_PAT` → `.secrets/.pat` → Keychain `vscode-vsce` (interactive only) →
+     bare `vsce`. Because the tag push in the same step also triggers CI, a local
+     "already published" rejection is EXPECTED and non-fatal — do not treat it as failure.
+  **AI rule:** after ANY version bump/tag push, confirm publish with
+  `gh run list --workflow=publish.yml --limit 3` (or the CI log line
+  `Published lengockhoa.UnicDB v<ver>.`). Do NOT run a bare `vsce publish` and do NOT
+  hand-edit `package.json`/`package-lock.json`/`CHANGELOG.md` separately — `npm run bump`
+  (now wired in `package.json`: `bump`, `bump:patch`, `bump:minor`, `bump:major`) does the
+  whole atomic sequence. This rule exists because a docs-only cycle (AICHAT) was first
+  handled with a manual bump and a manual tag push, which left the Marketplace step unclear
+  even though CI had actually published.
 - **AI engine source of truth:** `src/extension.ts` reads persisted `AiSettings.engine` from `AiConfigStore` before consulting the legacy `UnicDB.ai.engine` configuration fallback. Selecting `omp` in AI Settings therefore controls AI Chat; unavailable OMP explicitly falls back to builtin.
 
 ## Known Bugs & Root Causes

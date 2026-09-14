@@ -6,10 +6,12 @@
 //   2) sync package-lock.json       (npm install --package-lock-only)
 //   3) prepend a CHANGELOG.md entry  (with today's date + summary slot)
 //   4) typecheck + test
-//   5) package .vsix                 (npx vsce package)
-//   6) print the exact git + publish commands to run next
+//   5) package .vsix                 (npx vsce compile + package)
+//   6) atomic publish: commit → tag → push → GitHub release → Marketplace
 //
 // Usage:
+//   npm run bump                                 # auto-bump patch (atomic ship; use this)
+//   npm run bump:minor | bump:major              # minor / major bump
 //   node scripts/bump-version.mjs                # auto-bump patch (1.51.6 → 1.51.7)
 //   node scripts/bump-version.mjs minor          # auto-bump minor
 //   node scripts/bump-version.mjs major          # auto-bump major
@@ -322,9 +324,61 @@ if (skipPublish) {
   }
   console.log(`✓ GitHub release v${newVersion} created`);
 
-  // 6g. Marketplace publish (PAT is in macOS Keychain).
-  runHost("vsce", ["publish"]);
-  console.log(`✓ Published to VS Code Marketplace`);
+  // 6g. Marketplace publish.
+  //
+  // Two publishers can race here: pushing the tag in 6e triggers
+  // `.github/workflows/publish.yml` (CI publishes from the VSCE_PAT secret),
+  // and this step also publishes locally. vsce rejects a version that is
+  // already on the Marketplace, so a lost race must NOT be fatal.
+  //
+  // PAT resolution order:
+  //   1. $VSCE_PAT if the operator exported one.
+  //   2. `.secrets/.pat` (gitignored on-disk cache — the AI-runnable path; see
+  //      docs/MEMORY.md: the Keychain lookup hangs in non-interactive shells).
+  //   3. macOS Keychain `vscode-vsce` (interactive shells only).
+  //   4. bare `vsce publish` (works only if already logged in / CI context).
+  let pat = process.env.VSCE_PAT || "";
+  if (!pat) {
+    try {
+      const diskPat = readFileSync(resolve(ROOT, ".secrets/.pat"), "utf8").trim();
+      if (diskPat) {
+        pat = diskPat;
+        console.log("✓ using PAT from .secrets/.pat");
+      }
+    } catch {
+      /* not present — fall through */
+    }
+  }
+  if (!pat && process.platform === "darwin" && process.stdin.isTTY) {
+    const kc = spawnSync(
+      "security",
+      ["find-generic-password", "-s", "vscode-vsce", "-w"],
+      { encoding: "utf8" },
+    );
+    if (kc.status === 0 && kc.stdout.trim()) {
+      pat = kc.stdout.trim();
+      console.log("✓ using PAT from macOS Keychain (vscode-vsce)");
+    }
+  }
+  if (!pat) {
+    console.log("• no PAT found — falling back to logged-in vsce session (CI only)");
+  }
+  const publishRes = spawnSync(
+    "npx",
+    ["--no-install", "vsce", "publish", ...(pat ? ["-p", pat] : [])],
+    { stdio: "inherit", cwd: ROOT },
+  );
+  if (publishRes.status === 0) {
+    console.log(`✓ Published to VS Code Marketplace`);
+  } else {
+    // Most likely cause: CI already published this exact version after the tag
+    // push. That is success, not failure — report and continue.
+    console.log(
+      `• local vsce publish exited ${publishRes.status}. If CI (tag push) already ` +
+        `published v${newVersion}, this is expected. Verify:` +
+        `\n    https://marketplace.visualstudio.com/items?itemName=lengockhoa.UnicDB`,
+    );
+  }
 }
 
 console.log(`\n✓ bump-version: ${oldVersion} → ${newVersion} complete`);
