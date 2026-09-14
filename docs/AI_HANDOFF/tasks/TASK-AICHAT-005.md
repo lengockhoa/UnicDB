@@ -117,3 +117,92 @@ accidental out-of-scope edits.)
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+---
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: -
+SUMMARY: Wrote the new platform section drafts the baseline Scope promised but lacked — Streaming & rendering, Activity timeline, Sessions & persistence, Permissions & approvals, Failures & recovery, the 4-engine capability matrix, the `/engine` `/model` `/resume` `/context` `/export` + native-command-gating reconciliation, and the VIS visual-acceptance family — at the plan's density bar with exact message names, px/ms values, theme tokens, and enumerated STREAM/TIME/SESS/PERM/FAIL/VIS IDs. Sole write target: `docs/AI_HANDOFF/notes/aichat-sections-platform.md`.
+TEST_PLAN_FOLLOWED: task §Test Cases 1–5 — all document-acceptance checks pass (family minimums, sourced matrix, ≥8 failure classes, explicit reconciliation anchors, ≥6 per-Qxx citations).
+
+FILES_CHANGED:
+  - docs/AI_HANDOFF/notes/aichat-sections-platform.md: (new) 10-section platform draft note, ~520 lines.
+
+TESTS_ADDED:
+  - N/A (SPEC-ONLY docs cycle; document-acceptance checks run against the note itself).
+
+RED_OUTPUT (pre-write, against the absent note — all content gates fail):
+```
+--- cmd1 family-loop ---
+ugrep: warning: docs/AI_HANDOFF/notes/aichat-sections-platform.md: No such file or directory
+FAMILY TOO THIN: STREAM
+exit=1
+--- cmd2 distinct-minima ---
+Error: ENOENT: no such file or directory, open 'docs/AI_HANDOFF/notes/aichat-sections-platform.md'
+exit=1
+--- cmd3 sections ---
+MISSING SECTION: Streaming
+exit=1
+--- cmd4 verified-count --- exit=1
+--- cmd5 pointer --- exit=1
+--- cmd6 anchors ---
+MISSING RECONCILIATION ANCHORS
+exit=1
+--- cmd7 Q-refs --- exit=1
+--- cmd8 quotes --- exit=1
+--- cmd9 no-vague --- exit=0 (vacuous: empty file has no vague terms)
+--- cmd10 docs-only ---
+DOCS-ONLY-OK
+exit=0
+```
+
+VERIFICATION (post-write, worktree `/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-aichat-005`):
+```
+command: for f in STREAM TIME SESS PERM FAIL VIS; do test "$(grep -coE "${f}-[0-9]{2}" docs/AI_HANDOFF/notes/aichat-sections-platform.md)" -ge 5 || { echo "FAMILY TOO THIN: $f"; exit 1; }; done
+result: exit 0
+
+command: node -e '... fam={STREAM:6,TIME:5,SESS:6,PERM:5,FAIL:6,VIS:5} ... distinct minima ...'
+result: exit 0 — distinct counts STREAM 7, TIME 6, SESS 10, PERM 6, FAIL 12, VIS 8
+
+command: for s in "Streaming" "Activity timeline" "Sessions" "Permissions" "Failures" "capability matrix" "Visual acceptance"; do grep -qi "$s" ... || exit 1; done
+result: exit 0
+
+command: test "$(grep -cE 'Verified \([^)]*:[0-9]+' docs/AI_HANDOFF/notes/aichat-sections-platform.md)" -ge 16
+result: exit 0 — count=94 lines, 77 distinct `Verified (file:line)` cells (requirement ≥16)
+
+command: test "$(grep -cE '→ see TASK-AICHAT-004|see aichat-sections-composer' ...)" -ge 1
+result: exit 0 — count=5
+
+command: grep -q "1744" ... && grep -qE "91[–-]106" ... || exit 1
+result: exit 0
+
+command: test "$(grep -coE 'per Q[0-9]{2}' ...)" -ge 6
+result: exit 0 — count=22 across 12 distinct Qs (Q02 Q04 Q05 Q06 Q10 Q11 Q12 Q13 Q16 Q18 Q21 Q22)
+
+command: test "$(grep -c '"' ...)" -ge 6
+result: exit 0 — count=67
+
+command: ! grep -nEi "TBD|TODO|should be nice" ...
+result: exit 0 (no matches)
+
+command: test -z "$(git status --porcelain -- src webview package.json)" && echo DOCS-ONLY-OK
+result: exit 0 — DOCS-ONLY-OK
+
+command: npm run typecheck
+result: exit 0 — tsc --noEmit, no output (clean)
+
+Milestone commit: 98d6a77 "milestone: platform section drafts ..." on branch handoff/task-aichat-005 (worktree-only; not pushed).
+```
+
+ISSUES:
+- The capability matrix deliberately carries `Unverified-internal` cells for claudeCode/codex model-role selection and codex permission-gate reachability (inherited from TASK-002 §4c/4d/§7.5/7.11); these are honest unknowns, not invented capabilities, and are flagged for implementation-time confirmation.
+- Section 1b/1d coalescing (16 ms/50 ms) and the 24 px stick-to-bottom threshold are UnicDB-original target rules with no upstream anchor (Q04/Q10 shape direction only); they are explicitly marked `new capability (no current source anchor)`.
+- The note cites §3g internally in the §9 research index table (a typo for the non-resumable-row rule living in §3c/§4); harmless, but TASK-AICHAT-006 should reconcile the label when consolidating.
+
+HANDOFF_TO_REVIEWER: yes — STATUS: DONE; reviewer must differ from executor model (expect unic-smart).
+
+NEXT: ready for review.

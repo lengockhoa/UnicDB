@@ -111,3 +111,69 @@ accidental out-of-scope edits.)
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: -
+SUMMARY: Wrote `docs/AI_HANDOFF/notes/aichat-sections-composer.md` (446 lines) — four upgraded section drafts (composer keyboard state machine, slash menu, mention menu, autocomplete geometry+a11y) merging the three wave-1 fact-bases and external research into the baseline draft's contracts, plus a 15-entry current→target delta ledger. No other file touched; RED confirmed before the write.
+TEST_PLAN_FOLLOWED: task §4 (Test Cases 1–5) + inline plan §3 density rows; all 11 §Verification Commands run.
+
+FILES_CHANGED:
+  - docs/AI_HANDOFF/notes/aichat-sections-composer.md: new file, the task's sole write target (worktree commit 45009f4 on branch handoff/task-aichat-004)
+
+TESTS_ADDED:
+  - Docs-only cycle — no executable test file. Document-acceptance checks are the task's §Verification Commands (family loops + distinct-minima + value/ID greps + docs-only guard + typecheck), run against the note itself.
+
+RED_OUTPUT (pre-state, before the note existed — captured verbatim):
+```
+=== RED: family loop ===
+FAMILY TOO THIN: KBD
+RED-exit:0
+=== RED: distinct checker ===
+node:fs:440
+    return binding.readFileUtf8(path, stringToFlags(options.flag));
+           ^
+Error: ENOENT: no such file or directory, open 'docs/AI_HANDOFF/notes/aichat-sections-composer.md'
+    at node:fs:440:14
+  path: 'docs/AI_HANDOFF/notes/aichat-sections-composer.md'
+Node.js v22.22.1
+RED-distinct-exit:1
+```
+
+Verification Output (all commands run fresh in the worktree after the write):
+```
+$ for f in KBD SLASH MENTION A11Y; do test "$(grep -coE "${f}-[0-9]{2}" ....md)" -ge 6 || { echo "FAMILY TOO THIN: $f"; exit 1; }; done
+C1-OK
+$ node -e '...distinct minima {KBD:8,SLASH:8,MENTION:10,A11Y:6}...'
+C2-OK
+$ grep -qiE "state machine|states" ....md
+C3-OK
+$ test "$(grep -c 'current:' ....md)" -ge 10        # actual: 16
+C4-OK
+$ test "$(grep -coE 'per Q[0-9]{2}' ....md)" -ge 8  # actual: 23
+C5-OK
+$ for v in "420px" "280px" "40vh" "44px" "12px" "16px" "13px" "11px" "500 ms" "150 ms" "200 ms"; do grep -q "$v" ....md || exit 1; done
+C6-OK
+$ for i in 01..07; do grep -q "KBD-$i" ....md || exit 1; done
+C7-OK
+$ for i in 01..10; do grep -q "MENTION-$i" ....md || exit 1; done
+C8-OK
+$ ! grep -nEi "TBD|TODO|should be nice" ....md
+C9-OK
+$ test -z "$(git status --porcelain -- src webview package.json)" && echo DOCS-ONLY-OK
+DOCS-ONLY-OK
+$ npm run typecheck
+> UnicDB@1.53.46 typecheck
+> tsc --noEmit
+C11-OK
+```
+11/11 commands exit 0. Distinct family counts: KBD 10, SLASH 9, MENTION 12, A11Y 8. Distinct
+Q references: Q02 Q06 Q07 Q08 Q09 Q10 Q14 Q15 Q19 Q20 Q21 Q22 (12). `supersedes:` rationale
+markers: 4 (3 rules + 1 ledger line). Delta entries: 15, covering every required minimum
+(Shift-in-menu bug, keyup-only detection, textarea.value-direct slash insertion, innerText
+export hand-off to 005, uncorrelated mention requests, plus 10 more).
+
+Note: DOCS-ONLY held — the only write is `docs/AI_HANDOFF/notes/aichat-sections-composer.md`; `git status --porcelain -- src webview package.json` is empty and `typecheck` is clean. TASK-AICHAT-005-owned topics are cross-referenced (`→ see TASK-AICHAT-005 section`), never duplicated. Reviewer: `handoff.reviewer.enabled` path — task set to `pending_review` in `docs/AI_HANDOFF/INDEX.md`.
