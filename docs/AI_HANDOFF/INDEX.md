@@ -1,46 +1,33 @@
 # Handoff INDEX
 
-## Cycle CLIPGRID — results-grid clipboard copy/paste + Excel paste + Cmd/Ctrl+Enter save
+## Cycle AICHAT — research-complete rewrite of docs/AI_CHAT_REDESIGN.md
 
-Base: main @ d955873 (v1.53.42, working tree at plan time; `docs/WORKLOG.md` dirty —
-unrelated doc edit). Cycle kicked off 2026-09-10: user wants spreadsheet clipboard
-semantics on the data results table — select cell/range/rows/column → Cmd/Ctrl+C copies
-the TSV matrix; Cmd/Ctrl+V pastes the copied matrix at a destination cell; Excel
-tab/newline clipboard paste lands as grid edits; Save or Cmd/Ctrl+Enter persists.
+Base: main @ b7f49fc (2026-09-14). SPEC-ONLY cycle (P0, user-confirmed): the single deliverable
+is `docs/AI_CHAT_REDESIGN.md` rewritten into a research-complete, implementation-ready spec.
+NO runtime source changes; every task writes only under `docs/`. User mandates: (1) extensive
+internet research folded into the spec; (2) "as much detail as possible" — far denser than the
+70-line baseline draft. The draft's dangling promise (three unnamed Marketplace extensions,
+research blocked) is resolved by documented substitution: GitHub Copilot Chat, Cline, Continue
++ official VS Code docs / WAI-ARIA APG.
 
-Prior cycle RES2ROW (TASK-COLLAPSE-002, done, released v1.53.40) archived at
-`INDEX_RES2ROW.md` / `ACTIVE_RES2ROW.md` / `PLAN_RES2ROW.md`.
-
-Grounding note: the copy/paste/save pipeline largely EXISTS (TASK-501/502/RANGE-001/503
-heritage). This cycle pins it with tests and closes THREE real gaps: Cmd/Ctrl+V keyboard
-wiring via a host clipboard read round-trip, the never-read `suppressNextCellClickClear`
-stale-range defect, and the active-range tiling defect in `pasteIntoRange`
-(`webview/main.ts:3464` pads overhang columns with `""`, so a 1×1 clipboard does not tile
-across a 2×2 active range) that TASK-CLIP-002's wave-1 run exposed.
+Prior cycle CLIPGRID archived at `INDEX_CLIP.md` / `PLAN_CLIPGRID.md` (4/4 done, v1.53.45).
 
 | Task | Title | Status | Deps | Files | Reviewer |
 |------|-------|--------|------|-------|----------|
-| TASK-CLIP-001 | Copy matrix shapes — bundle + pure test pin (1×1, N×M, rows, column strip, hidden cols, no-selection guard) | done (approved) | none | src/ui/__tests__/webviewClipboardCopy.test.ts (new), src/ui/__tests__/resultsGridModelEdit.test.ts | unic/unic-smart |
-| TASK-CLIP-002 | Paste matrix semantics — Excel TSV → grid edits; bundle + pure test pin (tests-only; PARTIAL report preserved) | done (approved_minor) | none | src/ui/__tests__/webviewClipboardPaste.test.ts (new) | unic/unic-smart |
-| TASK-CLIP-003 | Webview: `pasteIntoRange` active-range column tiling fix (turns the CLIP-002 RED case GREEN) + Cmd/Ctrl+V keydown wiring via readClipboard/clipboardText host round-trip + stale-range clear fix | done (approved_minor) | none | webview/main.ts, src/ui/messages.ts, src/ui/resultsPanel.ts, src/ui/__tests__/webviewKeybinding.test.ts | unic/unic-smart |
-| TASK-CLIP-004 | Save persistence pin — paste → Cmd/Ctrl+Enter posts one saveEdits batch; ok clears highlights; refused shows banner | done (approved) | TASK-CLIP-003 | src/ui/__tests__/webviewClipboardSave.test.ts (new) | unic/unic-smart |
+| TASK-AICHAT-001 | Webview fact-base — verify draft anchors, inventory chat webview files, gap list | ready | none | docs/AI_HANDOFF/notes/aichat-factbase-webview.md (new) | unic-smart |
+| TASK-AICHAT-002 | Host/engine fact-base — protocol, sessions, permissions, streaming, 4-engine capability matrix | ready | none | docs/AI_HANDOFF/notes/aichat-factbase-host.md (new) | unic-smart |
+| TASK-AICHAT-003 | External research — VS Code, Copilot Chat, Cline, Continue, WAI-ARIA (Q01–Q22, evidence-labeled) | ready | none | docs/AI_HANDOFF/notes/aichat-research-external.md (new) | unic-smart |
+| TASK-AICHAT-004 | Draft upgraded composer/slash/mention/geometry-a11y sections (KBD/SLASH/MENTION/A11Y) | ready | TASK-AICHAT-001, TASK-AICHAT-002, TASK-AICHAT-003 | docs/AI_HANDOFF/notes/aichat-sections-composer.md (new) | unic-smart |
+| TASK-AICHAT-005 | Draft NEW platform sections — streaming, timeline, sessions, permissions, failures, engine matrix (STREAM/TIME/SESS/PERM/FAIL) | ready | TASK-AICHAT-001, TASK-AICHAT-002, TASK-AICHAT-003 | docs/AI_HANDOFF/notes/aichat-sections-platform.md (new) | unic-smart |
+| TASK-AICHAT-006 | Consolidate final spec — rewrite docs/AI_CHAT_REDESIGN.md, verify anchors, sequencing appendix | ready | TASK-AICHAT-004, TASK-AICHAT-005 | docs/AI_CHAT_REDESIGN.md | unic-smart |
 
-Waves (ALL EXECUTED 2026-09-10 — commits a7e4a98 wave 1, 1b66032 wave 2, 990ade7 wave 3):
-**wave 1 = TASK-CLIP-001 ∥ TASK-CLIP-002** — CLIP-001 PASS (41 tests GREEN + integrated
-on main); CLIP-002 PARTIAL 8/9 with its 1×1 → 2×2 tiling regression preserved as evidence ·
-**wave 2 = TASK-CLIP-003** — PASS: the production tiling fix turned CLIP-002's frozen
-suite 9/9 GREEN and the required gate suite ran 44/44 · **wave 3 = TASK-CLIP-004** —
-PASS: targeted save-pin suite 32/32 GREEN on CLIP-003's `debugClipboard` seam. All four
-tasks are `done` (R2 review complete 2026-09-10 — 2× approved, 2× approved_minor, no blockers); the next phase is R4 closeout (final verification + release decision).
+Waves: wave 1 = AICHAT-001 ∥ 002 ∥ 003 (run 2-at-a-time, handoff.maxParallelAgents=2) |
+wave 2 = AICHAT-004 ∥ 005 | wave 3 = AICHAT-006. No two same-wave tasks share a Target File.
 
-Revision 2026-09-10 (after the 2-round plan-review cap): TASK-CLIP-003 absorbed the
-`pasteIntoRange` tiling correction and dropped its TASK-CLIP-002 dependency — see PLAN.md
-"Implementation-Discovery Revision". Wave-1 tasks were `pending_review` at revision time, not
-`ready`, so the executed wave was not re-run. All review verdicts from R2 are in the task
-files' Reviewer Verdict sections — the source of truth for findings; this INDEX carries only
-the settled status labels.
-
-Wave-boundary gates: `npm run typecheck` exit 0 · `npm run compile` clean before ANY
-bundle test (they eval `dist/webview.js` and self-skip without it — a skip is NOT green) ·
-targeted `npx vitest run …` GREEN · full `npm test` GREEN at closeout. No `lint` script
-exists in this repo.
+Notes:
+- TASK-AICHAT-003's executor MUST have web tools (launch general-purpose; per its Discussion).
+- Acceptance gates are executable and were dry-run green against the baseline at plan time:
+  anchor checker (file exists + range in-bounds) and acceptance-ID uniqueness checker
+  (PLAN §5); baseline currently anchors 23 unique IDs, all ranges in-bounds.
+- task-budget-validator.mjs is not installed in this repo — the planner performed a manual
+  field-completeness audit instead (documented in PLAN.md Self-Audit); do not try to run it.

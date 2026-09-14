@@ -1,356 +1,309 @@
-# PLAN — Cycle CLIPGRID: results-grid clipboard copy/paste (Cmd/Ctrl+C, Cmd/Ctrl+V, Excel paste, Cmd/Ctrl+Enter save)
+# PLAN — Cycle AICHAT: research-complete rewrite of docs/AI_CHAT_REDESIGN.md
+
+Prior cycle CLIPGRID archived at `PLAN_CLIPGRID.md` / `INDEX_CLIP.md` (all 4 tasks done/approved,
+released v1.53.45 @ df180d5 — see `RUN.md`).
 
 ## §1 Intent
 
-**Problem (user):** In the data results table the user wants spreadsheet clipboard semantics:
-select one cell, a rectangular range, rows, or a column → **Cmd/Ctrl+C** copies the copied
-matrix as TSV; select a destination cell → **Cmd/Ctrl+V** pastes the copied matrix starting
-at that cell; **pasting content copied in Excel** (tab/newline clipboard text) must land in
-the results table as edits; **Save or Cmd/Ctrl+Enter** persists the edits to the database.
+**Problem.** `docs/AI_CHAT_REDESIGN.md` (untracked baseline draft) is a research spec for
+redesigning the extension's AI chat panel. The user judged it insufficient ("đoạn mô tả này
+chưa đủ") and asked for research that makes it as good as possible. The draft itself declares
+its two holes: (a) its Scope section promises streaming, activity timeline, sessions,
+permissions, failures, accessibility and visual acceptance — but only composer/slash/mention/
+autocomplete-geometry exist in detail; (b) its Evidence section records that external research
+was BLOCKED (web fetches failed) and that three requested-but-unnamed Marketplace extensions
+were never inspected.
 
-**Success looks like:**
-1. Any selection shape (1 cell / rectangle / row checkboxes / a column strip) + Cmd/Ctrl+C
-   → exactly one `copy` message whose `text` is the TSV matrix of the selection.
-2. Cmd/Ctrl+V with TSV text on the OS clipboard → cells starting at the focused cell (or the
-   active range's top-left) become dirty edits, visibly highlighted, mirrored into the grid.
-3. Excel-origin paste (multi-row × multi-col, CRLF line endings, trailing newline) parses and
-   lands with the same semantics.
-4. Cmd/Ctrl+Enter or the existing Commit (✓) button posts one `saveEdits` batch; on
-   `saveResult ok` the dirty highlights clear (new baseline). Existing refusals/errors flow
-   through the save banner unchanged.
+**P0 decision (resolved with the user — do not reopen).** SPEC-ONLY cycle. The single
+deliverable is a research-complete, implementation-ready `docs/AI_CHAT_REDESIGN.md`.
+NO runtime source changes are authorized; every task writes only under `docs/`. Implementation
+of the redesign is a future cycle. Doc language: English.
 
-**Planner grounding note (verified against working tree @ d955873, base `main`):** nearly the
-whole pipeline ALREADY EXISTS — heritage of TASK-501/TASK-502/TASK-RANGE-001/TASK-503:
-- Range selection: `webview/main.ts:476-558` (`cellRange`, `setCellRange`,
-  `normalizeCellRange`), drag wiring at `main.ts:1254-1301`, Shift+Arrow at `main.ts:1412-1451`,
-  highlight via `cellClassRules` → `UnicDB-cell-range` (`main.ts:2343-2353`, `styles.css:518`).
-- Copy: `copySelectionToHost()` (`main.ts:4031`) — range takes precedence over row-checkbox
-  selection over focused-row fallback; posts `{type:"copy", text}`; host writes the OS
-  clipboard at `resultsPanel.ts:1033-1036` (`vscode.env.clipboard.writeText`).
-- Paste: capture-phase `paste` listener (`main.ts:1401-1405`) → `onGridPaste`
-  (`main.ts:3300`): `parseTsvPaste` → focused-cell anchor path or `pasteIntoRange`
-  (`main.ts:3417`); pure helpers `parseTsvPaste` / `applyPasteToDirty` /
-  `applyRangePasteToDirty` in `src/ui/resultsGridModel.ts:1226/1261/1387`.
-- Save: Cmd/Ctrl+Enter capture listener (`main.ts:1355-1370`) → `onCommitClick()`
-  (`main.ts:3782`) posts one `saveEdits` batch → `handleSaveEdits` (`resultsPanel.ts:1040`).
+**User mandates (hard requirements).**
+1. After local-source research, dig the internet extensively and fold maximum researched
+   detail into the spec.
+2. "As much detail as possible" is a quality BAR: the finished spec must be far denser than
+   the current draft (70 lines) — not a light edit. See §3 for the per-section density bar.
 
-The real GAPS this cycle closes, each verified in source:
-1. **No keyboard Cmd/Ctrl+V wiring.** The bundle handles only the `paste` ClipboardEvent;
-   `gridApi.processCellFromClipboard` / a Cmd/Ctrl+V keydown path does not exist. On hosts
-   where the webview never receives a trusted `paste` event on a non-editable grid, Cmd/Ctrl+V
-   is a no-op. Fix: Cmd/Ctrl+V keydown (capture phase, `isFilterInput` guard) synthesizes the
-   same paste dispatch after an async clipboard read.
-2. **Column-strip / whole-column copy parity.** `copySelectionToHost` handles range +
-   full-row checkbox selection + focused row, but a user selecting a COLUMN (drag down one
-   column, no checkbox) is naturally expressed as a 1-column-wide range — that works today —
-   yet a row-rectangle where the user dragged ACROSS only part of the grid relies on range
-   coords; both need one bundle test suite to pin shape semantics (rows / columns / 1×1 /
-   N×M) — currently only `selectionRangeToText` unit tests exist, zero bundle tests for
-   copy of a range.
-3. **`suppressNextCellClickClear` is set but never read** (`main.ts:479,1260` — only 2
-   occurrences). The documented "clicking a non-cell area clears the range" behavior
-   (comment `main.ts:469`) is not wired, so a stale rectangle survives clicks on the
-   toolbar and silently redirects the next copy/paste. This is a live correctness gap for
-   "select a destination cell" — if the user's last range lingers, paste goes to the OLD
-   range instead of the newly focused cell. Fix: read the flag in a capture-phase
-   `mousedown`/`cellClicked` clear path (only this task may touch this wiring).
-4. **Active-range tiling is column-blind (found during implementation).** `pasteIntoRange`
-   (`main.ts:3417`) builds each target column's slice with `row[srcColOffset] ?? ""`
-   (`main.ts:3464`), so a clipboard NARROWER than the active range stamps `""` into the
-   overhang columns instead of tiling the source value. TASK-CLIP-002's wave-1 bundle suite
-   proved it: a 1×1 `"z"` into a 2×2 active range yields `0:0="z", 0:1="", 1:0="z", 1:1=""`.
-   Row tiling already works (`applyRangePasteToDirty`, `resultsGridModel.ts:1408`); column
-   tiling is missing. Fix: tile the source column, keeping the CLIP-002 contract GREEN and
-   multi-column / hidden-column / clipping behaviour unchanged.
+**Dangling-promise resolution (encoded, from the draft's own Evidence section).** The unnamed
+"three requested Marketplace extensions" are substituted by named, comparable subjects:
+GitHub Copilot Chat, Cline, Continue, plus official VS Code Chat/API/docs surfaces. The
+Evidence section of the final spec must state this substitution openly. Grep for the old
+phrase must return nothing.
 
-Task sizing: pure-model helpers are done and tested; the work is bundle-level wiring +
-pinning tests + two real defect fixes (stale-range clear, active-range column tiling). No new npm deps, no schema
-changes; the ONLY new host message types are the §7-sanctioned `readClipboard`
-(webview→host) / `clipboardText` (host→webview) round-trip pair added by TASK-CLIP-003 —
-every other discriminator (`copy`, `saveEdits`, `retryFailedRows`) is unchanged.
+**Success definition.** All of the following are true at cycle end:
+- Every section promised by the draft's Scope exists with concrete, implementable detail
+  (numbers, tokens, message names, state machines, exact strings, enumerated acceptance IDs).
+- Every file:line anchor in the spec is re-verified against the current tree by an automated
+  check that exits non-zero on a stale anchor.
+- Every external claim carries one of the three evidence labels; zero unattributed claims;
+  zero fabricated URLs.
+- The draft's existing contracts (KBD-01..07, SLASH-01..06, MENTION-01..10, geometry values)
+  are preserved or explicitly superseded with rationale — nothing silently lost.
 
 ## §2 Scope
 
-**In scope:**
-- Cmd/Ctrl+V keydown handler on `gridWrap` (capture phase) that routes into the existing
-  paste pipeline (`onGridPaste` semantics) after reading the OS clipboard; `isFilterInput`
-  guard; `preventDefault`/`stopPropagation` on the handled path.
-- Paste-event hardening: ignore multi-part / non-plain clipboard payloads explicitly
-  (`getData("text/plain")` empty → no-op) — behavior pin, not new logic.
-- Column-strip copy parity test coverage (1-col range copy through `copySelectionToHost`).
-- Fix the stale-range defect: `suppressNextCellClickClear` consumed; clicking a non-cell
-  area (toolbar, header, footer) clears `cellRange`/`cellRangeAnchor`; clicking a cell
-  after a drag starts a new anchor (flag suppresses the spurious clear from AG Grid focus).
-- Fix the discovered active-range tiling defect in `pasteIntoRange`: a 1×1 clipboard value
-  must tile across every visible cell in a multi-cell active range. The already-written
-  CLIP-002 bundle regression is the contract; its `"z"` → 2×2 case is currently RED and
-  remains required verification after the production repair.
-- Excel-paste matrix semantics pinned: CRLF, trailing newline, jagged rows padded, clip at
-  grid edge, and range tiling (CLIP-002 remains tests-only; CLIP-003 owns this production
-  correction).
-- Save contract pinned at bundle level: Cmd/Ctrl+Enter + commit button post exactly one
-  `saveEdits` with `edits[]` = snapshot; `saveResult ok:true` clears highlights.
-- New bundle test files for the above (paths in §4 / task files).
+**In scope:** local-source fact-bases (webview layer; host + engine adapters); external
+research (official VS Code docs, GitHub Copilot Chat, Cline, Continue, WAI-ARIA APG);
+section drafts (composer/slash/mention/a11y; streaming/timeline/sessions/permissions/failures/
+engine-matrix/visual-acceptance); final consolidation of `docs/AI_CHAT_REDESIGN.md`.
 
-**Out of scope:**
-- Any new webview→host message discriminator EXCEPT the §7-sanctioned `readClipboard`, and
-  any new host→webview discriminator EXCEPT its `clipboardText` reply (both TASK-CLIP-003
-  only; `copy`, `saveEdits`, `retryFailedRows` unchanged); no host-side save-statement
-  changes (`src/core/saveStatements.ts` untouched).
-- Enterprise-style "copy with headers", cut, drag-fill, cross-tab clipboard history.
-- Local Add-Row paste targeting (paste already stops at locally-added rows by design —
-  `main.ts:3351`, pinned as-is).
-- No-PK ctid save bug (tracked separately in queue spec GRID-EXCEL-OVERHAUL A).
-- Console panel / AI chat clipboard (different surfaces).
+**Out of scope:** ANY change under `src/`, `webview/`, `package.json`, or any other non-docs
+path; git commits by tasks; implementing the redesign; inspecting the original unnamed
+Marketplace extensions (substituted per §1); new npm dependencies.
 
-**CONSTRAINT — same-wave file rule and execution order:** CLIP-001 and CLIP-002 own
-disjoint test files; CLIP-003 exclusively owns `webview/main.ts`, `src/ui/messages.ts`,
-`src/ui/resultsPanel.ts`, and `webviewKeybinding.test.ts`; CLIP-004 owns its new save test.
-After wave-1 test work, CLIP-003 is intentionally the sole **wave-2 production batch** and
-CLIP-004 remains wave 3. CLIP-003 has `Dependencies: none` because the CLIP-002 regression
-already exists on main and must be repaired, not discarded; its wave-2 placement is an
-operational serialization point, not a graph dependency.
+**Per-wave file ownership (hard constraint: no two same-wave tasks share a Target File).**
+
+| Wave | Task | Owns (writes) | Reads only |
+|------|------|---------------|-----------|
+| 1 | TASK-AICHAT-001 | `docs/AI_HANDOFF/notes/aichat-factbase-webview.md` (new) | `webview/aiChatPanel*.ts`, baseline draft |
+| 1 | TASK-AICHAT-002 | `docs/AI_HANDOFF/notes/aichat-factbase-host.md` (new) | `src/ui/aiChatPanel*.ts`, `src/ui/aiChatAttachments.ts`, `src/ai/**`, baseline draft |
+| 1 | TASK-AICHAT-003 | `docs/AI_HANDOFF/notes/aichat-research-external.md` (new) | baseline draft; internet via WebSearch/WebFetch |
+| 2 | TASK-AICHAT-004 | `docs/AI_HANDOFF/notes/aichat-sections-composer.md` (new) | all three wave-1 notes, baseline draft |
+| 2 | TASK-AICHAT-005 | `docs/AI_HANDOFF/notes/aichat-sections-platform.md` (new) | all three wave-1 notes, baseline draft |
+| 3 | TASK-AICHAT-006 | `docs/AI_CHAT_REDESIGN.md` (the real target) | all five notes, baseline draft, sources for anchor check |
+
+Wave 1 is 3 tasks executed 2-at-a-time (`handoff.maxParallelAgents = 2`). Wave 2 runs both
+draft tasks in parallel. Wave 3 is a single consolidation task. Width is maximal given the
+single-target file at the end.
 
 ## §3 Approach
 
-**TASK-CLIP-001 (copy matrix shapes — tests only):** add
-`src/ui/__tests__/webviewClipboardCopy.test.ts` (jsdom bundle-eval, harness pattern of
-`webviewBundle.test.ts` / `webviewKeybinding.test.ts`: stub `acquireVsCodeApi`, eval
-`dist/webview.js`, dispatch a 3×2 state, drive `api.forEachNode(setSelected)` / synthetic
-`mousedown`+`mousemove` on `.ag-cell` elements to build ranges, dispatch Cmd/Ctrl+C
-`keydown` on `.UnicDB-grid-host`, assert the posted `copy` messages). Pins: 1×1 cell; N×M
-rectangle; full-row checkboxes; single column strip (drag down col `name`); hidden-column
-exclusion (via `debugSetSpecs` seam `main.ts:4510`); focused-row fallback. Pure-side
-`selectionRangeToText` shape cases (row-major, `\t`/`\n` joins) extend
-`resultsGridModelEdit.test.ts` only where a shape lacks coverage (column-strip = 1-wide
-range). **No production edits.**
+**Pipeline: 3 research lanes → 2 section-draft lanes → 1 consolidation.** Research is split
+webview-vs-host because the draft's own bugs live on both sides of the postMessage boundary
+(webview key listeners vs host command registry vs engine adapters). Section drafting is split
+interaction-vs-platform so both wave-2 tasks read all fact-bases but write disjoint sections.
+Consolidation is ONE task because `docs/AI_CHAT_REDESIGN.md` is a single owned file and
+terminology/ID-numbering reconciliation must happen in one head.
 
-**TASK-CLIP-002 (paste matrix semantics — tests only):** add
-`src/ui/__tests__/webviewClipboardPaste.test.ts` (same bundle harness). Pins the EXISTING
-paths so the CLIP-003 wiring cannot regress them: paste event with `clipboardData` text →
-`editState.dirtyCount` grows by the in-bounds cell count; anchor at focused cell; range
-present → tiling into rectangle (`parsed[r % rows][c % cols]`), over-paste clipped;
-CRLF + trailing-newline normalization (via `parseTsvPaste` direct unit rows already present
-in `resultsGridModelEdit.test.ts` — bundle-level asserts end-state only); locally-added row
-stop (`serverIndexByRowId` miss breaks the walk); undo stack receives one `cell-edit` per
-pasted cell; empty text / filter-input target → zero dirty. **No production edits.** Its
-1×1-to-2×2 test correctly exposes that `pasteIntoRange` currently pads the second column
-with `""`; the test remains historical partial evidence and is re-verified by CLIP-003.
+**Local fact-base content (TASK-001, TASK-002).** Verify EVERY file:line anchor the draft
+cites, by opening the exact range with `Read(file, offset=<line>)` and recording verdict
+`confirms` / `corrects (actual: …)` with a short quote. Inventory — not re-derive — current
+behavior. Known leads to chase (from the draft): the Shift+Enter-not-excluded menu Enter bug
+(`webview/aiChatPanelMain.ts:792–895`), keyup-only mention detection
+(`webview/aiChatPanelMain.ts:907–931`), slash toolbar writing `textarea.value` directly
+(`webview/aiChatPanelComposer.ts:441–457`), `innerText` export announcing success unconfirmed
+(`webview/aiChatPanelMain.ts:629–640`), host `/engine` accepting only builtin/omp
+(`src/ui/aiChatPanel.ts:1744–1816`) vs the panel protocol advertising four engines
+(`src/ui/aiChatPanelMessages.ts:91–106`), native resume explicitly unavailable in the Claude
+Code (`claudeCodeChatEngine.ts:272–279`) and Codex (`codexChatEngine.ts:357–364`) adapters.
+TASK-002 must Glob the full chat surface first (chat/session/stream/permission/attach/
+timeline filenames under `src/` and `webview/`) and produce a per-engine capability matrix —
+4 rows: `builtin`, `omp`, `claudeCode`, `codex` (builtin confirmed real at
+`src/ai/engineChoice.ts:9–21`) × columns: streaming, resume, native commands, model/role
+picker, sessions/persistence, permissions/approvals, activity/timeline events, failure modes.
 
-**TASK-CLIP-003 (webview wiring + stale-range clear + active-range tiling fix — the only
-wave-2 production task):**
-1. Correct `pasteIntoRange` in `webview/main.ts` so clipboard columns tile as well as rows:
-   for every visible active-range target column, select `row[srcColOffset % row.length]`
-   (with the established empty-row fallback) rather than padding a past-the-end column with
-   `""`. This makes a 1×1 clipboard `"z"` populate every cell of a 2×2 active range while
-   preserving multi-column selection, hidden-column exclusion, row tiling, and clipping.
-   The existing CLIP-002 bundle suite is the regression proof and MUST pass after this fix.
-2. Add a capture-phase `keydown` Cmd/Ctrl+V listener on `gridWrap`, modeled on the existing
-   Cmd/Ctrl+C listener (`main.ts:1340-1348`): guard `isFilterInput(ev.target)`; on hit
-   `ev.preventDefault(); ev.stopPropagation();` then obtain text. Webviews cannot rely on a
-   trusted `paste` event arriving on a non-editable grid, and `navigator.clipboard.readText`
-   requires focus/permission the webview may lack — so the handler posts a NEW
-   host round-trip: `postToHost({ type: "copy", text: "" })` is WRONG (would clobber the
-   clipboard); instead the host already exposes `vscode.env.clipboard`. **Chosen seam:** add
-   the minimal new host→webview pull message `readClipboard` (webview→host) + reply
-   `clipboardText` (host→webview) in `src/ui/messages.ts`, handled at
-   `resultsPanel.ts:handleMessage` with `vscode.env.clipboard.readText()`; the webview
-   dispatches a synthetic `ClipboardEvent("paste", {clipboardData})` into `onGridPaste`'s
-   existing listener path. Message union grows additively; unknown-type fall-through
-   (`main.ts` host switch default) keeps old bundles safe. **Rejected alternative:** making
-   the keydown handler call `navigator.clipboard.readText()` directly — fails silently in
-   VS Code webviews without clipboard permissions and cannot be tested in jsdom; the host
-   round-trip is one `await` and matches the existing `copy` write path symmetry
-   (`resultsPanel.ts:1035`).
-3. Wire the stale-range clear: in the capture `mousedown` listener on `gridWrap`
-   (`main.ts:1254`), when `findCellFromEvent` returns null (toolbar/header/footer click),
-   call `setCellRange(null)` unless `suppressNextCellClickClear` is true; consume the flag
-   (set to false) after any mousedown that read it, so the documented
-   "clicking a non-cell area clears" contract (`main.ts:469`) finally holds and a lingering
-   rectangle can never redirect the next paste.
-4. Expose a `__UnicDB.debugClipboard` test seam (pattern: `main.ts:4523`) —
-   `simulatePaste(text: string)` that funnels into the same `onGridPaste` dispatch the real
-   events use, and `getCellRange(): {startRow,startCol,endRow,endCol} | null` so tests can
-   assert clears without DOM poking. Both are test-only additions to the existing debug
-   object.
+**External research lane (TASK-003).** 22 enumerated questions (Q01–Q22, listed in the task
+file) covering every spec section: VS Code Chat docs and Chat/API extension points; Copilot
+Chat slash commands, context variables, sessions, streaming presentation, edit-acceptance UX;
+Cline Plan/Act approval flows, timeline/checkpoints; Continue context providers, slash
+commands, model roles, session storage; WAI-ARIA APG combobox + listbox keyboard tables and
+editable-combobox modes; VS Code webview accessibility + workbench color tokens. Every answer
+carries a label — `Verified-with-URL` (actually fetched), `Reported-unverified`
+(secondary/uncertain source), `Could-not-verify` (with the queries tried). Blocked questions
+are recorded honestly, never guessed. This lane's executor needs web tools: launch as a
+general-purpose agent (noted in the task's Discussion).
 
-**TASK-CLIP-004 (save persistence pin — wave 3, after CLIP-003):** add
-`src/ui/__tests__/webviewClipboardSave.test.ts`: dirty cells from a paste → Cmd/Ctrl+Enter
-keydown (meta AND ctrl variants) posts exactly ONE `saveEdits` whose `edits` match the
-dirty snapshot and carry `serverIndexByRowId`; empty-dirty Cmd/Ctrl+Enter posts nothing
-(no-op guard `main.ts:3783`); `saveResult ok:true` → `dirtyCount === 0` and no
-`UnicDB-cell-dirty` cells remain; `refused:true` → banner shows reason, dirty cleared.
-Bundle test file only; production untouched — this is the acceptance pin that Cmd/Ctrl+Enter
-persists pasted edits end-to-end at the webview level (host side already covered by
-`resultsPanelSaveEdits.test.ts`).
+**Section drafts (TASK-004, TASK-005).** Each rewrites its assigned draft sections and adds
+new ones, merging fact-base + research. Every statement that differs from current behavior
+carries a `current: <file:line does X> → target: Y` delta note. External influences cite the
+research question ID (e.g. "per Q13"). No "nice to have" phrasing anywhere.
+
+**Consolidation (TASK-006).** Assembles the final spec: Status header updated; Evidence
+section rewritten around the substitution; all sections merged in the draft's existing
+section order (Composer contract first, then the new platform sections); a single
+acceptance-test index (families below); Source anchors section re-verified by the automated
+anchor checker; plus an implementation-sequencing appendix (wave-able chunking of the future
+implementation cycle) so the spec is genuinely implementation-ready.
+
+**Quality bar — per-section density (the "maximum detail" mandate, made checkable):**
+
+| Spec section | Required density (minimum bar) |
+|---|---|
+| Composer keyboard | controller state machine (states + transitions listed); rule per modifier key incl. IME; running-turn policy; draft-preservation guarantees; KBD family extended to ≥8 IDs |
+| Slash menu | full current command inventory (from fact-base, with file:line); argument grammar per command; menu row anatomy; per-command picker spec (/clear /resume /engine /model /context /export /help /new); SLASH extended to ≥8 IDs |
+| Mention menu | token-boundary detection rules stated concretely; debounce/requestId/correlation values kept (150 ms / 200 ms); chip data model fields enumerated; disambiguation rules per kind; MENTION kept ≥10 IDs |
+| Autocomplete geometry + a11y | keep every existing px/ms value (420/8/280/40vh/44/12/8/16/13-20/11-16/2-2/500); APG combobox checklist mapped to new A11Y family ≥6 IDs |
+| Streaming & rendering | message-type names from protocol inventory; render coalescing policy; partial-markdown/fence policy; stick-to-bottom scroll rule with px threshold; stop/cancel semantics; STREAM family ≥6 IDs |
+| Activity timeline | turn/event model per engine; collapsibility + content rules; TIME family ≥5 IDs |
+| Sessions & persistence | storage location/mechanism from fact-base; session schema fields; picker contents; per-engine native-resume wording; rename/delete/export; SESS family ≥6 IDs |
+| Permissions & approvals | current permission surface inventory; target approval model (Cline-informed, VS Code-adapted); PERM family ≥5 IDs |
+| Failures & recovery | ≥6 distinct failure classes, each with exact user-visible message string + recovery action; FAIL family ≥6 IDs |
+| Visual acceptance (owned by TASK-005 — the new-UI-surface owner) | VIS family ≥5 IDs; every NEW rendered surface (stream area, activity timeline, session picker, permission prompts, failure banners) gets concrete layout/spacing/typography values or named VS Code theme tokens, plus 200% zoom, reduced-motion, and light/dark/high-contrast rendering acceptance |
+| Engine capability matrix | 4 engine rows × ≥8 capability columns; every cell `Verified (file:line)` or `Unverified-internal` |
+| Acceptance-test index | families KBD, SLASH, MENTION, A11Y, STREAM, TIME, SESS, PERM, FAIL, VIS (EXP folded into SLASH/SESS as in the draft) — every ID unique, no gaps |
+
+**Trade-offs / alternatives rejected.**
+- *One mega-task writing the whole spec* — rejected: no parallelism (waves 1+2 collapse into a
+  chain), no reviewer gate per research lane, and a single agent cannot carry web research +
+  8.8k LOC of source reading + writing in one context.
+- *Editing the final spec directly in waves 1–2* — rejected: violates the single-owner rule
+  for `docs/AI_CHAT_REDESIGN.md` and would serialize everything behind wave 1.
+- *Letting fact-base executors also do web research* — rejected: their agent profile has no
+  web tools; TASK-003 is explicitly launched as general-purpose with WebSearch/WebFetch.
+- *Inspecting the original unnamed Marketplace extensions* — rejected: their identity is
+  recorded nowhere in the repo; substitution is the user-sanctioned resolution (§1).
+- *Splitting consolidation across two tasks* — rejected: same-file ownership conflict;
+  numbering/terminology reconciliation needs one head.
+- *Renumbering the draft's existing acceptance IDs freely* — rejected: they are the draft's
+  most stable artifact; consolidation preserves them verbatim and appends.
+
+**Stated unknowns (executor resolves, one read each).** Exact session-persistence mechanism
+and permission surface are unknown to the planner (no task may guess them; TASK-002's Glob
+sweep finds them or records "absent in current source" — which is itself a spec input).
+Whether `builtin` is a real engine implementation or a fallback label is resolved by reading
+`src/ai/engineChoice.ts` + the engine adapter inventory.
 
 ## §4 Test Plan
 
-Harness: bundle tests eval `dist/webview.js` into jsdom — `npm run compile` is REQUIRED
-first; a silent self-skip is NOT green. Pure-logic tests extend the existing vitest node
-files.
+Docs-only cycle: runtime test suites are N/A (no source changes authorized). Document-
+acceptance checks below replace them; each is automated in the owning task's Verification
+Commands and fails loudly (non-zero exit).
 
 | Type | Test Name | Expected |
 |------|-----------|----------|
-| happy (CLIP-001 bundle) | Cmd+C with 1×1 range (mousedown+mouseup single cell) | exactly 1 `copy` msg; `text` === the single formatted cell, no `\t`/`\n` |
-| happy (CLIP-001 bundle) | Cmd+C with 2×2 drag rectangle rows [[1,alpha],[2,beta]] | 1 `copy` msg; `text` === `"1\talpha\n2\tbeta"` |
-| happy (CLIP-001 bundle) | Cmd+C with rows 0-1 selected via checkboxes (no range) | 1 `copy` msg; 2 lines, both tab-joined (row-copy parity with `webviewBundle.test.ts` #3) |
-| happy (CLIP-001 bundle) | column strip: drag down the single column `name`, rows 0-2 | 1 `copy` msg; `text` === `"alpha\nbeta\ngamma"` (1-wide TSV) |
-| edge (CLIP-001 shape) | 2×2 range with col `id` hidden via `debugSetSpecs` | copy excludes hidden column: `text` === `"alpha\nbeta"` (no `1\t` leak) |
-| edge (CLIP-001 shape) | Cmd+C with no selection AND no focused cell | zero `copy` posts (`main.ts:4065` guard) |
-| edge (CLIP-001 boundary) | range extending past last row (drag below grid) | copy clipped to displayed rows (`copyCellRangeToHost` clamps `endRow`) |
-| regression (CLIP-001) | existing `webviewBundle.test.ts` #3 + `webviewExport.test.ts` #3 copy cases | unchanged GREEN |
-| happy (CLIP-002 bundle) | paste event, text `"10\tx\n20\ty"`, focused cell (0,0) on col `id` | dirtyCount 4; dirty snapshot exactly (0,0)=`"10"`, (0,1)=`"x"`, (1,0)=`"20"`, (1,1)=`"y"`; grid cells of rows 0-1 mirror the values after refresh |
-| happy (CLIP-002 bundle) | Excel-origin paste: `"1\r\n2\r\n"` (CRLF + trailing newline) focused (0,0) | dirtyCount 2, col 0 rows 0-1 = `"1"`,`"2"` (trailing empty row dropped) |
-| regression (CLIP-002 → CLIP-003) | paste 1×1 clipboard `"z"` into active 2×2 range | all 4 range cells = `"z"`; this existing CLIP-002 test is RED before CLIP-003 (`0:1`/`1:1` were `""`) and MUST be GREEN after its production fix |
-| edge (CLIP-002 shape) | paste 3×3 clipboard into 2×2 range | over-paste clipped — only 4 dirty cells |
-| edge (CLIP-002 empty) | paste event with empty `getData("text/plain")` | zero dirty; no preventDefault side effects asserted via no `copy`/`saveEdits` posts |
-| edge (CLIP-002 target) | paste event dispatched on a filter `<input>` inside gridWrap | zero dirty (user's local typing untouched) |
-| edge (CLIP-002 boundary) | paste 2 rows at last displayed row (1 row left) | only 1 row dirtied (bottom-edge break `main.ts:3348`) |
-| regression (CLIP-002) | existing `resultsGridModelEdit.test.ts` parse/apply cases | unchanged GREEN |
-| happy (CLIP-003 bundle) | Cmd+V keydown on gridHost → webview posts `{type:"readClipboard"}`; test host stub replies `{type:"clipboardText", text:"7\tseven"}`; `debugClipboard.simulatePaste` asserted NOT called | exactly ONE paste application at the focused anchor — dirtyCount 2 ((anchor)=`"7"`, right neighbor=`"seven"`); no double-fire (keydown + native paste) |
-| happy (CLIP-003 production) | 1×1 clipboard `"z"` pasted into active 2×2 range | all four visible range cells are `"z"`; column tiling uses the clipboard width modulo and no second-column `""` edits are created |
-| happy (CLIP-003 bundle) | Ctrl+V variant (windows/Linux chord) | same as Cmd+V |
-| edge (CLIP-003 stale-range) | drag a range; click toolbar (non-cell); Cmd+V | range is null after the non-cell click → paste anchors at focused cell, NOT the stale rectangle |
-| edge (CLIP-003 input) | Cmd+V while focus is in filter input | zero dirty; native input paste not intercepted |
-| edge (CLIP-003 permission) | host replies `clipboardText` with empty string | zero dirty, no state change |
-| regression (CLIP-003) | CLIP-002 paste suite (including 1×1 → 2×2 tiling), Shift+Arrow / mousemove range wiring, and `aiChatPanelCloneCss.test.ts` range-CSS pin | all GREEN after the production correction |
-| happy (CLIP-004 bundle) | paste 2 cells then Cmd+Enter | exactly 1 `saveEdits`; `edits.length === 2`; `index === 0`; `serverIndexByRowId` present |
-| happy (CLIP-004 bundle) | Ctrl+Enter variant posts identically | 1 `saveEdits` per dispatch |
-| edge (CLIP-004 noop) | Cmd+Enter with dirtyCount 0 | zero `saveEdits` (guard) |
-| edge (CLIP-004 refused) | `saveResult {ok:true, refused:true, reason}` | banner shows reason; dirty cleared; no retry button state |
-| regression (CLIP-004) | `saveResult ok:true` → `dirtyCount === 0`, no `.UnicDB-cell-dirty` in DOM | mirrors existing `webviewEditHighlight.test.ts` #5 for the paste-origin path |
-| regression (CLIP-004) | existing `webviewKeybinding.test.ts` K1-K3 (input-focus guard, dirty commit) | unchanged GREEN |
+| happy | Anchor-integrity check (TASK-006) | node checker parses every `file.ts:A–B` anchor in the final spec; every file exists and B ≤ file line count; exits 0 |
+| happy | Section completeness (TASK-006) | final spec contains all sections: Scope, Evidence status, Composer contract (keyboard/slash/mention/geometry+a11y), Streaming, Activity timeline, Sessions, Permissions, Failures, Engine matrix, Visual acceptance, acceptance-test index, Source anchors, implementation sequencing |
+| happy | Baseline ID preservation (TASK-006) | KBD-01..07, SLASH-01..06, MENTION-01..10 each still present in the final spec (grep per ID) |
+| happy | Research coverage (TASK-003) | notes file has Q01–Q22 headings; ≥15 questions labeled `Verified-with-URL` when the network is reachable — otherwise a documented `BLOCKED(network)` ledger (every attempted Q labeled, blocked Qs `Could-not-verify` with queries/URLs tried) is an acceptable terminal state; substitution section present |
+| happy | Fact-base grounding (TASK-001/002) | each note contains verdicts for 100% of the draft's anchors in its layer (6 webview-side, 5 host/engine-side) plus ≥5 new file:line facts; engine matrix has 4 rows × ≥8 columns |
+| happy | Draft-section density (TASK-004/005) | each required section reaches its §3 density bar (family ID counts, numeric values present — grep-checked) |
+| edge (staleness) | Off-by-N anchor correction (TASK-001/002) | where a cited range no longer matches the described behavior, the note records `corrects (actual: …)` with the true range — zero silent copies |
+| edge (regression, dangling promise) | Unresolved-promise ban (TASK-006) | `grep -q "three requested Marketplace extensions" docs/AI_CHAT_REDESIGN.md` exits 1; Evidence section names the substitution subjects |
+| edge (attribution) | Unattributed-claim ban (TASK-004/005/006) | every external claim carries `Verified-with-URL` / `Reported-unverified` / `Could-not-verify` or a research-question reference; zero occurrences of "TBD", "TODO", "should be nice" |
+| edge (scope guard) | Docs-only write guard (all tasks) | `git status --porcelain -- src webview package.json` is empty after every task (verified clean pre-cycle: only `.gitignore`, `docs/AI_HANDOFF/RUN.md` modified + 2 untracked docs files) |
+| edge (boundary) | State-file budget (planner) | `docs/AI_HANDOFF/INDEX.md` and `ACTIVE.md` ≤80 lines each |
 
 ## §5 Verification
 
+`package.json` defines `compile, watch, test, test:integration, typecheck, package,
+publish:*, verify:fast, verify:release, profile:*` — **no lint script exists**. Every task
+runs `npm run typecheck` (the repo static gate) plus the applicable exact commands in its own
+`## Verification Commands` block. `npm test` is deliberately not run: this SPEC-ONLY cycle
+modifies no runtime behavior, and the task gate requires targeted document checks rather than
+the full suite by default. The following shared and final-consolidation commands were dry-run
+against the current baseline where their target artifact already exists (all passed).
+
 ```bash
+# All six tasks: proves this SPEC-ONLY cycle did not edit forbidden runtime paths.
+test -z "$(git status --porcelain -- src webview package.json)" && echo DOCS-ONLY-OK
 npm run typecheck
-npm run compile        # REQUIRED before any bundle test — they eval dist/webview.js
-# Wave 2 (TASK-CLIP-003 — operationally serialized after wave 1; it has no task dependency)
-# Recompile first: webview/main.ts + messages.ts changed. The CLIP-002 suite is REQUIRED:
-# it carries the formerly RED 1×1 → active-range tiling regression.
-npm run typecheck && npm run compile
-npx vitest run src/ui/__tests__/webviewClipboardCopy.test.ts src/ui/__tests__/webviewClipboardPaste.test.ts src/ui/__tests__/webviewKeybinding.test.ts src/ui/__tests__/webviewBundle.test.ts tests/webviewEditHighlight.test.ts
-# Wave 3 (TASK-CLIP-004 — recompile first)
-npm run typecheck && npm run compile
-npx vitest run src/ui/__tests__/webviewClipboardSave.test.ts src/ui/__tests__/webviewKeybinding.test.ts
-npm test               # full-suite final gate
+
+# TASK-AICHAT-001: cited webview anchor ranges remain readable.
+test "$(wc -l < webview/aiChatPanelMain.ts)" -ge 931 && test "$(wc -l < webview/aiChatPanelComposer.ts)" -ge 504 && echo ANCHOR-BOUNDS-OK
+
+# TASK-AICHAT-002: cited host/adapter anchor ranges remain readable.
+test "$(wc -l < src/ui/aiChatPanel.ts)" -ge 1816 && test "$(wc -l < src/ui/aiChatPanelMessages.ts)" -ge 106 && test "$(wc -l < src/ai/claudeCode/claudeCodeChatEngine.ts)" -ge 279 && test "$(wc -l < src/ai/codex/codexChatEngine.ts)" -ge 364 && echo ANCHOR-BOUNDS-OK
+
+# TASK-AICHAT-003: exactly Q01..Q22, all labeled; research target met OR documented network-block
+# (mirrors §4/§6 and TASK-AICHAT-003's own gate: blocked Qs must be Could-not-verify with
+# queries/URLs tried — enforced by TASK-AICHAT-003's Test Cases 2/4; never fabricated).
+test "$(grep -cE '^### Q[0-9]{2}' docs/AI_HANDOFF/notes/aichat-research-external.md)" -eq 22
+test "$(grep -cE 'Verified-with-URL|Reported-unverified|Could-not-verify' docs/AI_HANDOFF/notes/aichat-research-external.md)" -ge 22
+test "$(grep -c 'Verified-with-URL' docs/AI_HANDOFF/notes/aichat-research-external.md)" -ge 15 || grep -q 'BLOCKED(network)' docs/AI_HANDOFF/notes/aichat-research-external.md
+
+# TASK-AICHAT-006: every source anchor in the final document exists and is in-bounds.
+node -e 'const fs=require("fs");const doc=fs.readFileSync("docs/AI_CHAT_REDESIGN.md","utf8");const re=/([\w\/.-]+\.(?:ts|js)):(\d+)(?:[–-](\d+))?/g;let m,f=0;while((m=re.exec(doc))){const[F,a,b]=[m[1],+m[2],m[3]?+m[3]:+m[2]];if(!fs.existsSync(F)){console.log("MISSING FILE",F);f++;continue}const n=fs.readFileSync(F,"utf8").split("\n").length;if(b>n){console.log("RANGE OOB",F,b,">",n);f++}}console.log(f?f+" ANCHOR FAILURES":"ALL ANCHORS OK");process.exit(f?1:0)'
+! grep -q "three requested Marketplace extensions" docs/AI_CHAT_REDESIGN.md
+node -e 'const t=require("fs").readFileSync("docs/AI_CHAT_REDESIGN.md","utf8");const ids=t.match(/\b(?:KBD|SLASH|MENTION|A11Y|STREAM|TIME|SESS|PERM|FAIL|VIS)-\d{2}\b/g)||[];const dup=ids.filter((v,i,a)=>a.indexOf(v)!==i);if(dup.length){console.log("DUP IDS",[...new Set(dup)].join(","));process.exit(1)}console.log("UNIQUE",ids.length,"IDS")'
+! grep -nEi "TBD|TODO|should be nice" docs/AI_CHAT_REDESIGN.md
 ```
 
-Lint: this repo has NO `lint` script (package.json scripts: compile, watch, test,
-test:integration, typecheck, package, publish:*, verify:fast, verify:release, profile:*).
-`npm run typecheck` (`tsc --noEmit`) is the lint-equivalent gate and is mandatory in every
-wave. Bundle tests self-skip without `dist/webview.js` — an executor that skips them has
-NOT verified anything (treat self-skips as failures in review).
+The complete task-specific document-density and fact-coverage commands are deliberately
+repeated in each task file because their target notes do not exist until the owning task runs;
+they contain no placeholders and fail non-zero on a missing requirement.
 
 ## §6 Acceptance
 
-- [ ] `npm run typecheck` exits 0 after every wave.
-- [ ] CLIP-001: all copy-shape cases GREEN — 1×1, N×M, row-checkbox, column strip, hidden-col exclusion, no-selection no-op.
-- [ ] CLIP-002: remains test-only with its executor report preserved; all paste-semantics cases, including the formerly RED 1×1 → active-2×2 tiling regression, are GREEN when re-run after CLIP-003.
-- [ ] CLIP-003: corrects active-range column tiling; Cmd+V and Ctrl+V through the host round-trip apply exactly one paste; stale range cleared by non-cell click; `npm run compile` re-run before its tests.
-- [ ] CLIP-004: paste → Cmd/Ctrl+Enter posts one `saveEdits` batch; `ok` clears highlights; refused shows banner.
-- [ ] `npm test` full suite GREEN at closeout (wave-boundary regression net).
-- [ ] No file outside the four tasks' Target Files lists modified; no new npm dependency.
-- [ ] Manual smoke (executor): run a SELECT, drag a 2×2 range, Cmd+C, click another cell, Cmd+V → two cells dirty; paste a real Excel 2×3 block → lands as edits; paste a single clipboard cell into a selected 2×2 range → all four cells update; Cmd+Enter → save banner clears highlights on success.
+- [ ] `docs/AI_CHAT_REDESIGN.md` contains every §3 section at its density bar — family ID
+      minimums met (KBD≥8, SLASH≥8, MENTION≥10, A11Y≥6, STREAM≥6, TIME≥5, SESS≥6, PERM≥5,
+      FAIL≥6, VIS≥5) — TASK-004, TASK-005, TASK-006
+- [ ] Anchor checker exits 0 on the final spec; every fact-base anchor verdict recorded —
+      TASK-001, TASK-002, TASK-006
+- [ ] Evidence section states the named-subject substitution; "three requested Marketplace
+      extensions" absent; every external claim labeled; research notes Q01–Q22 with ≥15
+      Verified-with-URL — or, if the network is blocked, a documented `BLOCKED(network)`
+      ledger as an acceptable terminal state (never fabricated URLs) — TASK-003, TASK-006
+- [ ] Baseline contracts preserved: KBD-01..07, SLASH-01..06, MENTION-01..10 and all
+      geometry values present in the final spec — TASK-006
+- [ ] Engine capability matrix: 4 engines × ≥8 columns, every cell sourced or marked
+      Unverified-internal — TASK-002, TASK-005
+- [ ] Docs-only invariant: `git status --porcelain -- src webview package.json` empty at
+      every task completion — all tasks
+- [ ] Every task `ready` (validator `VERDICT: ok`), reviewed (unic-smart reviewer ≠
+      executor model), and closed per the state machine — all tasks
 
 ## §7 Global Constraints
 
-- No new npm dependencies. Bundle tests require `npm run compile`; treat self-skips as failures.
-- New message discriminators allowed ONLY: `readClipboard` (webview→host) and `clipboardText` (host→webview), additive to `WebviewMessage`/`HostMessage` unions; unknown-type fall-through must keep stale bundles safe.
-- Cmd/Ctrl+C and Cmd/Ctrl+V each bind in exactly ONE capture-phase listener on `gridWrap` (A16 double-fire rule, `main.ts:2505-2509`).
-- `isFilterInput` guard on every new keydown/paste entry point (filter/search typing is never a grid edit).
-- Preserve existing class names: `UnicDB-cell-range`, `UnicDB-cell-dirty`, `UnicDB-grid-host`, `UnicDB-save-banner` (pinned by existing tests).
-- Paste must never target locally-added rows (`serverIndexByRowId` miss = stop) — INSERT marker integrity.
-- Coordinates stay in the established namespaces: display rows via `getDisplayedRowAtIndex`, cols via `currentSpecs` index (never live `getColumnDefs`).
-- TASK-CLIP-002's `src/ui/__tests__/webviewClipboardPaste.test.ts` is FROZEN contract: TASK-CLIP-003 satisfies it by fixing production (`pasteIntoRange` column tiling) and never by editing the test — a failure there means the fix is wrong, not the test.
-- No version bump / release this cycle (maintainer folds into next release).
+- SPEC-ONLY: writes allowed under `docs/` only; never touch `src/`, `webview/`,
+  `package.json`; never run `git commit` (checkpoint commit is a later phase's job, not a
+  task's).
+- Doc language: English.
+- Evidence labels mandatory on every external claim: `Verified-with-URL` /
+  `Reported-unverified` / `Could-not-verify` (with queries tried). Fabricated URLs or
+  guessed extension behavior forbidden.
+- No runtime behavior stated as existing without a verified `file:line` anchor; proposed
+  behavior is marked as target, not current.
+- Preserve the baseline draft's honesty discipline; dangling unverified promises forbidden.
+- `handoff.reviewer.model = unic-smart`; reviewer model must differ from executor model.
+- `handoff.maxParallelAgents = 2`; wave batches ≤2 concurrent agents.
+- State files `INDEX.md`, `ACTIVE.md`, `RUN.md` stay ≤80 lines.
+- npm is the package manager; no new dependencies (docs cycle adds none anyway).
+- Baseline acceptance IDs (KBD-01..07, SLASH-01..06, MENTION-01..10) are preserved
+  verbatim; new IDs append, never overwrite.
 
 ## Planner Report
-PLANNER_MODEL: unic/unic-smart
-PLAN_REVIEW: Approved by unic/unic-smart
+PLANNER_MODEL: bao-opus
 
 ## Planner Self-Audit
 Checklist: 12/12 pass
-Fixed during audit: (1) merged a drafted "copy tests" + "hidden-column tests" task into CLIP-001 (same test-file collision); (2) the initial CLIP-003 draft called `navigator.clipboard.readText()` directly — rejected after grounding (silent permission failure in VS Code webviews, untestable in jsdom) and replaced with the minimal `readClipboard`/`clipboardText` host round-trip, recorded as the §3 rejected alternative; (3) discovered `suppressNextCellClickClear` is written but never read (2 occurrences, `main.ts:479,1260`) — promoted from "test gap" to an explicit CLIP-003 production fix with its own edge case, since a stale rectangle silently misdirects the next paste; (4) split save-pin into wave-3 CLIP-004 because it re-edits test files only but its scenarios depend on CLIP-003's seam — dependency recorded instead of a same-file race.
-Known gaps: jsdom fires no trusted `paste`/`clipboard` events, so the real OS-clipboard hop is exercised only via the host round-trip stub + the manual smoke in §6; pixel-level range-highlight visuals are pinned structurally (CSS class presence + existing CSS pin in `aiChatPanelCloneCss.test.ts`), not visually. Column-header CLICK (not drag) column selection is not an AG Grid Community feature — out of scope, documented in §2.
+Fixed during audit: (1) added `builtin` confirmation anchor `src/ai/engineChoice.ts:9–21`
+after verifying it exists, replacing a speculative engine list; (2) replaced a naive
+`git diff` dirty-tree guard with the pre-verified `git status --porcelain -- src webview
+package.json` form (working tree already carries `.gitignore`/`RUN.md` modifications, so a
+whole-tree guard would always fail); (3) folded EXP acceptance IDs into SLASH/SESS families
+instead of inventing an orphan EXP family the sections don't own; (4) the task-budget
+validator (`task-budget-validator.mjs`) is NOT installed in this repo (checked
+`.claude/ukit/index/` and `src/core/` — the latter is this extension's own code) — documented
+dismissal: manual field-completeness audit performed on all six task files instead (every
+required field present; noted in INDEX.md so executors do not hunt for it); (5) dry-ran the
+executable gates live against the baseline — anchor checker prints ALL ANCHORS OK, ID
+checker prints UNIQUE 23 IDS, bounds + docs-only guard pass, BSD grep handles the en-dash
+patterns; (6) replaced three grep alternations that BSD grep mis-handles (`\|` in BRE) and
+one never-failing `^|` pattern with `-E` forms that can actually fail.
+Known gaps: session-persistence mechanism and current permission surface are unknown until
+TASK-002's Glob sweep runs — the plan treats "absent in current source" as a valid, valuable
+finding rather than forcing an inventory. External research may be network-blocked again
+(it was, in the draft's authoring session); TASK-003's Could-not-verify path plus ≥15
+Verified-with-URL target keeps the cycle honest without blocking on connectivity.
 
 ## Plan Review Log
 
-### Round 1 — 2026-09-10 · unic/unic-smart
-Status: Issues Found
+### Round 1 — 2026-09-14
+REVIEWER_MODEL: bao-opus (opus-class; matches `handoff.reviewer.model = unic-smart` tier per §7; no executor exists at plan stage, so the reviewer-≠-executor rule is not yet applicable — reviewer shares the planner's model class, noted for transparency)
+VERDICT: Issues Found
+FINDINGS:
+  1. IMPORTANT (Completeness/Consistency — §1, §2, §3, §4, §6): "visual acceptance" is one of the draft's declared Scope promises (§1 lists it explicitly) but it is silently unowned: no §2 task covers it (TASK-004 owns a11y, TASK-005 owns streaming/timeline/sessions/permissions/failures/engine-matrix), the §3 density table has no row for it, the §4 section-completeness check does not require it, and §6 has no acceptance item — so the cycle's own automated gates would pass a final spec that drops it, exactly the failure mode §1's success definition ("every section promised by the draft's Scope exists") forbids. Fix: add a "Visual acceptance" row to the §3 density table (visual/motion/screenshot-level acceptance criteria per section); assign ownership in §2 (rendering/timeline visuals → TASK-005, composer/geometry visuals → TASK-004); add it to the §4 completeness section list and a §6 checklist line; if a VISUAL acceptance family is introduced, extend the §5 ID-uniqueness regex to include `VISUAL`.
+  2. IMPORTANT (Consistency — §4/§5 TASK-003 gate vs §1/§7 and the planner's own "Known gaps"): `Verified-with-URL ≥ 15` is a hard non-zero-exit gate, yet the plan itself records that the draft's authoring session had web fetches fully BLOCKED. If that recurs, TASK-003 cannot pass honestly — an unpassable bar for an unattended executor is a standing invitation to fabricate URLs/labels, directly contradicting §7 ("Fabricated URLs or guessed extension behavior forbidden") and the honesty discipline the cycle exists to preserve. Fix: define the blocked-network path now — gate becomes "(Verified-with-URL ≥ 15) OR (all 22 questions answered with a label and every blocked one recorded as Could-not-verify with queries tried, task ends STATUS: BLOCKED(network) surfaced to the orchestrator)"; never a silent pass, never a fabricated label.
+  3. MINOR (Consistency — §5 anchor checker vs §1 success bullet): the checker regex `/([\w\/.-]+\.(?:ts|js)):(\d+)[–-](\d+)/g` only matches ranged anchors; a single-line anchor like `file.ts:42` in the final spec silently skips validation, weakening the §1 guarantee "every file:line anchor is re-verified by an automated check". Fix: make the range optional and treat end = start: `/([\w\/.-]+\.(?:ts|js)):(\d+)(?:[–-](\d+))?/g` with `b = m[3] ? +m[3] : a`.
+NOTES: Otherwise internally consistent — file ownership has no same-wave shared write, the dependency graph (3 fact-bases → 2 disjoint section drafts → 1 consolidation) is executable without guessing, §5's script references are real (`typecheck` exists, `lint` correctly declared absent, verified against package.json), density bars are concrete and checkable, and scope/YAGNI are clean (SPEC-ONLY held throughout; no speculative process weight).
 
-COMPLETENESS:
-  - none — Test Plan §4 gives every task ≥1 happy + ≥2 edge cases; §5 mandates `npm run typecheck` as the lint-equivalent gate (repo has no lint script); §6 acceptance gates + manual smoke are concrete and testable.
-CONSISTENCY:
-  - §1 (Task sizing) says "No new host message types" and §2 (Out of scope) excludes "Any new webview→host message discriminator", but §3 TASK-CLIP-003 introduces two new discriminators (`readClipboard` webview→host, `clipboardText` host→webview) and §7 explicitly sanctions exactly that pair. Fix: amend §1 and §2 to "…except the §7-sanctioned `readClipboard`/`clipboardText` pair" so the P5 diff reviewer cannot false-block CLIP-003's seam as out-of-scope.
-  - §2 wave rule says TASK-CLIP-004 "re-touches `webview/main.ts` after CLIP-003 lands", but §3 TASK-CLIP-004 states "production untouched — bundle test file only" and Planner Self-Audit item 4 confirms tests-only. Fix: change the §2 parenthetical to "tests-only pin, depends on CLIP-003's seam; does not edit `webview/main.ts`".
-CLARITY:
-  - §4 CLIP-002 row 1 expected cell ends with an ellipsis ("(1,1)=`"y"…`") — replace with the complete literal expectation ("(1,1)=`\"y\"`; dirty snapshot matches") so the executor has one unambiguous target.
-  - §4 CLIP-003 first happy row phrasing "after `debugClipboard.simulatePaste` seam not used — via host round-trip" is ambiguous; rewrite as "drive Cmd+V keydown; test host stub replies `clipboardText`; assert the `simulatePaste` seam was NOT used".
-SCOPE:
-  - none — single surface (results-grid clipboard copy/paste + save pin), explicit out-of-scope list (headers-copy, cut, drag-fill, No-PK ctid, other panels), clean wave/file-disjointness plan.
-YAGNI:
-  - none — `readClipboard`/`clipboardText` is a minimal seam with a recorded rejected alternative; `debugClipboard` follows the existing `__UnicDB.debug*` seam pattern; no speculative features.
+### Round 1b — 2026-09-14 — findings applied
+PLANNER_MODEL: bao-opus
+1. Visual acceptance (IMPORTANT) — single owner chosen: TASK-AICHAT-005 (owns the new rendered surfaces; TASK-004 keeps the existing composer/geometry-a11y surface, no shared file). Applied: §2 in-scope line adds visual-acceptance; §3 density table gains a "Visual acceptance" row (VIS family ≥5 IDs; concrete spacing/typography/theme tokens + 200% zoom + reduced motion + light/dark/high-contrast for stream area, timeline, session picker, permission prompts, failure banners); §4 section-completeness list adds Visual acceptance; §6 AC1 adds VIS≥5; TASK-AICHAT-005 goal/ownership/test-case-1/verification-commands/ACs updated (family loop + distinct-minima checker + section grep include VIS); TASK-AICHAT-006 section list, section grep, ID-uniqueness regex, and distinct-minima checker extended with VIS; TASK-005 Discussion records the ownership rationale.
+2. BLOCKED(network) path (IMPORTANT) — TASK-AICHAT-003 now defines the honest exit: gate is `(Verified-with-URL ≥ 15) OR (BLOCKED(network) marker present AND all 22 Qs labeled AND every blocked Q is Could-not-verify with exact queries/URLs tried)`; verification command changed accordingly; Test Cases 2 and 4 reworded; AC + Discussion state `STATUS: BLOCKED(network)` is surfaced in the Executor Report and never rescued by fabricated entries. PLAN §4 research-coverage row and §6 AC3 treat a documented block as an acceptable terminal state; TASK-AICHAT-006 test case 6 + Discussion instruct consolidation to record the block openly and still complete. ≥15 remains the goal when the network works.
+3. Anchor checker regex (MINOR) — widened in both PLAN §5 and TASK-AICHAT-006 to `/([\w\/.-]+\.(?:ts|js)):(\d+)(?:[–-](\d+))?/g` with `b = m[3] ? +m[3] : a`, so single-line `file.ts:N` anchors are validated too. Re-dry-run: baseline still prints ALL ANCHORS OK; synthetic check confirms in-bounds single+range anchors yield 0 failures and a single-line OOB anchor (`aiChatPanelHeader.ts:99999`) is detected as a failure.
 
-NOTES: Both consistency findings are stale §1/§2 summary text contradicting the operative §3/§7 detail — surgical one-line edits, no re-planning required. Model transparency: reviewer runs as unic/unic-smart (= config `handoff.reviewer.model`); planner self-reported the same gateway model — config `mustDifferFromExecutor` binds at P5 vs the executor (hint `unic-code`), which this plan review does not gate.
+### Round 2b — 2026-09-14 — findings applied without re-review (loop cap reached)
+PLANNER_MODEL: bao-opus
+1. VIS in §3 acceptance-test-index row + §5 ID-uniqueness regex (IMPORTANT, round-1 partial) — §3 index row now lists families KBD, SLASH, MENTION, A11Y, STREAM, TIME, SESS, PERM, FAIL, VIS; the §5 ID-uniqueness checker regex extended to `(?:KBD|SLASH|MENTION|A11Y|STREAM|TIME|SESS|PERM|FAIL|VIS)` (already matched TASK-AICHAT-006's own checkers, which got VIS in round 1b), so duplicate VIS-xx IDs now fail the plan-level gate. Dry-run: baseline UNIQUE 23 IDS; synthetic `VIS-01 VIS-01` detected as DUP and exits 1.
+2. §5 TASK-003 gate mirrored with §4/§6 (IMPORTANT, round-1 partial) — §5 research block now reads: exactly 22 `### Qxx` headings; ≥22 combined evidence labels; then `(Verified-with-URL ≥ 15) OR (BLOCKED(network) marker present)` — with the queries/URLs-tried requirement for blocked Qs owned by TASK-AICHAT-003's Test Cases 2/4 and referenced in a §5 comment. Dry-run on fixtures: ≥15 Verified passes; 14 Verified + `BLOCKED(network)` + 22 labels passes; 14 Verified without the marker fails non-zero.
 
-### Round 1 Revision — 2026-09-10 · planner (unic/unic-smart)
-Status: all findings resolved — resubmitted for re-review
 
-1. RESOLVED (consistency): §1 task-sizing + §2 out-of-scope now exempt exactly the
-   §7-sanctioned `readClipboard` (webview→host) / `clipboardText` (host→webview) pair;
-   all other discriminators (`copy`, `saveEdits`, `retryFailedRows`) remain unchanged.
-2. RESOLVED (consistency): §2 wave rule corrected — TASK-CLIP-004 is tests-only and does
-   NOT edit `webview/main.ts`; it consumes TASK-CLIP-003's `debugClipboard.simulatePaste`
-   seam (now consistent with §3 and Self-Audit item 4).
-3. RESOLVED (clarity): §4 CLIP-002 happy row rewritten as a complete literal expectation.
-   Grounding note: the reviewer's sketch kept dirtyCount 2 with (1,1)=`"y"`, which is
-   unreachable — with the 2-col fixture, (1,1)=`"y"` (= parsed[1][1]) requires anchor
-   col 0 (`onGridPaste` anchor math, `webview/main.ts:3329-3333`; col clip in
-   `applyPasteToDirty`, `src/ui/resultsGridModel.ts:1289-1292`), which yields dirtyCount 4
-   — matching TASK-CLIP-002 test #1 verbatim, so §4 now states that exact expectation.
-4. RESOLVED (clarity): §4 CLIP-003 happy row rewritten as a literal host round-trip:
-   Cmd+V keydown → `readClipboard` post → stub replies `clipboardText "7\tseven"` →
-   exactly one paste application at the focused anchor, with `simulatePaste` asserted
-   NOT used (matches TASK-CLIP-003 test #1).
-
-Task files: no edits required — TASK-CLIP-002 #1 and TASK-CLIP-003 #1 already carried the
-literal expectations these findings ask for; PLAN §4 now matches them. Dependency graph,
-waves, and task statuses (`ready`) untouched.
-### Round 2 — 2026-09-10 · unic/unic-smart (config handoff.reviewer.model: unic-smart)
-Status: Approved
-
-COMPLETENESS:
-  - none — §4 gives every task ≥1 happy + ≥2 edge cases; §5 correctly documents the no-lint-script state and mandates `npm run typecheck` per wave (verified package.json: compile/test/typecheck present, no lint); every regression file the plan cites exists (webviewBundle, webviewKeybinding, webviewExport, resultsGridModelEdit, tests/webviewEditHighlight, aiChatPanelCloneCss, resultsPanelSaveEdits); no TODO/TBD/placeholder in the document.
-CONSISTENCY:
-  - Round 1 finding 1 RESOLVED — §1 task-sizing and §2 out-of-scope now exempt exactly the §7-sanctioned readClipboard/clipboardText pair ("every other discriminator (copy, saveEdits, retryFailedRows) is unchanged"); the §3/§7 contradiction is gone.
-  - Round 1 finding 2 RESOLVED — §2 wave rule now reads CLIP-004 "tests-only, does NOT edit webview/main.ts; consumes CLIP-003's debugClipboard.simulatePaste seam", matching §3, §5 wave-3 commands, and Self-Audit item 4.
-  - none remaining — waves ↔ task ownership ↔ §5 per-wave commands ↔ §6 acceptance agree; §4 numeric expectations internally consistent (2×2 paste → dirtyCount 4; CRLF 2×1 → dirtyCount 2).
-CLARITY:
-  - Round 1 finding 3 RESOLVED — §4 CLIP-002 row 1 is a complete literal expectation (dirtyCount 4; (0,0)="10",(0,1)="x",(1,0)="20",(1,1)="y"); the planner's anchor-math grounding makes it consistent with the tile/clip rows.
-  - Round 1 finding 4 RESOLVED — §4 CLIP-003 happy row is a literal round-trip script (keydown → readClipboard post → stub replies clipboardText → exactly one paste at focused anchor; simulatePaste asserted NOT called).
-  - none remaining — residual informal phrasing ("right neighbor") is unambiguous given the stated 2-col fixture and anchor.
-SCOPE:
-  - none — single surface (results-grid clipboard copy/paste + save pin), explicit out-of-scope list, file-disjoint waves preserved.
-YAGNI:
-  - none — readClipboard/clipboardText is a minimal seam with a recorded rejected alternative; both debugClipboard accessors are consumed by named tests; no speculative features.
-
-NOTES: Approved — proceed to implementation (wave 1 = TASK-CLIP-001 ∥ TASK-CLIP-002). Reviewer runs as unic/unic-smart = config handoff.reviewer.model; planner self-reported the same gateway model, which plan review does not gate (mustDifferFromExecutor binds at P5 vs the executor).
-
-## Implementation-Discovery Revision — 2026-09-10 · planner · unic/unic-smart
-
-The wave-1, tests-only TASK-CLIP-002 suite exposed an existing production defect rather
-than a test defect: `pasteIntoRange` slices clipboard columns with
-`row[srcColOffset] ?? ""`, so a 1×1 clipboard fills the first column of a 2×2 active range
-with `"z"` and incorrectly fills the second with `""`. TASK-CLIP-003 now explicitly owns
-the `webview/main.ts` column-tiling correction alongside its planned keyboard/host-message
-and stale-range work. Its `Dependencies` is relaxed to `none`: CLIP-002's regression is
-already written on main and must be re-run by CLIP-003, not waited on or discarded. It stays
-the sole operational wave-2 production task; TASK-CLIP-004 remains wave 3. TASK-CLIP-002
-remains tests-only, with its PARTIAL executor report preserved as historical evidence.
-
-Plan review reached its two-round cap before this implementation discovery (Round 2:
-Approved). This adaptation is applied without another plan-review invocation; the targeted
-CLIP-002 suite is now a mandatory CLIP-003 verification gate.
+### Round 2 — 2026-09-14
+REVIEWER_MODEL: bao-opus (opus-class; `handoff.reviewer.model = unic-smart` tier per §7 — same transparency note as Round 1; no executor exists at plan stage)
+VERDICT: Issues Found
+FINDINGS:
+  1. IMPORTANT (Consistency — §3 line 134 + §5 line 205 vs §3 line 132 / §4 line 170 / §6 line 216; Round 1 fix 1 only PARTIALLY applied): the new VIS family was added to §2 in-scope, the §3 Visual-acceptance density row (VIS≥5, owned by TASK-005), the §4 completeness list and §6 AC1 — but (a) the §3 "Acceptance-test index" row still enumerates the families as "KBD, SLASH, MENTION, A11Y, STREAM, TIME, SESS, PERM, FAIL" with no VIS, so the plan's own index definition omits a family it mandates two rows above; and (b) the §5 ID-uniqueness one-liner alternation `(?:KBD|SLASH|MENTION|A11Y|STREAM|TIME|SESS|PERM|FAIL)-\d{2}` does not match `VIS-NN`, so duplicate VIS IDs pass the plan-level uniqueness gate silently — Round 1's fix 1 explicitly required extending this §5 regex, and only the TASK-006 copy was extended (Round 1b). Fix: add `VIS` to the family list in the §3 acceptance-test-index row AND to the alternation in the §5 node command; re-dry-run on baseline (still UNIQUE 23 IDS, since VIS IDs only exist after TASK-005/006 run).
+  2. IMPORTANT (Consistency — §5 lines 198–200 vs §4 research-coverage row + §6 AC3; Round 1 fix 2 only PARTIALLY applied in the plan): §4 and §6 now define the honest exit as "(Verified-with-URL ≥ 15) OR documented BLOCKED(network) ledger (every blocked Q labeled Could-not-verify with queries/URLs tried)", but §5's TASK-AICHAT-003 block still runs the bare `test "$(grep -c 'Verified-with-URL' …)" -ge 15` hard gate under the comment "research threshold met" — it exits non-zero in exactly the state §4/§6 declare acceptable, so the plan states two different gates for the same named check and re-creates the fabrication pressure Round 1 flagged for any executor verifying against §5. Fix: update the §5 TASK-003 command to the OR-form (count ≥15, else require the BLOCKED(network) marker plus a Could-not-verify-with-queries ledger entry), or annotate the block as the reachable-network half with the task file carrying the authoritative conditional — one gate, stated identically in §4/§5/§6.
+NOTES: Fresh COMPLETENESS / CLARITY / SCOPE / YAGNI pass is clean: §3 density rows and the §4 completeness list now correspond 1:1 (incl. Visual acceptance), the §4/§6 BLOCKED(network) wording matches Round 1's OR-semantics, ownership stays single-writer per wave, all edits stayed SPEC-ONLY, and Round 1 fix 3 landed verbatim (§5 line 203: optional range `(?:[–-](\d+))?` with `b = m[3] ? +m[3] : +m[2]` — single-line anchors validated). Both findings are mechanical plan-text edits in the same §3/§5 spots the Round-1 fixes touched; no re-planning needed — apply and the plan is ready.

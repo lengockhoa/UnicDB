@@ -1,0 +1,104 @@
+# TASK-AICHAT-002 — Host/engine fact-base: protocol, sessions, permissions, streaming, capability matrix
+
+- Status: `ready`
+- Owner: `handoff`
+- Reviewer: `code-reviewer`
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 (Local fact-base content), §6 AC2 / AC5
+
+## Goal
+
+Produce the host-side fact-base for the AI-chat spec rewrite. First Glob the full chat surface
+under `src/` and `webview/` for chat/session/stream/permission/approval/timeline/attach names
+so no existing feature is missed. Then read the host UI layer (`src/ui/aiChatPanel.ts`,
+`aiChatPanelMessages.ts`, `aiChatPanelCommands.ts`, `aiChatAttachments.ts`) and engine
+adapters (`src/ai/omp/**`, `src/ai/claudeCode/**`, `src/ai/codex/**`, builtin choice/path).
+Verify EVERY host/adapter draft anchor; inventory protocol messages, sessions/persistence,
+permissions/approvals, streaming route, timeline/activity existence, failures; and produce an
+honest four-engine capability matrix. Record absent features as `absent in current source`,
+never inferred capability.
+
+## Target Files
+
+- `docs/AI_HANDOFF/notes/aichat-factbase-host.md` — (new) the only file this task writes.
+
+## Test Cases (REQUIRED — document-acceptance checks; runtime suites are N/A: SPEC-ONLY docs cycle)
+
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|----------|----------|---------------------|
+| 1 | happy | Full chat-surface Glob inventory | Note records actual Glob/search commands + results for chat/session/stream/permission/approval/timeline/attach filenames under `src/` and `webview/`; each discovered relevant file gets a role and whether read deeply / not relevant | Existing tree: `src/ui/aiChatPanel.ts`, `aiChatPanelMessages.ts`, `aiChatPanelCommands.ts`, `aiChatAttachments.ts`; engine dirs omp/claudeCode/codex |
+| 2 | happy | Draft host/adapter anchor verdict coverage | One `confirms`/`corrects (actual: …)` verdict plus short quote for: `src/ui/aiChatPanelCommands.ts:1–83`, `src/ui/aiChatPanel.ts:1744–1816`, `src/ui/aiChatPanelMessages.ts:91–106`, `src/ai/claudeCode/claudeCodeChatEngine.ts:272–279`, `src/ai/codex/codexChatEngine.ts:357–364` | Baseline draft §Source anchors; anchor files currently 84/4575/486/313/388 lines |
+| 3 | happy | Four-engine capability matrix | Matrix has exactly 4 engine rows (`builtin`, `omp`, `claudeCode`, `codex`) × ≥8 named columns: streaming, resume, native commands, model/role picker, session/persistence, permissions/approvals, timeline events, failure modes; EVERY cell contains either `Verified (file:line)` or `Unverified-internal` / `absent in current source` | `builtin` real selection anchor: `src/ai/engineChoice.ts:9–21` |
+| 4 | edge (missing feature) | Absent surface is explicit rather than fabricated | If no current activity timeline, approval UX, native sessions, or engine capability exists, note says `absent in current source` with the files/search terms checked; no row claims it exists without a file:line | Full Glob sweep result |
+| 5 | edge (protocol mismatch) | Engine-label / command reconciliation fact found | Note identifies whether `/engine` host parsing accepts the same engines as the protocol advertises, with exact input/output names and anchors; discrepancy is described as fact, not a proposed fix | Draft asserts builtin/omp parser vs four-engine protocol mismatch |
+| 6 | edge (failure path) | Failure and stream termination route is traceable | ≥4 distinct failures/terminal paths (provider unavailable, process failure, cancellation, malformed/unexpected host/webview message, or actual equivalents) recorded with triggering condition, current user-visible outcome, and `file:line` | Source inventory |
+
+## Test Files
+
+- Document-acceptance checks run against `docs/AI_HANDOFF/notes/aichat-factbase-host.md`
+  itself. No executable test files — SPEC-ONLY docs cycle; `npm test` would test no changed
+  runtime behavior.
+
+## Verification Commands
+
+```bash
+test "$(wc -l < src/ui/aiChatPanel.ts)" -ge 1816 && test "$(wc -l < src/ui/aiChatPanelMessages.ts)" -ge 106 && test "$(wc -l < src/ai/claudeCode/claudeCodeChatEngine.ts)" -ge 279 && test "$(wc -l < src/ai/codex/codexChatEngine.ts)" -ge 364 && echo ANCHOR-BOUNDS-OK
+for r in "aiChatPanelCommands\.ts:1[–-]83" "aiChatPanel\.ts:1744[–-]1816" "aiChatPanelMessages\.ts:91[–-]106" "claudeCodeChatEngine\.ts:272[–-]279" "codexChatEngine\.ts:357[–-]364"; do grep -qE "$r" docs/AI_HANDOFF/notes/aichat-factbase-host.md || { echo "MISSING VERDICT: $r"; exit 1; }; done
+for e in builtin omp claudeCode codex; do grep -qw "$e" docs/AI_HANDOFF/notes/aichat-factbase-host.md || { echo "MISSING ENGINE ROW: $e"; exit 1; }; done
+test "$(grep -cE 'Verified \([^)]*:[0-9]+' docs/AI_HANDOFF/notes/aichat-factbase-host.md)" -ge 32
+grep -qiE "Glob sweep|search inventory" docs/AI_HANDOFF/notes/aichat-factbase-host.md || { echo "MISSING GLOB SWEEP"; exit 1; }
+! grep -nEi "TBD|TODO|should be nice" docs/AI_HANDOFF/notes/aichat-factbase-host.md
+test -z "$(git status --porcelain -- src webview package.json)" && echo DOCS-ONLY-OK
+npm run typecheck
+```
+
+(No lint script exists in this repo — `typecheck` is the static gate and protects against
+accidental out-of-scope edits.)
+
+## Acceptance Criteria
+
+- [ ] Full chat-surface Glob/search inventory recorded before conclusions.
+- [ ] All 5 draft-cited host/engine anchors have verdicts and quotes.
+- [ ] Protocol message inventory names each host→webview and webview→host message relevant to
+      send, stream, stop, session, command, context, export, error — or records it absent.
+- [ ] Four-engine matrix meets case 3 with no invented cell values.
+- [ ] Current sessions/persistence, permission/approval surface, stream route, timeline
+      existence, and ≥4 failure/termination paths are factually grounded.
+- [ ] All §Verification Commands pass; no writes outside `docs/`.
+
+## Dependencies
+
+- (none)
+
+## Interfaces
+
+- Consumes: `docs/AI_CHAT_REDESIGN.md` baseline §Source anchors (read-only); read-only host
+  UI, engine adapter, and engine-choice source tree.
+- Produces: `docs/AI_HANDOFF/notes/aichat-factbase-host.md` — sections: (1) search inventory,
+  (2) anchor verdicts, (3) protocol inventory, (4) four-engine matrix, (5) sessions /
+  permissions / streaming / timeline inventories, (6) failures, (7) exact gaps/open questions.
+  Consumed by TASK-AICHAT-005 (§platform sections), TASK-AICHAT-004 (engine-command context),
+  and TASK-AICHAT-006 (read-only evidence).
+
+---
+
+## Discussion
+
+### 2026-09-14 · planner · bao-opus
+- Confirmed at plan time: adapter directories and files exist — `src/ai/omp/ompChatEngine.ts`,
+  `src/ai/claudeCode/claudeCodeChatEngine.ts`, `src/ai/codex/codexChatEngine.ts`; `builtin`
+  is named in `src/ai/engineChoice.ts:9–21`. Do not call a missing `builtinChatEngine.ts`
+  plausible — find the real fallback route.
+- Do not assume a timeline, approval flow, or persistence exists because a redesign needs it.
+  Negative evidence is an implementation-relevant research result and must be searchable.
+- Keep host protocol message names and TypeScript signatures exact (quote them); no
+  plausible-looking schemas.
+- **Task-budget validator dismissal:** the required CLI path
+  `.claude/ukit/index/task-budget-validator.mjs` is absent in this consumer-repo install
+  (planner confirmed by directory lookup). Manual audit found all required task fields,
+  independent deliverable, concrete 1 happy + 2 distinct edge checks, and a bounded docs-only
+  research scope; `ready` is appropriate.
+
+---
+
+<!-- Phase 3 executor appends `## Executor Report` BELOW this separator.
+Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
