@@ -14,12 +14,12 @@ Prior cycle CLIPGRID archived at `INDEX_CLIP.md` / `PLAN_CLIPGRID.md` (4/4 done,
 
 | Task | Title | Status | Deps | Files | Reviewer |
 |------|-------|--------|------|-------|----------|
-| TASK-AICHAT-001 | Webview fact-base — verify draft anchors, inventory chat webview files, gap list | pending_review | none | docs/AI_HANDOFF/notes/aichat-factbase-webview.md (new) | unic-smart |
-| TASK-AICHAT-002 | Host/engine fact-base — protocol, sessions, permissions, streaming, 4-engine capability matrix | pending_review | none | docs/AI_HANDOFF/notes/aichat-factbase-host.md (new) | unic-smart |
-| TASK-AICHAT-003 | External research — VS Code, Copilot Chat, Cline, Continue, WAI-ARIA (Q01–Q22, evidence-labeled) | pending_review | none | docs/AI_HANDOFF/notes/aichat-research-external.md (new) | unic-smart |
-| TASK-AICHAT-004 | Draft upgraded composer/slash/mention/geometry-a11y sections (KBD/SLASH/MENTION/A11Y) | pending_review | TASK-AICHAT-001, TASK-AICHAT-002, TASK-AICHAT-003 | docs/AI_HANDOFF/notes/aichat-sections-composer.md (new) | unic-smart |
-| TASK-AICHAT-005 | Draft NEW platform sections — streaming, timeline, sessions, permissions, failures, engine matrix (STREAM/TIME/SESS/PERM/FAIL/VIS) | pending_review | TASK-AICHAT-001, TASK-AICHAT-002, TASK-AICHAT-003 | docs/AI_HANDOFF/notes/aichat-sections-platform.md (new) | unic-smart |
-| TASK-AICHAT-006 | Consolidate final spec — rewrite docs/AI_CHAT_REDESIGN.md, verify anchors, sequencing appendix | pending_review | TASK-AICHAT-004, TASK-AICHAT-005 | docs/AI_CHAT_REDESIGN.md | unic-smart |
+| TASK-AICHAT-001 | Webview fact-base — verify draft anchors, inventory chat webview files, gap list | done | none | docs/AI_HANDOFF/notes/aichat-factbase-webview.md (new) | bao-opus |
+| TASK-AICHAT-002 | Host/engine fact-base — protocol, sessions, permissions, streaming, 4-engine capability matrix | done | none | docs/AI_HANDOFF/notes/aichat-factbase-host.md (new) | bao-opus |
+| TASK-AICHAT-003 | External research — VS Code, Copilot Chat, Cline, Continue, WAI-ARIA (Q01–Q22, evidence-labeled) | done | none | docs/AI_HANDOFF/notes/aichat-research-external.md (new) | bao-opus |
+| TASK-AICHAT-004 | Draft upgraded composer/slash/mention/geometry-a11y sections (KBD/SLASH/MENTION/A11Y) | done | TASK-AICHAT-001, TASK-AICHAT-002, TASK-AICHAT-003 | docs/AI_HANDOFF/notes/aichat-sections-composer.md (new) | bao-opus |
+| TASK-AICHAT-005 | Draft NEW platform sections — streaming, timeline, sessions, permissions, failures, engine matrix (STREAM/TIME/SESS/PERM/FAIL/VIS) | done | TASK-AICHAT-001, TASK-AICHAT-002, TASK-AICHAT-003 | docs/AI_HANDOFF/notes/aichat-sections-platform.md (new) | bao-opus |
+| TASK-AICHAT-006 | Consolidate final spec — rewrite docs/AI_CHAT_REDESIGN.md, verify anchors, sequencing appendix | done | TASK-AICHAT-004, TASK-AICHAT-005 | docs/AI_CHAT_REDESIGN.md | bao-opus |
 
 Waves: wave 1 = AICHAT-001 ∥ 002 ∥ 003 (run 2-at-a-time, handoff.maxParallelAgents=2) |
 wave 2 = AICHAT-004 ∥ 005 | wave 3 = AICHAT-006. No two same-wave tasks share a Target File.

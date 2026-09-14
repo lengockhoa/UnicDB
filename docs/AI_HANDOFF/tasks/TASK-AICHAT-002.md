@@ -196,3 +196,22 @@ the previous commit lists only `docs/AI_HANDOFF/notes/aichat-factbase-host.md`.
   cannot verify the underlying provider model ID from inside the session; if the reviewer
   needs a canonical ID, this field is the honest best-effort value, flagged as such.
 - No writes outside `docs/`; no commit outside the worktree; nothing pushed.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: all 8 §Verification Commands re-run in the main working tree (incl. `npm run typecheck`)
+  result: 8/8 PASS — ANCHOR-BOUNDS-OK; 5/5 verdicts; 4/4 engine rows; Verified-count=33 (≥32); glob sweep present; no TBD/TODO; DOCS-ONLY-OK; tsc --noEmit exit 0
+TEST_PLAN_COVERAGE: all-followed — §1 glob inventory with per-file roles; §2 five anchor verdicts (4 corrected with exact quotes); §4 exactly 4 engines × 8 columns, every cell Verified/absent/Unverified-internal; §1f/§3c/§5d absent surfaces with search terms; §7.1 /engine parser-vs-protocol mismatch as fact; §6 fourteen failure paths with anchors
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - docs/AI_HANDOFF/notes/aichat-factbase-host.md:339 — cites `RESUME_PICKER_CAP` constant at `src/ui/aiChatPanel.ts:1173`; the constant is actually `:1154` (`:1173` is an interface doc comment). The cap-of-20 fact itself is verified (`:1154`, applied at `:4051`; `:4046` anchors the statement start).
+    - docs/AI_HANDOFF/notes/aichat-factbase-host.md:375 — redact boundary cited as `aiChatPanel.ts:2601, :2782`; actual `String(redact(delta))` lines are `:2586` (omp route) and `:2782` (image-capable route). `:2601` is `this.postSessionState("running")`. The redaction claim itself is true.
+    - docs/AI_HANDOFF/notes/aichat-factbase-host.md:152 — §2c correction places the `AiChatPanelEngine` doc comment at `:91` and interface at `:92`; actually doc comment `:92`, interface keyword `:93` (end `:107` and the `:102` four-engine union are exact).
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: ~45 file:line anchors spot-checked (protocol tables, matrix cells, absent-claims, extension wiring, webview export). All substantive claims true; no fabrication; negative-evidence greps reproduce (no timeline/activity/approval files, no builtinChatEngine.ts/sessionStore, no `default:` branch in either wire switch). Only 3 line-number drifts, none changing a conclusion.

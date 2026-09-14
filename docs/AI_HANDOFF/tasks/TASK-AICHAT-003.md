@@ -232,3 +232,22 @@ search results for a network outage. Highest-value comparators for the final spe
 **Stop and Send / Steer / Queue** run-turn model (Q10), Cline's **Checkpoint / Compare / Restore**
 timeline (Q13) and per-tool-call approval matrix (Q12), Continue's **role-vs-model** split (Q16),
 and the APG's focus-retention plus `aria-disabled`-for-discoverability guidance (Q21).
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus (config handoff.reviewer.model = unic-smart; differs from executor — isolation holds)
+EXECUTOR_MODEL: claude-sonnet-5 (inferred from .ukit/storage/config.json router.defaultModel/modelTiers.code — value is a real configured model id, not a placeholder)
+VERIFICATION_RERUN:
+  command: all 8 §Verification Commands, main working tree (Q01–Q22 headings / Verified-with-URL≥15-or-BLOCKED / https≥15 / subjects / substitution / no-TBD-TODO / docs-only / npm run typecheck)
+  result: 8/8 PASS — 22 headings, 25 Verified-with-URL lines, 53 https lines, DOCS-ONLY-OK, typecheck-exit=0
+TEST_PLAN_COVERAGE: all-followed — T1–T6 verified by rerun + full read; RED_OUTPUT is a real pre-state failure (file absent, MISSING Q01; commit 40df791 creates the file); every Q block carries subject/URL/label/observation/relevance
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - docs/AI_HANDOFF/notes/aichat-research-external.md:467,486,503 — Q22's blanket label "every constituent claim traces to a fetched page above" over-covers 2 tokens: `allowDangerouslySkipPermissions` (0 hits across all 16 listed URLs; a Claude Code/Codex CLI flag, not on any fetched page) and "Cline skills-as-slash-commands" (none of the 4 fetched Cline pages covers skills). Narrow the label to the traceable claims or move these tokens to Reported-unverified — TASK-AICHAT-004/005/006 consume Q22 as verified.
+    - docs/AI_HANDOFF/notes/aichat-research-external.md:232,179 — attribution imprecision: `chat.notifyWindowOn*` (Q11) lives on the chat-agent-mode page (4 hits), not the cited chat-sessions page; `/fork` (Q08) is on chat-sessions, not the cited copilot-chat URL. Claims are real and in-fetched; citations point at sibling pages.
+    - task file Executor Report — EXECUTOR_MODEL was inferred from config, not harness-reported; value matches config, so logged per gate contract, non-blocking.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Honesty spot-check (reviewer has no WebFetch; used curl) on 6 cited URLs — W3C APG combobox (aria-activedescendant/aria-autocomplete present), VS Code v1_104 ("Skip tool calls", chat.tools, autoApprove), chat-agent-mode (Stop and Send / Steer / Add to Queue / chat.requestQueuing.defaultAction), copilot-chat, chat-sessions (Export/Forked/External) — all reachable, every load-bearing quote found verbatim on its cited page; no fabricated URL found. Note: docs/copilot/chat/copilot-chat currently serves chat-agent-mode content byte-identically, so executor observations still match what that URL serves. No BLOCKED(network) path exercised — target met with real fetched sources; WebSearch outage honestly recorded in note + report.

@@ -206,3 +206,23 @@ ISSUES:
 HANDOFF_TO_REVIEWER: yes — STATUS: DONE; reviewer must differ from executor model (expect unic-smart).
 
 NEXT: ready for review.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN: PASS
+  command: all 11 §Verification Commands re-run in main worktree (/Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB)
+  result: cmd1 family minima exit 0; cmd2 distinct STREAM=7 TIME=6 SESS=10 PERM=6 FAIL=12 VIS=8; cmd3 sections exit 0; cmd4 verified-anchor lines=94 (>=16); cmd5 composer pointers=5; cmd6 anchors 1744 + 91–106 present; cmd7 per-Qxx=22; cmd8 quotes=67; cmd9 no vague terms; cmd10 DOCS-ONLY-OK; npm run typecheck exit 0
+TEST_PLAN_COVERAGE: all-followed — TC1 all six sections + VIS at density bar; TC2 matrix 4x8, every cell labeled, no invented capability (codex gate caveat matches extension.ts:2479 comment); TC3 ten failure classes each with exact quoted string + recovery + FAIL ID; TC4 reconciliation cites both anchors, capability gating + local-transcript≠native-resume preserved; TC5 16 distinct Q IDs, all verified verbatim against aichat-research-external.md
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - docs/AI_HANDOFF/notes/aichat-sections-platform.md:253,287 — RESUME_PICKER_CAP cited as src/ui/aiChatPanel.ts:1173; actual declaration is :1154 (line 1173 is an unrelated comment). Inherited from aichat-factbase-host.md:339; TASK-006 should fix both.
+    - docs/AI_HANDOFF/notes/aichat-sections-platform.md:64 — redaction anchor aiChatPanel.ts:2601 is stale; actual `String(redact(delta))` posts are :2586 and :2782 (the :2782 citation is correct). Inherited from aichat-factbase-host.md:375.
+    - docs/AI_HANDOFF/notes/aichat-sections-platform.md:177,486,499 — TraceRecorder cited as src/ai/trace.ts:11; the class is at :144 (fact-base used :1). Pin :144 at consolidation.
+    - docs/AI_HANDOFF/notes/aichat-sections-platform.md:748 — §9 row "3g/4" references a non-existent §3g (executor self-reported; rule lives in §3c/§3d). Reconcile label in TASK-006.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Anchor spot-checks across ~40 cited file:line ranges confirmed real constructs and verbatim strings (resume gates, disposed/process-failed messages, stream fallback, fallback-to-builtin, optimistic export, permission namespaces, bypass, timeout). No contradiction with fact-bases or the composer note; VIS covers all five new surfaces. Only stale-by-a-few-lines inherited anchors remain.

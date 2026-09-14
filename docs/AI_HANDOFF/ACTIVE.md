@@ -7,4 +7,4 @@ Tasks: 6 total planned
   - TASK-AICHAT-004 (writing) [ready] — upgraded composer/slash/mention/geometry-a11y section drafts; baseline IDs preserved; ≥10 current→target deltas → notes/aichat-sections-composer.md
   - TASK-AICHAT-005 (writing) [ready] — NEW platform sections: streaming/timeline/sessions/permissions/failures + engine matrix + /engine /model /resume reconciliation → notes/aichat-sections-platform.md
   - TASK-AICHAT-006 (consolidation) [ready] — single-owner rewrite of docs/AI_CHAT_REDESIGN.md; anchor checker + ID-uniqueness gates; implementation-sequencing appendix
-Status: planning_done — ready for executor
+Status: done — 6/6 tasks approved (5 approved_minor with non-blocking single-line anchor corrections applied post-review); final spec docs/AI_CHAT_REDESIGN.md is 700 lines (10x baseline)

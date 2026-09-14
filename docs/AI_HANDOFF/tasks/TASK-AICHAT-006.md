@@ -200,3 +200,23 @@ Note on one mid-run fix: the ID-uniqueness gate initially flagged `KBD-01` becau
 
 <!-- ADDENDUM appended by executor — see note above. -->
 
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus (config handoff.reviewer.model = unic-smart tier)
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN: PASS — all 13 §Verification Commands re-run fresh in the main tree: anchor checker ALL ANCHORS OK (exit 0), dangling-promise ban, KBD/SLASH/MENTION presence, family-thin, distinct-family minimums, UNIQUE 88 IDS / zero dups, values, sections, vague-text ban, DOCS-ONLY-OK, `npm run typecheck` exit 0. Doc = 700 lines (10x baseline), committed as 48e6b59.
+TEST_PLAN_COVERAGE: all-followed — §Test Cases 1–6 satisfied: full section set present; anchor gate green; substitution stated openly in §Evidence status with the exact dangling phrase absent; baseline IDs + all geometry/timing values retained (§1.4/§9/§11); families exceed minimums with one engine-command rule home (§8); RED_OUTPUT contains real failing-gate output from the baseline pre-state.
+FINDINGS:
+  critical:
+    - none
+  important:
+    - none
+  minor:
+    - docs/AI_CHAT_REDESIGN.md:277 + :300 + :647 — RESUME_PICKER_CAP cited as src/ui/aiChatPanel.ts:1173; actual definition is :1154 (applied in the filter chain :4046–4051, slice at :4051). Claim itself (cap 20, omp-only, sort/filter) verified true in source.
+    - docs/AI_CHAT_REDESIGN.md:240 — TraceRecorder cited at src/ai/trace.ts:11; the class is at :144 (:11 is the TraceKind union, which §12 labels correctly).
+    - docs/AI_CHAT_REDESIGN.md:119 + :647 — src/ui/aiChatPanelCommands.ts:44 labeled "unclosed-quote null"; line 44 is the unknown-command null, the unclosed-quote return is at :80. Parser behavior claim itself is correct.
+    - Anchor spot-check otherwise clean: 30+ anchors verified line-exact across aiChatPanelCommands.ts, aiChatPanelMessages.ts (:44–:114, :425), aiChatPanel.ts (:1744–1817, :4018–:4076), extension.ts (:2433, :2478–2491 codex no---mcp-config caveat verbatim in source), claudeCode/codex engines (exact resume/dispose/start-fail strings), omp/acp.ts (:213/:252), webview composer+main (:441–:504, :792–:931, :1223–:1248, :1955–:2035, :629–:641), settings.ts (:13/:24).
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Consolidated spec is self-consistent (terminology table honored, §8 single-home for engine-command rules, §11 supersession ledger accurate against source, §10 index 88 unique IDs / 10 families), Evidence section states the named-subject substitution openly and honestly scopes Could-not-verify sub-parts, Appendix A is coherent and explicitly non-authorizing. The three minor findings are wrong line numbers on otherwise-true claims — trivially greppable by symbol name; fix opportunistically in the next docs pass, not worth a re-review round.

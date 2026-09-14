@@ -161,3 +161,40 @@ Note: |
   Secret Guard false positive. Runtime suites out of scope per task §Test Files (SPEC-ONLY docs
   cycle); only `npm run typecheck` was run as the static gate. The note file added in this report
   lives on the worktree branch; the orchestrator's copy-back step diffs the worktree against base.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN: PASS
+  - V1 anchor bounds: ANCHOR-BOUNDS-OK (main=2264, composer=579 — matches note header)
+  - V2 five verdict anchors: ALL-5-VERDICTS-OK
+  - V3 anchor count: 43 (>=20 required)
+  - V4 inventory: INVENTORY-OK (4 files)
+  - V5 placeholder scan: NO-PLACEHOLDER-OK
+  - V6 docs-only: DOCS-ONLY-OK
+  - V7 npm run typecheck: exit 0
+TEST_PLAN_COVERAGE: all-followed — case 1 (5 verdicts, quotes verified verbatim against source),
+  case 2 (zero silent copies; the one off-by-one — keyup listener closing at 932 vs cited 931 —
+  is explicitly disclosed in note §1, not copied silently), case 3 (4-file sweep + negative
+  results verified: `ls webview/ | grep -i chat` = exactly 4; aiSettingsFormMain.ts = 454 lines),
+  case 4 (G1..G8 all anchored; the 5 mandated leads all present: G1, G2, G3, G4, §3e).
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - docs/AI_HANDOFF/notes/aichat-factbase-webview.md:86 — the G5 grep example lists comment
+      refs at aiChatPanelMain.ts:5 and markdownSafe.ts:4-5 but omits aiChatPanelMain.ts:464
+      (also a comment-only ref); the "no production import" claim itself is correct.
+    - docs/AI_HANDOFF/notes/aichat-factbase-webview.md:142 — `model_select` anchored as 717–719;
+      the actual `post()` is line 719 (717–718 are the wire comment). Range still contains the
+      call; cosmetic only.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Re-ran all 7 §Verification Commands fresh in the main tree — all green. Spot-checked 25+
+  cited anchors (composer 441–457 / 496–504; main 72–77, 629–641, 786–895 incl. 812/819–825/864–866,
+  897–932, 1272–1320, 1955–2017, 2027–2035, 2051–2058, 2229–2252 line-341 data-token; G5/G6/G7/G8
+  claims) — every quote and line number matches current source exactly; no fabrication found.
+  All-Five-confirms is a true result, not a skipped check: e.g. the draft's "Shift+Enter not
+  excluded in menu Enter branches" is confirmed at main 812/872 and the single Shift guard at
+  composer 498. RED_OUTPUT contains a real pre-write failing run (MISSING VERDICT, exit 1).
