@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.53.47] — 2026-09-15
+
+- Summary: Research-complete rewrite of the AI Chat redesign spec. `docs/AI_CHAT_REDESIGN.md` grows from a 70-line draft to a 702-line implementation-ready spec — 17 sections, 10 acceptance-test families (88 unique IDs), an evidence-labeled external-research pass (27 verified URLs), and Appendix A implementation sequencing. **No runtime change** — a docs-only milestone, so it is tagged but not published to the Marketplace as a new build.
+- Files: `docs/AI_CHAT_REDESIGN.md`, `docs/AI_HANDOFF/**`, `CHANGELOG.md`, `package.json`, `package-lock.json`.
+- Also closes the stale `[Unreleased]` block: the **AI-engine unification** was stranded under that open heading even though its code shipped in the 1.53.46 build. Per-model `AiModelConfig.engine?` was removed so the global `UnicDB.ai.engine` selector (default `"omp"`) is the only engine control — `src/ai/settings.ts`, `src/ai/config.ts` (legacy-config migration + stale-key strip), `webview/aiSettingsFormMain.ts` (Lite Engine dropdown removed), and `src/ai/commitGenCommand.ts` (engine read from global `settings.engine`). Recorded here only to clear the changelog, not as new work.
+- Verification: `npm run typecheck` ✅ · `npm run compile` ✅ · docs-only (no `src/` or `webview/` diff vs 1.53.46).
+
+---
+
 ## [1.53.46] — 2026-09-13
 
 - Summary: Ship the Generate Commit Message spinner-hang fix and the results-grid bug family. Marketplace 1.53.45 predates these fixes (published 2026-09-10); this bump republishes the corrected build.
@@ -18,35 +27,6 @@
   - `serializeCommitPrompt` throws a structured `Error` if a `ChatContentPart.text`/`imageUrl` is not a string; `buildCommitGenOmpOneShot` ignores non-string deltas; `runGenerateCommitMessage` validates `typeof result.text === "string"` after both `builtinComplete` and `OmpOneShot.generate` so a misbehaving port can no longer leak `[object Object]` into the input box.
   - New tests: `commitGenOmpOneShot` unit (10), deterministic end-to-end permission-hang regression (2), gated live smoke (`UnicDB_OMP_SMOKE=1`), `commitMessage` (serializeCommitPrompt happy-path + throws), and `commitGenCommand` Test #8 (builtin non-string), Test #9 (omp one-shot non-string), Test #10 (claude-code / codex fallback + hint).
 - Verification: `npx vitest run src/ai/__tests__/commitGenOmpOneShot.test.ts src/ai/__tests__/commitGenOmpOneShot.e2e.test.ts src/ai/__tests__/commitMessage.test.ts src/ai/__tests__/commitGenCommand.test.ts src/ui/__tests__/commitGenIntegration.test.ts` ✅ (121 tests across the related suites); live smoke `UnicDB_OMP_SMOKE=1` ✅.
-
-## [Unreleased]
-
-- Summary: **Unify AI engine selection.** Drop per-model `engine` overrides
-  entirely; the global `UnicDB.ai.engine` dropdown is now the **only** engine
-  control in the AI Settings webview. Generate Commit Message follows the
-  same engine as the chat panel (no Lite section dropdown anymore). Fresh
-  installs default to `omp` (was `builtin`).
-- **Data model (`src/ai/settings.ts` + `src/ai/config.ts`):**
-  - `AiModelConfig.engine?` field deleted. No validator rule, no migration
-    backfill, no save-time persistence for per-model engine.
-  - `defaultAiSettings()` now returns `engine: "omp"` and `models.lite`
-    without an `engine` key. `loadSettings()` migrates legacy configs that
-    lack `engine` to `"omp"` (existing configs with a stored `engine` keep
-    it). Legacy stored configs whose `models.*` entries still carry a stale
-    `engine` key have it stripped on load.
-- **Webview (`webview/aiSettingsFormMain.ts`):**
-  - Lite section no longer renders an Engine dropdown — only Model ID +
-    Vision toggle. The global Engine dropdown now defaults to `omp` in HTML
-    and in the init mirror.
-  - Validator mirror and `readSettings()` drop the per-model engine branch.
-- **Commit gen (`src/ai/commitGenCommand.ts`):**
-  - `engine` is now read from `settings.engine` (global) — `models.lite.engine`
-    is no longer consulted. Behavior is unchanged when global is `builtin`
-    (provider.complete path) or `omp` (one-shot OmpChatEngine.generate).
-    `claude-code` / `codex` at the global level fall through to builtin
-    since commit-gen only ships omp + builtin adapters today.
-- **`package.json`:** `UnicDB.ai.engine.default` updated to `"omp"`; copy
-  refreshed to note the new default.
 
 ## [1.53.44] — 2026-09-10
 
@@ -1278,8 +1258,6 @@ Cycle AIC: SQL autocomplete (AI-powered, schema-only, debounced ghost text).
 
 ### Changed
 - The Console panel's `dispose` and per-tab `closeTab` now cancel any in-flight autocomplete request for the affected tab.
-
-## [Unreleased]
 
 ## [1.12.0] — 2026-08-28
 
