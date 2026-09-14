@@ -161,7 +161,18 @@ const args = process.argv.slice(2);
 const skipTest = args.includes("--skip-test");
 const skipPackage = args.includes("--skip-package");
 const skipPublish = args.includes("--skip-publish");
-const mode = args.find((a) => !a.startsWith("--")) ?? "patch";
+// Positional mode = first arg that is neither a flag nor the VALUE of a
+// value-taking flag. Without excluding flag values, `npm run bump --
+// --changelog-summary "some text"` would treat "some text" as the mode and
+// die with "invalid bump mode" (this bug blocked the documented one-command
+// flow until 2026-09-15).
+const VALUE_FLAGS = new Set(["--changelog-summary", "--changelog-files"]);
+const flagValueIdx = new Set();
+for (let i = 0; i < args.length; i++) {
+  if (VALUE_FLAGS.has(args[i])) flagValueIdx.add(i + 1);
+}
+const mode =
+  args.find((a, i) => !a.startsWith("--") && !flagValueIdx.has(i)) ?? "patch";
 const argValue = (flag) => {
   const i = args.indexOf(flag);
   return i >= 0 && i + 1 < args.length ? args[i + 1] : null;
