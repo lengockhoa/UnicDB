@@ -115,3 +115,88 @@ accidental out-of-scope edits.)
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+---
+
+## Executor Report
+
+STATUS: DONE (pipeline Status: PASS)
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: Claude:feature-implementer
+SUMMARY: Rewrote docs/AI_CHAT_REDESIGN.md as the single-owner consolidated final spec — merged the composer (TASK-004) and platform (TASK-005) section drafts, reconciled terminology/duplication, rewrote the Evidence status section around the openly-stated named-subject substitution, produced one deduplicated acceptance-test index, re-verified every file:line anchor, and appended the implementation-sequencing appendix. Baseline 70 lines -> final 700 lines (10x); all document gates green.
+TEST_PLAN_FOLLOWED: task §Test Cases 1–6 (document-acceptance; SPEC-ONLY docs cycle, runtime suites N/A — anchor checker is the executable gate).
+FILES_CHANGED:
+  - docs/AI_CHAT_REDESIGN.md: fully rewritten (baseline draft -> research-complete consolidated spec)
+TESTS_ADDED:
+  - N/A (document-acceptance checks; executable gate is the §Verification Commands anchor checker)
+
+### RED_OUTPUT (baseline pre-state, pasted)
+
+```
+===== RED 1: anchor checker =====
+ALL ANCHORS OK
+anchor exit=0
+===== RED 2: dangling promise =====
+DANGLING PROMISE PRESENT (grep found it)
+===== RED 3: KBD-08 (family depth) =====
+MISSING KBD-08
+===== RED 4: SLASH-07/08 =====
+MISSING SLASH-07
+===== RED 5: MENTION-11/12 =====
+MISSING MENTION-11
+===== RED 6: family distinct-ID gate =====
+FAMILY KBD distinct 7<8
+FAMILY SLASH distinct 6<8
+FAMILY A11Y distinct 0<6
+FAMILY STREAM distinct 0<6
+FAMILY TIME distinct 0<5
+FAMILY SESS distinct 0<6
+FAMILY PERM distinct 0<5
+FAMILY FAIL distinct 0<6
+FAMILY VIS distinct 0<5
+family exit=1
+===== RED 7: sections =====
+MISSING SECTION: Streaming
+MISSING SECTION: Activity timeline
+MISSING SECTION: Sessions
+MISSING SECTION: Permissions
+MISSING SECTION: Failures
+MISSING SECTION: Visual acceptance
+MISSING SECTION: [Ii]mplementation sequencing
+===== RED 8: vague text =====
+===== RED 9: values =====
+```
+
+RED is confirmed: the baseline draft fails the dangling-promise gate, the family-depth gate, the section-set gate, and the ID-uniqueness gate. (The anchor checker passes at baseline because the cited source files exist; it re-passes on the rewritten spec.)
+
+### Verification Output (GREEN, pasted)
+
+```
+=== FULL VERIFICATION ===
+ALL ANCHORS OK
+anchor exit=0
+dangling-ban exit=0
+KBD exit=0
+SLASH exit=0
+MENTION exit=0
+family-thin exit=0
+distinct exit=0
+UNIQUE 88 IDS
+unique exit=0
+values exit=0
+sections exit=0
+vague-ban exit=0
+DOCS-ONLY-OK
+typecheck exit=0
+
+> UnicDB@1.53.46 typecheck
+> tsc --noEmit
+```
+
+Baseline line count 70, final 700 (ratio 10.00x, far above the >=3x density bar). Milestone commit `09cd38e` on worktree branch `handoff/task-aichat-006` (`git add docs/AI_CHAT_REDESIGN.md` only; no writes to src/, webview/, or package.json).
+
+Note on one mid-run fix: the ID-uniqueness gate initially flagged `KBD-01` because the KBD-02 line cross-referenced it by id; rephrased to prose so each id occurs exactly once. Final uniqueness: 88 distinct ids, zero duplicates.
+
+<!-- ADDENDUM appended by executor — see note above. -->
+
