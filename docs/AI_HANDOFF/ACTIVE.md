@@ -1,10 +1,8 @@
-Cycle: AICHAT   Date: 2026-09-14   Base: main @ b7f49fc
-Goal: Rewrite docs/AI_CHAT_REDESIGN.md into a research-complete, implementation-ready AI-chat redesign spec (SPEC-ONLY docs cycle — no runtime changes; internet-research + maximum-detail mandates)
-Tasks: 6 total planned
-  - TASK-AICHAT-001 (research) [ready] — webview fact-base: verify every draft anchor, inventory the 4 chat webview files, ≥5 anchored gaps → notes/aichat-factbase-webview.md
-  - TASK-AICHAT-002 (research) [ready] — host/engine fact-base: protocol inventory, sessions/permissions/streaming/timeline presence, 4-engine (builtin/omp/claudeCode/codex) capability matrix → notes/aichat-factbase-host.md
-  - TASK-AICHAT-003 (research, WEB TOOLS REQUIRED) [ready] — external research Q01–Q22: VS Code docs, Copilot Chat, Cline, Continue, WAI-ARIA APG; ≥15 Verified-with-URL; substitution recorded → notes/aichat-research-external.md
-  - TASK-AICHAT-004 (writing) [ready] — upgraded composer/slash/mention/geometry-a11y section drafts; baseline IDs preserved; ≥10 current→target deltas → notes/aichat-sections-composer.md
-  - TASK-AICHAT-005 (writing) [ready] — NEW platform sections: streaming/timeline/sessions/permissions/failures + engine matrix + /engine /model /resume reconciliation → notes/aichat-sections-platform.md
-  - TASK-AICHAT-006 (consolidation) [ready] — single-owner rewrite of docs/AI_CHAT_REDESIGN.md; anchor checker + ID-uniqueness gates; implementation-sequencing appendix
-Status: done — 6/6 tasks approved (5 approved_minor with non-blocking single-line anchor corrections applied post-review); final spec docs/AI_CHAT_REDESIGN.md is 700 lines (10x baseline)
+Cycle: CHATV2
+Goal: Replace the complete AI Chat V1 webview with a professional, engine-aware V2 while preserving host/security integrations.
+Mode: Planning complete; runtime implementation not started or authorized in this cycle.
+Source spec: docs/AI_CHAT_PROFESSIONAL_SPEC.md
+Plan: docs/AI_HANDOFF/PLAN.md
+Queue: 17 ready tasks in docs/AI_HANDOFF/tasks/TASK-CHATV2-001.md through TASK-CHATV2-017.md
+Next: future executor begins TASK-CHATV2-001 and follows TDD + dependency order.
+Hard constraints: native DOM TypeScript, existing esbuild, no UI framework/dependency/CDN/browser storage, scoped CSS, no release.
