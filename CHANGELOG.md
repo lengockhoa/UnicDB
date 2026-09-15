@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.48] — 2026-09-15
+
+- Summary: Ship the one-command release flow: npm run bump / bump:minor / bump:major resolve to scripts/bump-version.mjs and atomically ship every bump to both GitHub Releases and the VS Code Marketplace. Fixes the flag-parser bug that treated the --changelog-summary value as the bump mode, adds a .secrets/.pat PAT fallback, tolerates the CI publish race after a tag push, and unblocks the frozen-surface guards for release-plumbing scripts.
+- Files: package.json, scripts/bump-version.mjs, docs/MEMORY.md, src/adapters/__tests__/bq04SurfaceGuard.test.ts, src/adapters/__tests__/bqFollowupSurfaceGuard.test.ts
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.48.vsix packaged
+
+---
+
 ## [1.53.47] — 2026-09-15
 
 - Summary: Research-complete rewrite of the AI Chat redesign spec. `docs/AI_CHAT_REDESIGN.md` grows from a 70-line draft to a 702-line implementation-ready spec — 17 sections, 10 acceptance-test families (88 unique IDs), an evidence-labeled external-research pass (27 verified URLs), and Appendix A implementation sequencing. **No runtime change** — a docs-only milestone, so it is tagged but not published to the Marketplace as a new build.
