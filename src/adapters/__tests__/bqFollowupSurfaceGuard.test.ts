@@ -118,7 +118,7 @@ function packageJsonDepsDiff(ref: string): string {
       // additive and live next to "package" — they are release plumbing, not
       // a package manifest surface change. Skip them so frozen-surface guards
       // don't flag legitimate release-tooling additions.
-      /^[+-]\s+"publish:[a-z]+":\s+".*",?\s*$/.test(line) ||
+      /^[+-]\s+"(?:publish|bump)(?::[a-z]+)?":\s+".*",?\s*$/.test(line) ||
       contributesKeyPattern.test(line) ||
       contributesMenuKeyPattern.test(line) ||
       onCommandLinePattern.test(line) ||
