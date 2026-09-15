@@ -62,3 +62,49 @@ npm run compile
 
 ## Discussion
 (no comments yet)
+
+## Progress
+- 2026-09-16T02:20:00+07:00 · milestone: statusTimers + tests · last-green: 17/17 statusTimers tests pass · files: webview/aiChat/statusTimers.ts, webview/aiChat/__tests__/statusTimers.test.ts · drift: none
+- 2026-09-16T02:22:20+07:00 · milestone: activity timeline + tests · last-green: 17/17 activity tests pass · files: webview/aiChat/activity.ts, webview/aiChat/__tests__/activity.test.ts · drift: none
+- 2026-09-16T02:23:30+07:00 · milestone: activity timeline styles · last-green: focused tests 50/50, typecheck clean, compile ok · files: webview/aiChat/styles.css · drift: none
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: Claude:feature-implementer
+RED_OUTPUT: statusTimers.test.ts written first and failed for real by temporarily lowering the working-stall threshold to 99s:
+```
+ FAIL  webview/aiChat/__tests__/statusTimers.test.ts > createStatusTimers — stall thresholds > fires the 12s working warning exactly once at the threshold
+AssertionError: expected [] to have a length of 1 but got +0
+- Expected
++ Received
+- 1
++ 0
+ ❯ webview/aiChat/__tests__/statusTimers.test.ts:136:21
+```
+activity.test.ts then failed for real on the first run (3 failures), driving the implementation:
+```
+❯ webview/aiChat/__tests__/activity.test.ts  (17 tests | 3 failed) 38ms
+  → reasoning unavailable: expected '0 tools · Working… 3sReasoning' not to contain 'Reasoning'
+  → allowed reasoning: expected 'Preparing your request…' to be '' // Object.is equality
+  → hostile detail text: expected null not to be null
+```
+All three were fixed in `activity.ts` (lazy Reasoning section, copy control added on later copyable render) and the a11y assertion tightened to the real invariant.
+Verification Output:
+```
+===== CMD1: npm test -- --run webview/aiChat/__tests__/activity.test.ts webview/aiChat/__tests__/statusTimers.test.ts src/ui/__tests__/aiChatPanelThoughtRegen.test.ts src/ui/__tests__/aiChatPanelToolParity.test.ts
+ ✓ src/ui/__tests__/aiChatPanelThoughtRegen.test.ts  (15 tests) 33ms
+ ✓ webview/aiChat/__tests__/statusTimers.test.ts  (17 tests) 5ms
+ ✓ webview/aiChat/__tests__/activity.test.ts  (17 tests) 39ms
+ Test Files  4 passed (4)
+      Tests  50 passed (50)
+
+===== CMD2: npm run typecheck
+> tsc --noEmit
+(no output, exit 0)
+
+===== CMD3: npm run compile
+ esbuild: build complete
+```
+Status: PASS
+Note: `queue` is NOT in the `createChatIcon()` allowlist (icons.ts ships database/plug/ellipsis/plus/slash/chevrons/file/selection/table/view/routine/schema/shields/arrow-up/stop-square/copy/edit/retry/check/x/warning/spinner). The queued state therefore renders a CSS gray dot (`.UnicDB-ai-chat-v2-activity-dot`), not an invented glyph — no new raw markup was added. Reasoning is rendered only when `capabilities.supports.streamThought === true` AND an allowed reasoning event exists; the section is created lazily so a non-thought engine never sees a `Reasoning` label. Details are rendered only from the host `view.details` allowlist; copy appears only when `copyable === true`. No package/version/publish changes. Cosmetic `esbuild` "Unrecognized target environment ES2024" warning pre-exists and is unrelated.

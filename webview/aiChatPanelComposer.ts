@@ -517,15 +517,14 @@ export function renderComposer(
     }
   });
 
-  // Enter-to-send (Shift+Enter for newline) — mirrors Claude Code behavior.
-  prompt.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter" && !ev.shiftKey) {
-      ev.preventDefault();
-      const text = prompt.value.trim();
-      if (!text) return;
-      cb.onSend(text, atts.slice());
-    }
-  });
+  // TASK-CHATV2-009 — the Enter=send keydown was REMOVED from this module. The
+  // single keyboard/transport owner is `webview/aiChat/controller.ts` (one
+  // capture-phase keydown on `#promptV2`). This V1 composer card is retained
+  // only as an archived compatibility shim for V1 flows that still address
+  // `#prompt` (slash dropdown, mention-token insertion, `/clear`). It installs
+  // NO submit keyboard path; the send button below keeps its V1 click contract
+  // for the remaining compatibility tests, but the live path is `#primaryTurnBtn`
+  // routed through `controller.requestSubmit()`. Deleted in CHATV2-017.
 
   // Initial visuals.
   applyBypassVisual();

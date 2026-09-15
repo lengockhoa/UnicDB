@@ -107,6 +107,7 @@ import { formatAttributionFooter } from "../ai/grounding/attribution";
 // TASK-CHATV2-003 — versioned V2 protocol seam. The panel stamps a monotonic
 // envelope on every V2 post and validates + dispatches V2 webview intents.
 import {
+  AI_CHAT_PROTOCOL_VERSION_V2,
   nextV2Envelope,
   parseAiChatWebviewIntentV2,
   type AiChatFrameEnvelopeV2,
@@ -117,6 +118,15 @@ import {
 import type { OmpChatEngine } from "../ai/omp/ompChatEngine";
 import type { ClaudeCodeChatEngine } from "../ai/claudeCode/claudeCodeChatEngine";
 import type { CodexChatEngine } from "../ai/codex/codexChatEngine";
+import {
+  AiChatSessionStore,
+  type AiChatSessionRecord,
+  type AiChatStoredActivity,
+} from "./aiChatSessionStore";
+import {
+  exportSession,
+  type AiChatExportPort,
+} from "./aiChatExport";
 import { TraceRecorder, type TraceDump, redact } from "../ai/trace";
 import {
   resolvePolicy,
@@ -780,6 +790,21 @@ export interface AiChatPanelOptions {
    * Optional: callers that omit it keep the pre-CL-002 behavior unchanged.
    */
   onSchemaDdl?: (statements: readonly string[]) => void;
+  /**
+   * TASK-CHATV2-015 — host-side structured session persistence. Wired from
+   * `extension.ts` with `new AiChatSessionStore({ memento: context.workspaceState })`
+   * (the SAME VS Code Memento mechanism the schema filter / console drafts
+   * use). When absent the panel runs with an in-memory-only store, so
+   * existing tests/bare hosts keep working and never touch disk.
+   */
+  sessionStore?: AiChatSessionStore;
+  /**
+   * TASK-CHATV2-015 — host save port for `export_session`. Built from
+   * `vscode.window.showSaveDialog` + `vscode.workspace.fs.writeFile` in
+   * `extension.ts`. Absent → the panel reports the safe export failure
+   * shape rather than inventing a destination.
+   */
+  exportPort?: AiChatExportPort;
 }
 
 /**
@@ -1380,9 +1405,42 @@ export class AiChatPanel {
    * the envelope sequence restarts at 1 whenever this id changes. The host
    * owns both values — a client-supplied session/sequence is never trusted.
    */
-  private readonly v2SessionId: string = `sess-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
+  /**
+   * Live V2 session id. Starts as the panel's own opaque id; re-based by
+   * `resume_saved_session` (adopt a saved record) and by `create_session`
+   * (mint a fresh id so New chat never appends to the previous record).
+   */
+  private v2SessionId: string = AiChatPanel.newSessionId();
   /** Last V2 envelope posted to the webview; drives `nextV2Envelope`. */
   private v2LastEnvelope: AiChatFrameEnvelopeV2 | null = null;
+  /**
+   * TASK-CHATV2-015: active structured session id. Rebased by
+   * `resume_saved_session` / `create_session`; the store record for this id is
+   * the persisted transcript. `null` before the first user turn materializes
+   * a session (nothing is created for an empty panel).
+   */
+  private sessionId: string | null = null;
+  /** Current turn's stable assistant message id (one node per turn). */
+  private sessionAssistantMessageId: string | null = null;
+  /** Accumulated visible assistant text for the live turn. */
+  private sessionAssistantText = "";
+  /** Safe activity summaries for the live turn. */
+  private sessionActivities: AiChatStoredActivity[] = [];
+  /** Terminal state recorded for the live turn (completed/stopped/failed). */
+  private sessionOutcome: "completed" | "stopped" | "failed" | "idle" = "idle";
+  /** Lazily-created in-memory store when the host supplies none. */
+  private fallbackSessionStore: AiChatSessionStore | null = null;
+  /**
+   * True once the V2 `session_hydrated` frame has been posted. Older history
+   * records are only published when a hydrated V2 webview can consume them.
+   */
+  private v2HydrationPosted = false;
+  /**
+   * When the live session was adopted via `resume_saved_session`, the cwd its
+   * record was captured in. Guarantees a lazily-created record keeps the same
+   * resume-picker scope instead of silently moving to the current cwd.
+   */
+  private resumedSessionCwd: string | null = null;
   /**
    * TASK-CHATV2-003: in-flight `search_context` correlation. Only one mention
    * search is live at a time; a response whose requestId/draftRevision do not
@@ -1635,6 +1693,13 @@ export class AiChatPanel {
     this.trace.clear();
     if (this.torndown) return;
     this.torndown = true;
+    // TASK-CHATV2-015: force any pending 750ms streaming checkpoint to disk
+    // before the panel goes away so the last visible stream survives close.
+    try {
+      this.sessionStore().flush();
+    } catch {
+      /* best-effort — teardown must never throw */
+    }
     // Cancel every pending permission request with one cancelled ACP
     // result per server request before tearing the session down.
     this.cancelAllPending();
@@ -1820,31 +1885,63 @@ export class AiChatPanel {
         this.bypassPermissions = intent.policy === "bypass";
         return;
       case "list_sessions":
-        await this.handleResumeList();
+        // V2 picker lists the HOST-STRUCTURED saved transcripts (store-backed,
+        // cwd-scoped, <=20, untitled fallback) — never a provider-native list.
+        this.postV2Sessions();
         return;
       case "resume_saved_session":
-        await this.handleResumePick(intent.sessionId);
+        // Adopt a SAVED UnicDB transcript. The webview labels this truthfully
+        // (never a provider-native resume); the host re-bases the live session
+        // id and hydrates the recent transcript before the panel is usable.
+        if (intent.sessionId === this.sessionId) return;
+        this.handleResumeSavedSession(intent.sessionId);
         return;
       case "create_session":
+        // New chat: finalize any live turn into the OLD session (never
+        // deleted), then reset the live transcript and re-base to a fresh
+        // opaque id so the next turn writes a NEW record.
+        this.sessionMarkOutcome("stopped");
+        this.sessionEndTurn();
+        this.resumedSessionCwd = null;
+        this.sessionId = null;
+        // Fresh opaque id so the next turn writes a NEW record: New chat must
+        // never append to (or overwrite) the session it replaced.
+        this.v2SessionId = AiChatPanel.newSessionId();
+        this.v2LastEnvelope = null;
         this.handleClear();
         return;
       case "rename_session":
-        // Rename is host-acknowledged; this cycle has no session store yet, so
-        // echo the accepted title back so the webview stops showing optimistic
-        // state (title_updated is the ack contract).
+        // Host-acknowledged rename. Persist against the LIVE session; a stale
+        // request for another session echoes nothing (no cross-session mutate).
+        if (this.sessionId !== null) {
+          const updated = this.sessionStore().rename(this.sessionId, intent.title);
+          if (updated === null) {
+            // Unknown/quarantined record: report a safe failure so the webview
+            // keeps the edit rather than showing a title that was not saved.
+            this.postV2({
+              kind: "toast",
+              level: "error",
+              safeMessage: "Could not rename this chat.",
+            });
+            return;
+          }
+        }
         this.postV2({ kind: "title_updated", title: intent.title });
         return;
       case "clear_session":
+        // Clear ONLY the current transcript; other stored sessions survive.
+        this.sessionResetTurn();
+        if (this.sessionId !== null) {
+          try {
+            this.sessionStore().clearTranscript(this.sessionId);
+          } catch {
+            /* best-effort */
+          }
+        }
         this.handleClear();
         return;
       case "export_session":
-        // Export writer lands in CHATV2-015; this cycle reports the safe
-        // failure shape so the webview never shows fake success.
-        this.postV2({
-          kind: "export_failed",
-          safeMessage: "Chat export is not available yet.",
-          diagnosticId: diagnosticIdForV2("export-unavailable"),
-        });
+        await this.handleExportSession(intent.format);
         return;
       case "pick_active_schema":
         this.options.onPickSchema?.();
@@ -1854,6 +1951,51 @@ export class AiChatPanel {
         // settings command seam in this cycle.
         return;
     }
+  }
+
+  /**
+   * TASK-CHATV2-015 — host-side export. Serializes the STRUCTURED store record
+   * (never DOM text) and writes it through the injected host port. Success is
+   * announced only on the `export_completed` frame; cancel emits nothing;
+   * failure emits the exact safe copy. If no session/store exists yet there is
+   * nothing to export, so the safe failure shape is reported instead of a fake
+   * success.
+   */
+  private async handleExportSession(format: "markdown" | "json"): Promise<void> {
+    const id = this.sessionId;
+    const record: AiChatSessionRecord | null = id === null ? null : this.sessionStore().get(id);
+    if (record === null) {
+      this.postV2({
+        kind: "export_failed",
+        safeMessage: "There is no saved chat to export yet.",
+        diagnosticId: diagnosticIdForV2("export-empty"),
+      });
+      return;
+    }
+    const port = this.options.exportPort;
+    if (port === undefined) {
+      this.postV2({
+        kind: "export_failed",
+        safeMessage: "Chat export is not available in this host.",
+        diagnosticId: diagnosticIdForV2("export-unavailable"),
+      });
+      return;
+    }
+    const result = await exportSession(record, format, port);
+    if (result.status === "cancelled") return; // cancel = no success, no failure
+    if (result.status === "failed") {
+      this.postV2({
+        kind: "export_failed",
+        safeMessage: result.safeReason,
+        diagnosticId: result.diagnosticId,
+      });
+      return;
+    }
+    this.postV2({
+      kind: "export_completed",
+      format: result.format,
+      name: result.name,
+    });
   }
 
   private async handleMessage(msg: AiChatPanelWebviewMessage): Promise<void> {
@@ -2206,6 +2348,12 @@ export class AiChatPanel {
     // non-empty send so a failed/empty call never erases the last real one.
     if (trimmed.length > 0) this.lastSentText = trimmed;
     if (trimmed.length === 0) return;
+
+    // TASK-CHATV2-015: record the VISIBLE user prompt in the structured store
+    // before the turn runs. `userMsg.content` is later augmented with mention/
+    // grounding blocks — those are prompt plumbing, not the user's transcript,
+    // so the store keeps the exact text the user typed.
+    this.sessionBeginTurn(trimmed);
 
     // Fresh token for this turn. Also: a replacement send cancels any
     // outstanding permission requests from the previous turn before we
@@ -2572,6 +2720,7 @@ export class AiChatPanel {
         // growing after we already committed to aborting.
         if (token?.aborted) return;
         this.post({ type: "delta", text });
+        this.sessionNoteAssistant(text);
       },
       onStreamFallback: () => {
         // Panel owns the literal fallback label (no shared const with
@@ -2587,6 +2736,13 @@ export class AiChatPanel {
         // abort state; gating belongs to the consumer.
         if (token?.aborted) return;
         this.post({ type: "step", label: call.name || "tool" });
+        this.sessionNoteActivity({
+          toolId: `tool-${this.sessionTurnSeq}-${this.sessionActivities.length + 1}`,
+          label: call.name || "tool",
+          action: "tool",
+          status: "running",
+          summary: "",
+        });
       },
       // AIX-03: visible tool-call outcome card — shape only, never rows.
       onToolResult: (call, outcome) => {
@@ -2650,16 +2806,18 @@ export class AiChatPanel {
             /* fall through to the plain card */
           }
         }
+        const summary = summarizeToolOutcome(
+          name,
+          outcome.status,
+          toolShapeSummary(outcome.resultText),
+        );
         this.post({
           type: "tool_result",
           tool: name,
           status: outcome.status,
-          summary: summarizeToolOutcome(
-            name,
-            outcome.status,
-            toolShapeSummary(outcome.resultText),
-          ),
+          summary,
         });
+        this.sessionNoteActivityEnd(name, outcome.status, summary);
       },
     };
 
@@ -2677,6 +2835,11 @@ export class AiChatPanel {
           text: result.finalText,
           markdown: true,
         });
+        // TASK-CHATV2-015: the engine's finalText is authoritative — replace
+        // the streamed accumulator so the persisted transcript matches what
+        // the webview shows (a stream fallback may have emitted nothing).
+        this.sessionSetAssistant(result.finalText);
+        this.sessionMarkOutcome("completed");
         const assistantMsg: ChatMessage = {
           role: "assistant",
           content: result.finalText,
@@ -2696,8 +2859,10 @@ export class AiChatPanel {
         // User-driven stop (token flipped) or upstream provider AbortError:
         // the stop UX already surfaces a quiet "stopped" state via the
         // webview's done/de-stream path. Never post an error bubble here.
+        this.sessionMarkOutcome("stopped");
         return;
       }
+      this.sessionMarkOutcome("failed");
       const message = err instanceof Error ? err.message : String(err);
       // TASK-003 D3: when AI is not configured mid-session, the literal
       // provider error "AI is not configured" is not actionable on its
@@ -2720,6 +2885,10 @@ export class AiChatPanel {
       // Finding 1b: keep turnSettled accurate even for the builtin engine
       // so a later engine failover (B8) never leaves it stuck false.
       this.turnSettled = true;
+      // TASK-CHATV2-015: terminal write is immediate (cancels any pending
+      // 750ms checkpoint), so a completed/stopped/failed turn is durable even
+      // if the panel is closed right after.
+      this.sessionEndTurn();
     }
   }
 
@@ -2793,8 +2962,10 @@ export class AiChatPanel {
           finalText = (finalText ?? "") + delta;
           // AIX-07: redact is the LAST pass before the webview wire — a
           // secret-shaped string streamed by the engine must not cross
-          // the panel boundary (no-op for clean text).
+          // the panel boundary (no-op for clean text). TASK-CHATV2-015
+          // persists the SAME redacted text (never the raw delta).
           this.post({ type: "delta", text: String(redact(delta)) });
+          this.sessionNoteAssistant(String(redact(delta)));
         },
         onThought: (chunk) => {
           if (token?.aborted) return;
@@ -2812,22 +2983,31 @@ export class AiChatPanel {
             this.postSessionState("running");
           }
           this.post({ type: "step", label: toolName });
+          this.sessionNoteActivity({
+            toolId: `tool-${this.sessionTurnSeq}-${this.sessionActivities.length + 1}`,
+            label: toolName,
+            action: "tool",
+            status: "running",
+            summary: "",
+          });
         },
         onToolEnd: (toolName, result, isError) => {
           if (token?.aborted) return;
           // AIX-03: same visible outcome card as the builtin path —
           // sanitized shape summary, never row bytes.
           const status = isError ? "failed" : "ok";
+          const summary = summarizeToolOutcome(
+            toolName,
+            status,
+            toolShapeSummary(typeof result === "string" ? result : ""),
+          );
           this.post({
             type: "tool_result",
             tool: toolName,
             status,
-            summary: summarizeToolOutcome(
-              toolName,
-              status,
-              toolShapeSummary(typeof result === "string" ? result : ""),
-            ),
+            summary,
           });
+          this.sessionNoteActivityEnd(toolName, status, summary);
         },
         onError: (message) => {
           // R4.5 fix (critical_block): mid-turn crash on the production
@@ -2842,6 +3022,7 @@ export class AiChatPanel {
           // consumers; the engine only reports the mid-turn error).
           if (postedError) return;
           postedError = true;
+          this.sessionMarkOutcome("failed");
           this.postSessionState("error");
           this.post({ type: "error", message });
           this.engine = "builtin";
@@ -2865,8 +3046,11 @@ export class AiChatPanel {
                 userMsg,
                 { role: "assistant", content: text },
               ];
+              // TASK-CHATV2-015: persist the authoritative final text.
+              this.sessionSetAssistant(text);
             }
             completed = true;
+            this.sessionMarkOutcome("completed");
           }
         },
       });
@@ -2874,6 +3058,7 @@ export class AiChatPanel {
       // OmpChatEngine.send is contractually non-throwing, but defend
       // anyway so a stray rejection surfaces as one error bubble + flip.
       if (!postedError) {
+        this.sessionMarkOutcome("failed");
         const message = err instanceof Error ? err.message : String(err);
         this.postSessionState("error");
         this.post({ type: "error", message });
@@ -2886,6 +3071,7 @@ export class AiChatPanel {
     } finally {
       // A crashed turn ends on the error state, not a misleading "done".
       if (!postedError) this.postSessionState("done");
+      if (token?.aborted) this.sessionMarkOutcome("stopped");
       // TASK-ARP06-005: OMP turns carry the policy notice with NO invented
       // usage — `undefined` usage resolves to `unknown:true` and contributes
       // nothing to the session totals. Posted once per turn here (the
@@ -2894,6 +3080,9 @@ export class AiChatPanel {
       this.post({ type: "done" });
       this.token = null;
       this.turnSettled = true;
+      // TASK-CHATV2-015: immediate terminal write (stopped preserves the
+      // partial text the engine already streamed).
+      this.sessionEndTurn();
       // Defensive: if the engine resolved without firing onDone (an
       // implementation oversight), don't silently leave the history pair
       // unpromoted. We do NOT promote partial/aborted/crashed turns.
@@ -2991,6 +3180,7 @@ export class AiChatPanel {
           }
           finalText = (finalText ?? "") + delta;
           this.post({ type: "delta", text: String(redact(delta)) });
+          this.sessionNoteAssistant(String(redact(delta)));
         },
         onThought: (chunk) => {
           if (token?.aborted) return;
@@ -3007,20 +3197,29 @@ export class AiChatPanel {
             this.postSessionState("running");
           }
           this.post({ type: "step", label: toolName });
+          this.sessionNoteActivity({
+            toolId: `tool-${this.sessionTurnSeq}-${this.sessionActivities.length + 1}`,
+            label: toolName,
+            action: "tool",
+            status: "running",
+            summary: "",
+          });
         },
         onToolEnd: (toolName, result, isError) => {
           if (token?.aborted) return;
           const status = isError ? "failed" : "ok";
+          const summary = summarizeToolOutcome(
+            toolName,
+            status,
+            toolShapeSummary(typeof result === "string" ? result : ""),
+          );
           this.post({
             type: "tool_result",
             tool: toolName,
             status,
-            summary: summarizeToolOutcome(
-              toolName,
-              status,
-              toolShapeSummary(typeof result === "string" ? result : ""),
-            ),
+            summary,
           });
+          this.sessionNoteActivityEnd(toolName, status, summary);
         },
         onError: (message) => {
           // TASK-011: a mid-turn crash on the image-capable engine route
@@ -3033,6 +3232,7 @@ export class AiChatPanel {
           // crash doesn't permanently downgrade the panel UX.
           if (postedError) return;
           postedError = true;
+          this.sessionMarkOutcome("failed");
           this.postSessionState("error");
           this.post({ type: "error", message });
         },
@@ -3045,8 +3245,10 @@ export class AiChatPanel {
                 userMsg,
                 { role: "assistant", content: t },
               ];
+              this.sessionSetAssistant(t);
             }
             completed = true;
+            this.sessionMarkOutcome("completed");
           }
         },
       }, attachments);
@@ -3055,16 +3257,21 @@ export class AiChatPanel {
       // if a future change makes them throw we surface a single error +
       // continue with the same engine choice.
       if (!postedError) {
+        this.sessionMarkOutcome("failed");
         const message = err instanceof Error ? err.message : String(err);
         this.postSessionState("error");
         this.post({ type: "error", message });
       }
     } finally {
       if (!postedError) this.postSessionState("done");
+      if (token?.aborted) this.sessionMarkOutcome("stopped");
       this.postUsage(undefined, policy.notice);
       this.post({ type: "done" });
       this.token = null;
       this.turnSettled = true;
+      // TASK-CHATV2-015: immediate terminal write; a stopped turn keeps its
+      // streamed partial text.
+      this.sessionEndTurn();
       // Touch state so unused-locals don't trip strict-mode — documents
       // the contract that `completed` and `userMsg` flow through the
       // path without needing direct use here.
@@ -3269,6 +3476,8 @@ export class AiChatPanel {
       this.post({ type: "done" });
       this.turnSettled = true;
       this.token = null;
+      this.sessionMarkOutcome("failed");
+      this.sessionEndTurn();
       return;
     }
 
@@ -3286,6 +3495,8 @@ export class AiChatPanel {
       // subsequent turn now runs builtin.
       this.postEngine("builtin");
       this.token = null;
+      this.sessionMarkOutcome("failed");
+      this.sessionEndTurn();
       return;
     }
     const token = this.token;
@@ -3421,6 +3632,8 @@ export class AiChatPanel {
           // credential shapes that span chunk boundaries.
           const finalText = String(redact(session.buffer));
           this.post({ type: "assistant", text: finalText, markdown: true });
+          this.sessionSetAssistant(finalText);
+          this.sessionMarkOutcome("completed");
           this.history = [
             ...this.history,
             userMsg,
@@ -3431,6 +3644,7 @@ export class AiChatPanel {
         this.turnDonePosted = true;
       }
     } catch (err) {
+      this.sessionMarkOutcome("failed");
       const message = err instanceof Error ? err.message : String(err);
       // Finding 4 (review): the stderr tail was previously only surfaced on
       // a HANDSHAKE failure — after a successful handshake it kept filling
@@ -3450,10 +3664,14 @@ export class AiChatPanel {
       // so the resume guards (`token !== null`) don't permanently swallow
       // resume_list/resume_pick after the first message.
       this.token = null;
+      if (token?.aborted) this.sessionMarkOutcome("stopped");
       // Finding 1b: the turn is settled on every exit path from here —
       // a session/update notification arriving after this point is late
       // and must be dropped by handleAcpNotification's turnSettled gate.
       this.turnSettled = true;
+      // TASK-CHATV2-015: immediate terminal write (stopped preserves the
+      // partial buffer that already streamed to the webview).
+      this.sessionEndTurn();
     }
   }
 
@@ -3723,6 +3941,7 @@ export class AiChatPanel {
         // engine may stream credential-shaped strings — so apply the SAME
         // redact() pass BEFORE post().
         this.post({ type: "delta", text: String(redact(text)) });
+        this.sessionNoteAssistant(String(redact(text)));
       }
       return;
     }
@@ -3743,6 +3962,13 @@ export class AiChatPanel {
         (typeof toolCallId === "string" && toolCallId.length > 0 && toolCallId) ||
         "tool";
       this.post({ type: "step", label });
+      this.sessionNoteActivity({
+        toolId: `tool-${this.sessionTurnSeq}-${this.sessionActivities.length + 1}`,
+        label,
+        action: "tool",
+        status: "running",
+        summary: "",
+      });
       return;
     }
     if (sessionUpdate === "agent_thought_chunk") {
@@ -4216,8 +4442,199 @@ export class AiChatPanel {
     // (history has no trailing pair) and re-sends the pre-clear text,
     // resurrecting a message the user explicitly wiped.
     this.lastSentText = null;
+    // TASK-CHATV2-015: drop the live turn accumulator so a cleared transcript
+    // never resumes writing into the previous turn's message id.
+    this.sessionResetTurn();
     this.post({ type: "init", hasHistory: false, visionCapable: this.computeVisionCapabilityForEngine(this.engine) });
     this.post({ type: "done" });      // belt: webview busy flag về false
+  }
+
+  // ==========================================================================
+  // TASK-CHATV2-015 — structured session persistence wiring
+  // ==========================================================================
+
+  /** The host store, or a lazily-created in-memory one when none was injected. */
+  private sessionStore(): AiChatSessionStore {
+    if (this.options.sessionStore) return this.options.sessionStore;
+    if (this.fallbackSessionStore === null) {
+      const memory = new Map<string, unknown>();
+      this.fallbackSessionStore = new AiChatSessionStore({
+        memento: {
+          get: <T,>(key: string, dflt?: T): T | undefined =>
+            (memory.has(key) ? (memory.get(key) as T) : dflt),
+          update: async (key: string, value: unknown): Promise<void> => {
+            if (value === undefined) memory.delete(key);
+            else memory.set(key, value);
+          },
+        },
+      });
+    }
+    return this.fallbackSessionStore;
+  }
+
+  /** Ensure a store record exists for the live session, creating one lazily. */
+  private ensureSession(): string {
+    const store = this.sessionStore();
+    if (this.sessionId !== null) {
+      // The record may be unknown to this store (a panel fallback store, or a
+      // stale id) — create-on-miss keeps the write path from silently no-oping.
+      if (store.get(this.sessionId) === null) {
+        store.create({
+          id: this.sessionId,
+          cwd: this.sessionId === this.v2SessionId ? this.workspaceCwd() : this.resumedSessionCwd ?? this.workspaceCwd(),
+          engine: this.engine ?? "builtin",
+          model: this.activeRole,
+        });
+      }
+      return this.sessionId;
+    }
+    this.sessionId = this.v2SessionId;
+    store.create({
+      id: this.sessionId,
+      cwd: this.workspaceCwd(),
+      engine: this.engine ?? "builtin",
+      model: this.activeRole,
+    });
+    return this.sessionId;
+  }
+
+  /**
+   * Begin recording a user turn in the structured store: append the visible
+   * prompt and reset the live assistant accumulator. Failures never throw.
+   */
+  private sessionBeginTurn(userText: string): void {
+    try {
+      const id = this.ensureSession();
+      this.sessionTurnSeq += 1;
+      this.sessionAssistantMessageId = `msg-${this.sessionTurnSeq}-${this.v2SessionId}`;
+      this.sessionAssistantText = "";
+      this.sessionActivities = [];
+      this.sessionOutcome = "idle";
+      this.sessionStore().appendUserMessage(id, {
+        id: `um-${this.sessionTurnSeq}-${this.v2SessionId}`,
+        text: userText,
+        turnId: this.v2TurnId ?? `turn-${this.sessionTurnSeq}`,
+      });
+    } catch {
+      /* persistence is best-effort; the turn itself must never fail on it */
+    }
+  }
+
+  /** Coalesced streaming checkpoint (750ms debounce in the store). */
+  private sessionNoteAssistant(text: string): void {
+    if (this.sessionAssistantMessageId === null) return;
+    this.sessionAssistantText += text;
+    this.sessionCheckpoint();
+  }
+
+  /** Replace the live assistant text with the engine's authoritative final. */
+  private sessionSetAssistant(text: string): void {
+    if (this.sessionAssistantMessageId === null) return;
+    this.sessionAssistantText = text;
+    this.sessionCheckpoint();
+  }
+
+  /** Write one coalesced streaming checkpoint for the live assistant message. */
+  private sessionCheckpoint(): void {
+    if (this.sessionId === null || this.sessionAssistantMessageId === null) return;
+    try {
+      this.sessionStore().checkpointAssistant(this.sessionId, {
+        messageId: this.sessionAssistantMessageId,
+        text: this.sessionAssistantText,
+        turnId: this.v2TurnId ?? `turn-${this.sessionTurnSeq}`,
+      });
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  /** Record this turn's terminal outcome (last explicit mark wins for errors). */
+  private sessionMarkOutcome(outcome: "completed" | "stopped" | "failed"): void {
+    this.sessionOutcome = outcome;
+  }
+
+  /**
+   * Terminal turn update — written immediately, preserving partial text.
+   * Called from every turn's `finally`; a turn that finished with no explicit
+   * stop/error mark is `completed`.
+   */
+  private sessionEndTurn(): void {
+    if (this.sessionAssistantMessageId === null) return;
+    if (this.sessionOutcome === "idle") this.sessionOutcome = "completed";
+    const assistantId = this.sessionAssistantMessageId;
+    try {
+      this.sessionStore().finalizeTurn(this.sessionId ?? this.v2SessionId, {
+        terminalState: this.sessionOutcome,
+        assistantText: this.sessionAssistantText,
+        assistantMessageId: assistantId,
+        turnId: this.v2TurnId ?? `turn-${this.sessionTurnSeq}`,
+        activities: this.sessionActivities.slice(),
+        partial: this.sessionOutcome === "stopped",
+      });
+    } catch {
+      /* best-effort */
+    }
+    // Reset the accumulator so the next turn starts a fresh assistant message.
+    this.sessionAssistantMessageId = null;
+    this.sessionAssistantText = "";
+    this.sessionActivities = [];
+    this.sessionOutcome = "idle";
+  }
+
+  /** Reset per-turn session tracking without touching the stored record. */
+  private sessionResetTurn(): void {
+    this.sessionAssistantMessageId = null;
+    this.sessionAssistantText = "";
+    this.sessionActivities = [];
+    this.sessionOutcome = "idle";
+  }
+
+  /** Record one safe activity summary for the live turn (shape-only text). */
+  private sessionNoteActivity(input: {
+    toolId: string;
+    label: string;
+    action: string;
+    status: AiChatStoredActivity["status"];
+    summary: string;
+    durationMs?: number;
+  }): void {
+    if (this.sessionAssistantMessageId === null) return;
+    this.sessionActivities.push({
+      id: `act-${this.sessionTurnSeq}-${this.sessionActivities.length + 1}`,
+      turnId: this.v2TurnId ?? `turn-${this.sessionTurnSeq}`,
+      toolId: input.toolId,
+      label: input.label,
+      action: input.action,
+      status: input.status,
+      summary: input.summary,
+      durationMs: input.durationMs ?? null,
+    });
+  }
+
+  /**
+   * Close the most recent still-running activity for this turn. A result with
+   * no matching start records a closed activity so the summary is never lost.
+   */
+  private sessionNoteActivityEnd(
+    label: string,
+    status: AiChatStoredActivity["status"],
+    summary: string,
+  ): void {
+    if (this.sessionAssistantMessageId === null) return;
+    for (let i = this.sessionActivities.length - 1; i >= 0; i -= 1) {
+      const prior = this.sessionActivities[i]!;
+      if (prior.status === "running") {
+        this.sessionActivities[i] = { ...prior, status, summary };
+        return;
+      }
+    }
+    this.sessionNoteActivity({
+      toolId: `tool-${this.sessionTurnSeq}-${this.sessionActivities.length + 1}`,
+      label,
+      action: "tool",
+      status,
+      summary,
+    });
   }
 
   /** Workspace cwd used to filter session/list entries. */
@@ -4225,6 +4642,97 @@ export class AiChatPanel {
     return (
       vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd()
     );
+  }
+
+  /** Mint a fresh opaque session id (no clock/random determinism requirement —
+   * ids are opaque echoes, never parsed). */
+  private static newSessionId(): string {
+    return `sess-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
+  }
+
+  // ==========================================================================
+  // TASK-CHATV2-015 — saved-session adoption + structured resume picker
+  // ==========================================================================
+
+  /**
+   * Publish the host-side saved-session list on the V2 `sessions` frame (and
+   * drain any store quarantine warnings so a corrupt record surfaces as a safe
+   * warning instead of a crash). Returns the number of items published.
+   */
+  private postV2Sessions(): number {
+    const store = this.sessionStore();
+    const cwd = this.workspaceCwd();
+    let items: Array<{ sessionId: string; label: string; detail: string }> = [];
+    try {
+      items = store.listRecent(cwd).map((s) => ({
+        sessionId: s.id,
+        label: store.labelFor(s),
+        detail: `${s.messageCount} messages`,
+      }));
+    } catch {
+      items = [];
+    }
+    this.postV2({ kind: "sessions", items });
+    this.drainSessionWarnings();
+    return items.length;
+  }
+
+  /** Surface (and clear) safe store warnings: quarantine + write failures. */
+  private drainSessionWarnings(): void {
+    let warnings: readonly string[] = [];
+    try {
+      warnings = this.sessionStore().takeWarnings();
+    } catch {
+      return;
+    }
+    for (const message of warnings) {
+      this.postV2({ kind: "toast", level: "warning", safeMessage: message });
+    }
+  }
+
+  /**
+   * Adopt a SAVED UnicDB transcript as the live session. Hydrates the recent
+   * transcript, re-bases the live id + envelope sequence, and answers the
+   * resume request with a `sessions` frame. AES-CLEANED: the store already
+   * excludes reasoning/raw tool output/secrets; a corrupt record quarantines
+   * (safe warning) and the caller keeps the current transcript.
+   */
+  private handleResumeSavedSession(rawId: string): void {
+    const store = this.sessionStore();
+    if (store.get(rawId) === null) {
+      // Unknown / quarantined / corrupt: never crash, never fake a resume.
+      this.postV2({
+        kind: "toast",
+        level: "warning",
+        safeMessage: "That saved chat could not be opened.",
+      });
+      this.drainSessionWarnings();
+      this.postV2Sessions();
+      return;
+    }
+    this.sessionId = rawId;
+    this.v2SessionId = rawId;
+    this.resumedSessionCwd = store.listSummaries(this.workspaceCwd()).find((s) => s.id === rawId)?.cwd ?? null;
+    const hydrate = store.hydrate(rawId);
+    // Re-base the V2 envelope onto the adopted session so the webview adopts
+    // the NEW id and continues sequencing instead of replaying from 1. Seeding
+    // `lastEnvelope` with the stored head makes the next `postV2` emit head+1.
+    const head = store.sequenceHead(rawId);
+    this.v2LastEnvelope = {
+      protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+      sessionId: rawId,
+      sequence: head,
+    };
+    this.sessionResetTurn();
+    this.postV2({
+      kind: "session_hydrated",
+      hasHistory: hydrate.total > 0,
+      visionCapable: this.resolvedVisionCapable ?? false,
+      truncated: hydrate.hasMore,
+      truncatedCount: hydrate.total - hydrate.items.length,
+    });
+    this.drainSessionWarnings();
+    this.postV2Sessions();
   }
 
   /** Compare two entries for sort-by-updatedAt-desc with a raw-string
@@ -4746,8 +5254,16 @@ export class AiChatPanel {
    * always host-generated — a client-supplied sequence is never consulted.
    */
   private postV2(body: AiChatHostFrameV2Body): void {
-    const envelope = nextV2Envelope(this.v2LastEnvelope, this.v2SessionId);
+    // TASK-CHATV2-015: the live session id IS the store record id once a
+    // session exists; the envelope follows it across resume/create.
+    const sessionId = this.sessionId ?? this.v2SessionId;
+    const envelope = nextV2Envelope(this.v2LastEnvelope, sessionId);
     this.v2LastEnvelope = envelope;
+    try {
+      this.sessionStore().noteSequence(sessionId, envelope.sequence);
+    } catch {
+      /* best-effort sequence bookkeeping */
+    }
     void this.panel?.webview.postMessage({ ...envelope, ...body });
   }
 

@@ -308,7 +308,10 @@ describe("AiChatPanelCloneWebview — TASK-AGTUI-007 #5 legacy flows unchanged",
     expect(h.received.filter((m) => m.type === "send").length).toBe(0);
   });
 
-  it("#5b Enter on non-empty text posts {type:'send',text}", () => {
+  it("#5b Enter on non-empty text no longer posts a legacy send (TASK-CHATV2-009)", () => {
+    // TASK-CHATV2-009 removed the legacy `#prompt` Enter=send path. The single
+    // keyboard/transport owner is the V2 controller's capture-phase handler on
+    // `#promptV2`; the archived `#prompt` carries no independent send path.
     const h = makeHarness();
     h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
     const prompt = document.getElementById("prompt") as HTMLTextAreaElement;
@@ -318,8 +321,8 @@ describe("AiChatPanelCloneWebview — TASK-AGTUI-007 #5 legacy flows unchanged",
       new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
     );
     const sends = h.received.filter((m) => m.type === "send");
-    expect(sends.length).toBe(1);
-    expect(sends[0]?.text).toBe("hello world");
+    expect(sends.length).toBe(0);
+    expect(document.getElementById("promptV2")).not.toBeNull();
   });
 
   it("#5c stop while busy posts {type:'stop'}", () => {

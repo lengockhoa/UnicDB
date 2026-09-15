@@ -301,7 +301,11 @@ describe("AiChatPanelWebview — Enter / Tab select, never send (TASK-005 #4)", 
     expect(sends.length).toBe(0);
   });
 
-  it("#4c Enter with dropdown CLOSED still sends (wave-2 keybind preserved)", () => {
+  it("#4c Enter with dropdown CLOSED does NOT send from the archived #prompt (TASK-CHATV2-009)", () => {
+    // TASK-CHATV2-009 removed the legacy `#prompt` Enter=send path; the single
+    // keyboard/transport owner is the V2 controller on `#promptV2`. Selecting /
+    // navigating with the mention dropdown open still works, but a bare Enter on
+    // the archived input never posts a legacy `send`.
     const harness = makeHarness();
     harness.dispatch({ type: "init", hasHistory: false });
     const prompt = promptEl();
@@ -310,8 +314,9 @@ describe("AiChatPanelWebview — Enter / Tab select, never send (TASK-005 #4)", 
     // No `@` → dropdown not open.
     prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     const sends = harness.received.filter((m) => m.type === "send");
-    expect(sends.length).toBe(1);
-    expect(sends[0]).toEqual({ type: "send", text: "hello world" });
+    expect(sends.length).toBe(0);
+    // The V2 composer owns that id now.
+    expect(document.getElementById("promptV2")).not.toBeNull();
   });
 });
 

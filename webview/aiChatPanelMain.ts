@@ -44,6 +44,17 @@ import {
 // CSS entry (dist/aiChatPanel.css) and linked by the panel HTML — NOT
 // imported here, so the stdout-bundling test harness stays valid.
 import { mountChatShellIfNeeded } from "./aiChat/shell";
+// TASK-CHATV2-009 — the single keyboard/transport owner. `vscodeApi` above was
+// already acquired once at module scope and is passed in, so the controller
+// never calls `acquireVsCodeApi` a second time.
+import {
+  createChatController,
+  type ChatController,
+  type VsCodeApiLike,
+} from "./aiChat/controller";
+import { COMPOSER_IDS as V2_COMPOSER_IDS } from "./aiChat/composer";
+import type { ChatShellRefs } from "./aiChat/shell";
+import type { ChatViewState } from "./aiChat/store";
 
 declare const acquireVsCodeApi: undefined | (() => {
   postMessage: (msg: unknown) => void;
@@ -270,6 +281,13 @@ const state: State = {
  * the wave-1 modules carries the right id contract because the modules
  * expose them directly. */
 let header: UnicDBHeader | null = null;
+/** TASK-CHATV2-009 — the single keyboard/transport owner. Every composer send,
+ * stop and draft edit now flows through this handle; the legacy composer module
+ * below is retained only as an archived compatibility shim. */
+let chatController: ChatController | null = null;
+/** The archived (V1) composer handle. Kept for V1 flows that still address
+ * `#prompt` (mention token insertion, slash dropdown, `/clear`); it no longer
+ * carries an independent send/keyboard path. */
 let composer: UnicDBComposer | null = null;
 let slashOpen = false;
 let slashActiveIndex = 0;
@@ -487,6 +505,40 @@ function setBusy(busy: boolean): void {
   composer?.setBusy(busy);
 }
 
+/**
+ * TASK-CHATV2-009 — archive the V1 composer card. It is KEPT in the DOM (the
+ * legacy id contract `#prompt` / `#sendBtn` still resolves for V1 flows such as
+ * `/clear`, the slash dropdown and mention-token insertion) but it carries no
+ * independent send or keyboard behavior anymore: this task strips the composer
+ * module's Enter=send path and the main module's capture-phase keydown, and the
+ * single controller on `#promptV2` is the only transport owner. Removed in
+ * CHATV2-017.
+ */
+function archiveV1Composer(): void {
+  const v1 = document.getElementById("composer");
+  if (v1) {
+    v1.setAttribute("data-chat-v1-archived", "1");
+    v1.setAttribute("aria-hidden", "true");
+  }
+  // The hidden host keyboard shortcut is not a real VS Code keybinding, so do
+  // not advertise a fake one on the archived affordance.
+  const hiddenHint = document.getElementById("kbdHint");
+  if (hiddenHint) hiddenHint.hidden = true;
+}
+
+/**
+ * TASK-CHATV2-009 — compatibility bridge from the V2 controller state to the
+ * legacy DOM builders. The controller owns the transcript in V2 contract terms;
+ * this adapter drives the EXISTING V1 bubble builders (not a second renderer) so
+ * there is one visual transcript. Deleted in CHATV2-017 together with the V1
+ * builders.
+ */
+function applyV2StateToLegacy(state: ChatViewState, refs: ChatShellRefs): void {
+  setBusy(state.turn !== null && !state.turn.closed);
+  // Status live region copy is the controller's render output, never authority.
+  refs.statusLiveRegion.textContent = "";
+}
+
 function renderInitial(): void {
   // TASK-AGTUI-007 — the integration seam. Build the panel out of the
   // wave-1 modules instead of one big inline innerHTML blob:
@@ -520,6 +572,22 @@ function renderInitial(): void {
   thread.className = "UnicDB-chat-thread";
   thread.setAttribute("aria-live", "polite");
   shell.transcript.appendChild(thread);
+
+  // TASK-CHATV2-009 — the V2 composer becomes the ONE live composer. The
+  // controller (mounted here) owns its capture-phase keydown, message stream
+  // and submit/stop dedupe. `promptV2` is the single transport-bearing input.
+  const v2App = document.createElement("div");
+  v2App.id = "UnicDB-ai-chat-v2-app";
+  v2App.className = "UnicDB-ai-chat-v2-app";
+  shell.composer.appendChild(v2App);
+
+  chatController = createChatController({
+    root,
+    vscode: vscodeApi as VsCodeApiLike | null,
+    renderExtra: (state, refs) => applyV2StateToLegacy(state, refs),
+    onLegacyMessage: (data) => handleLegacyHostMessage(data),
+  });
+  chatController.announceReady();
 
   const jump = document.createElement("button");
   jump.type = "button";
@@ -566,6 +634,7 @@ function renderInitial(): void {
     }
   }
 
+  archiveV1Composer();
   wireControls();
   wireJumpLatest();
 }
@@ -831,22 +900,11 @@ function wireControls(): void {
   prompt?.addEventListener(
     "keydown",
     (ev: KeyboardEvent) => {
-      // Ctrl+Enter / Cmd+Enter must NOT trigger send (TASK-002 #9).
-      // The composer's Enter=send listener (added at bubble phase on the
-      // same target) would otherwise post a send on Ctrl+Enter — pin it
-      // off here at capture phase so the bubble handler never sees the
-      // key. Dropdown handling below takes precedence when a dropdown is
-      // open so the user can still navigate / select with modifier keys.
-      if (
-        ev.key === "Enter" &&
-        (ev.ctrlKey || ev.metaKey) &&
-        !mentionOpen &&
-        !slashOpen
-      ) {
-        ev.preventDefault();
-        ev.stopImmediatePropagation();
-        return;
-      }
+      // TASK-CHATV2-009 — the Ctrl/Cmd+Enter prevent branch was removed here:
+      // it existed only to suppress the composer module's bubble-phase
+      // Enter=send listener, which this task also removed. The V2 controller on
+      // `#promptV2` owns modifier-Enter now. The dropdown branches below are V1
+      // behavior on the archived `#prompt` and stay for compatibility.
       if (mentionOpen) {
         if (ev.key === "Enter" || ev.key === "Tab") {
           ev.preventDefault();
@@ -1987,8 +2045,12 @@ function renderHistory(msg: HistoryMsg): void {
 }
 
 // ---- Wire host messages ----------------------------------------------------
- window.addEventListener("message", (ev: MessageEvent) => {
-   const msg = ev.data as HostMsg;
+//
+// TASK-CHATV2-009 — the controller is the ONLY `window.message` listener now.
+// This legacy dispatcher is invoked BY the controller (via `onLegacyMessage`)
+// for non-V2 frames, so V1 frame handling survives without a second listener.
+function handleLegacyHostMessage(data: unknown): void {
+   const msg = data as HostMsg;
    switch (msg.type) {
     case "init":
       applyInit(msg);
@@ -2113,7 +2175,7 @@ function renderHistory(msg: HistoryMsg): void {
       return;
     }
   }
-});
+}
 
 // ---- TASK-005 — inline miss notice -----------------------------------------
 
@@ -2316,4 +2378,10 @@ function renderGroundingChips(msg: {
 
 // ---- Boot ------------------------------------------------------------------
 renderInitial();
-post({ type: "ready" });
+// TASK-CHATV2-009 — the boot readiness signal rides the V2 seam
+// (`{kind:"ready_v2", protocolVersion:2}`) emitted by the controller inside
+// `renderInitial`. The legacy `{type:"ready"}` is NOT also sent: the host's
+// `handleReady` is not idempotent (it re-posts the init/models/capabilities
+// fan-out each time), so a second ready would duplicate the hydration fan-out
+// and create a competing message path. Deleted in CHATV2-017 with the rest of
+// the V1 wire.

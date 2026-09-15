@@ -78,6 +78,23 @@ export const COMPOSER_IDS = Object.freeze({
   permission: "permissionBtn",
   primary: "primaryTurnBtn",
   hint: "composerHint",
+  // TASK-CHATV2-009 — the canonical transcript mount. The controller nests the
+  // legacy `#thread` here so the single keyboard/transport owner can scroll and
+  // observe it. Not a composer control.
+  transcript: "thread",
+} as const);
+
+/** Archived composer ids. TASK-CHATV2-009 makes the V2 composer the ONLY live
+ * composer: the V1 composer node is kept in the DOM out of the accessibility
+ * tree (see `archiveV1Composer` in aiChatPanelMain.ts) so V1 flows that still
+ * address `#prompt` (mention tokens, slash dropdown, `/clear`) keep working,
+ * but it carries no independent send/keyboard path. Deleted in CHATV2-017. */
+export const ARCHIVED_COMPOSER_IDS = Object.freeze({
+  v1Composer: "composer",
+  v1Prompt: "prompt",
+  v1Send: "sendBtn",
+  v1Stop: "stopBtn",
+  v1Attach: "attachBtn",
 } as const);
 
 /** Caret/selection snapshot emitted alongside a draft edit. */

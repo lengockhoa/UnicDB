@@ -233,8 +233,13 @@ describe("AiChatPanelWebview — thinking block survives toggle, resets on new s
 // ============================================================================
 // #3 Enter sends; Shift+Enter newlines; plain Enter never inserts newline
 // ============================================================================
-describe("AiChatPanelWebview — Enter/Shift+Enter keybind (TASK-002 #3)", () => {
-  it("plain Enter sends + clears; Enter never inserts a newline", () => {
+describe("AiChatPanelWebview — single composer keyboard owner (TASK-CHATV2-009)", () => {
+  // TASK-CHATV2-009 moved the Enter=send keyboard path OFF the archived V1
+  // `#prompt` and onto the V2 controller's single capture-phase handler on
+  // `#promptV2`. The legacy `#prompt` retains its input/keyup handlers (slash +
+  // mention) but installs NO submit keyboard path.
+
+  it("plain Enter on the legacy #prompt no longer sends (path removed)", () => {
     const h = makeHarness();
     h.dispatch({ type: "init", hasHistory: false });
 
@@ -247,33 +252,16 @@ describe("AiChatPanelWebview — Enter/Shift+Enter keybind (TASK-002 #3)", () =>
     });
     prompt.dispatchEvent(ev);
 
-    const sends = h.received.filter((m) => m.type === "send");
-    expect(sends).toHaveLength(1);
-    expect(prompt.value).toBe("");
-
-    // CRITICAL: Enter must NEVER insert a newline. defaultPrevented was true,
-    // which means no browser-default insertion ran.
-    expect(ev.defaultPrevented).toBe(true);
+    expect(h.received.filter((m) => m.type === "send")).toHaveLength(0);
+    // No submit handler means no preventDefault either.
+    expect(ev.defaultPrevented).toBe(false);
   });
 
-  it("Shift+Enter does NOT send and does NOT preventDefault", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-
-    const prompt = inputEl("prompt");
-    prompt.value = "line1";
-    const ev = new KeyboardEvent("keydown", {
-      key: "Enter",
-      shiftKey: true,
-      bubbles: true,
-      cancelable: true,
-    });
-    prompt.dispatchEvent(ev);
-
-    expect(h.received.filter((m) => m.type === "send")).toHaveLength(0);
-    // Shift+Enter must fall through so the browser/textarea default inserts
-    // the newline (we don't fight the platform's contract).
-    expect(ev.defaultPrevented).toBe(false);
+  it("the V2 promptV2 is the single transport-bearing composer input", () => {
+    makeHarness();
+    const v2 = inputEl("promptV2");
+    expect(v2).not.toBeNull();
+    expect(v2.id).toBe("promptV2");
   });
 });
 

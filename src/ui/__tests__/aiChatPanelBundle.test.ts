@@ -109,7 +109,12 @@ describeIfBundle("webview/aiChatPanelMain.ts bundle (TASK-003)", () => {
 
   itIfBundle("#2 init renders input + Send/Stop/Clear buttons + posts ready", () => {
     const { received } = loadBundle();
-    expect(received.some((m) => m.type === "ready")).toBe(true);
+    // TASK-CHATV2-009: boot readiness now rides the V2 seam
+    // (`{kind:"ready_v2", protocolVersion:2}`); the legacy `{type:"ready"}` is no
+    // longer sent (host handleReady is not idempotent).
+    expect(
+      received.some((m) => m.kind === "ready_v2" || m.type === "ready"),
+    ).toBe(true);
     dispatch({ type: "init", hasHistory: false });
     const root = document.getElementById("UnicDB-root") as HTMLDivElement;
     for (const id of ["prompt", "sendBtn", "stopBtn", "clearBtn"]) {
