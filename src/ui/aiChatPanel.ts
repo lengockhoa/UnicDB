@@ -4870,6 +4870,12 @@ export class AiChatPanel {
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.options.extensionUri, "dist", "webview.css"),
     );
+    // TASK-CHATV2-005 — V2-scoped stylesheet emitted from
+    // webview/aiChatPanelMain.ts. Loaded alongside the legacy bundle during
+    // migration; every selector is scoped to the V2 root class.
+    const v2StyleUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.options.extensionUri, "dist", "aiChatPanel.css"),
+    );
     const csp = [
       "default-src 'none'",
       // TASK-001 (cycle AB): the attachments strip renders
@@ -4885,10 +4891,11 @@ export class AiChatPanel {
       <meta charset="UTF-8" />
       <meta http-equiv="Content-Security-Policy" content="${csp}" />
       <link rel="stylesheet" href="${styleUri}" />
+      <link rel="stylesheet" href="${v2StyleUri}" />
       <title>UnicDB AI Chat</title>
     </head>
     <body class="UnicDB-form-body UnicDB-chat-body">
-      <div id="UnicDB-root" class="UnicDB-chat"></div>
+      <div id="UnicDB-root" class="UnicDB-chat UnicDB-ai-chat-v2"></div>
       <script src="${scriptUri}"></script>
     </body>
     </html>`;

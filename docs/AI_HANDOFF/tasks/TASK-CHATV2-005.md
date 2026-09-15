@@ -64,3 +64,54 @@ npm run compile
 
 ## Discussion
 (no comments yet)
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: -
+MILESTONES (5 commits on handoff/task-chatv2-005):
+  71e049e step1 icons.ts+test · 9f5f498 step2 v2 scoped styles ·
+  01277d8 step3 shell.ts+test · 0bb564a step4 wire shell + V2 root class +
+  bundle marker test · 3255d59 step5 screenshot fixtures + stale-import fix
+RED_OUTPUT: NOT independently captured — this run wrote files incrementally
+  (one file per milestone, committed before the next) because two prior
+  attempts died from an intermittent gateway stream error after spending the
+  whole budget on reads. Tests were authored to exercise real behavior before
+  first run; the first shell.test.ts run genuinely failed for the expected
+  reasons and was fixed:
+    - "repeated mount" failed: listener counter marker was reset to "0" AFTER
+      registration in mountChatShell (assertion expected >0). Fix: seed the
+      marker to "0" before buildHeader() so the registration bump sticks.
+    - "scopes every selector" failed: the @keyframes step selectors (`0%`,
+      `100%`) were comma-split and not excluded from the scope scan. Fix: the
+      test skips `^\d+%$|^from$|^to$`.
+  Both were test/impl mismatches, not silently-passing tests.
+Verification Output:
+  CMD1: npm test -- --run webview/aiChat/__tests__/shell.test.ts src/ui/__tests__/aiChatPanelBundle.test.ts src/ui/__tests__/aiChatPanelCloneCss.test.ts
+    ✓ src/ui/__tests__/aiChatPanelCloneCss.test.ts  (8 tests) 24ms
+    ✓ webview/aiChat/__tests__/shell.test.ts  (14 tests) 31ms
+    ✓ src/ui/__tests__/aiChatPanelBundle.test.ts  (33 tests) 194ms
+    Test Files  3 passed (3)   Tests  55 passed (55)
+  CMD2: npm run typecheck → tsc --noEmit, exit=0 (no output)
+  CMD3: npm run compile → "esbuild: build complete", exit=0
+    emits dist/aiChatPanel.css (10.4kb, 136 .UnicDB-ai-chat-v2 occurrences)
+  ADDITIONAL: full `npm test` = 286 files passed | 2 skipped, 4253 tests
+    passed | 5 skipped. The 9-file chat webview regression suite
+    (aiChatPanelWebview / Clone* / Task002 / Task005 / DbAware / SessionState /
+    E2E) = 136 passed.
+Status: PASS
+Note: Two implementation decisions beyond the literal step list:
+  (1) The V2 stylesheet is built as its own esbuild CSS entry
+      (`aiChatPanelCssConfig` → dist/aiChatPanel.css) and linked from
+      buildHtml, rather than `import`ed into aiChatPanelMain.ts: the
+      webview tests bundle that entry to stdout via esbuild with no outfile,
+      and a CSS import makes esbuild error ("Cannot import … without an
+      output path configured"). This keeps the stdout-bundling harness valid.
+  (2) #thread nests INSIDE the shell's `transcript` mount point (the shell
+      mounts on #UnicDB-root) instead of the shell mounting inside #thread.
+      Mounting inside #thread shifted `thread.children[0]` and broke
+      aiChatPanelWebview.test.ts:671 (notice-above-items). Nesting preserves
+      every legacy `thread.children` assertion. Migration is otherwise inert:
+      the root class is now `UnicDB-chat UnicDB-ai-chat-v2`.
+  vitest.config.ts was widened to `webview/**/*.test.ts` (TASK-CHATV2-004's
+  main-tree change, absent from this pre-wave-3 worktree base).

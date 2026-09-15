@@ -95,6 +95,19 @@ const aiChatPanelConfig = {
   minify,
   logLevel: "info",
 };
+// TASK-CHATV2-005 — V2-scoped chat stylesheet. Built as its own CSS entry so
+// dist/aiChatPanel.css can be linked independently of the legacy
+// dist/webview.css; keeping the CSS out of the JS bundle also keeps the
+// stdout-bundling webview tests (which feed aiChatPanelMain.ts to esbuild with
+// no outfile) working.
+/** @type {import('esbuild').BuildOptions} */
+const aiChatPanelCssConfig = {
+  entryPoints: ["webview/aiChat/styles.css"],
+  outfile: "dist/aiChatPanel.css",
+  bundle: true,
+  minify,
+  logLevel: "info",
+};
 /** @type {import('esbuild').BuildOptions} */
 const schemaFormConfig = {
   entryPoints: ["webview/schemaFormMain.ts"],
@@ -159,7 +172,8 @@ async function run() {
     const ctx9 = await esbuild.context(comparePanelConfig);
     const ctx10 = await esbuild.context(erPanelConfig);
     const ctxRename = await esbuild.context(renameFormConfig);
-    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch(), ctx7.watch(), ctx8.watch(), ctx9.watch(), ctx10.watch(), ctxRename.watch()]);
+    const ctxAiChatCss = await esbuild.context(aiChatPanelCssConfig);
+    await Promise.all([ctx1.watch(), ctx2.watch(), ctx3.watch(), ctx4.watch(), ctx5.watch(), ctx6.watch(), ctx7.watch(), ctx8.watch(), ctx9.watch(), ctx10.watch(), ctxRename.watch(), ctxAiChatCss.watch()]);
     console.log("esbuild: watching...");
   } else {
     await Promise.all([
@@ -178,6 +192,8 @@ async function run() {
       esbuild.build(comparePanelConfig),
       esbuild.build(erPanelConfig),
       esbuild.build(renameFormConfig),
+      // TASK-CHATV2-005 — emit dist/aiChatPanel.css for the V2 chat shell.
+      esbuild.build(aiChatPanelCssConfig),
     ]);
     console.log("esbuild: build complete");
   }

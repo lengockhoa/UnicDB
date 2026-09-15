@@ -724,3 +724,52 @@ describeIfBundle(
     );
   },
 );
+
+// ============================================================================
+// TASK-CHATV2-005 — V2 app shell is reachable through the existing bundle
+// (test case #6: entry reachability / V2 root marker).
+// ============================================================================
+
+describeIfBundle(
+  "webview/aiChatPanelMain.ts bundle (TASK-CHATV2-005 V2 shell)",
+  () => {
+    itIfBundle("compiled bundle contains the V2 root marker", () => {
+      expect(
+        bundleSrc ?? "",
+        "dist/aiChatPanel.js must contain the UnicDB-ai-chat-v2 class literal",
+      ).toContain("UnicDB-ai-chat-v2");
+    });
+
+    itIfBundle("boot mounts the V2 shell with header/main/composer + 2 live regions", () => {
+      loadBundle();
+      dispatch({ type: "init", hasHistory: false });
+      const root = document.getElementById("UnicDB-root") as HTMLDivElement;
+      // The V2 classes are reachable from the compiled entry.
+      expect(root.querySelectorAll(".UnicDB-ai-chat-v2-header").length).toBe(1);
+      expect(root.querySelectorAll(".UnicDB-ai-chat-v2-main").length).toBe(1);
+      expect(root.querySelectorAll(".UnicDB-ai-chat-v2-composer").length).toBe(1);
+      expect(document.getElementById("UnicDB-ai-chat-v2-status-live")).not.toBeNull();
+      expect(document.getElementById("UnicDB-ai-chat-v2-alert-live")).not.toBeNull();
+    });
+
+    itIfBundle("V2 root marker survives the legacy boot path (regression)", () => {
+      loadBundle();
+      dispatch({ type: "init", hasHistory: false });
+      const root = document.getElementById("UnicDB-root") as HTMLDivElement;
+      // The shell marker proves a single mount through the real entry. The
+      // shell root IS #UnicDB-root here (the compiled entry calls
+      // mountChatShell(root)); assert the marker on it plus the V2 class.
+      expect(
+        root.getAttribute("data-chat-v2-shell"),
+        "the compiled entry must mount the V2 shell",
+      ).toBe("1");
+      expect(root.classList.contains("UnicDB-ai-chat-v2")).toBe(true);
+      // Legacy thread behavior is untouched: #thread still exists and still
+      // carries the aria-live + class contract from the pre-V2 bundle.
+      const thread = document.getElementById("thread") as HTMLDivElement | null;
+      expect(thread).not.toBeNull();
+      expect(thread?.classList.contains("UnicDB-chat-thread")).toBe(true);
+      expect(thread?.getAttribute("aria-live")).toBe("polite");
+    });
+  },
+);

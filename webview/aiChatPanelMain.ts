@@ -38,6 +38,12 @@ import {
   type ComposerCallbacks,
   type ComposerAttachment,
 } from "./aiChatPanelComposer";
+// TASK-CHATV2-005 — semantic V2 skeleton. Mounted into the live transcript
+// region established here; later tasks (006–017) fill the placeholders.
+// The V2 stylesheet (webview/aiChat/styles.css) is built as its own esbuild
+// CSS entry (dist/aiChatPanel.css) and linked by the panel HTML — NOT
+// imported here, so the stdout-bundling test harness stays valid.
+import { mountChatShellIfNeeded } from "./aiChat/shell";
 
 declare const acquireVsCodeApi: undefined | (() => {
   postMessage: (msg: unknown) => void;
@@ -500,11 +506,20 @@ function renderInitial(): void {
   //      send/stop/bypass/model_select/attach-picker click paths.
   header = renderHeader(root);
 
+  // TASK-CHATV2-005 — mount the V2 skeleton FIRST so #thread can nest inside
+  // its semantic `transcript` mount point. Nesting (rather than mounting the
+  // shell inside #thread) keeps `thread.children` and every `thread.children[0]`
+  // assertion owned by the legacy suite unchanged, while later V2 components
+  // still address the semantic mount points (header/banner/main/context/
+  // composer/hint + live regions). `mountChatShellIfNeeded` only creates
+  // missing nodes on repeat boots.
+  const shell = mountChatShellIfNeeded(root);
+
   const thread = document.createElement("div");
   thread.id = "thread";
   thread.className = "UnicDB-chat-thread";
   thread.setAttribute("aria-live", "polite");
-  root.appendChild(thread);
+  shell.transcript.appendChild(thread);
 
   const jump = document.createElement("button");
   jump.type = "button";

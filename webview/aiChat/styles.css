@@ -1,0 +1,531 @@
+/* webview/aiChat/styles.css — TASK-CHATV2-005
+ *
+ * V2-only scoped visual contract for the new chat shell. This file is
+ * SEPARATE from the legacy `webview/styles.css` (only the visually-hidden
+ * utility + the pulse keyframes are shared in spirit; here they are
+ * namespaced). Every rule below is scoped to the `.UnicDB-ai-chat-v2` root so
+ * the stylesheet can be loaded alongside the legacy layer during migration
+ * without leaking into other panels or overriding global selectors.
+ *
+ * Tokens/typography/radii/spacing/colors follow PLAN §3 exactly. No remote
+ * font, no icon library, no CSS framework, no global `.button`/`.chat`
+ * selectors, no `!important` on user-derived values.
+ *
+ * Root geometry: a vertical grid —
+ *   40px header · conditional 28–40px banner · minmax(0,1fr) transcript ·
+ *   conditional max-72px context strip · sticky composer · 20px hint.
+ * Root padding is 10px block / 12px inline; the transcript pads 8px inline
+ * and lays turns out with 16px gaps.
+ */
+
+/* ---- Root ---------------------------------------------------------------- */
+
+.UnicDB-ai-chat-v2 {
+  /* Theme-first token aliases (PLAN §3). Fallbacks are the dark-canvas hexes
+   * so the panel stays legible outside a VS Code host. */
+  --UnicDB-ai-chat-v2-canvas: var(--vscode-editor-background, #0d1117);
+  --UnicDB-ai-chat-v2-surface: var(--vscode-editorWidget-background, #161b22);
+  --UnicDB-ai-chat-v2-input: var(--vscode-input-background, #10151c);
+  --UnicDB-ai-chat-v2-border: var(--vscode-panel-border, #3b434d);
+  --UnicDB-ai-chat-v2-focus: var(--vscode-focusBorder, #5f9eff);
+  --UnicDB-ai-chat-v2-text: var(--vscode-foreground, #e6edf3);
+  --UnicDB-ai-chat-v2-muted: var(--vscode-descriptionForeground, #8b949e);
+  --UnicDB-ai-chat-v2-primary: var(--vscode-button-background, #2f81f7);
+  --UnicDB-ai-chat-v2-success: var(--vscode-testing-iconPassed, #3fb950);
+  --UnicDB-ai-chat-v2-warning: var(--vscode-editorWarning-foreground, #d29922);
+  --UnicDB-ai-chat-v2-danger: var(--vscode-testing-iconFailed, #f85149);
+  --UnicDB-ai-chat-v2-shadow: var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+
+  /* Radii (PLAN §3): 6 / 10 / 16. */
+  --UnicDB-ai-chat-v2-radius-sm: 6px;
+  --UnicDB-ai-chat-v2-radius-md: 10px;
+  --UnicDB-ai-chat-v2-radius-lg: 16px;
+
+  /* Spacing scale (PLAN §3): 4 / 8 / 12 / 16. */
+  --UnicDB-ai-chat-v2-space-1: 4px;
+  --UnicDB-ai-chat-v2-space-2: 8px;
+  --UnicDB-ai-chat-v2-space-3: 12px;
+  --UnicDB-ai-chat-v2-space-4: 16px;
+
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: 40px auto minmax(0, 1fr) auto auto 20px;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  padding: 10px 12px;
+  overflow: hidden;
+  background: var(--UnicDB-ai-chat-v2-canvas);
+  color: var(--UnicDB-ai-chat-v2-text);
+  font-family: var(--vscode-font-family, -apple-system, "Segoe UI", sans-serif);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* ---- Header (40px) ------------------------------------------------------- */
+
+.UnicDB-ai-chat-v2-header {
+  display: flex;
+  align-items: center;
+  gap: var(--UnicDB-ai-chat-v2-space-2);
+  min-width: 0;
+  min-height: 0;
+  height: 40px;
+  padding: 0 2px;
+}
+
+/* 16px product mark — decorative unless session-list behavior exists. */
+.UnicDB-ai-chat-v2-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--UnicDB-ai-chat-v2-primary);
+}
+
+.UnicDB-ai-chat-v2-mark svg {
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+
+/* Session title — 13/18 weight 600. */
+.UnicDB-ai-chat-v2-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+/* Engine status pill — provider-neutral, at least 32px tall. */
+.UnicDB-ai-chat-v2-engine {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--UnicDB-ai-chat-v2-space-1);
+  flex: 0 0 auto;
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0 var(--UnicDB-ai-chat-v2-space-2);
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: var(--UnicDB-ai-chat-v2-surface);
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-engine-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--UnicDB-ai-chat-v2-muted);
+}
+
+.UnicDB-ai-chat-v2-engine-ready {
+  color: var(--UnicDB-ai-chat-v2-success);
+}
+
+.UnicDB-ai-chat-v2-engine-ready .UnicDB-ai-chat-v2-engine-dot {
+  background: var(--UnicDB-ai-chat-v2-success);
+}
+
+.UnicDB-ai-chat-v2-engine-working .UnicDB-ai-chat-v2-engine-dot {
+  background: var(--UnicDB-ai-chat-v2-primary);
+  animation: UnicDB-ai-chat-v2-pulse 1.2s ease-in-out infinite;
+}
+
+.UnicDB-ai-chat-v2-engine-unavailable .UnicDB-ai-chat-v2-engine-dot {
+  background: var(--UnicDB-ai-chat-v2-danger);
+}
+
+/* Any 32x32 control in the header/composer. */
+.UnicDB-ai-chat-v2-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 32px;
+  min-height: 32px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: transparent;
+  color: var(--UnicDB-ai-chat-v2-text);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.UnicDB-ai-chat-v2-control:hover {
+  background: var(--UnicDB-ai-chat-v2-surface);
+}
+
+.UnicDB-ai-chat-v2-control svg {
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+}
+
+.UnicDB-ai-chat-v2-control:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
+}
+
+/* ---- Banner (conditional 28–40px) ---------------------------------------- */
+
+.UnicDB-ai-chat-v2-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--UnicDB-ai-chat-v2-space-2);
+  min-width: 0;
+  min-height: 28px;
+  max-height: 40px;
+  margin-bottom: var(--UnicDB-ai-chat-v2-space-2);
+  padding: var(--UnicDB-ai-chat-v2-space-1) var(--UnicDB-ai-chat-v2-space-2);
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: var(--UnicDB-ai-chat-v2-surface);
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+.UnicDB-ai-chat-v2-banner[hidden] {
+  display: none;
+}
+
+.UnicDB-ai-chat-v2-banner-warning {
+  border-color: var(--UnicDB-ai-chat-v2-warning);
+  color: var(--UnicDB-ai-chat-v2-warning);
+}
+
+.UnicDB-ai-chat-v2-banner-danger {
+  border-color: var(--UnicDB-ai-chat-v2-danger);
+  color: var(--UnicDB-ai-chat-v2-danger);
+}
+
+/* ---- Transcript (minmax(0,1fr)) ------------------------------------------ */
+
+.UnicDB-ai-chat-v2-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.UnicDB-ai-chat-v2-transcript > * {
+  min-width: 0;
+  min-height: 0;
+}
+
+.UnicDB-ai-chat-v2-loading {
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* ---- Context strip (conditional, max 72px) ------------------------------- */
+
+.UnicDB-ai-chat-v2-context {
+  display: flex;
+  align-items: center;
+  gap: var(--UnicDB-ai-chat-v2-space-1);
+  min-width: 0;
+  min-height: 0;
+  max-height: 72px;
+  margin-top: var(--UnicDB-ai-chat-v2-space-2);
+  padding: 0 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.UnicDB-ai-chat-v2-context[hidden] {
+  display: none;
+}
+
+/* ---- Composer (sticky, 16px-radius two-row shell) ------------------------ */
+
+.UnicDB-ai-chat-v2-composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin-top: var(--UnicDB-ai-chat-v2-space-2);
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-lg);
+  background: var(--UnicDB-ai-chat-v2-input);
+}
+
+/* Top region: auto-growing borderless textarea, 64–160px. */
+.UnicDB-ai-chat-v2-composer-top {
+  display: flex;
+  min-width: 0;
+  min-height: 64px;
+  max-height: 160px;
+  padding: 14px 16px 10px;
+}
+
+.UnicDB-ai-chat-v2-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  max-height: 147px; /* up to seven 21px visual lines */
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--UnicDB-ai-chat-v2-text);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 21px;
+  overflow-y: auto;
+}
+
+.UnicDB-ai-chat-v2-input::placeholder {
+  color: var(--UnicDB-ai-chat-v2-muted);
+}
+
+/* Bottom region: min 48px, 7px 10px padding, 6px gaps. */
+.UnicDB-ai-chat-v2-composer-bottom {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 7px 10px;
+}
+
+.UnicDB-ai-chat-v2-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Send/stop slot: exactly 40x40, radius 10. */
+.UnicDB-ai-chat-v2-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--UnicDB-ai-chat-v2-radius-md);
+  background: var(--UnicDB-ai-chat-v2-primary);
+  color: #ffffff;
+  cursor: pointer;
+  transition: filter 120ms ease;
+}
+
+.UnicDB-ai-chat-v2-send:hover {
+  filter: brightness(1.08);
+}
+
+.UnicDB-ai-chat-v2-send:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
+}
+
+.UnicDB-ai-chat-v2-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.UnicDB-ai-chat-v2-send svg {
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+
+.UnicDB-ai-chat-v2-stop {
+  background: var(--UnicDB-ai-chat-v2-danger);
+}
+
+.UnicDB-ai-chat-v2-stop svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Focus/open-popover shadow; idle stays flat. */
+.UnicDB-ai-chat-v2-composer:focus-within {
+  box-shadow: 0 8px 24px var(--UnicDB-ai-chat-v2-shadow);
+}
+
+/* ---- Keyboard hint (20px) ------------------------------------------------ */
+
+.UnicDB-ai-chat-v2-hint {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 0;
+  height: 20px;
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* Metadata text (11/16). */
+.UnicDB-ai-chat-v2-meta {
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* Chips (12/18 weight 600). */
+.UnicDB-ai-chat-v2-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--UnicDB-ai-chat-v2-space-1);
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 var(--UnicDB-ai-chat-v2-space-2);
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: var(--UnicDB-ai-chat-v2-surface);
+  color: var(--UnicDB-ai-chat-v2-text);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+.UnicDB-ai-chat-v2-chip-warning {
+  border-color: var(--UnicDB-ai-chat-v2-warning);
+  color: var(--UnicDB-ai-chat-v2-warning);
+}
+
+/* ---- Live regions (visually hidden, never display:none) ------------------ */
+
+.UnicDB-ai-chat-v2-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Optional visible label hidden at narrow widths while aria-label persists. */
+.UnicDB-ai-chat-v2-label-optional {
+  display: inline;
+}
+
+/* ---- Responsive: <420px hide optional labels, keep aria-label ------------ */
+
+@media (max-width: 419px) {
+  .UnicDB-ai-chat-v2-label-optional {
+    display: none;
+  }
+
+  .UnicDB-ai-chat-v2-engine-label {
+    display: none;
+  }
+
+  .UnicDB-ai-chat-v2-title {
+    font-size: 12px;
+  }
+}
+
+/* ---- Responsive: <320px composer actions wrap into two rows -------------- */
+
+@media (max-width: 319px) {
+  .UnicDB-ai-chat-v2-composer-bottom {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+  }
+
+  .UnicDB-ai-chat-v2-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(32px, 1fr));
+    grid-auto-rows: auto;
+    gap: var(--UnicDB-ai-chat-v2-space-1);
+    width: 100%;
+  }
+
+  .UnicDB-ai-chat-v2-send {
+    justify-self: end;
+  }
+}
+
+/* ---- High contrast ------------------------------------------------------- */
+
+@media (forced-colors: active) {
+  .UnicDB-ai-chat-v2-control,
+  .UnicDB-ai-chat-v2-chip,
+  .UnicDB-ai-chat-v2-engine {
+    border-color: ButtonBorder;
+  }
+
+  .UnicDB-ai-chat-v2-control:focus-visible,
+  .UnicDB-ai-chat-v2-send:focus-visible {
+    outline-color: Highlight;
+  }
+
+  .UnicDB-ai-chat-v2-send {
+    background: ButtonFace;
+    color: ButtonText;
+    border: 1px solid ButtonBorder;
+  }
+}
+
+/* ---- Reduced motion ------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  .UnicDB-ai-chat-v2-control,
+  .UnicDB-ai-chat-v2-send,
+  .UnicDB-ai-chat-v2-engine-working .UnicDB-ai-chat-v2-engine-dot {
+    transition: none;
+    animation: none;
+  }
+}
+
+/* Namespaced keyframes (the only selectors not rooted at .UnicDB-ai-chat-v2). */
+@keyframes UnicDB-ai-chat-v2-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes UnicDB-ai-chat-v2-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

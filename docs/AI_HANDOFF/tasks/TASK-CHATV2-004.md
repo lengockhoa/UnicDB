@@ -56,4 +56,93 @@ npm run compile
 - Produces: `ChatViewState`, `ChatAction`, `createInitialChatState()`, `reduceChatState()` for controller/renderers.
 
 ## Discussion
-(no comments yet)
+
+### 2026-09-16 · executor · claude-code/bao-sonnet
+Decision 1 — vitest `include` widened. The task §Test Files path is
+`webview/aiChat/__tests__/store.test.ts`, but `vitest.config.ts` included only
+`webview/__tests__/*.test.ts`. I verified empirically that passing the explicit
+file path does NOT bypass `include` (vitest 1.6 reports "No test files found",
+exit 1). To make the mandated §Verification Commands runnable at all, the glob
+was widened to `webview/**/*.test.ts`. This is the minimal unblock and is the
+shared prerequisite for CHATV2-005..016, all of which use the same
+`webview/aiChat/__tests__/` path. No existing test file changes behavior: the
+sweep shows 347 tests pass and only the 5 pre-existing ENOENT suites (worktree
+has no `node_modules/.bin`) still fail, identically on the base checkout
+(confirmed via stash). CHATV2-017 owns final cleanup; if a reviewer prefers the
+glob to stay narrow, the alternative is naming this file `*.store.test.ts` under
+`webview/__tests__/`, which contradicts the task's explicit Test Files path.
+
+Decision 2 — "stop" has no terminal phase. The §6 phase vocabulary is
+idle/validating/.../completed/failed — there is no `stopped` phase. A
+`turn_finished` with `outcome: "stopped"` therefore lands on the terminal
+`completed` phase while the turn record preserves `outcome: "stopped"`. This
+matches the host frame union (`outcome: completed|stopped|failed`) and keeps the
+phase set closed and exhaustive.
+
+Decision 3 — turn gating is `turn_started`-first. `turn_started` is applied
+directly (it creates the live turn); every other turn-scoped frame is ignored
+unless its `turnId` matches the live open turn, and ignored after the turn
+closed, so a late delta can never resurrect a terminal turn. Wrong-session and
+stale/duplicate-sequence frames return the SAME state object (identity no-op).
+
+## Progress
+- 2026-09-16T01:43:00+07:00 · milestone: RED→GREEN pure reducer + serializable state · last-green: store.test.ts 13/13; aiChatPanelMessagesV2 16/16; typecheck exit 0; compile exit 0 · files: webview/aiChat/store.ts, webview/aiChat/__tests__/store.test.ts, vitest.config.ts · drift: vitest.config.ts widened (`webview/**/*.test.ts`) so the task's Test Files path is discovered — shared prerequisite for CHATV2-005..016; rationale in Discussion decision 1
+- 2026-09-16T01:45:00+07:00 · milestone: stop-dispatch + host-ack regression coverage · last-green: store.test.ts 14/14; cmd1 exit 0 (30 tests); typecheck exit 0; compile exit 0 · files: webview/aiChat/__tests__/store.test.ts · drift: none
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  Tests written first in webview/aiChat/__tests__/store.test.ts while
+  webview/aiChat/store.ts was absent. Verbatim RED after the vitest include fix:
+
+    $ npm test -- --run webview/aiChat/__tests__/store.test.ts
+     ❯ webview/aiChat/__tests__/store.test.ts  (0 test)
+    ⎯⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯⎯
+     FAIL  webview/aiChat/__tests__/store.test.ts
+    Error: Failed to load url ../store (resolved id: ../store) in
+      .../webview/aiChat/__tests__/store.test.ts. Does the file exist?
+     Test Files  1 failed (1)
+          Tests  no tests
+
+  A second RED was surfaced during implementation: the first reducer draft gated
+  `turn_started` behind "a live turn must already exist", so the turn was never
+  created. 4/13 failed:
+
+    FAIL #3 closes a turn on the first terminal frame only
+      AssertionError: expected 'validating' to be 'failed'
+    FAIL #5 edits the next draft while streaming but creates no submit effect
+      AssertionError: expected 'validating' to be 'streaming'
+    (plus 2 more)
+
+  Fix: apply `turn_started` directly (it opens the turn); gate every other
+  turn-scoped frame on the live open turn. Then 13/13 green.
+
+Verification Output: |
+  $ npm test -- --run webview/aiChat/__tests__/store.test.ts \
+        src/ui/__tests__/aiChatPanelMessagesV2.test.ts
+   ✓ webview/aiChat/__tests__/store.test.ts  (14 tests) 8ms
+   ✓ src/ui/__tests__/aiChatPanelMessagesV2.test.ts  (16 tests) 6ms
+  Test Files  2 passed (2)
+       Tests  30 passed (30)
+  CMD1_EXIT=0
+
+  $ npm run typecheck
+  > tsc --noEmit
+  CMD2_EXIT=0
+
+  $ npm run compile
+  ⚡ Done in 203ms
+  esbuild: build complete
+  CMD3_EXIT=0
+
+  Wider sweep (informational): `npx vitest run` → 347 tests pass; 5 suites fail
+  with ENOENT on `<worktree>/node_modules/.bin/{esbuild,vsce}`. Reproduced
+  identically on the stashed base checkout, so pre-existing worktree environment
+  gaps (also recorded by TASK-CHATV2-003), not caused by this change.
+
+Status: PASS
+Note: Two spec-interpretation decisions recorded in Discussion (vitest include
+  widening; stop→completed with outcome preserved). No new dependency, no
+  provider-name branching, no DOM/clock/random/storage in the reducer.
