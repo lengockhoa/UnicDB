@@ -48,3 +48,6 @@ dist/
 .bump-notes-*.md
 node_modules_backup/
 .tmp-debug/
+
+# macOS SMB delete tombstones (external SMB volumes) — ephemeral junk, never commit
+.smbdelete*

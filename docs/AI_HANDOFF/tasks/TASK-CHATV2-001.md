@@ -57,3 +57,30 @@ test -z "$(git diff --name-only -- src webview package.json esbuild.js)"
 
 ## Discussion
 (no comments yet)
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  FAIL tests/chatv2BaselineNotes.test.ts > #1 Four-engine matrix
+  AssertionError: baseline must contain a 4-engine x 12-capability table: expected null not to be null
+  FAIL tests/chatv2BaselineNotes.test.ts > #2 Missing capability
+  AssertionError: expected null not to be null
+  FAIL tests/chatv2BaselineNotes.test.ts > #3 Duplicate keyboard path
+  AssertionError: must anchor the composer bubble-phase Enter listener: expected false to be true
+  FAIL tests/chatv2BaselineNotes.test.ts > #4 Cutover completeness
+  AssertionError: cutover map must be non-trivial: expected 0 to be greater than 1000
+   Test Files  1 failed (1)
+        Tests  4 failed (4)
+Verification Output: |
+  #1 npm run typecheck → tsc --noEmit, exit=0
+  #2 npm run compile → esbuild build complete (aiChatPanel.js 73.6kb), exit=0
+  #3 npm test -- --run webview/__tests__/aiChatPanelComposer.test.ts webview/__tests__/aiChatPanelThread.test.ts src/ui/__tests__/aiChatPanelMessages.test.ts src/ui/__tests__/aiChatPanelCommands.test.ts
+     → Test Files 4 passed (4); Tests 62 passed (62)
+  #4 node -e '... existsSync + length>=1000 for both notes' → exit=0
+  #5 test -z "$(git diff --name-only -- src webview package.json esbuild.js)" → exit=0 (empty runtime diff)
+  Guard test tests/chatv2BaselineNotes.test.ts → 4 passed (4)
+  Full suite npm test → Test Files 282 passed | 2 skipped; Tests 4180 passed | 5 skipped
+Status: PASS
+Note: Four capability cells recorded `unknown` (claude-code reasoning stream + bypass; codex tools + permissions) because the adapters declare callbacks with no emit site or expose no toggle; not inferred as parity. Screenshot states ship as jsdom DOM fixtures; widths 320/420/768 and dark/light/high-contrast are deferred to the CHATV2-017 real-bundle checklist (jsdom cannot prove geometry). Spec correction: the "normalized callbacks" claim at docs/AI_CHAT_PROFESSIONAL_SPEC.md §2 was narrowed to state only emitted kinds, proven stale by the two missing emit sites. All 112 file:line anchors validated in-range against this worktree.

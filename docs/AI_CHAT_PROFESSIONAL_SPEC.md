@@ -28,7 +28,7 @@ The target is an evolution of the current implementation. Do not discard the hos
 | `webview/aiChatPanelMain.ts` | Current DOM composition, message handling, slash and mention behavior. | Replace fragmented module-level mutable UI state with one controller/store. Preserve security restrictions. |
 | `webview/aiChatPanelComposer.ts` | Current composer DOM, model chip, attachment controls, send/stop behavior. | Refactor into the new composer component; do not retain competing key listeners. |
 | `webview/aiChatPanelThread.ts` | Escaped bubbles, Markdown path, thinking/tool cards. | Reuse safe render primitives. Continue escaping all untrusted values. |
-| `src/ai/omp/*`, `src/ai/claudeCode/*`, `src/ai/codex/*` | Engine adapters produce normalized delta/thought/tool/error/done callbacks. | Adapt into a common capability and event envelope; do not parse provider-specific UI text in webview. |
+| `src/ai/omp/*`, `src/ai/claudeCode/*`, `src/ai/codex/*` | Engine adapters declare a shared delta/thought/tool/error/done callback surface, but not every adapter emits every kind today (verified: omp emits delta/thought/tool at `src/ai/omp/ompChatEngine.ts:279,288,299`; claude-code declares `onThought` at `src/ai/claudeCode/claudeCodeProcess.ts:63` with no emit site; codex declares `onToolStart`/`onToolEnd` at `src/ai/codex/codexProcess.ts:87` with no emit site). | Adapt into a common capability and event envelope; advertise only emitted kinds; do not parse provider-specific UI text in webview. |
 | `webview/styles.css` | Theme-aware current styles and VS Code CSS variable fallbacks. | Replace chat selectors incrementally under a new `.UnicDB-ai-chat-v2` root; do not change other webviews. |
 
 ### Non-negotiable safety and privacy rules
