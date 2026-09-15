@@ -510,6 +510,231 @@
   }
 }
 
+/* ---- Transcript renderer (TASK-CHATV2-006) -------------------------------- */
+/* Every selector is scoped under .UnicDB-ai-chat-v2. Geometry follows PLAN §6:
+   user bubble max 78%, 8x12px, radius 12/12/4/12; assistant unboxed max
+   880px/92%, 4px 0. Action buttons are 28x28 and appear on hover or focus. */
+
+.UnicDB-ai-chat-v2-load-earlier {
+  align-self: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: transparent;
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-load-earlier:hover {
+  color: var(--UnicDB-ai-chat-v2-text);
+}
+
+.UnicDB-ai-chat-v2-item {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+/* User bubble: right-aligned, max 78%, 8x12px, asymmetric radius. */
+.UnicDB-ai-chat-v2-item-user {
+  align-self: flex-end;
+  max-width: 78%;
+  padding: 8px 12px;
+  border-radius: 12px 12px 4px 12px;
+  background: var(--UnicDB-ai-chat-v2-surface);
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* Assistant answer: unboxed, max 880px/92%, 4px 0. */
+.UnicDB-ai-chat-v2-item-text,
+.UnicDB-ai-chat-v2-item-reasoning {
+  align-self: flex-start;
+  max-width: 92%;
+  width: 880px;
+  padding: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+.UnicDB-ai-chat-v2-reasoning-body {
+  color: var(--UnicDB-ai-chat-v2-muted);
+  white-space: pre-wrap;
+}
+
+/* Long unbroken SQL keeps wrapping; code blocks scroll horizontally. */
+.UnicDB-ai-chat-v2-assistant-body {
+  min-width: 0;
+  white-space: pre-wrap;
+}
+
+.UnicDB-ai-chat-v2-md-paragraph {
+  margin: 0 0 8px;
+}
+
+.UnicDB-ai-chat-v2-md-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.UnicDB-ai-chat-v2-md-heading {
+  margin: 12px 0 6px;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+}
+
+.UnicDB-ai-chat-v2-code {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: var(--UnicDB-ai-chat-v2-input);
+  overflow-x: auto;
+  white-space: pre;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* Decorative streaming caret — never announced. */
+.UnicDB-ai-chat-v2-caret {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--UnicDB-ai-chat-v2-text);
+  animation: UnicDB-ai-chat-v2-pulse 1s ease-in-out infinite;
+}
+
+.UnicDB-ai-chat-v2-caret[hidden] {
+  display: none;
+}
+
+.UnicDB-ai-chat-v2-stopped {
+  margin-top: 4px;
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.UnicDB-ai-chat-v2-tool {
+  align-self: flex-start;
+  max-width: 92%;
+  padding: 6px 10px;
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-left-width: 3px;
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: var(--UnicDB-ai-chat-v2-surface);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.UnicDB-ai-chat-v2-tool-status[data-status="failed"],
+.UnicDB-ai-chat-v2-tool-status[data-status="denied"] {
+  color: var(--UnicDB-ai-chat-v2-danger);
+}
+
+/* Action row: visible on hover or keyboard focus-within, never on touch-only
+   or reduced-motion traps. Buttons are 28x28 with a 2px focus ring. */
+.UnicDB-ai-chat-v2-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  min-height: 28px;
+}
+
+.UnicDB-ai-chat-v2-item-user .UnicDB-ai-chat-v2-actions {
+  justify-content: flex-end;
+}
+
+.UnicDB-ai-chat-v2-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: transparent;
+  color: var(--UnicDB-ai-chat-v2-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.UnicDB-ai-chat-v2-item:hover .UnicDB-ai-chat-v2-action,
+.UnicDB-ai-chat-v2-item:focus-within .UnicDB-ai-chat-v2-action,
+.UnicDB-ai-chat-v2-action:focus-visible {
+  opacity: 1;
+}
+
+.UnicDB-ai-chat-v2-action:hover {
+  color: var(--UnicDB-ai-chat-v2-text);
+  background: var(--UnicDB-ai-chat-v2-input);
+}
+
+.UnicDB-ai-chat-v2-action[hidden] {
+  display: none;
+}
+
+.UnicDB-ai-chat-v2-action:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
+}
+
+/* Context chips carried by a user message. */
+.UnicDB-ai-chat-v2-context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.UnicDB-ai-chat-v2-context-chip {
+  max-width: 100%;
+  padding: 0 6px;
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Transient toast (clipboard success/failure). */
+.UnicDB-ai-chat-v2-toast {
+  align-self: flex-start;
+  padding: 4px 8px;
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: var(--UnicDB-ai-chat-v2-surface);
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.UnicDB-ai-chat-v2-toast[data-level="error"] {
+  color: var(--UnicDB-ai-chat-v2-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .UnicDB-ai-chat-v2-caret,
+  .UnicDB-ai-chat-v2-action {
+    animation: none;
+    transition: none;
+  }
+}
+
 /* Namespaced keyframes (the only selectors not rooted at .UnicDB-ai-chat-v2). */
 @keyframes UnicDB-ai-chat-v2-pulse {
   0%,
@@ -527,5 +752,324 @@
   }
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* ===========================================================================
+   TASK-CHATV2-008 — composer v2 lanes, chips, menus and states.
+   Every selector is scoped under `.UnicDB-ai-chat-v2`; no bare selectors.
+   =========================================================================== */
+
+.UnicDB-ai-chat-v2-input-v2 {
+  max-height: 147px; /* exactly seven 21px visual lines, then overflow-y */
+}
+
+.UnicDB-ai-chat-v2-input-scroll {
+  overflow-y: auto;
+}
+
+/* Three-lane bottom row: left controls · scrolling center · right actions. */
+.UnicDB-ai-chat-v2-composer-lane {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.UnicDB-ai-chat-v2-composer-lane-left,
+.UnicDB-ai-chat-v2-composer-lane-right {
+  flex: 0 0 auto;
+}
+
+.UnicDB-ai-chat-v2-composer-lane-center {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+/* Every actionable composer control is at least 32x32. */
+.UnicDB-ai-chat-v2-composer .UnicDB-ai-chat-v2-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: transparent;
+  color: var(--UnicDB-ai-chat-v2-muted);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.UnicDB-ai-chat-v2-composer .UnicDB-ai-chat-v2-control:hover {
+  background: var(--UnicDB-ai-chat-v2-surface);
+  color: var(--UnicDB-ai-chat-v2-text);
+}
+
+.UnicDB-ai-chat-v2-composer .UnicDB-ai-chat-v2-control:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
+}
+
+/* Chips: model / schema / permission — >=36px tall, 12/18 weight 600. */
+.UnicDB-ai-chat-v2-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--UnicDB-ai-chat-v2-space-1);
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 var(--UnicDB-ai-chat-v2-space-2);
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: var(--UnicDB-ai-chat-v2-surface);
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-chip:hover {
+  color: var(--UnicDB-ai-chat-v2-text);
+}
+
+.UnicDB-ai-chat-v2-chip:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
+}
+
+.UnicDB-ai-chat-v2-chip svg {
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
+.UnicDB-ai-chat-v2-model-chip,
+.UnicDB-ai-chat-v2-schema-chip {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.UnicDB-ai-chat-v2-permission {
+  min-width: 36px;
+}
+
+/* Context chip lane: horizontal scroll, never overlaps the send slot. */
+.UnicDB-ai-chat-v2-context-chip-list {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--UnicDB-ai-chat-v2-space-1);
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.UnicDB-ai-chat-v2-context-chip-list[hidden] {
+  display: none;
+}
+
+.UnicDB-ai-chat-v2-context-chip {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  max-width: 200px;
+  min-height: 28px;
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: var(--UnicDB-ai-chat-v2-surface);
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+.UnicDB-ai-chat-v2-context-chip-changed {
+  border-color: var(--UnicDB-ai-chat-v2-warning);
+  color: var(--UnicDB-ai-chat-v2-warning);
+}
+
+.UnicDB-ai-chat-v2-context-chip-missing {
+  border-color: var(--UnicDB-ai-chat-v2-danger);
+  color: var(--UnicDB-ai-chat-v2-danger);
+}
+
+.UnicDB-ai-chat-v2-context-chip-body {
+  min-width: 0;
+  max-width: 160px;
+  padding: 0 var(--UnicDB-ai-chat-v2-space-2);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-context-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-context-chip-body:focus-visible,
+.UnicDB-ai-chat-v2-context-chip-remove:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: -2px;
+}
+
+/* Primary slot: one 40x40 slot whose meaning follows state (send | stop). */
+.UnicDB-ai-chat-v2-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--UnicDB-ai-chat-v2-radius-md);
+  background: var(--UnicDB-ai-chat-v2-primary);
+  color: #ffffff;
+  cursor: pointer;
+  transition: filter 120ms ease, background-color 120ms ease;
+}
+
+.UnicDB-ai-chat-v2-primary-send:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.UnicDB-ai-chat-v2-primary-busy {
+  background: var(--UnicDB-ai-chat-v2-danger);
+}
+
+.UnicDB-ai-chat-v2-primary:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
+}
+
+.UnicDB-ai-chat-v2-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Transient 250ms visual lock only — the textarea stays editable. */
+.UnicDB-ai-chat-v2-primary-locked {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.UnicDB-ai-chat-v2-primary svg {
+  pointer-events: none;
+}
+
+/* Composer hint: fixed draft-preserved copy while a turn is live. */
+.UnicDB-ai-chat-v2-composer-hint {
+  padding: 0 var(--UnicDB-ai-chat-v2-space-4) var(--UnicDB-ai-chat-v2-space-2);
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.UnicDB-ai-chat-v2-composer-hint[hidden] {
+  display: none;
+}
+
+/* Anchored composer menus (attach/model/schema/permission popovers). */
+.UnicDB-ai-chat-v2-composer-menu {
+  position: absolute;
+  z-index: 3;
+  min-width: 220px;
+  max-width: 420px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--UnicDB-ai-chat-v2-space-1);
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-md);
+  background: var(--UnicDB-ai-chat-v2-surface);
+  box-shadow: 0 8px 24px var(--UnicDB-ai-chat-v2-shadow);
+}
+
+.UnicDB-ai-chat-v2-composer-menu[hidden] {
+  display: none;
+}
+
+.UnicDB-ai-chat-v2-composer-menu-row {
+  display: flex;
+  align-items: center;
+  gap: var(--UnicDB-ai-chat-v2-space-2);
+  width: 100%;
+  min-height: 44px;
+  padding: 0 var(--UnicDB-ai-chat-v2-space-2);
+  border: 0;
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: transparent;
+  color: var(--UnicDB-ai-chat-v2-text);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-composer-menu-row:hover {
+  background: var(--UnicDB-ai-chat-v2-input);
+}
+
+.UnicDB-ai-chat-v2-composer-menu-row[aria-disabled="true"] {
+  color: var(--UnicDB-ai-chat-v2-muted);
+  cursor: default;
+}
+
+/* <420px: optional chip labels hide; accessible names remain on the control. */
+@media (max-width: 419px) {
+  .UnicDB-ai-chat-v2-composer .UnicDB-ai-chat-v2-label-optional {
+    display: none;
+  }
+
+  .UnicDB-ai-chat-v2-model-chip,
+  .UnicDB-ai-chat-v2-schema-chip {
+    max-width: 120px;
+  }
+}
+
+/* <320px: two-row composer grid — attach/slash/model first, safety/send second. */
+@media (max-width: 319px) {
+  .UnicDB-ai-chat-v2-composer-bottom-v2 {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto;
+  }
+
+  .UnicDB-ai-chat-v2-composer-lane-center {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .UnicDB-ai-chat-v2-composer-lane-left,
+  .UnicDB-ai-chat-v2-composer-lane-right {
+    grid-row: 2;
+  }
+
+  .UnicDB-ai-chat-v2-composer-lane-right {
+    justify-content: flex-end;
   }
 }

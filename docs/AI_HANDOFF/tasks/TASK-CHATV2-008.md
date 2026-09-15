@@ -60,4 +60,55 @@ npm run compile
 - Produces: `ComposerView`, `ComposerCallbacks`, `renderComposerV2()` for 009–014.
 
 ## Discussion
-(no comments yet)
+- 2026-09-14 · The task says boundaries `<420px`/`<320px`; the landed shell
+  (TASK-CHATV2-005) implements them with the exclusive literals `419px`/`319px`.
+  Followed the existing codebase convention and asserted `419px`/`319px` in the
+  composer test rather than inventing a second boundary literal.
+- 2026-09-14 · Compatibility export in `webview/aiChatPanelComposer.ts` is
+  ADDITIVE only (a pure re-export). The V1 `renderComposer` surface is untouched
+  so `webview/__tests__/aiChatPanelComposer.test.ts` keeps passing until 017.
+
+## Progress
+- 2026-09-14T02:10:26+07:00 · milestone: composer component + tests · last-green: 17/18 composer tests green (only the CSS-branch case red, expected) · files: webview/aiChat/composer.ts, webview/aiChat/__tests__/composer.test.ts · drift: none
+- 2026-09-14T02:12:00+07:00 · milestone: composer/chip/menu styles · last-green: 18/18 composer tests green · files: webview/aiChat/composer.ts, webview/aiChat/__tests__/composer.test.ts, webview/aiChat/styles.css · drift: none
+- 2026-09-14T02:13:01+07:00 · milestone: compatibility re-export + verification · last-green: 36/36 focused tests, typecheck and compile green · files: webview/aiChat/composer.ts, webview/aiChat/__tests__/composer.test.ts, webview/aiChat/styles.css, webview/aiChatPanelComposer.ts · drift: none
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: |
+  Files were written incrementally (composer.ts + composer.test.ts committed first,
+  then styles.css, then the compatibility export). The first composer-test run
+  before the CSS milestone produced a genuine RED for the one case that depends on
+  the not-yet-written stylesheet:
+
+    FAIL webview/aiChat/__tests__/composer.test.ts > ... narrow mode CSS branches (#6)
+      > hides optional labels under 420px and wraps the bottom lane under 320px
+    AssertionError: expected false to be true // Object.is equality
+      expect(/label-optional\s*\{[^}]*display:\s*none/.test(narrow420)).toBe(true)
+
+  Three additional RED assertions were test-harness defects, fixed in the test
+  (not by weakening the contract): a spread copy froze the callback counters at 0
+  (`expected +0 to be 1`); the architecture scan read comment prose, not code; and
+  the primary slot had no title/aria before the first `render()`. The last one was
+  a real component bug, fixed by labelling the icon-only primary at construction.
+Verification Output: |
+  $ npm test -- --run webview/aiChat/__tests__/composer.test.ts webview/__tests__/aiChatPanelComposer.test.ts src/ui/__tests__/aiChatPanelCloneCss.test.ts
+   ✓ src/ui/__tests__/aiChatPanelCloneCss.test.ts  (8 tests) 22ms
+   ✓ webview/aiChat/__tests__/composer.test.ts  (18 tests) 39ms
+   ✓ webview/__tests__/aiChatPanelComposer.test.ts  (10 tests) 68ms
+   Test Files  3 passed (3)
+        Tests  36 passed (36)
+
+  $ npm run typecheck
+  > tsc --noEmit
+  (exit 0)
+
+  $ npm run compile
+  esbuild: build complete
+    dist/extension.js 6.5mb, dist/webview.js 2.3mb, dist/webview.css 54.0kb
+Status: PASS
+Note: Compatibility export is additive/re-export only; V1 surface untouched.
+  Boundary literals follow 005's 419px/319px convention. No transport/keydown
+  owner added (test #7 enforces). No version bump, package or publish.

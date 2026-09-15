@@ -602,3 +602,34 @@ export function renderComposer(
     },
   };
 }
+
+// ===========================================================================
+// TASK-CHATV2-008 — temporary V2 compatibility export.
+//
+// The V2 composer lives in `webview/aiChat/composer.ts`. Until the cutover task
+// TASK-CHATV2-017 re-points `webview/aiChatPanelMain.ts` at it and deletes this
+// module, this bridge lets a caller construct the V2 composer through the same
+// entry file it already imports. It is a RE-EXPORT ONLY: no V1 behavior is
+// wrapped, adapted or shadowed, and nothing here acquires a host transport or a
+// keyboard-submit owner (both stay with TASK-CHATV2-009).
+// ===========================================================================
+
+export {
+  renderComposerV2,
+  COMPOSER_IDS,
+  COMPOSER_AUTO_GROW_MAX_PX,
+  COMPOSER_AUTO_GROW_MIN_PX,
+  COMPOSER_BUSY_HINT,
+  COMPOSER_PLACEHOLDER,
+  COMPOSER_REASON_EMPTY,
+  COMPOSER_REASON_UNRESOLVED,
+  COMPOSER_SEND_LABEL,
+  COMPOSER_STOP_LABEL,
+  COMPOSER_STOP_LOCK_MS,
+} from "./aiChat/composer";
+export type {
+  ComposerCallbacks as ComposerCallbacksV2,
+  ComposerOptions as ComposerOptionsV2,
+  ComposerSelection as ComposerSelectionV2,
+  ComposerView as ComposerViewV2,
+} from "./aiChat/composer";

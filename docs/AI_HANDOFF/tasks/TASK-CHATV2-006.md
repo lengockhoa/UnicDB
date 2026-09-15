@@ -63,3 +63,58 @@ npm run compile
 
 ## Discussion
 (no comments yet)
+
+## Progress
+
+- 2026-09-16T02:09:56+0700 · milestone: markdown primitives · last-green: `npx vitest run webview/__tests__/markdownSafe.test.ts` 19/19 pass · files: webview/aiChat/markdown.ts, webview/__tests__/markdownSafe.test.ts · drift: none
+- 2026-09-16T02:12:16+0700 · milestone: transcript renderer · last-green: `npx vitest run webview/aiChat/__tests__/transcript.test.ts` 17/17 pass · files: webview/aiChat/markdown.ts, webview/__tests__/markdownSafe.test.ts, webview/aiChat/transcript.ts, webview/aiChat/__tests__/transcript.test.ts · drift: none
+- 2026-09-16T02:12:44+0700 · milestone: thread compatibility exports · last-green: targeted suite 61/61, `npm run typecheck`, `npm run compile` all pass · files: webview/aiChat/transcript.ts, webview/aiChat/__tests__/transcript.test.ts, webview/aiChatPanelThread.ts · drift: none
+- 2026-09-16T02:14:20+0700 · milestone: styles + final verification · last-green: targeted suite 64/64, typecheck clean, compile clean, webview+ui lane 2004 tests pass · files: webview/aiChat/styles.css, webview/aiChat/__tests__/transcript.test.ts · drift: webview/aiChat/styles.css is not a declared Target File but the task hard-constraint ("scoped CSS") and PLAN §6 geometry require the new renderer's rules to live in the V2-scoped stylesheet owned by TASK-CHATV2-005.
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: Files were written incrementally in four milestones (markdown primitives, transcript renderer, thread exports, styles). Real RED was observed inside the transcript suite during milestone 2 — first run 14 passed / 3 failed:
+  - `never assigns raw provider text to innerHTML anywhere in the tree` — AssertionError: expected `...` not to contain `<svg` (my assertion was wrong: decorative icon SVGs are legitimate; rewrote to assert no event attribute / no provider-derived element node instead).
+  - `announces Copied on success through the polite status region` — AssertionError: expected `''` to be `Copied` (Promise jobs had not drained with `await Promise.resolve()`; switched to a macrotask `settle()`).
+  - `announces Could not copy in the alert region on rejection` — same async-flush cause; fixed with `settle()`.
+  A fourth RED surfaced after the first two fixes: `expected '...' not to contain 'onload'` — the payload text `onload` legitimately survives as escaped text; replaced the over-broad innerHTML substring check with an element-attribute assertion.
+
+Verification Output:
+```
+$ npm test -- --run webview/aiChat/__tests__/transcript.test.ts webview/__tests__/markdownSafe.test.ts webview/__tests__/aiChatPanelThread.test.ts
+ ✓ webview/__tests__/markdownSafe.test.ts  (19 tests) 14ms
+ ✓ webview/__tests__/aiChatPanelThread.test.ts  (25 tests) 21ms
+ ✓ webview/aiChat/__tests__/transcript.test.ts  (20 tests) 166ms
+ Test Files  3 passed (3)
+      Tests  64 passed (64)
+
+$ npm run typecheck
+> tsc --noEmit
+(exit 0, no errors)
+
+$ npm run compile
+  dist/aiChatPanel.css  14.9kb
+esbuild: build complete
+(exit 0)
+
+# broader regression lane (vitest run webview src/ui)
+ Test Files  5 failed | 144 passed (149)
+      Tests  2004 passed (2004)
+```
+The 5 file-level failures in the broad lane are environmental only: `spawnSync .../.worktrees/task-chatv2-006/node_modules/.bin/esbuild ENOENT` in `src/ui/__tests__/aiChatPanelWebview*.test.ts` (they exec the worktree's uninstalled esbuild binary). Zero test assertions failed; all 2004 tests passed.
+
+Status: PASS
+Note: `webview/aiChat/styles.css` was touched beyond the declared Target Files list; rationale recorded in the Progress drift field. No new dependency, no version bump, no publish. `node_modules` is not installed inside the worktree, so bundle-exec tests that spawn the local esbuild binary cannot run there — this is a worktree setup gap, not a regression from this task.
+
+## Executor Report (returned summary)
+
+TASK: TASK-CHATV2-006
+STATUS: PASS
+EXECUTOR_MODEL: bao-sonnet
+FILES: webview/aiChat/transcript.ts, webview/aiChat/markdown.ts, webview/aiChatPanelThread.ts, webview/aiChat/styles.css, webview/aiChat/__tests__/transcript.test.ts, webview/__tests__/markdownSafe.test.ts
+RED: confirmed
+VERIFY: 3 commands, all pass
+NOTE: webview/aiChat/styles.css touched beyond declared Target Files (scoped rules required by hard constraint); rationale in Progress drift.

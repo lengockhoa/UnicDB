@@ -47,6 +47,29 @@ import { escapeHtml, renderMarkdown } from "./markdownSafe";
  * `renderMarkdown` from this module. */
 export { renderMarkdown };
 
+// ------------------------------------------------------------------
+// V2 compatibility bridge — TASK-CHATV2-006.
+//
+// The V2 keyed renderer and its escape-first Markdown primitives live in
+// `webview/aiChat/`. These re-exports let the V1 thread module act as the
+// migration seam until CHATV2-017 deletes this file AFTER the V2 cutover:
+// nothing here is a second implementation — every name is the single V2
+// definition. Do NOT add behavior to this block.
+// ------------------------------------------------------------------
+export { createTranscriptRenderer } from "./aiChat/transcript";
+export type {
+  ChatTranscriptRefs,
+  TranscriptCallbacks,
+  TranscriptRenderer,
+} from "./aiChat/transcript";
+export {
+  extractSqlFences,
+  isSqlLang,
+  parseMarkdownBlocks,
+  renderMarkdownInto,
+} from "./aiChat/markdown";
+export type { MarkdownBlock } from "./aiChat/markdown";
+
 /** Reverse the escape table. Used by the Copy buttons (kept here so the
  * module is self-contained; rendered copies of the same fn live in main
  * until TASK-007 lands). */
