@@ -37,6 +37,21 @@ jobs:
       - name: Publish to VS Code Marketplace
         # `vsce publish` reads `version` from package.json automatically; no need
         # to pass it. PAT is read from the `VSCE_PAT` secret in repo settings.
+        #
+        # Two publishers can race for the same version: `npm run bump` publishes
+        # locally AND pushes the tag that triggers this job. Whichever loses gets
+        # "already exists" from vsce. That is success, not failure — the version
+        # is on the Marketplace either way. Treat it as green so every release
+        # shows a clean CI result (this bit v1.53.48: local won, CI went red).
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: npx vsce publish -p "$VSCE_PAT"
+        run: |
+          set +e
+          out=$(npx vsce publish -p "$VSCE_PAT" 2>&1)
+          code=$?
+          echo "$out"
+          if [ $code -ne 0 ] && echo "$out" | grep -q "already exists"; then
+            echo "::notice::lengockhoa.UnicDB version already on the Marketplace (local publish won the race) — treating as success."
+            exit 0
+          fi
+          exit $code
