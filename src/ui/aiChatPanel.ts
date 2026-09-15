@@ -54,7 +54,7 @@ import {
   summarizeAttachmentsForLog,
   type MinimalAttachment,
 } from "./aiChatAttachments";
-import { defaultAiSettings, type AiConfig, type AiModelRole } from "../ai/settings";
+import { defaultAiSettings, type AiConfig, type AiSettings, type AiModelRole } from "../ai/settings";
 import { createDbTools } from "../ai/tools/registry";
 import { createWorkspaceSearchTool } from "../ai/tools/workspaceSearchTool";
 import { createFileOpsTool, createFileOpsPreview, fileOpsDeniedEnvelope } from "../ai/tools/fileOpsTool";
@@ -112,6 +112,18 @@ import {
   resolvePolicy,
   type EffectivePolicy,
 } from "../ai/policy";
+// TASK-CHATV2-002 — host-authoritative engine capability vocabulary. The panel
+// derives its engine-owned decisions (today: the `init.visionCapable` image
+// gate) from this resolver instead of a provider-name branch, so the four
+// engines can never advertise a capability the adapter does not prove.
+import {
+  resolveEngineCapabilities,
+  type AiEngineName,
+  type ChatModelRole,
+  type EngineAdapterRuntime,
+  type EngineCapabilityPolicy,
+  type EngineCapabilitySnapshot,
+} from "../ai/capabilities";
 import type { ConnectionRecoveryStatus } from "../core/connectionManager";
 
  import { buildPermissionToolInfo } from "./permissionDetail";
@@ -1387,6 +1399,13 @@ export class AiChatPanel {
    */
   private resolvedVisionCapable: boolean | null = null;
   /**
+   * TASK-CHATV2-002: latest host-authoritative capability snapshot for the
+   * effective engine (mirrors the V2 `capabilities` frame). Internal for now —
+   * the wire frame lands in CHATV2-003; the snapshot already replaces the
+   * provider-name vision branch inside this panel.
+   */
+  private capabilitySnapshot: EngineCapabilitySnapshot | null = null;
+  /**
    * Finding 7 belt: `dispose()` calling `this.panel?.dispose()` synchronously
    * re-enters the `onDidDispose` handler below (confirmed by the real
    * webview panel AND every test fake, which both fire `onDidDispose`
@@ -1850,30 +1869,15 @@ export class AiChatPanel {
     } catch {
       cfg = null;
     }
-    // TASK-001 (cycle AB): the omp engine cannot accept images regardless
-    // of the active role's `vision` flag — engine is the belt. TASK-011
-    // extends the belt: Claude Code + Codex are image-capable by engine
-    // contract (TASK-009/010), so `visionCapable` is unconditionally true
-    // for them; builtin still defers to `cfg.models.work.vision` exactly
-    // as the cycle-AB baseline established. Any failure (null config,
-    // store absent, transient error) collapses to the legacy default
-    // (`defaultAiSettings()` → work.vision: true) so the webview UX does
-    // not regress on first-launch-with-no-settings.
-    let visionCapable: boolean;
-    if (this.engine === "omp") {
-      visionCapable = false;
-    } else if (this.engine === "claude-code" || this.engine === "codex") {
-      // TASK-009/010 contract: the engine is image-capable regardless of
-      // model role's `vision` flag. We do not consult the config store on
-      // this path — the (potentially throwing) loadConfig cost has zero
-      // payoff when the gate is engine-owned. Hard-coded true keeps
-      // `prepareAttachments` from refusing on the image path, mirrors the
-      // TASK-001 belt-vs-suspenders rule (engine owns the truth).
-      visionCapable = true;
-    } else {
-      visionCapable = cfg?.models.work.vision
-        ?? defaultAiSettings().models.work.vision;
-    }
+    // TASK-CHATV2-002: the image gate is produced by the capability resolver
+    // (adapter transport AND active-model vision), replacing the four-way
+    // provider-name branch. Any failure (null config, store absent, transient
+    // error) collapses to the legacy default (`defaultAiSettings()` →
+    // work.vision: true) so the webview UX does not regress on
+    // first-launch-with-no-settings.
+    const effectiveCfg = cfg ?? defaultAiSettings();
+    this.capabilitySnapshot = this.resolveCapabilitiesForReady(effectiveCfg);
+    const visionCapable = this.capabilitySnapshot.supports.imageInput;
     // Post the `models` frame BEFORE `init` — the chip / dropdown render
     // consumes it eagerly, and snapshotting postedMessages after init
     // arrival must observe every frame this method will produce.
@@ -3895,9 +3899,92 @@ export class AiChatPanel {
    */
   private computeVisionCapabilityForEngine(eng: EngineKind | null): boolean {
     if (eng === null) return false; // pre-ready: refuse images by default
-    if (eng === "omp") return false;
-    if (eng === "claude-code" || eng === "codex") return true;
-    return defaultAiSettings().models.work.vision;
+    return this.resolveCapabilitiesFor(eng, defaultAiSettings()).supports.imageInput;
+  }
+
+  /**
+   * TASK-CHATV2-002: host-side adapter runtime for `engine`. The panel knows
+   * only whether its dispatch seam is wired (CHATV2-001: availability is the
+   * presence of the seam); builtin is always present.
+   */
+  private adapterRuntimeFor(engine: AiEngineName): EngineAdapterRuntime {
+    switch (engine) {
+      case "builtin":
+        return { state: "ready" };
+      case "omp":
+        return this.options.ompChatEngine !== undefined ||
+          this.options.acp !== undefined
+          ? { state: "ready" }
+          : { state: "unavailable", reason: "not-installed" };
+      case "claude-code":
+        return this.options.claudeCodeChatEngine !== undefined
+          ? { state: "ready" }
+          : { state: "unavailable", reason: "not-installed" };
+      case "codex":
+        return this.options.codexChatEngine !== undefined
+          ? { state: "ready" }
+          : { state: "unavailable", reason: "not-installed" };
+    }
+  }
+
+  /**
+   * TASK-CHATV2-002: the panel's own role list for the active engine. omp owns
+   * its model selection, so it advertises none (the resolver likewise reports
+   * `supports.modelRoles === false`).
+   */
+  private capabilityModelRoles(engine: AiEngineName, cfg: AiSettings): ChatModelRole[] {
+    if (engine === "omp") return [];
+    return AI_MODEL_ROLES.map((role) => {
+      const m = cfg.models[role];
+      return {
+        role,
+        modelId: typeof m?.modelId === "string" ? m.modelId : "",
+        vision: m?.vision === true,
+      };
+    });
+  }
+
+  /**
+   * TASK-CHATV2-002: pure adapter. Resolves the effective capability snapshot
+   * for `engine` from the adapter runtime, the configured role metadata and the
+   * effective policy. The panel never branches on a provider name for an
+   * engine feature; it reads this snapshot.
+   */
+  private resolveCapabilitiesFor(
+    engine: AiEngineName,
+    cfg: AiSettings,
+    policy?: EngineCapabilityPolicy,
+    fallbackFrom?: AiEngineName,
+  ): EngineCapabilitySnapshot {
+    const effectivePolicy: EngineCapabilityPolicy = policy ?? {
+      // A denied workspace-trust/context policy admits no context class.
+      dbContext: true,
+      workspaceContext: true,
+      // Panel bypass is session-scoped and host-proven for builtin/omp; the
+      // resolver still ANDs it with engine support.
+      bypassAllowed: true,
+    };
+    return resolveEngineCapabilities({
+      engine,
+      adapter: this.adapterRuntimeFor(engine),
+      modelRoles: this.capabilityModelRoles(engine, cfg),
+      activeRole: this.activeRole,
+      policy: effectivePolicy,
+      savedTranscriptResume: false,
+      ...(fallbackFrom !== undefined ? { fallbackFrom } : {}),
+    });
+  }
+
+  /** Ready-path wrapper: hosts that declared a requested engine also declare
+   * whether it fell back, so the snapshot's status matches the banner. */
+  private resolveCapabilitiesForReady(cfg: AiSettings): EngineCapabilitySnapshot {
+    const engine = (this.engine ?? "builtin") as AiEngineName;
+    const requested = this.options.engine;
+    const fellBack =
+      requested !== undefined && requested !== engine
+        ? (requested as AiEngineName)
+        : undefined;
+    return this.resolveCapabilitiesFor(engine, cfg, undefined, fellBack);
   }
 
   private handleClear(): void {

@@ -57,3 +57,56 @@ npm run compile
 
 ## Discussion
 (no comments yet)
+
+## Progress
+- 2026-09-16T00:52:00+07:00 · milestone: capability resolver wired + AiSettings type widening (typecheck clean, 55 tests pass) · last-green: typecheck exit 0; 55/55 focused tests pass; compile exit 0 · files: src/ai/capabilities.ts, src/ai/__tests__/capabilities.test.ts, src/ui/aiChatPanel.ts · drift: none
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  The original RED transcript was lost when the previous attempt was killed by a
+  transient API error, and no copy survives in `.ukit/storage/cache/tee/` (searched;
+  nothing preserved). Reverting the implementation to re-show RED is not allowed, so
+  this is the honest record of the initial RED that occurred:
+
+  Command: `npm test -- --run src/ai/__tests__/capabilities.test.ts`
+  Before `src/ai/capabilities.ts` existed, the suite failed to load:
+    Error: Failed to resolve import "../capabilities" from
+    "src/ai/__tests__/capabilities.test.ts". Does the file exist?
+    → Test Files  1 failed (1) / Tests  no tests
+  This is the genuine TDD RED for the new module (test written first, module absent).
+  After the module was added the suite went green (31/31) and has stayed green.
+  The blocker this run fixed was a compile-time RED, verbatim:
+    src/ui/aiChatPanel.ts(1879,64): error TS2345: Argument of type 'AiSettings' is not
+      assignable to parameter of type 'AiConfig'. Property 'apiKey' is missing in type
+      'AiConfig' but required in type 'AiConfig'.
+    src/ui/aiChatPanel.ts(3902,45): error TS2345: same.
+  Fixed by widening `capabilityModelRoles` / `resolveCapabilitiesFor` /
+  `resolveCapabilitiesForReady` params from `AiConfig` to `AiSettings` and importing
+  `AiSettings`; call sites and behaviour unchanged.
+
+Verification Output: |
+  $ npx tsc --noEmit -p tsconfig.json
+  EXIT=0
+
+  $ npm test -- --run src/ai/__tests__/capabilities.test.ts src/ui/__tests__/aiChatPanelAgentEngines.test.ts src/ui/__tests__/aiChatPanelPolicy.test.ts
+   ✓ src/ai/__tests__/capabilities.test.ts  (31 tests) 6ms
+   ✓ src/ui/__tests__/aiChatPanelPolicy.test.ts  (20 tests) 12ms
+   ✓ src/ui/__tests__/aiChatPanelAgentEngines.test.ts  (4 tests) 83ms
+   Test Files  3 passed (3)
+        Tests  55 passed (55)
+     Duration  457ms
+  EXIT=0
+
+  $ npm run typecheck
+  > tsc --noEmit
+  EXIT=0
+
+  $ npm run compile
+  esbuild: build complete
+  EXIT=0
+
+Status: PASS
+Note: none
