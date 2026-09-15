@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.53.49] — 2026-09-15
+
+- Summary: Redo the AIChat composer button row so controls no longer overlap: 28px icon tiles scoped to icon-only buttons, text chips truncate with ellipsis, Bypass becomes a readable labeled pill, schema chip uses plain "schema: <name>" text (raw $(...) codicon never rendered in the webview), and mic/slash placeholders styled as ghost tiles.
+- Files: webview/aiChatPanelComposer.ts, webview/styles.css
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.53.49.vsix packaged
+
+---
+
 ## [1.53.48] — 2026-09-15
 
 - Summary: Ship the one-command release flow: npm run bump / bump:minor / bump:major resolve to scripts/bump-version.mjs and atomically ship every bump to both GitHub Releases and the VS Code Marketplace. Fixes the flag-parser bug that treated the --changelog-summary value as the bump mode, adds a .secrets/.pat PAT fallback, tolerates the CI publish race after a tag push, and unblocks the frozen-surface guards for release-plumbing scripts.
