@@ -1186,27 +1186,54 @@
   background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
   color: var(--vscode-errorForeground, #f48771);
 }
+/* Composer card — one rounded container holding the textarea plus the
+ * action row, mirroring the Claude-style single-card composer. The border,
+ * radius, and internal padding live here; the textarea inside sheds its own
+ * box so the card reads as one surface instead of an input floating above a
+ * loose button row. */
 .UnicDB-chat-input {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--vscode-input-border, #3c3c3c);
+  border-radius: 8px;
+  background: var(--vscode-input-background, #3c3c3c);
 }
 .UnicDB-chat-input textarea {
   resize: vertical;
   min-height: 60px;
   font-family: inherit;
-  background: var(--vscode-input-background, #3c3c3c);
+  background: transparent;
   color: var(--vscode-input-foreground, #cccccc);
-  border: 1px solid var(--vscode-input-border, #3c3c3c);
-  padding: 6px;
+  border: none;
+  padding: 2px 0;
+}
+.UnicDB-chat-input textarea:focus {
+  outline: none;
 }
 .UnicDB-chat-actions {
   display: flex;
   gap: 6px;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
   min-width: 0;
+}
+/* Left cluster — destructive/ghost tools (resume/clear/regenerate, chips,
+ * slash, bypass, mic, attach). Right cluster — the single primary action
+ * (send, which swaps to stop while busy). The split is what gives the row
+ * its breathing room: the accent sits alone on the right. */
+.UnicDB-chat-actions-left,
+.UnicDB-chat-actions-right {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.UnicDB-chat-actions-right {
+  margin-left: auto;
 }
 /* Icon-only tiles (resume/clear/regenerate/mic/attach/send/stop/slash).
  * Scoped with :not() so variable-width text chips and the labeled
@@ -1263,6 +1290,13 @@
 .UnicDB-chat-primary {
   background: var(--vscode-button-background, #0e639c) !important;
   color: var(--vscode-button-foreground, #ffffff) !important;
+}
+/* Send is the one strong accent on the right; round it so it reads as the
+ * card's primary action rather than another square tool tile. Scoped by tag
+ * + class (higher specificity than the shared tile rule) so the stop button
+ * keeps its frozen square/red contract. */
+.UnicDB-chat-actions button.UnicDB-chat-primary {
+  border-radius: 999px;
 }
 /* Dead affordances (voice placeholder, "/" shortcut) read as ghost tiles:
  * same 28px footprint, dashed outline, 40% opacity — visibly inert, never
@@ -1759,11 +1793,32 @@ body.UnicDB-console-body {
   cursor: pointer;
   background: transparent;
   color: var(--vscode-foreground, #cccccc);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.UnicDB-chat-slash-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+.UnicDB-chat-slash-detail {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #8c8c8c);
 }
 .UnicDB-chat-slash-row:hover,
 .UnicDB-chat-slash-row:focus {
   background: var(--vscode-list-activeSelectionBackground, #094771);
   color: var(--vscode-list-activeSelectionForeground, #ffffff);
+}
+/* Engine-gated unavailable row (§8.6): stays listed and focusable so the
+ * user learns why it is not offered, but reads as inert. The detail line
+ * carries the reason. */
+.UnicDB-chat-slash-row-unavailable {
+  opacity: 0.55;
+  cursor: default;
+}
+.UnicDB-chat-slash-row-unavailable .UnicDB-chat-slash-name {
+  text-decoration: line-through;
 }
 .UnicDB-chat-local-notice {
   align-self: flex-start;
@@ -2353,6 +2408,24 @@ body.UnicDB-chat-body {
   max-width: 180px;
   flex: 0 1 auto;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Two-tone model chip body: role in the accent, a muted separator, model id
+ * in the secondary color. Only the model id truncates (it is the unbounded
+ * half); the role stays legible so the user can always read which role is
+ * active even in a narrow composer. */
+.UnicDB-chat-chip-role {
+  color: var(--UnicDB-chat-accent-hover, #60a5fa);
+  flex: 0 0 auto;
+}
+.UnicDB-chat-chip-dot {
+  color: var(--vscode-descriptionForeground, #8c8c8c);
+  flex: 0 0 auto;
+}
+.UnicDB-chat-chip-model {
+  color: var(--vscode-descriptionForeground, #8c8c8c);
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }

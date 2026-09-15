@@ -412,3 +412,63 @@ describe("AiChatPanelCloneWebview — TASK-AGTUI-007 #6 XSS invariants", () => {
 // (no specific assertions here — see the existing suites in the
 // verification command list).
 // =====================================================================
+
+// =====================================================================
+// Test 8 — engine-aware slash menu (§8.6)
+// =====================================================================
+describe("AiChatPanelCloneWebview — engine-aware slash menu", () => {
+  function typePrompt(value: string): void {
+    const prompt = document.getElementById("prompt") as HTMLTextAreaElement;
+    prompt.value = value;
+    prompt.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  it("#8a builtin engine: /resume row is marked unavailable with an omp reason", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
+    h.dispatch({ type: "engine", name: "builtin" });
+    typePrompt("/");
+    const rows = document.querySelectorAll<HTMLButtonElement>(".UnicDB-chat-slash-row");
+    expect(rows.length).toBeGreaterThan(0);
+    const resumeRow = Array.from(rows).find((r) => r.dataset.command === "resume");
+    expect(resumeRow, "resume row must be listed").toBeTruthy();
+    expect(resumeRow!.getAttribute("aria-disabled")).toBe("true");
+    expect(resumeRow!.classList.contains("UnicDB-chat-slash-row-unavailable")).toBe(true);
+    // Clicking an unavailable row does NOT fill the composer.
+    resumeRow!.click();
+    const prompt = document.getElementById("prompt") as HTMLTextAreaElement;
+    expect(prompt.value).toBe("/");
+  });
+
+  it("#8b omp engine: /resume row is available and fills the composer on click", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
+    h.dispatch({ type: "engine", name: "omp" });
+    typePrompt("/res");
+    const rows = document.querySelectorAll<HTMLButtonElement>(".UnicDB-chat-slash-row");
+    expect(rows.length).toBe(1);
+    const row = rows[0]!;
+    expect(row.dataset.command).toBe("resume");
+    expect(row.getAttribute("aria-disabled")).toBeNull();
+    row.click();
+    const prompt = document.getElementById("prompt") as HTMLTextAreaElement;
+    expect(prompt.value).toBe("/resume ");
+  });
+
+  it("#8c re-announcing the engine refreshes an open menu's availability", () => {
+    const h = makeHarness();
+    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
+    h.dispatch({ type: "engine", name: "builtin" });
+    typePrompt("/");
+    let resumeRow = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(".UnicDB-chat-slash-row"),
+    ).find((r) => r.dataset.command === "resume");
+    expect(resumeRow!.getAttribute("aria-disabled")).toBe("true");
+    // Host switches to omp while the menu is open.
+    h.dispatch({ type: "engine", name: "omp" });
+    resumeRow = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(".UnicDB-chat-slash-row"),
+    ).find((r) => r.dataset.command === "resume");
+    expect(resumeRow!.getAttribute("aria-disabled")).toBeNull();
+  });
+});

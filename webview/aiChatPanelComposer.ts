@@ -110,10 +110,27 @@ function iconButton(
   return b;
 }
 
-/** Builds a small text label used inside the chip trigger. */
-function buildChipLabel(active: ComposerModelEntry | null): string {
-  if (!active) return "No models configured";
-  return `${active.role} · ${active.modelId}`;
+/** Builds the two-tone chip body: role in the strong accent, model id muted.
+ * Falls back to a single muted label when nothing is configured. Text-only
+ * (textContent on each span) so a hostile model id can never inject markup. */
+function paintChipLabel(target: HTMLElement, active: ComposerModelEntry | null): void {
+  target.replaceChildren();
+  if (!active) {
+    target.textContent = "No models configured";
+    target.setAttribute("aria-label", "Select model");
+    return;
+  }
+  const role = document.createElement("span");
+  role.className = "UnicDB-chat-chip-role";
+  role.textContent = active.role;
+  const dot = document.createElement("span");
+  dot.className = "UnicDB-chat-chip-dot";
+  dot.textContent = "·";
+  const model = document.createElement("span");
+  model.className = "UnicDB-chat-chip-model";
+  model.textContent = active.modelId;
+  target.append(role, dot, model);
+  target.setAttribute("aria-label", `Model: ${active.role} · ${active.modelId}`);
 }
 
 /**
@@ -149,14 +166,21 @@ export function renderComposer(
   prompt.setAttribute("aria-label", "Prompt");
   inputCol.appendChild(prompt);
 
-  // Bottom row: action buttons live here (legacy + new affordances).
+  // Bottom row: two clusters, left (tools) and right (send). Split so the
+  // row keeps its breathing room — the reference card puts the send action
+  // alone on the right with the destructive/ghost controls grouped left.
   const actions = document.createElement("div");
   actions.className = "UnicDB-chat-actions";
+  const actionsLeft = document.createElement("div");
+  actionsLeft.className = "UnicDB-chat-actions-left";
+  const actionsRight = document.createElement("div");
+  actionsRight.className = "UnicDB-chat-actions-right";
+  actions.append(actionsLeft, actionsRight);
   inputCol.appendChild(actions);
 
   // --- Legacy action buttons (live HERE per PLAN §3 id contract) -----------
   // Order: resume · clear · regenerate (legacy grouping), then chip + slash +
-  // bypass + mic + attach + send.
+  // bypass + mic + attach on the LEFT; send + stop alone on the RIGHT.
   const resumeBtn = iconButton(
     "resumeBtn",
     "Resume session",
@@ -165,7 +189,7 @@ export function renderComposer(
       '<path d="M3.5 3.5 V6.5 H6.5" />' +
       '<path d="M8 5.5 V8 L9.8 9.5" />',
   );
-  actions.appendChild(resumeBtn);
+  actionsLeft.appendChild(resumeBtn);
 
   const clearBtn = iconButton(
     "clearBtn",
@@ -177,7 +201,7 @@ export function renderComposer(
       '<path d="M6.8 7.5 V11.5" />' +
       '<path d="M9.2 7.5 V11.5" />',
   );
-  actions.appendChild(clearBtn);
+  actionsLeft.appendChild(clearBtn);
 
   const regenerateBtn = iconButton(
     "regenerateBtn",
@@ -186,13 +210,13 @@ export function renderComposer(
     '<path d="M12.5 8a4.5 4.5 0 1 1-1.3-3.2" />' +
       '<path d="M12.5 3.5 V6.5 H9.5" />',
   );
-  actions.appendChild(regenerateBtn);
+  actionsLeft.appendChild(regenerateBtn);
 
   // Visual divider before the new affordances (purely cosmetic).
   const sep = document.createElement("div");
   sep.className = "UnicDB-chat-actions-sep";
   sep.setAttribute("aria-hidden", "true");
-  actions.appendChild(sep);
+  actionsLeft.appendChild(sep);
 
   // --- Model chip dropdown -------------------------------------------------
   const chipBtn = document.createElement("button");
@@ -202,8 +226,8 @@ export function renderComposer(
   chipBtn.setAttribute("aria-haspopup", "listbox");
   chipBtn.setAttribute("aria-label", "Select model");
   chipBtn.title = "Select model";
-  chipBtn.textContent = "No models configured";
-  actions.appendChild(chipBtn);
+  paintChipLabel(chipBtn, null);
+  actionsLeft.appendChild(chipBtn);
 
   // The menu is appended to the wrap so it can be positioned absolutely.
   const chipMenu = document.createElement("div");
@@ -227,7 +251,7 @@ export function renderComposer(
   schemaChipBtn.setAttribute("aria-label", "Active schema");
   schemaChipBtn.title = "Active schema — click to change. CREATE FUNCTION / unqualified SELECT run here.";
   schemaChipBtn.textContent = "schema: default";
-  actions.appendChild(schemaChipBtn);
+  actionsLeft.appendChild(schemaChipBtn);
 
   // --- Slash affordance (`/N`) --------------------------------------------
   const slashHintBtn = document.createElement("button");
@@ -237,7 +261,7 @@ export function renderComposer(
   slashHintBtn.textContent = "/";
   slashHintBtn.setAttribute("aria-label", "Insert slash command");
   slashHintBtn.title = "Insert slash command";
-  actions.appendChild(slashHintBtn);
+  actionsLeft.appendChild(slashHintBtn);
 
   // --- Bypass-permissions toggle (default OFF) ----------------------------
   const bypassToggle = document.createElement("button");
@@ -249,7 +273,7 @@ export function renderComposer(
   bypassToggle.setAttribute("aria-label", "Bypass permissions");
   bypassToggle.title = "Bypass permissions (session only)";
   bypassToggle.textContent = "Bypass";
-  actions.appendChild(bypassToggle);
+  actionsLeft.appendChild(bypassToggle);
 
   // --- Mic placeholder ----------------------------------------------------
   const micBtn = document.createElement("button");
@@ -267,7 +291,7 @@ export function renderComposer(
     '<path d="M3.5 8a4.5 4.5 0 0 0 9 0" />' +
     '<path d="M8 12.5 V14.5" />' +
     "</svg>";
-  actions.appendChild(micBtn);
+  actionsLeft.appendChild(micBtn);
 
   // --- Attach + send / stop (busy swap) -----------------------------------
   const attachBtn = document.createElement("button");
@@ -282,7 +306,7 @@ export function renderComposer(
     'stroke-linejoin="round">' +
     '<path d="M14.3 7.4 8.2 13.5a4 4 0 0 1-5.7-5.7l5.7-5.7A2.7 2.7 0 1 1 12 5.9l-5.7 5.7a1.4 1.4 0 0 1-1.9-1.9l5.7-5.7" />' +
     "</svg>";
-  actions.appendChild(attachBtn);
+  actionsLeft.appendChild(attachBtn);
 
   const sendBtn = iconButton(
     "sendBtn",
@@ -292,7 +316,7 @@ export function renderComposer(
       '<path d="M14.7 1.3 10 14.7 7.3 8.7 1.3 6 14.7 1.3 Z" />',
     "UnicDB-chat-primary",
   );
-  actions.appendChild(sendBtn);
+  actionsRight.appendChild(sendBtn);
 
   const stopBtn = iconButton(
     "stopBtn",
@@ -302,7 +326,7 @@ export function renderComposer(
   );
   stopBtn.style.display = "none";
   stopBtn.setAttribute("aria-label", "Stop generation");
-  actions.appendChild(stopBtn);
+  actionsRight.appendChild(stopBtn);
 
   // Mount.
   root.appendChild(wrap);
@@ -341,7 +365,7 @@ export function renderComposer(
 
   function refreshChipLabel(): void {
     const active = models.find((m) => m.role === activeRole) ?? null;
-    chipBtn.textContent = buildChipLabel(active);
+    paintChipLabel(chipBtn, active);
     chipBtn.disabled = models.length === 0;
   }
 

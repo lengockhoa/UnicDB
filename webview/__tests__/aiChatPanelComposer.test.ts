@@ -224,6 +224,61 @@ describe("aiChatPanelComposer — TASK-AGTUI-004", () => {
     }
   });
 
+  it("#9 card split: left cluster holds tools/chips, right cluster holds only send/stop", () => {
+    attach(root);
+    renderComposer(root, noopCallbacks());
+    const left = root.querySelector(".UnicDB-chat-actions-left");
+    const right = root.querySelector(".UnicDB-chat-actions-right");
+    expect(left, ".UnicDB-chat-actions-left must exist").not.toBeNull();
+    expect(right, ".UnicDB-chat-actions-right must exist").not.toBeNull();
+    // Primary action group — send + stop only.
+    const rightIds = Array.from(right!.querySelectorAll("button")).map((b) => b.id);
+    expect(rightIds.sort()).toEqual(["sendBtn", "stopBtn"]);
+    // Left cluster — every other control (tools, chips, slash, bypass, mic, attach).
+    for (const id of [
+      "resumeBtn",
+      "clearBtn",
+      "regenerateBtn",
+      "modelChipBtn",
+      "schemaChipBtn",
+      "slashHintBtn",
+      "bypassToggle",
+      "micBtn",
+      "attachBtn",
+    ]) {
+      expect(left!.querySelector(`#${id}`), `#${id} must live in the left cluster`).not.toBeNull();
+    }
+    // Both clusters sit inside the one actions row.
+    const actions = root.querySelector(".UnicDB-chat-actions");
+    expect(actions?.contains(left!)).toBe(true);
+    expect(actions?.contains(right!)).toBe(true);
+  });
+
+  it("#10 model chip is two-tone: accent role span + muted model span, textContent preserved", () => {
+    attach(root);
+    const composer = renderComposer(root, noopCallbacks());
+    composer.setModels(
+      [
+        { role: "work", modelId: "gpt-x", vision: false },
+        { role: "smart", modelId: "o3", vision: true },
+      ],
+      "smart",
+    );
+    const chip = root.querySelector("#modelChipBtn") as HTMLButtonElement;
+    const role = chip.querySelector(".UnicDB-chat-chip-role");
+    const model = chip.querySelector(".UnicDB-chat-chip-model");
+    expect(role?.textContent).toBe("smart");
+    expect(model?.textContent).toBe("o3");
+    // Legacy substring contract preserved (main-suite pins `toContain`).
+    expect(chip.textContent).toContain("smart");
+    expect(chip.textContent).toContain("o3");
+    // The chip body is text-only — no element-node injection from wire data.
+    composer.setModels([{ role: "work", modelId: "<img src=x>", vision: false }], "work");
+    const model2 = chip.querySelector(".UnicDB-chat-chip-model");
+    expect(model2?.querySelector("img")).toBeNull();
+    expect(model2?.textContent).toBe("<img src=x>");
+  });
+
   it("#8 busy-disable matches legacy contract: send/resume/regenerate/attach disabled, clearBtn untouched", () => {
     attach(root);
     const composer = renderComposer(root, noopCallbacks());

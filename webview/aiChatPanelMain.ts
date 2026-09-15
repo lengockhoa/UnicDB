@@ -25,8 +25,8 @@ import {
 } from "./attachLimits";
 import {
   parseAiChatCommand,
-  AI_CHAT_COMMANDS,
-  type AiChatCommand,
+  aiChatCommandsForEngine,
+  type AiChatCommandEntry,
 } from "../src/ui/aiChatPanelCommands";
 import {
   renderHeader,
@@ -267,7 +267,12 @@ let header: UnicDBHeader | null = null;
 let composer: UnicDBComposer | null = null;
 let slashOpen = false;
 let slashActiveIndex = 0;
-let slashCandidates: AiChatCommand[] = [];
+let slashCandidates: AiChatCommandEntry[] = [];
+/** Active engine, tracked from `engine` frames so the slash menu can gate
+ * commands per engine (§8.6). Defaults to `builtin` until the host announces
+ * its resolved engine — the fail-safe value that offers no engine-specific
+ * commands. */
+let slashEngine = "builtin";
 
 // ---- TASK-005 — @-mention dropdown state ----------------------------------
 //
@@ -571,7 +576,7 @@ function disposeSlashDropdown(): void {
   document.querySelector(".UnicDB-chat-slash-dropdown")?.remove();
 }
 
-function renderSlashDropdown(candidates: AiChatCommand[]): void {
+function renderSlashDropdown(candidates: AiChatCommandEntry[]): void {
   document.querySelector(".UnicDB-chat-slash-dropdown")?.remove();
   if (candidates.length === 0) {
     slashOpen = false;
@@ -583,18 +588,35 @@ function renderSlashDropdown(candidates: AiChatCommand[]): void {
   const dropdown = document.createElement("div");
   dropdown.className = "UnicDB-chat-slash-dropdown";
   dropdown.setAttribute("role", "listbox");
-  for (const [index, command] of candidates.entries()) {
+  for (const [index, entry] of candidates.entries()) {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "UnicDB-chat-slash-row";
     row.setAttribute("role", "option");
-    row.textContent = `/${command}`;
+    row.dataset.command = entry.command;
+    // Primary line: the command name. Secondary line: description, or the
+    // engine-gated reason when the command is unavailable here (§8.6 — keep
+    // the row visible and focusable, mark it aria-disabled).
+    const name = document.createElement("span");
+    name.className = "UnicDB-chat-slash-name";
+    name.textContent = `/${entry.command}`;
+    const detail = document.createElement("span");
+    detail.className = "UnicDB-chat-slash-detail";
+    detail.textContent = entry.reason ?? entry.description;
+    row.append(name, detail);
+    if (!entry.available) {
+      row.setAttribute("aria-disabled", "true");
+      row.classList.add("UnicDB-chat-slash-row-unavailable");
+    }
     row.setAttribute("aria-selected", String(index === slashActiveIndex));
     row.addEventListener("mousedown", (ev) => ev.preventDefault());
     row.addEventListener("click", () => {
+      // Unavailable rows are informational only — selecting one would only
+      // produce a host error, so they never fill the composer.
+      if (!entry.available) return;
       const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
       if (prompt) {
-        prompt.value = `/${command} `;
+        prompt.value = `/${entry.command} `;
         prompt.focus();
       }
       disposeSlashDropdown();
@@ -611,7 +633,9 @@ function updateSlashDropdown(value: string): void {
     return;
   }
   const query = trimmed.slice(1).toLowerCase();
-  const candidates = AI_CHAT_COMMANDS.filter((command) => command.startsWith(query));
+  const candidates = aiChatCommandsForEngine(slashEngine).filter((entry) =>
+    entry.command.startsWith(query),
+  );
   slashActiveIndex = 0;
   renderSlashDropdown(candidates);
 }
@@ -859,9 +883,11 @@ function wireControls(): void {
         if (ev.key === "Tab") {
           ev.preventDefault();
           ev.stopImmediatePropagation();
-          const command = slashCandidates[slashActiveIndex];
-          if (command && prompt) {
-            const next = `/${command} `;
+          const entry = slashCandidates[slashActiveIndex];
+          // Unavailable rows are informational — Tab leaves the composer
+          // untouched (the row stays focusable per the menu contract).
+          if (entry?.available && prompt) {
+            const next = `/${entry.command} `;
             prompt.value = next;
             composer?.setValue(next);
             prompt.focus();
@@ -879,9 +905,9 @@ function wireControls(): void {
             disposeSlashDropdown();
             return;
           }
-          const command = slashCandidates[slashActiveIndex];
-          if (command && prompt) {
-            const next = `/${command} `;
+          const entry = slashCandidates[slashActiveIndex];
+          if (entry?.available && prompt) {
+            const next = `/${entry.command} `;
             prompt.value = next;
             composer?.setValue(next);
             prompt.focus();
@@ -1964,9 +1990,23 @@ function renderHistory(msg: HistoryMsg): void {
     case "delta":
       appendDelta(msg.text);
       return;
-    case "engine":
+    case "engine": {
       applyEngine(msg);
+      // Track the announced engine so the slash menu can gate commands per
+      // engine (§8.6). Only a recognized engine updates the gate; an unknown
+      // wire name leaves the previous value so no unsafe engine string can
+      // widen the command set.
+      const KNOWN_ENGINES = ["builtin", "omp", "claude-code", "codex"];
+      if (typeof msg.name === "string" && KNOWN_ENGINES.includes(msg.name)) {
+        slashEngine = msg.name;
+        // Refresh an open menu so availability reflects the new engine.
+        if (slashOpen) {
+          const promptEl = document.getElementById("prompt") as HTMLTextAreaElement | null;
+          if (promptEl) updateSlashDropdown(promptEl.value);
+        }
+      }
       return;
+    }
     case "session_state":
       applySessionState(msg.state);
       return;

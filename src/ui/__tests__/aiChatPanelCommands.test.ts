@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseAiChatCommand } from "../aiChatPanelCommands";
+import {
+  parseAiChatCommand,
+  aiChatCommandsForEngine,
+} from "../aiChatPanelCommands";
 
 describe("parseAiChatCommand", () => {
   it("parses recognized commands case-insensitively with whitespace", () => {
@@ -30,5 +33,51 @@ describe("parseAiChatCommand", () => {
       command: "context",
       args: ["foo", "bar"],
     });
+  });
+});
+
+describe("aiChatCommandsForEngine", () => {
+  it("lists the full local set with descriptions for the builtin engine", () => {
+    const entries = aiChatCommandsForEngine("builtin");
+    expect(entries.map((e) => e.command)).toEqual([
+      "clear",
+      "resume",
+      "engine",
+      "context",
+      "export",
+      "model",
+    ]);
+    for (const e of entries) {
+      expect(e.description, `${e.command} description`).toBeTruthy();
+    }
+  });
+
+  it("gates /resume as unavailable on every non-omp engine, available on omp", () => {
+    for (const engine of ["builtin", "claude-code", "codex"]) {
+      const resume = aiChatCommandsForEngine(engine).find((e) => e.command === "resume");
+      expect(resume?.available, `${engine} resume`).toBe(false);
+      expect(resume?.reason).toMatch(/omp/i);
+    }
+    const ompResume = aiChatCommandsForEngine("omp").find((e) => e.command === "resume");
+    expect(ompResume?.available).toBe(true);
+    expect(ompResume?.reason).toBeUndefined();
+  });
+
+  it("fails closed for an unknown/hostile engine: only omp-gated resume is restricted", () => {
+    const entries = aiChatCommandsForEngine("../../evil");
+    expect(entries.map((e) => e.command)).toEqual([
+      "clear",
+      "resume",
+      "engine",
+      "context",
+      "export",
+      "model",
+    ]);
+    // Unknown engine is treated like a non-omp engine: resume unavailable.
+    expect(entries.find((e) => e.command === "resume")?.available).toBe(false);
+    // No command name ever echoes the hostile engine string.
+    for (const e of entries) {
+      expect(e.command).not.toContain("evil");
+    }
   });
 });

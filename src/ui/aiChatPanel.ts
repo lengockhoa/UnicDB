@@ -1776,42 +1776,51 @@ export class AiChatPanel {
       return;
     }
     const target = args[0];
-    if (args.length !== 1 || (target !== "builtin" && target !== "omp")) {
-      this.post({ type: "error", message: "Usage: /engine builtin|omp" });
+    const ENGINE_TARGETS: readonly EngineKind[] = [
+      "builtin",
+      "omp",
+      "claude-code",
+      "codex",
+    ];
+    if (args.length !== 1 || !ENGINE_TARGETS.includes(target as EngineKind)) {
+      this.post({ type: "error", message: "Usage: /engine builtin|omp|claude-code|codex" });
+      return;
+    }
+    const wanted = target as EngineKind;
+    // Capability gate (§8.1): a known engine the host cannot switch to is
+    // reported as unavailable rather than silently accepted or rejected.
+    // Availability is the presence of its dispatch seam on this panel.
+    const available =
+      wanted === "builtin" ||
+      (wanted === "omp" &&
+        (this.options.acp !== undefined ||
+          this.options.ompChatEngine !== undefined)) ||
+      (wanted === "claude-code" &&
+        this.options.claudeCodeChatEngine !== undefined) ||
+      (wanted === "codex" && this.options.codexChatEngine !== undefined);
+    if (!available) {
+      this.post({
+        type: "error",
+        message: `Engine ${wanted} is not available in this workspace.`,
+      });
       return;
     }
     try {
       await vscode.workspace
         .getConfiguration("UnicDB")
-        .update("ai.engine", target, vscode.ConfigurationTarget.Global);
+        .update("ai.engine", wanted, vscode.ConfigurationTarget.Global);
     } catch {
       this.post({ type: "error", message: "Could not save the engine selection." });
       return;
     }
-    if (target === "builtin") {
-      if (this.engine === "omp") this.disposeAcpSession();
-      this.engine = "builtin";
-      this.postEngine("builtin");
-      this.post({
-        type: "assistant",
-        text: "Engine set to builtin for this chat and future panels.",
-        markdown: false,
-      });
-      return;
-    }
-    if (this.options.acp !== undefined) {
-      this.engine = "omp";
-      this.postEngine("omp");
-      this.post({
-        type: "assistant",
-        text: "Engine set to omp for this chat and future panels.",
-        markdown: false,
-      });
-      return;
-    }
+    // Leaving omp tears down its persistent ACP session; the other engines
+    // own only per-turn subprocesses, so no session lingers.
+    if (this.engine === "omp" && wanted !== "omp") this.disposeAcpSession();
+    this.engine = wanted;
+    this.postEngine(wanted);
     this.post({
       type: "assistant",
-      text: "Engine set to omp for future panels; reopen this chat to activate it.",
+      text: `Engine set to ${wanted} for this chat and future panels.`,
       markdown: false,
     });
   }

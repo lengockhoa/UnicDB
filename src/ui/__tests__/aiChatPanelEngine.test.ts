@@ -1161,3 +1161,88 @@ describe("AiChatPanel — TASK-012 R4.5: claude/codex engine dispose on teardown
     expect(dispose).toHaveBeenCalledTimes(1);
   });
 });
+
+// ============================================================================
+// TASK (§8.1) — /engine capability-gated command visibility.
+//
+// The host accepts the full four-engine vocabulary instead of the old
+// two-literal parser, gates a known-but-unavailable engine with the
+// "is not available in this workspace" string, and never posts an
+// assistant echo for a rejected switch.
+// ============================================================================
+describe("AiChatPanel — /engine capability gating (§8.1)", () => {
+  it("#E1 /engine with no args reports the active engine, no error", async () => {
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      engine: "builtin",
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "command", command: "engine", args: [] });
+    await until(() => postedMessages(p).some(isAssistant));
+    const assistant = postedMessages(p).filter(isAssistant).pop();
+    expect(assistant?.text).toContain("builtin");
+    expect(postedMessages(p).filter(isError).length).toBe(0);
+  });
+
+  it("#E2 known engine the host cannot switch to → 'not available' error, no assistant echo", async () => {
+    // claude-code requested but no claudeCodeChatEngine seam wired.
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      engine: "builtin",
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "command", command: "engine", args: ["claude-code"] });
+    await until(() => postedMessages(p).some(isError));
+    const errs = postedMessages(p).filter(isError);
+    expect(errs.some((e) => /claude-code is not available in this workspace/i.test(e.message))).toBe(true);
+    // The switch did not take effect — no "Engine set to" echo.
+    expect(
+      postedMessages(p).filter(isAssistant).some((a) => /Engine set to/i.test(a.text)),
+    ).toBe(false);
+  });
+
+  it("#E3 unknown literal keeps the corrective usage string", async () => {
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      engine: "builtin",
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "command", command: "engine", args: ["nonsense"] });
+    await until(() => postedMessages(p).some(isError));
+    const errs = postedMessages(p).filter(isError);
+    expect(errs.some((e) => /Usage: \/engine/.test(e.message))).toBe(true);
+  });
+
+  it("#E4 switching to an available engine persists + acknowledges", async () => {
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      engine: "builtin",
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+    handler({ type: "command", command: "engine", args: ["builtin"] });
+    await until(() => postedMessages(p).some(isAssistant));
+    const assistant = postedMessages(p).filter(isAssistant).pop();
+    expect(assistant?.text).toMatch(/Engine set to builtin/i);
+    expect(postedMessages(p).filter(isError).length).toBe(0);
+  });
+});

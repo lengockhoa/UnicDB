@@ -10,6 +10,65 @@ export const AI_CHAT_COMMANDS = [
 
 export type AiChatCommand = (typeof AI_CHAT_COMMANDS)[number];
 
+/** One-line description shown next to a command in the slash menu. */
+const COMMAND_DESCRIPTIONS: Record<AiChatCommand, string> = {
+  clear: "Clear the conversation",
+  resume: "Resume a previous session",
+  engine: "Show or switch the active engine",
+  context: "Show grounded context for this session",
+  export: "Export the transcript",
+  model: "Show or switch the active model role",
+};
+
+/** A slash-menu row: the command plus its per-engine availability. */
+export interface AiChatCommandEntry {
+  command: AiChatCommand;
+  description: string;
+  available: boolean;
+  /** Why the command is unavailable on the active engine (omitted when
+   * available). Rendered as the secondary line so the menu never promises an
+   * action the engine cannot perform. */
+  reason?: string;
+}
+
+/** Engine-gated reason a local command is not usable on `engine`, or
+ * `undefined` when it is. Grounded in the existing host guards: `/resume`
+ * posts "Resume requires the omp engine." on every non-omp engine
+ * (`src/ui/aiChatPanel.ts:4023`), so the menu marks it unavailable there
+ * instead of offering a command that can only fail. Unrecognized engine
+ * values fail closed the same way (only `omp` may resume). */
+function unavailableReason(
+  command: AiChatCommand,
+  engine: string,
+): string | undefined {
+  if (command === "resume" && engine !== "omp") {
+    return "Requires the omp engine";
+  }
+  return undefined;
+}
+
+/**
+ * Slash commands for the active engine, in menu order. Native provider
+ * commands are absent for every engine today — omp's
+ * `available_commands_update` is explicitly ignored
+ * (`src/ai/omp/ompChatEngine.ts:332`) and claude-code / codex expose no
+ * command parser — so the set is the shared local registry with per-engine
+ * availability applied. A command the engine cannot run is listed as
+ * unavailable rather than hidden, so the user sees why it is not offered.
+ */
+export function aiChatCommandsForEngine(engine: string): AiChatCommandEntry[] {
+  return AI_CHAT_COMMANDS.map((command) => {
+    const reason = unavailableReason(command, engine);
+    const entry: AiChatCommandEntry = {
+      command,
+      description: COMMAND_DESCRIPTIONS[command],
+      available: reason === undefined,
+    };
+    if (reason !== undefined) entry.reason = reason;
+    return entry;
+  });
+}
+
 export interface ParsedAiChatCommand {
   command: AiChatCommand;
   args: string[];
@@ -36,6 +95,7 @@ const COMMANDS: Record<AiChatCommand, true> = {
 export function parseAiChatCommand(input: string): ParsedAiChatCommand | null {
   const text = input.trim();
   if (!text.startsWith("/")) return null;
+
 
   let i = 1;
   const commandStart = i;
