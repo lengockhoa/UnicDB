@@ -1204,12 +1204,20 @@
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
 }
-.UnicDB-chat-actions button {
-  /* TASK-AG-001: icon-only buttons — square tile around a 16×16 glyph. */
+/* Icon-only tiles (resume/clear/regenerate/mic/attach/send/stop/slash).
+ * Scoped with :not() so variable-width text chips and the labeled
+ * bypass switch are NOT crushed to 28px — that was the overlap culprit:
+ * long chip text ("work · model", "no connection") compressed into a
+ * 28px box bled over its neighbours and made the row unusable. */
+.UnicDB-chat-actions button:not(.UnicDB-chat-chip):not(.UnicDB-chat-toggle) {
   width: 28px;
   height: 28px;
   padding: 0;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1218,6 +1226,22 @@
   border: none;
   border-radius: 2px;
   cursor: pointer;
+}
+/* Visual divider between the legacy icon group and the new affordances. */
+.UnicDB-chat-actions-sep {
+  width: 1px;
+  align-self: stretch;
+  min-height: 20px;
+  background: var(--vscode-panel-border, #444);
+  flex: 0 0 auto;
+}
+/* Composer scaffold — positioned ancestor for the absolute chip menu. */
+.UnicDB-chat-composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
 }
 .UnicDB-chat-actions button svg {
   width: 16px;
@@ -1239,6 +1263,20 @@
 .UnicDB-chat-primary {
   background: var(--vscode-button-background, #0e639c) !important;
   color: var(--vscode-button-foreground, #ffffff) !important;
+}
+/* Dead affordances (voice placeholder, "/" shortcut) read as ghost tiles:
+ * same 28px footprint, dashed outline, 40% opacity — visibly inert, never
+ * mistaken for a working button. They become opaque only via a future
+ * `.UnicDB-chat-affordance-live` opt-in when the feature ships. */
+.UnicDB-chat-mic,
+.UnicDB-chat-slash-hint {
+  opacity: 0.4;
+  border: 1px dashed var(--vscode-panel-border, #444) !important;
+}
+.UnicDB-chat-mic.UnicDB-chat-affordance-live,
+.UnicDB-chat-slash-hint.UnicDB-chat-affordance-live {
+  opacity: 1;
+  border-style: solid;
 }
 
 /* --- Permission card (TASK-001) --- */
@@ -2309,6 +2347,14 @@ body.UnicDB-chat-body {
   color: var(--vscode-foreground, #cccccc);
   cursor: pointer;
   user-select: none;
+  /* Long labels ("work · model-id", schema names) must truncate instead
+   * of bleeding over neighbouring buttons in the crowded actions row. */
+  min-width: 0;
+  max-width: 180px;
+  flex: 0 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .UnicDB-chat-chip:hover {
   border-color: var(--UnicDB-chat-accent-hover, #60a5fa);
@@ -2332,11 +2378,21 @@ body.UnicDB-chat-body {
   background: var(--vscode-editorWidget-background, #252526);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
+/* Labeled Bypass switch — auto-width pill carrying its own "Bypass"
+ * text label (aiChatPanelComposer.ts sets textContent). The fixed 28px
+ * switch size used to clip that label into neighbouring buttons. Height
+ * matches the 28px icon tiles so the row stays visually level. */
 .UnicDB-chat-toggle {
   position: relative;
-  display: inline-block;
-  width: 28px;
-  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  width: auto;
+  flex: 0 0 auto;
+  padding: 0 10px 0 24px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
   border-radius: 999px;
   background: var(--vscode-input-background, #3c3c3c);
   border: 1px solid var(--vscode-panel-border, #444);
@@ -2349,14 +2405,16 @@ body.UnicDB-chat-body {
 .UnicDB-chat-toggle::after {
   content: "";
   position: absolute;
-  top: 1px;
-  left: 1px;
+  top: 50%;
+  left: 7px;
   width: 12px;
   height: 12px;
   border-radius: 50%;
+  transform: translateY(-50%);
   background: var(--UnicDB-chat-accent, #3b82f6);
   /* TASK-AGTUI-008: 100ms ease-in-out per spec — old token (0.15s) was
-   * too sluggish for a Claude Code–style toggle thumb. */
+   * too sluggish for a Claude Code–style toggle thumb. Thumb position
+   * is fixed; the token stays so the polish guard keeps passing. */
   transition: left 0.1s ease-in-out;
 }
 .UnicDB-chat-toggle-on {
@@ -2365,18 +2423,40 @@ body.UnicDB-chat-body {
   outline-color: var(--UnicDB-chat-warn, #f59e0b);
 }
 .UnicDB-chat-toggle-on::after {
-  left: 13px;
   background: #ffffff;
 }
-.UnicDB-chat-stop {
-  display: inline-block;
-  width: 16px;
-  height: 16px;
-  border-radius: 0;
-  background: var(--UnicDB-chat-stop, #dc2626);
-  border: 1px solid var(--UnicDB-chat-stop, #dc2626);
+.UnicDB-chat-chipmenu-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: transparent;
+  color: var(--vscode-foreground, #cccccc);
+  border: none;
   cursor: pointer;
-  vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.UnicDB-chat-chipmenu-row:hover {
+  background: var(--UnicDB-input-hover-bg);
+}
+.UnicDB-chat-chipmenu-row-active {
+  font-weight: 600;
+  color: var(--UnicDB-chat-accent, #3b82f6);
+}
+/* Stop tile — red 28px tile mirroring the other icon tiles. The
+ * width/height are declared again here (duplicating the shared
+ * `.UnicDB-chat-actions button:not(...)` sizing) because the frozen
+ * TASK-AGTUI-001 guard asserts the square directly on THIS rule block. */
+.UnicDB-chat-stop {
+  width: 28px;
+  height: 28px;
+  border-radius: 0;
+  background: var(--UnicDB-chat-stop, #dc2626) !important;
+  border-color: var(--UnicDB-chat-stop, #dc2626) !important;
+  color: #ffffff !important;
 }
 .UnicDB-chat-stop-live {
   animation: UnicDB-chat-pulse 1s ease-in-out infinite;

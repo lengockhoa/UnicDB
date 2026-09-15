@@ -226,7 +226,7 @@ export function renderComposer(
   schemaChipBtn.className = "UnicDB-chat-chip UnicDB-chat-schema-chip";
   schemaChipBtn.setAttribute("aria-label", "Active schema");
   schemaChipBtn.title = "Active schema — click to change. CREATE FUNCTION / unqualified SELECT run here.";
-  schemaChipBtn.textContent = "$(symbol-namespace) default";
+  schemaChipBtn.textContent = "schema: default";
   actions.appendChild(schemaChipBtn);
 
   // --- Slash affordance (`/N`) --------------------------------------------
@@ -536,15 +536,15 @@ export function renderComposer(
       // correct disabled state without waiting for the next event.
       const hasConn = connectionId !== undefined;
       schemaChipBtn.disabled = !hasConn;
-      // `$(symbol-namespace)` is rendered as a plain glyph by VS Code's
-      // markdown / status-bar pipeline, NOT by the browser. The webview
-      // shows the codepoint literally so users see a stable label
-      // across themes; the host's status bar mirrors the same format.
+      // `$(...)` codicon syntax is rendered by VS Code's status-bar /
+      // markdown pipeline, NOT by the webview browser engine — the
+      // composer showed the raw codepoint, which read as visual noise
+      // overlapping the row. Plain-text "schema: <name>" label instead.
       schemaChipBtn.textContent = hasConn
         ? schema
-          ? `$(symbol-namespace) ${schema}`
-          : "$(symbol-namespace) default"
-        : "$(symbol-namespace) no connection";
+          ? `schema: ${schema}`
+          : "schema: default"
+        : "schema: no connection";
       schemaChipBtn.title = hasConn
         ? schema
           ? `Active schema: ${schema} — click to change.`
