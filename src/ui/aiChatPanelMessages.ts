@@ -484,3 +484,671 @@ export interface AiChatPanelMentionList {
 
 /** Snapshot of host-side history for replay into the next run. */
 export type HostHistory = ChatMessage[];
+
+// ===========================================================================
+// V2 protocol — TASK-CHATV2-003
+//
+// Ordered, versioned host/webview contract that replaces the V1 shapes above
+// across CHATV2-004…017. Every frame carries `protocolVersion: 2`,
+// `sessionId` and a monotonic `sequence`; turn-scoped frames additionally
+// carry `turnId`. V1 discriminators are NOT reused with a different meaning —
+// the V2 frames live under a distinct `kind` field.
+//
+// The V1→V2 bridge is the single temporary module
+// `src/ui/aiChatPanelV1Adapter.ts` (deleted in CHATV2-017); no V1 translation
+// logic may spread into components.
+//
+// SECURITY: no frame may represent raw provider/secret/base64 payloads.
+// `findForbiddenFieldV2` is the shape guard the protocol tests apply to every
+// fixture; `error` exposes only `safeMessage` + `diagnosticId` (+ optional
+// `safeDetail`).
+// ===========================================================================
+
+import type { AiEngineName, EngineCapabilitySnapshot } from "../ai/capabilities";
+
+/** The one live protocol version. Bump only with a migration task. */
+export const AI_CHAT_PROTOCOL_VERSION_V2 = 2 as const;
+export type AiChatProtocolVersionV2 = typeof AI_CHAT_PROTOCOL_VERSION_V2;
+
+/** Ordered envelope shared by every V2 host frame. */
+export interface AiChatFrameEnvelopeV2 {
+  readonly protocolVersion: AiChatProtocolVersionV2;
+  readonly sessionId: string;
+  /** Monotonic per panel/session; begins at 1 after hydration. */
+  readonly sequence: number;
+}
+
+/** Closed V2 turn-phase vocabulary (PLAN §6). */
+export type AiChatTurnPhaseV2 =
+  | "idle"
+  | "validating"
+  | "connecting"
+  | "waiting_for_first_event"
+  | "streaming"
+  | "awaiting_permission"
+  | "stopping"
+  | "completed"
+  | "failed";
+
+/** Tool/step status vocabulary shared by tool frames. */
+export type AiChatToolStatusV2 = "ok" | "failed" | "denied";
+
+/** One structured context reference the webview may carry on a draft. */
+export interface AiChatContextRefV2 {
+  readonly kind: "file" | "selection" | "table" | "view" | "routine" | "schema";
+  readonly id: string;
+  readonly label: string;
+  /** Amber state: the host resolved a change since the ref was taken. */
+  readonly changed?: boolean;
+  /** Amber state: the host could no longer resolve the ref. */
+  readonly missing?: boolean;
+}
+
+/** Host → webview: resolved engine capability snapshot. */
+export interface AiChatHostCapabilitiesV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "capabilities";
+  readonly capabilities: EngineCapabilitySnapshot;
+}
+
+/** Host → webview: initial/paged transcript hydration. */
+export interface AiChatHostSessionHydratedV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "session_hydrated";
+  readonly hasHistory: boolean;
+  readonly visionCapable: boolean;
+  readonly truncated?: boolean;
+  readonly truncatedCount?: number;
+}
+
+/** Host → webview: acknowledges a `submit_turn` clientRequestId. */
+export interface AiChatHostTurnStartedV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "turn_started";
+  readonly turnId: string;
+  readonly clientRequestId: string;
+}
+
+/** Host → webview: one turn-phase transition. */
+export interface AiChatHostPhaseV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "phase";
+  readonly turnId: string;
+  readonly phase: AiChatTurnPhaseV2;
+}
+
+/** Host → webview: incremental assistant text for one stable messageId. */
+export interface AiChatHostTextDeltaV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "text_delta";
+  readonly turnId: string;
+  readonly messageId: string;
+  readonly text: string;
+  readonly markdown?: boolean;
+}
+
+/** Host → webview: incremental reasoning text (rendered in a thinking block). */
+export interface AiChatHostReasoningDeltaV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "reasoning_delta";
+  readonly turnId: string;
+  readonly messageId: string;
+  readonly text: string;
+}
+
+/** Host → webview: a tool began. */
+export interface AiChatHostToolStartedV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "tool_started";
+  readonly turnId: string;
+  readonly toolId: string;
+  readonly label: string;
+  /** Coarse icon semantic — never a provider name. */
+  readonly action: string;
+}
+
+/** Host → webview: a tool finished. `summary` is SHAPE ONLY (never row bytes). */
+export interface AiChatHostToolFinishedV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "tool_finished";
+  readonly turnId: string;
+  readonly toolId: string;
+  readonly label: string;
+  readonly status: AiChatToolStatusV2;
+  readonly summary: string;
+  readonly durationMs?: number;
+}
+
+/** Host → webview: the engine needs a permission decision. */
+export interface AiChatHostPermissionRequestedV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "permission_requested";
+  readonly turnId: string;
+  readonly requestId: string;
+  readonly tool: { readonly id: string; readonly name: string; readonly detail: string };
+  readonly options: ReadonlyArray<{ readonly optionId: string; readonly label: string }>;
+}
+
+/** Host → webview: non-terminal advisory. */
+export interface AiChatHostWarningV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "warning";
+  readonly safeMessage: string;
+}
+
+/**
+ * Host → webview: terminal error. PRIVACY: only mapped copy + a short
+ * diagnostic id; `safeDetail` is a pre-scrubbed single line (optional).
+ */
+export interface AiChatHostErrorV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "error";
+  readonly turnId?: string;
+  readonly safeMessage: string;
+  readonly diagnosticId: string;
+  readonly safeDetail?: string;
+}
+
+/** Host → webview: the turn closed exactly once. */
+export interface AiChatHostTurnFinishedV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "turn_finished";
+  readonly turnId: string;
+  readonly outcome: "completed" | "stopped" | "failed";
+}
+
+/** Host → webview: answer to `search_context`, correlated to the request. */
+export interface AiChatHostFrameMentionResultsV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "mention_results";
+  readonly requestId: string;
+  readonly draftRevision: number;
+  readonly query: string;
+  readonly items: ReadonlyArray<{
+    readonly kind: "table" | "view" | "routine" | "file";
+    readonly label: string;
+    readonly detail: string;
+    readonly token: string;
+  }>;
+}
+
+/** Host → webview: current grounded-context status for a turn. */
+export interface AiChatHostContextStatusV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "context_status";
+  readonly turnId: string;
+  readonly selectionPath: string | null;
+  readonly fileCount: number;
+  readonly excludedCount: number;
+}
+
+/** Host → webview: the configured model roles + active role. */
+export interface AiChatHostModelsV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "models";
+  readonly active: AiModelRole;
+  readonly roles: ReadonlyArray<{ readonly role: AiModelRole; readonly modelId: string; readonly vision: boolean }>;
+}
+
+/** Host → webview: the active schema chip changed. */
+export interface AiChatHostSchemaV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "schema";
+  readonly schema: string | undefined;
+  readonly connectionId: string | undefined;
+}
+
+/** Host → webview: a host-side export finished writing. */
+export interface AiChatHostExportCompletedV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "export_completed";
+  readonly format: "markdown" | "json";
+  readonly name: string;
+}
+
+/** Host → webview: a host-side export failed (safe copy only). */
+export interface AiChatHostExportFailedV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "export_failed";
+  readonly safeMessage: string;
+  readonly diagnosticId: string;
+}
+
+/** Host → webview: the resumable session list. */
+export interface AiChatHostSessionsV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "sessions";
+  readonly items: ReadonlyArray<{
+    readonly sessionId: string;
+    readonly label: string;
+    readonly detail: string;
+  }>;
+}
+
+/** Host → webview: the session title was renamed (host-acknowledged). */
+export interface AiChatHostTitleUpdatedV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "title_updated";
+  readonly title: string;
+}
+
+/** Host → webview: transient toast. */
+export interface AiChatHostToastV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "toast";
+  readonly level: "info" | "warning" | "error";
+  readonly safeMessage: string;
+}
+
+/** Closed host → webview V2 frame union. */
+export type AiChatHostFrameV2 =
+  | AiChatHostCapabilitiesV2
+  | AiChatHostSessionHydratedV2
+  | AiChatHostTurnStartedV2
+  | AiChatHostPhaseV2
+  | AiChatHostTextDeltaV2
+  | AiChatHostReasoningDeltaV2
+  | AiChatHostToolStartedV2
+  | AiChatHostToolFinishedV2
+  | AiChatHostPermissionRequestedV2
+  | AiChatHostWarningV2
+  | AiChatHostErrorV2
+  | AiChatHostTurnFinishedV2
+  | AiChatHostFrameMentionResultsV2
+  | AiChatHostContextStatusV2
+  | AiChatHostModelsV2
+  | AiChatHostSchemaV2
+  | AiChatHostExportCompletedV2
+  | AiChatHostExportFailedV2
+  | AiChatHostSessionsV2
+  | AiChatHostTitleUpdatedV2
+  | AiChatHostToastV2;
+
+/** The immutable draft carried by `submit_turn`. */
+export interface AiChatSubmitDraftV2 {
+  readonly text: string;
+  readonly revision: number;
+  readonly context: ReadonlyArray<AiChatContextRefV2>;
+  readonly attachments: ReadonlyArray<MinimalAttachment>;
+}
+
+/** Webview → host V2 intents. Mutating intents carry `clientRequestId`. */
+export type AiChatWebviewIntentV2 =
+  | { readonly kind: "ready_v2"; readonly protocolVersion: AiChatProtocolVersionV2 }
+  | {
+      readonly kind: "submit_turn";
+      readonly protocolVersion: AiChatProtocolVersionV2;
+      readonly clientRequestId: string;
+      readonly draft: AiChatSubmitDraftV2;
+    }
+  | { readonly kind: "stop_turn"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string }
+  | { readonly kind: "set_engine"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string; readonly engine: AiEngineName }
+  | { readonly kind: "set_model"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string; readonly role: AiModelRole }
+  | {
+      readonly kind: "search_context";
+      readonly protocolVersion: AiChatProtocolVersionV2;
+      readonly clientRequestId: string;
+      readonly requestId: string;
+      readonly draftRevision: number;
+      readonly query: string;
+    }
+  | { readonly kind: "resolve_context"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string; readonly ref: AiChatContextRefV2 }
+  | { readonly kind: "remove_context"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string; readonly refId: string }
+  | {
+      readonly kind: "permission_response";
+      readonly protocolVersion: AiChatProtocolVersionV2;
+      readonly clientRequestId: string;
+      readonly requestId: string;
+      readonly optionId?: string;
+    }
+  | {
+      readonly kind: "set_permission_policy";
+      readonly protocolVersion: AiChatProtocolVersionV2;
+      readonly clientRequestId: string;
+      readonly policy: "default" | "bypass";
+    }
+  | { readonly kind: "list_sessions"; readonly protocolVersion: AiChatProtocolVersionV2 }
+  | { readonly kind: "resume_saved_session"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string; readonly sessionId: string }
+  | { readonly kind: "create_session"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string }
+  | { readonly kind: "rename_session"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string; readonly title: string }
+  | { readonly kind: "clear_session"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string }
+  | { readonly kind: "export_session"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string; readonly format: "markdown" | "json" }
+  | { readonly kind: "pick_active_schema"; readonly protocolVersion: AiChatProtocolVersionV2 }
+  | { readonly kind: "open_settings"; readonly protocolVersion: AiChatProtocolVersionV2 };
+
+/** One host frame with its envelope stripped (the semantic body). A plain
+ * `Omit` over the union collapses to common keys, so distribute explicitly. */
+export type AiChatHostFrameV2Body = AiChatHostFrameV2 extends infer T
+  ? T extends AiChatFrameEnvelopeV2
+    ? Omit<T, keyof AiChatFrameEnvelopeV2>
+    : never
+  : never;
+
+/** Sequence gate a downstream reducer keeps per live session. */
+export interface AiChatHostSequenceGateV2 {
+  readonly sessionId: string;
+  readonly lastSequence: number;
+}
+
+// ---- Runtime helpers -------------------------------------------------------
+
+function isRecordV2(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+const HOST_FRAME_KINDS_V2: ReadonlySet<string> = new Set([
+  "capabilities",
+  "session_hydrated",
+  "turn_started",
+  "phase",
+  "text_delta",
+  "reasoning_delta",
+  "tool_started",
+  "tool_finished",
+  "permission_requested",
+  "warning",
+  "error",
+  "turn_finished",
+  "mention_results",
+  "context_status",
+  "models",
+  "schema",
+  "export_completed",
+  "export_failed",
+  "sessions",
+  "title_updated",
+  "toast",
+]);
+
+const TURN_SCOPED_KINDS_V2: ReadonlySet<string> = new Set([
+  "turn_started",
+  "phase",
+  "text_delta",
+  "reasoning_delta",
+  "tool_started",
+  "tool_finished",
+  "permission_requested",
+  "context_status",
+  "turn_finished",
+]);
+
+const AI_ENGINE_NAMES_V2: ReadonlySet<string> = new Set([
+  "builtin",
+  "omp",
+  "claude-code",
+  "codex",
+]);
+
+const AI_MODEL_ROLES_V2: ReadonlySet<string> = new Set([
+  "work",
+  "smart",
+  "autocomplete",
+  "lite",
+]);
+
+const CONTEXT_REF_KINDS_V2: ReadonlySet<string> = new Set([
+  "file",
+  "selection",
+  "table",
+  "view",
+  "routine",
+  "schema",
+]);
+
+/**
+ * Runtime narrow guard for a V2 host frame. Validates the envelope, the closed
+ * `kind` set and the per-kind mandatory correlation fields. Never throws.
+ */
+export function isAiChatHostFrameV2(value: unknown): value is AiChatHostFrameV2 {
+  if (!isRecordV2(value)) return false;
+  if (value["protocolVersion"] !== AI_CHAT_PROTOCOL_VERSION_V2) return false;
+  const sessionId = value["sessionId"];
+  if (typeof sessionId !== "string" || sessionId.length === 0) return false;
+  const sequence = value["sequence"];
+  if (typeof sequence !== "number" || !Number.isInteger(sequence) || sequence < 1) {
+    return false;
+  }
+  const kind = value["kind"];
+  if (typeof kind !== "string" || !HOST_FRAME_KINDS_V2.has(kind)) return false;
+  if (TURN_SCOPED_KINDS_V2.has(kind)) {
+    const turnId = value["turnId"];
+    if (typeof turnId !== "string" || turnId.length === 0) return false;
+  }
+  if (kind === "mention_results") {
+    const requestId = value["requestId"];
+    if (typeof requestId !== "string" || requestId.length === 0) return false;
+    if (typeof value["draftRevision"] !== "number") return false;
+  }
+  return true;
+}
+
+/**
+ * Compute the next ordered envelope. The FIRST post-hydration frame is
+ * `sequence: 1`; a new session id restarts the counter at 1. The host owns the
+ * counter — a client-supplied sequence is never an input here.
+ */
+export function nextV2Envelope(
+  previous: AiChatFrameEnvelopeV2 | null,
+  sessionId: string,
+): AiChatFrameEnvelopeV2 {
+  if (previous === null || previous.sessionId !== sessionId) {
+    return {
+      protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+      sessionId,
+      sequence: 1,
+    };
+  }
+  return {
+    protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+    sessionId,
+    sequence: previous.sequence + 1,
+  };
+}
+
+/**
+ * Downstream reducer gate: a frame is accepted only for the live session AND
+ * with a strictly newer sequence. Wrong session or `sequence <= lastSequence`
+ * is rejected deterministically (never applied, never thrown).
+ */
+export function shouldAcceptHostFrameV2(
+  gate: AiChatHostSequenceGateV2,
+  frame: AiChatFrameEnvelopeV2,
+): boolean {
+  if (frame.protocolVersion !== AI_CHAT_PROTOCOL_VERSION_V2) return false;
+  if (frame.sessionId !== gate.sessionId) return false;
+  return frame.sequence > gate.lastSequence;
+}
+
+/**
+ * A `mention_results` frame is current only when the popover is still open on
+ * the SAME requestId and draftRevision. A dismissed/open-on-other-revision
+ * popover can never be reopened by a late response.
+ */
+export function isMentionResponseCurrentV2(
+  open: { readonly requestId: string; readonly draftRevision: number } | null,
+  response: { readonly requestId: string; readonly draftRevision: number },
+): boolean {
+  if (open === null) return false;
+  return (
+    open.requestId === response.requestId &&
+    open.draftRevision === response.draftRevision
+  );
+}
+
+// ---- Webview intent validation ---------------------------------------------
+
+export type AiChatIntentParseResultV2 =
+  | { readonly ok: true; readonly intent: AiChatWebviewIntentV2 }
+  | { readonly ok: false; readonly reason: string };
+
+function isNonEmptyStringV2(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function sanitizeContextRefV2(raw: unknown): AiChatContextRefV2 | null {
+  if (!isRecordV2(raw)) return null;
+  const kind = raw["kind"];
+  if (typeof kind !== "string" || !CONTEXT_REF_KINDS_V2.has(kind)) return null;
+  const id = raw["id"];
+  const label = raw["label"];
+  if (!isNonEmptyStringV2(id) || typeof label !== "string") return null;
+  const ref: {
+    -readonly [K in keyof AiChatContextRefV2]: AiChatContextRefV2[K];
+  } = { kind: kind as AiChatContextRefV2["kind"], id, label };
+  if (raw["changed"] === true) ref.changed = true;
+  if (raw["missing"] === true) ref.missing = true;
+  return Object.freeze(ref);
+}
+
+function sanitizeAttachmentV2(raw: unknown): MinimalAttachment | null {
+  if (!isRecordV2(raw)) return null;
+  const id = raw["id"];
+  const mime = raw["mime"];
+  const base64 = raw["base64"];
+  const bytes = raw["bytes"];
+  if (!isNonEmptyStringV2(id)) return null;
+  if (!isNonEmptyStringV2(mime)) return null;
+  if (typeof base64 !== "string") return null;
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return null;
+  return Object.freeze({ id, mime, base64, bytes });
+}
+
+/**
+ * Parse + validate one raw webview → host V2 intent. Unknown kinds, wrong
+ * protocol versions, missing correlation ids and malformed payloads all return
+ * `{ ok: false }` — the function NEVER throws, so a hostile/malformed message
+ * can never surface as an extension-host exception. Extra fields (including a
+ * client-supplied `sequence`) are dropped, never trusted.
+ */
+export function parseAiChatWebviewIntentV2(raw: unknown): AiChatIntentParseResultV2 {
+  try {
+    if (!isRecordV2(raw)) return { ok: false, reason: "not-an-object" };
+    if (raw["protocolVersion"] !== AI_CHAT_PROTOCOL_VERSION_V2) {
+      return { ok: false, reason: "unsupported-protocol-version" };
+    }
+    const kind = raw["kind"];
+    if (typeof kind !== "string") return { ok: false, reason: "missing-kind" };
+    const version = AI_CHAT_PROTOCOL_VERSION_V2;
+
+    // Intents with no host state mutation and no correlation id.
+    if (kind === "ready_v2") return { ok: true, intent: { kind, protocolVersion: version } };
+    if (kind === "list_sessions") return { ok: true, intent: { kind, protocolVersion: version } };
+    if (kind === "pick_active_schema") return { ok: true, intent: { kind, protocolVersion: version } };
+    if (kind === "open_settings") return { ok: true, intent: { kind, protocolVersion: version } };
+
+    // Every other intent mutates host state and MUST carry clientRequestId.
+    const clientRequestId = raw["clientRequestId"];
+    if (!isNonEmptyStringV2(clientRequestId)) {
+      return { ok: false, reason: "missing-client-request-id" };
+    }
+
+    switch (kind) {
+      case "submit_turn": {
+        const draft = raw["draft"];
+        if (!isRecordV2(draft)) return { ok: false, reason: "missing-draft" };
+        const text = draft["text"];
+        const revision = draft["revision"];
+        if (typeof text !== "string") return { ok: false, reason: "invalid-draft-text" };
+        if (typeof revision !== "number" || !Number.isInteger(revision) || revision < 0) {
+          return { ok: false, reason: "invalid-draft-revision" };
+        }
+        const rawContext = draft["context"];
+        const rawAttachments = draft["attachments"];
+        if (!Array.isArray(rawContext) || !Array.isArray(rawAttachments)) {
+          return { ok: false, reason: "invalid-draft-collections" };
+        }
+        const context: AiChatContextRefV2[] = [];
+        for (const entry of rawContext) {
+          const ref = sanitizeContextRefV2(entry);
+          if (ref === null) return { ok: false, reason: "invalid-context-ref" };
+          context.push(ref);
+        }
+        const attachments: MinimalAttachment[] = [];
+        for (const entry of rawAttachments) {
+          const att = sanitizeAttachmentV2(entry);
+          if (att === null) return { ok: false, reason: "invalid-attachment" };
+          attachments.push(att);
+        }
+        return {
+          ok: true,
+          intent: {
+            kind,
+            protocolVersion: version,
+            clientRequestId,
+            draft: Object.freeze({
+              text,
+              revision,
+              context: Object.freeze(context),
+              attachments: Object.freeze(attachments),
+            }),
+          },
+        };
+      }
+      case "stop_turn":
+      case "create_session":
+      case "clear_session":
+        return { ok: true, intent: { kind, protocolVersion: version, clientRequestId } };
+      case "set_engine": {
+        const engine = raw["engine"];
+        if (typeof engine !== "string" || !AI_ENGINE_NAMES_V2.has(engine)) {
+          return { ok: false, reason: "invalid-engine" };
+        }
+        return { ok: true, intent: { kind, protocolVersion: version, clientRequestId, engine: engine as AiEngineName } };
+      }
+      case "set_model": {
+        const role = raw["role"];
+        if (typeof role !== "string" || !AI_MODEL_ROLES_V2.has(role)) {
+          return { ok: false, reason: "invalid-role" };
+        }
+        return { ok: true, intent: { kind, protocolVersion: version, clientRequestId, role: role as AiModelRole } };
+      }
+      case "search_context": {
+        const requestId = raw["requestId"];
+        const draftRevision = raw["draftRevision"];
+        const query = raw["query"];
+        if (!isNonEmptyStringV2(requestId)) return { ok: false, reason: "invalid-request-id" };
+        if (typeof draftRevision !== "number" || !Number.isInteger(draftRevision) || draftRevision < 0) {
+          return { ok: false, reason: "invalid-draft-revision" };
+        }
+        if (typeof query !== "string") return { ok: false, reason: "invalid-query" };
+        return { ok: true, intent: { kind, protocolVersion: version, clientRequestId, requestId, draftRevision, query } };
+      }
+      case "resolve_context": {
+        const ref = sanitizeContextRefV2(raw["ref"]);
+        if (ref === null) return { ok: false, reason: "invalid-context-ref" };
+        return { ok: true, intent: { kind, protocolVersion: version, clientRequestId, ref } };
+      }
+      case "remove_context": {
+        const refId = raw["refId"];
+        if (!isNonEmptyStringV2(refId)) return { ok: false, reason: "invalid-ref-id" };
+        return { ok: true, intent: { kind, protocolVersion: version, clientRequestId, refId } };
+      }
+      case "permission_response": {
+        const requestId = raw["requestId"];
+        if (!isNonEmptyStringV2(requestId)) return { ok: false, reason: "invalid-request-id" };
+        const optionId = raw["optionId"];
+        if (optionId !== undefined && !isNonEmptyStringV2(optionId)) {
+          return { ok: false, reason: "invalid-option-id" };
+        }
+        const intent: {
+          -readonly [K in keyof Extract<AiChatWebviewIntentV2, { kind: "permission_response" }>]:
+            Extract<AiChatWebviewIntentV2, { kind: "permission_response" }>[K];
+        } = { kind, protocolVersion: version, clientRequestId, requestId };
+        if (optionId !== undefined) intent.optionId = optionId;
+        return { ok: true, intent };
+      }
+      case "set_permission_policy": {
+        const policy = raw["policy"];
+        if (policy !== "default" && policy !== "bypass") {
+          return { ok: false, reason: "invalid-policy" };
+        }
+        return { ok: true, intent: { kind, protocolVersion: version, clientRequestId, policy } };
+      }
+      case "resume_saved_session": {
+        const sessionId = raw["sessionId"];
+        if (!isNonEmptyStringV2(sessionId)) return { ok: false, reason: "invalid-session-id" };
+        return { ok: true, intent: { kind, protocolVersion: version, clientRequestId, sessionId } };
+      }
+      case "rename_session": {
+        const title = raw["title"];
+        if (typeof title !== "string") return { ok: false, reason: "invalid-title" };
+        return { ok: true, intent: { kind, protocolVersion: version, clientRequestId, title } };
+      }
+      case "export_session": {
+        const format = raw["format"];
+        if (format !== "markdown" && format !== "json") {
+          return { ok: false, reason: "invalid-format" };
+        }
+        return { ok: true, intent: { kind, protocolVersion: version, clientRequestId, format } };
+      }
+      default:
+        return { ok: false, reason: "unknown-kind" };
+    }
+  } catch {
+    // Defense-in-depth: any unforeseen input shape fails closed, never throws.
+    return { ok: false, reason: "malformed" };
+  }
+}
+
+/** Re-export the engine vocabulary the V2 intents reference, so consumers of
+ * the protocol import it from this single module. */
+export type { AiEngineName };

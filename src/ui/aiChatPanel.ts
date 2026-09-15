@@ -104,6 +104,16 @@ import { formatAttributionFooter } from "../ai/grounding/attribution";
    type AiChatPanelUsage,
    type AiChatPanelWebviewMessage,
 } from "./aiChatPanelMessages";
+// TASK-CHATV2-003 — versioned V2 protocol seam. The panel stamps a monotonic
+// envelope on every V2 post and validates + dispatches V2 webview intents.
+import {
+  nextV2Envelope,
+  parseAiChatWebviewIntentV2,
+  type AiChatFrameEnvelopeV2,
+  type AiChatHostFrameV2Body,
+  type AiChatTurnPhaseV2,
+  type AiChatWebviewIntentV2,
+} from "./aiChatPanelMessages";
 import type { OmpChatEngine } from "../ai/omp/ompChatEngine";
 import type { ClaudeCodeChatEngine } from "../ai/claudeCode/claudeCodeChatEngine";
 import type { CodexChatEngine } from "../ai/codex/codexChatEngine";
@@ -130,7 +140,27 @@ import type { ConnectionRecoveryStatus } from "../core/connectionManager";
  
  const PANEL_ID = "UnicDB.aiChatPanel";
 
- const SCHEMA_CONTEXT_BUDGET = 12_000; // chars (tăng từ 8000)
+/** TASK-CHATV2-003: deterministic, display-safe diagnostic id for a V2 frame.
+ * No clock and no random (CTX-04) — the same copy always yields the same id. */
+function diagnosticIdForV2(copy: string): string {
+  let hash = 0;
+  for (let i = 0; i < copy.length; i++) {
+    hash = (hash * 31 + copy.charCodeAt(i)) | 0;
+  }
+  return `diag-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+/** TASK-CHATV2-003: V1 session-state literals mapped onto V2 turn phases. */
+const V2_PHASE_BY_SESSION_STATE: Readonly<
+  Record<"connecting" | "running" | "done" | "error", AiChatTurnPhaseV2>
+> = Object.freeze({
+  connecting: "connecting",
+  running: "streaming",
+  done: "completed",
+  error: "failed",
+});
+
+const SCHEMA_CONTEXT_BUDGET = 12_000; // chars (tăng từ 8000)
  const SCHEMA_CONTEXT_TABLE_LIMIT = 200; // objects (tăng từ 30)
  const DEFAULT_PERMISSION_TIMEOUT_MS = 60_000;
 
@@ -1346,6 +1376,26 @@ export class AiChatPanel {
    */
   private engineGeneration = 0;
   /**
+   * TASK-CHATV2-003: live V2 host session id. Stable for the panel lifetime;
+   * the envelope sequence restarts at 1 whenever this id changes. The host
+   * owns both values — a client-supplied session/sequence is never trusted.
+   */
+  private readonly v2SessionId: string = `sess-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
+  /** Last V2 envelope posted to the webview; drives `nextV2Envelope`. */
+  private v2LastEnvelope: AiChatFrameEnvelopeV2 | null = null;
+  /**
+   * TASK-CHATV2-003: in-flight `search_context` correlation. Only one mention
+   * search is live at a time; a response whose requestId/draftRevision do not
+   * match this cell is a stale no-op (PLAN §4).
+   */
+  private v2OpenMention: { requestId: string; draftRevision: number; query: string } | null = null;
+  /**
+   * TASK-CHATV2-003: current turn correlation for V2 `turn_started` / turnId
+   * stamping. Assigned when a `submit_turn` is accepted.
+   */
+  private v2TurnId: string | null = null;
+  private v2TurnSeq = 0;
+  /**
    * TASK-AIX05-103 (case 3): dedupe latch for the raw-ACP Stop path.
    * Records the sessionId that already received one `session/cancel`
    * notify so repeated Stop presses cannot send a second cancel for the
@@ -1553,8 +1603,8 @@ export class AiChatPanel {
       this.postActiveSchema(seed.schema, seed.connectionId);
     }
     this.disposables.push(
-      this.panel.webview.onDidReceiveMessage(
-        (msg: AiChatPanelWebviewMessage) => this.handleMessage(msg),
+      this.panel.webview.onDidReceiveMessage((msg: unknown) =>
+        this.handleWebviewMessage(msg),
       ),
     );
     this.disposables.push(
@@ -1668,6 +1718,142 @@ export class AiChatPanel {
     for (const d of this.disposables) d.dispose();
     this.disposables = [];
     this.options.onDispose?.();
+  }
+
+  /**
+   * TASK-CHATV2-003: single receive entry point. A V2 intent (identified by
+   * `protocolVersion: 2`) is validated and dispatched through `handleV2Intent`;
+   * a malformed V2 intent is ignored (never thrown into the extension host).
+   * Every other message is a legacy V1 webview message and keeps the existing
+   * `handleMessage` path until CHATV2-017 deletes it.
+   */
+  private async handleWebviewMessage(raw: unknown): Promise<void> {
+    if (
+      raw !== null &&
+      typeof raw === "object" &&
+      (raw as { protocolVersion?: unknown }).protocolVersion === 2
+    ) {
+      const parsed = parseAiChatWebviewIntentV2(raw);
+      if (!parsed.ok) {
+        // Malformed/unknown intent: safe reject. The host stays alive and the
+        // webview is told exactly which kind was rejected (no raw input echo).
+        this.postV2({
+          kind: "toast",
+          level: "warning",
+          safeMessage: "That chat action was not understood.",
+        });
+        return;
+      }
+      await this.handleV2Intent(parsed.intent);
+      return;
+    }
+    await this.handleMessage(raw as AiChatPanelWebviewMessage);
+  }
+
+  /**
+   * TASK-CHATV2-003: V2 intent dispatch. Each intent maps onto the same host
+   * handlers the V1 wire already uses; the V2 envelope only adds correlation.
+   * The host never accepts a client sequence as authority.
+   */
+  private async handleV2Intent(intent: AiChatWebviewIntentV2): Promise<void> {
+    switch (intent.kind) {
+      case "ready_v2":
+        await this.handleReady();
+        return;
+      case "submit_turn": {
+        // Fresh turn correlation. Draft is cleared only by the webview once it
+        // sees the matching `turn_started` ack below.
+        this.v2TurnSeq += 1;
+        this.v2TurnId = `turn-${this.v2TurnSeq}-${this.v2SessionId}`;
+        this.postV2({
+          kind: "turn_started",
+          turnId: this.v2TurnId,
+          clientRequestId: intent.clientRequestId,
+        });
+        await this.handleSend(
+          intent.draft.text,
+          intent.draft.attachments as MinimalAttachment[],
+        );
+        return;
+      }
+      case "stop_turn":
+        this.handleStop();
+        return;
+      case "set_engine":
+        await this.handleCommand("engine", [intent.engine]);
+        return;
+      case "set_model":
+        await this.handleModelSelect(intent.role);
+        return;
+      case "search_context": {
+        this.v2OpenMention = {
+          requestId: intent.requestId,
+          draftRevision: intent.draftRevision,
+          query: intent.query,
+        };
+        const items = await this.handleMentionList(intent.query);
+        // Echo the EXACT correlation triple the webview sent; a response
+        // whose requestId/draftRevision no longer match is ignored by the
+        // webview reducer (stale query protection, PLAN §4).
+        this.postV2({
+          kind: "mention_results",
+          requestId: intent.requestId,
+          draftRevision: intent.draftRevision,
+          query: intent.query,
+          items,
+        });
+        return;
+      }
+      case "resolve_context":
+        await this.handleMentionList(intent.ref.label);
+        return;
+      case "remove_context":
+        // Webview-local chip removal: the host holds no draft state, so this
+        // is a semantic no-op acknowledgement (no frame, no throw).
+        return;
+      case "permission_response":
+        if (this.dbToolGate.respond(intent.requestId, intent.optionId)) return;
+        if (this.resolveHostPermission(intent.requestId, intent.optionId)) return;
+        this.handlePermissionResponse(intent.requestId, intent.optionId);
+        return;
+      case "set_permission_policy":
+        this.bypassPermissions = intent.policy === "bypass";
+        return;
+      case "list_sessions":
+        await this.handleResumeList();
+        return;
+      case "resume_saved_session":
+        await this.handleResumePick(intent.sessionId);
+        return;
+      case "create_session":
+        this.handleClear();
+        return;
+      case "rename_session":
+        // Rename is host-acknowledged; this cycle has no session store yet, so
+        // echo the accepted title back so the webview stops showing optimistic
+        // state (title_updated is the ack contract).
+        this.postV2({ kind: "title_updated", title: intent.title });
+        return;
+      case "clear_session":
+        this.handleClear();
+        return;
+      case "export_session":
+        // Export writer lands in CHATV2-015; this cycle reports the safe
+        // failure shape so the webview never shows fake success.
+        this.postV2({
+          kind: "export_failed",
+          safeMessage: "Chat export is not available yet.",
+          diagnosticId: diagnosticIdForV2("export-unavailable"),
+        });
+        return;
+      case "pick_active_schema":
+        this.options.onPickSchema?.();
+        return;
+      case "open_settings":
+        // Handled by the host command surface (extension.ts); the panel has no
+        // settings command seam in this cycle.
+        return;
+    }
   }
 
   private async handleMessage(msg: AiChatPanelWebviewMessage): Promise<void> {
@@ -1884,6 +2070,18 @@ export class AiChatPanel {
     this.post(this.buildModelsFrame(cfg));
     this.post({
       type: "init",
+      hasHistory: this.history.length > 0,
+      visionCapable,
+    });
+    // TASK-CHATV2-003: mirror the resolved capability snapshot + hydration on
+    // the ordered V2 seam. This is the first frame a V2 webview consumes, so
+    // the envelope sequence starts at 1 here.
+    this.postV2({
+      kind: "capabilities",
+      capabilities: this.capabilitySnapshot,
+    });
+    this.postV2({
+      kind: "session_hydrated",
       hasHistory: this.history.length > 0,
       visionCapable,
     });
@@ -2979,11 +3177,17 @@ export class AiChatPanel {
     return true;
   }
 
-  /** AIX-05: post one session-state transition for the current turn. */
+  /** AIX-05: post one session-state transition for the current turn. Mirrored
+   * onto the V2 `phase` seam so a V2 webview tracks the same lifecycle. */
   private postSessionState(
     state: "connecting" | "running" | "done" | "error",
   ): void {
     this.post({ type: "session_state", state, turnId: String(this.sessionTurnSeq) });
+    this.postV2({
+      kind: "phase",
+      turnId: this.v2TurnId ?? `turn-${this.sessionTurnSeq}`,
+      phase: V2_PHASE_BY_SESSION_STATE[state],
+    });
   }
 
   /**
@@ -4255,7 +4459,14 @@ export class AiChatPanel {
    * Either or both empty → still post the message so the webview can
    * render "No matches" + close on Enter.
    */
-  private async handleMentionList(query: string): Promise<void> {
+  private async handleMentionList(query: string): Promise<
+    Array<{
+      kind: "table" | "view" | "routine" | "file";
+      label: string;
+      detail: string;
+      token: string;
+    }>
+  > {
     const items: Array<{
       kind: "table" | "view" | "routine" | "file";
       label: string;
@@ -4385,6 +4596,7 @@ export class AiChatPanel {
     }
 
     this.post({ type: "mention_objects", items });
+    return items;
   }
   /**
    * AIX-04: user approved the plan card. Consent funnel: re-check drift
@@ -4524,6 +4736,19 @@ export class AiChatPanel {
 
   private post(msg: AiChatPanelHostMessage): void {
     void this.panel?.webview.postMessage(msg);
+  }
+
+  /**
+   * TASK-CHATV2-003: ordered V2 post seam. Stamps the monotonic envelope
+   * (`protocolVersion: 2`, host-owned `sessionId`, `sequence` beginning at 1
+   * after hydration and strictly increasing thereafter) onto a semantic body
+   * and sends it. This is the seam CHATV2-004…017 build on; the sequence is
+   * always host-generated — a client-supplied sequence is never consulted.
+   */
+  private postV2(body: AiChatHostFrameV2Body): void {
+    const envelope = nextV2Envelope(this.v2LastEnvelope, this.v2SessionId);
+    this.v2LastEnvelope = envelope;
+    void this.panel?.webview.postMessage({ ...envelope, ...body });
   }
 
   /**

@@ -389,3 +389,52 @@ describe("AiChatPanelMessages — engine (B8: version field)", () => {
     }
   });
 });
+
+// ---- CHATV2-003 — V2 protocol is ADDITIVE to the V1 wire ----------------
+// The V1 unions above are unchanged: every legacy fixture still compiles and
+// matches by `type`. V2 frames live on a separate `kind` discriminated union
+// in the same module; this block pins that coexistence.
+import type {
+  AiChatHostFrameV2,
+  AiChatWebviewIntentV2,
+} from "../aiChatPanelMessages";
+
+describe("AiChatPanelMessages — CHATV2-003 V2 additive compatibility", () => {
+  it("V2 host frame is a separate union discriminated by `kind`, not `type`", () => {
+    const frame: AiChatHostFrameV2 = {
+      protocolVersion: 2,
+      sessionId: "s1",
+      sequence: 1,
+      kind: "text_delta",
+      turnId: "t1",
+      messageId: "m1",
+      text: "hi",
+    };
+    expect(frame.kind).toBe("text_delta");
+    // A V2 frame has no V1 `type` field — the discriminators never collide.
+    expect("type" in frame).toBe(false);
+  });
+
+  it("V2 webview intents carry clientRequestId on mutating kinds", () => {
+    const intent: AiChatWebviewIntentV2 = {
+      kind: "set_model",
+      protocolVersion: 2,
+      clientRequestId: "c1",
+      role: "work",
+    };
+    expect(intent.kind).toBe("set_model");
+    expect(intent.clientRequestId).toBe("c1");
+  });
+
+  it("existing V1 legacy fixtures still match their `type` discriminator", () => {
+    const legacy: AiChatPanelHostMessage[] = [
+      { type: "init", hasHistory: false },
+      { type: "delta", text: "x" },
+      { type: "done" },
+    ];
+    expect(legacy.every((m) => typeof m.type === "string")).toBe(true);
+    expect(new Set(legacy.map((m) => m.type))).toEqual(
+      new Set(["init", "delta", "done"]),
+    );
+  });
+});
