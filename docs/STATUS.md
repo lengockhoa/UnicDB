@@ -1,5 +1,15 @@
 # STATUS — 2026-09-08 (cycle AGT-UI shipped → v1.53.25 + cleanup pass → cbf277a)
 
+## IN FLIGHT — 2026-09-15 (composer redesign + engine-aware slash landed; publish + CHATV2 pending)
+- **LANDED (committed on `main`, verified):** `feat(aichat): card composer redesign + engine-aware slash commands`
+  - Composer is one rounded card; actions row split into left tool cluster (resume/clear/regenerate/chips/slash/bypass/mic/attach) + right primary cluster (send swaps to stop). Two-tone model chip (accent role + muted id). Files: `webview/aiChatPanelComposer.ts`, `webview/styles.css`.
+  - Slash menu is engine-aware: `aiChatCommandsForEngine()` (in `src/ui/aiChatPanelCommands.ts`) gates `/resume` unavailable-with-reason on non-omp engines; rows carry name + description; webview tracks the announced engine and refreshes an open menu (`webview/aiChatPanelMain.ts`).
+  - Host `/engine` widened from `builtin|omp` to the full 4-engine vocabulary with capability gating (`src/ui/aiChatPanel.ts` `handleCommand`).
+  - Verification: typecheck clean · compile clean · targeted tests PASS (composer 12, commands 7, engine 25, clone-webview 14) · full suite 4176 passed / 5 skipped / 0 failed before the final commit.
+- **NEXT — PUBLISH (task #10):** `npm run bump` to ship the composer redesign + engine-aware slash (verify already done; only bump/publish remains).
+- **DEFERRED — CHATV2 pipeline (task #11):** `handoff: plan — AI Chat V2 replacement (17 coder-ready tasks)` committed. `docs/AI_HANDOFF/RUN.md` Phase=done = PLANNING ONLY, no runtime work. Start in a FRESH context: `/ukit:handoff-fullstack` → TASK-CHATV2-001 first, follow dependency order in `docs/AI_HANDOFF/INDEX.md`. The 17 `TASK-CHATV2-*.md` files were authored in another session — read/verify INDEX.md before executing; they have not been independently reviewed here.
+- Housekeeping: stray `.smbdeleteAAA*` files under `docs/AI_HANDOFF/` (SMB volume artifacts) left untouched — not deleted, origin unconfirmed.
+
 ## IN FLIGHT — 2026-09-13 (results-grid bug family)
 - Fixed 8 root-cause bugs (uncommitted, verified; all with RED→GREEN regression tests):
   1. QueryRunner lock race (`src/core/queryRunner.ts` `runLocked`).
