@@ -20,6 +20,7 @@
 //
 // Pure DOM TypeScript: no `vscode`, no node builtins, no framework, no timers.
 
+import { createChatIcon } from "./icons";
 import {
   AUTOCOMPLETE_EMPTY_MESSAGE,
   AUTOCOMPLETE_MAX_VISIBLE_ROWS,
@@ -38,6 +39,18 @@ export const AUTOCOMPLETE_LISTBOX_MARKER = "data-chat-autocomplete";
 /** Stable id prefix for an option, so `aria-activedescendant` is predictable. */
 export const AUTOCOMPLETE_OPTION_ID_PREFIX = `${ROOT_CLASS}-ac-opt-`;
 
+/** Marker attribute on a group heading element (mention rows only). */
+export const AUTOCOMPLETE_GROUP_MARKER = "data-chat-autocomplete-group";
+/** Marker attribute on the loading (spinner) row. */
+export const AUTOCOMPLETE_LOADING_MARKER = "data-chat-autocomplete-loading";
+/** Marker attribute on the error row. */
+export const AUTOCOMPLETE_ERROR_MARKER = "data-chat-autocomplete-error";
+/** Marker attribute on the error row's retry control. */
+export const AUTOCOMPLETE_RETRY_MARKER = "data-chat-autocomplete-retry";
+
+/** 16px semantic icon size (task spec: 16px semantic icon per row). */
+export const AUTOCOMPLETE_ICON_SIZE_PX = 16;
+
 /** One row as the view renders it. All copy is plain display text. */
 export interface AutocompleteRowModel {
   /** Safe identifier (descriptor id or mention token id) — used for the DOM id. */
@@ -52,6 +65,24 @@ export interface AutocompleteRowModel {
   readonly badge?: string;
   /** True when selecting the row would promise an unavailable action. */
   readonly unavailable?: boolean;
+  /**
+   * Optional group heading, painted as a non-selectable row immediately before
+   * this one. Only the first row of each group carries it.
+   */
+  readonly groupLabel?: string;
+  /**
+   * Optional allowlisted semantic icon name (`createChatIcon`). An unknown name
+   * resolves to an inert placeholder — the value is never written to the DOM.
+   */
+  readonly icon?: string;
+}
+
+/** Non-selectable status rows (empty/error). Never part of the option list. */
+export interface AutocompleteStatusRowModel {
+  readonly id: string;
+  readonly text: string;
+  /** Present only on an error row; renders the retry control. */
+  readonly retryLabel?: string;
 }
 
 export interface AutocompleteViewOptions {
@@ -63,16 +94,28 @@ export interface AutocompleteViewOptions {
   readonly slashButton?: HTMLElement;
   /** Empty-state copy override (mentions use their own). */
   readonly emptyMessage?: string;
+  /** Accessible name for the listbox (mentions pass their own). */
+  readonly ariaLabel?: string;
 }
 
 /** The view handle the controller drives. */
 export interface AutocompleteView {
   /** Replace the visible rows and set the active index (clamped by the view). */
   setRows(rows: readonly AutocompleteRowModel[], activeIndex: number): void;
-  /** Move the active row without re-reading the data. */
-  setActive(activeIndex: number): void;
+  /**
+   * Repaint as a NON-SELECTABLE status row (mention empty/error). The option
+   * list is cleared and `aria-activedescendant`/`aria-expanded` are pointed at
+   * the inert state, so Enter can never accept a status row.
+   */
+  setStatus(row: AutocompleteStatusRowModel): void;
+  /** Repaint as the loading (spinner) row — also non-selectable. */
+  setLoading(text: string): void;
   /** Pointer/click row handler. Replaces any previous handler. */
   setOnInvoke(handler: (index: number) => void): void;
+  /** Retry control handler (error row only). Replaces any previous handler. */
+  setOnRetry(handler: () => void): void;
+  /** Move the active row without re-reading the data. */
+  setActive(activeIndex: number): void;
   /** Remove the listbox and clear the textarea's aria wiring. */
   close(): void;
   /** True while a listbox is mounted. */
@@ -95,6 +138,7 @@ function safeIdFragment(id: string): string {
 export function createAutocompleteView(options: AutocompleteViewOptions): AutocompleteView {
   const { anchor, prompt, slashButton } = options;
   const emptyMessage = options.emptyMessage ?? AUTOCOMPLETE_EMPTY_MESSAGE;
+  const ariaLabel = options.ariaLabel ?? "Command suggestions";
 
   let element: HTMLElement | null = null;
   /** Every row the caller handed us, in caller order (origin of truth). */
@@ -104,10 +148,66 @@ export function createAutocompleteView(options: AutocompleteViewOptions): Autoco
   /** Active index into `allRows` (never a window-local index). */
   let activeIndex = 0;
   let onInvoke: ((index: number) => void) | null = null;
+  let onRetry: (() => void) | null = null;
+  /** The inert status row while one is painted (empty/error/loading). */
+  let statusRow: { readonly kind: "empty" | "error" | "loading"; readonly text: string; readonly retryLabel?: string } | null = null;
   let destroyed = false;
 
   function optionIdFor(row: AutocompleteRowModel): string {
     return `${AUTOCOMPLETE_OPTION_ID_PREFIX}${safeIdFragment(row.id)}`;
+  }
+
+  /** Append one visually-hidden group heading (mention grouping). */
+  function appendGroupHeading(list: HTMLElement, label: string): void {
+    const heading = document.createElement("div");
+    heading.className = `${ROOT_CLASS}-autocomplete-group`;
+    heading.setAttribute(AUTOCOMPLETE_GROUP_MARKER, "1");
+    // Non-selectable: no `role="option"`, hidden from the a11y option stream.
+    heading.setAttribute("role", "presentation");
+    heading.setAttribute("aria-hidden", "true");
+    // textContent only — a hostile label can never become markup.
+    heading.textContent = label;
+    list.appendChild(heading);
+  }
+
+  /** Append one non-selectable status row (empty/error/loading). */
+  function renderStatusRow(list: HTMLElement): void {
+    const row = statusRow;
+    if (row === null) return;
+    const node = document.createElement("div");
+    node.className = `${ROOT_CLASS}-autocomplete-status`;
+    node.setAttribute("role", "status");
+    // Never `role="option"`: a status row can never be selected or accepted.
+    node.setAttribute("aria-hidden", "false");
+    if (row.kind === "loading") node.setAttribute(AUTOCOMPLETE_LOADING_MARKER, "1");
+    if (row.kind === "error") node.setAttribute(AUTOCOMPLETE_ERROR_MARKER, "1");
+
+    if (row.kind === "loading") {
+      const spinner = createChatIcon("spinner", AUTOCOMPLETE_ICON_SIZE_PX);
+      spinner.classList.add(`${ROOT_CLASS}-autocomplete-spinner`);
+      node.appendChild(spinner);
+    }
+
+    const text = document.createElement("span");
+    text.className = `${ROOT_CLASS}-autocomplete-status-text`;
+    text.textContent = row.text;
+    node.appendChild(text);
+
+    if (row.kind === "error" && typeof row.retryLabel === "string") {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = `${ROOT_CLASS}-autocomplete-retry`;
+      retry.setAttribute(AUTOCOMPLETE_RETRY_MARKER, "1");
+      retry.textContent = row.retryLabel;
+      retry.addEventListener("mousedown", (event) => event.preventDefault());
+      retry.addEventListener("click", () => {
+        focusPrompt();
+        onRetry?.();
+      });
+      node.appendChild(retry);
+    }
+
+    list.appendChild(node);
   }
 
   /** The visible slice, derived from the active row so it never scrolls off. */
@@ -126,7 +226,7 @@ export function createAutocompleteView(options: AutocompleteViewOptions): Autoco
     list.className = `${ROOT_CLASS}-autocomplete`;
     list.setAttribute(AUTOCOMPLETE_LISTBOX_MARKER, "1");
     list.setAttribute("role", "listbox");
-    list.setAttribute("aria-label", "Command suggestions");
+    list.setAttribute("aria-label", ariaLabel);
     list.dataset.rowHeight = String(AUTOCOMPLETE_ROW_HEIGHT_PX);
     // Geometry contract as custom properties; styles.css consumes them.
     list.style.setProperty("--UnicDB-row-h", `${AUTOCOMPLETE_ROW_HEIGHT_PX}px`);
@@ -142,6 +242,13 @@ export function createAutocompleteView(options: AutocompleteViewOptions): Autoco
   }
 
   function applyActiveDescendant(): void {
+    // An inert status row is open but has no active descendant, so Enter can
+    // never accept it (the controller sees zero selectable items).
+    if (statusRow !== null) {
+      prompt.removeAttribute("aria-activedescendant");
+      prompt.setAttribute("aria-expanded", "false");
+      return;
+    }
     const row = allRows[activeIndex];
     if (row === undefined) {
       prompt.removeAttribute("aria-activedescendant");
@@ -164,6 +271,14 @@ export function createAutocompleteView(options: AutocompleteViewOptions): Autoco
     const list = ensureElement();
     list.replaceChildren();
 
+    // An inert status row (empty/error/loading) owns the whole popover: it
+    // suppresses every data row so nothing behind it can be accepted.
+    if (statusRow !== null) {
+      renderStatusRow(list);
+      applyActiveDescendant();
+      return;
+    }
+
     if (allRows.length === 0) {
       const empty = document.createElement("div");
       empty.className = `${ROOT_CLASS}-autocomplete-empty`;
@@ -178,6 +293,13 @@ export function createAutocompleteView(options: AutocompleteViewOptions): Autoco
     const visible = visibleRows();
     for (const [local, row] of visible.entries()) {
       const index = windowStart + local;
+
+      // Group heading (mention grouping) — non-selectable, outside the option
+      // stream, painted immediately before its first row.
+      if (typeof row.groupLabel === "string" && row.groupLabel.length > 0) {
+        appendGroupHeading(list, row.groupLabel);
+      }
+
       const option = document.createElement("div");
       option.className = `${ROOT_CLASS}-autocomplete-row`;
       option.setAttribute("role", "option");
@@ -193,9 +315,27 @@ export function createAutocompleteView(options: AutocompleteViewOptions): Autoco
 
       const secondary = document.createElement("span");
       secondary.className = `${ROOT_CLASS}-autocomplete-secondary`;
+      // Single-line secondary: the full distinguishing identity (path or
+      // connection.schema) lives here, so duplicate labels stay apart.
       secondary.textContent = row.secondary;
 
-      option.append(primary, secondary);
+      if (typeof row.icon === "string" && row.icon.length > 0) {
+        // Mention row: icon beside a two-line text column. The icon NAME is a
+        // lookup key only; an unknown name resolves to an inert placeholder and
+        // is never written into the DOM.
+        const body = document.createElement("div");
+        body.className = `${ROOT_CLASS}-autocomplete-body`;
+        const icon = createChatIcon(row.icon, AUTOCOMPLETE_ICON_SIZE_PX);
+        icon.classList.add(`${ROOT_CLASS}-autocomplete-icon`);
+        const text = document.createElement("div");
+        text.className = `${ROOT_CLASS}-autocomplete-text`;
+        text.append(primary, secondary);
+        body.append(icon, text);
+        option.appendChild(body);
+      } else {
+        // Slash row: the original two-line stack, unchanged.
+        option.append(primary, secondary);
+      }
 
       if (typeof row.syntax === "string" && row.syntax.length > 0) {
         const syntax = document.createElement("span");
@@ -247,12 +387,33 @@ export function createAutocompleteView(options: AutocompleteViewOptions): Autoco
       // The caller windows the list (see `buildSlashRows`); rendering exactly
       // what it passes keeps the active index the caller computed valid. Never
       // silently slice here — that would drop rows the caller believes visible.
+      statusRow = null;
       allRows = rows;
       activeIndex = clampActive(nextActiveIndex);
       render();
     },
+    setStatus(row: AutocompleteStatusRowModel): void {
+      if (destroyed) return;
+      const retryLabel = row.retryLabel;
+      statusRow = {
+        kind: retryLabel !== undefined && retryLabel.length > 0 ? "error" : "empty",
+        text: row.text,
+        ...(retryLabel !== undefined ? { retryLabel } : {}),
+      };
+      allRows = [];
+      activeIndex = 0;
+      render();
+    },
+    setLoading(text: string): void {
+      if (destroyed) return;
+      statusRow = { kind: "loading", text };
+      allRows = [];
+      activeIndex = 0;
+      render();
+    },
     setActive(nextActiveIndex: number): void {
-      if (destroyed || element === null) return;
+      // An inert status row is never active; arrows are a no-op there.
+      if (destroyed || element === null || statusRow !== null) return;
       const clamped = clampActive(nextActiveIndex);
       if (clamped === activeIndex) return;
       const previousStart = windowStart;
@@ -276,11 +437,15 @@ export function createAutocompleteView(options: AutocompleteViewOptions): Autoco
     setOnInvoke(handler: (index: number) => void): void {
       onInvoke = handler;
     },
+    setOnRetry(handler: () => void): void {
+      onRetry = handler;
+    },
     close(): void {
       if (destroyed) return;
       element?.remove();
       element = null;
       allRows = [];
+      statusRow = null;
       windowStart = 0;
       activeIndex = 0;
       prompt.removeAttribute("aria-activedescendant");
@@ -296,7 +461,9 @@ export function createAutocompleteView(options: AutocompleteViewOptions): Autoco
       element?.remove();
       element = null;
       allRows = [];
+      statusRow = null;
       onInvoke = null;
+      onRetry = null;
       prompt.removeAttribute("aria-activedescendant");
       prompt.removeAttribute("aria-expanded");
     },

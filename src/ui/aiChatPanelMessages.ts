@@ -533,16 +533,45 @@ export type AiChatTurnPhaseV2 =
 /** Tool/step status vocabulary shared by tool frames. */
 export type AiChatToolStatusV2 = "ok" | "failed" | "denied";
 
-/** One structured context reference the webview may carry on a draft. */
+/** Closed context-ref kind vocabulary (mirrors `ContextRef.kind`). */
+export type AiChatContextRefKindV2 = "file" | "selection" | "table" | "view" | "routine" | "schema";
+
+/** Closed context-ref status vocabulary (mirrors `ContextRef.status`). */
+export type AiChatContextRefStatusV2 = "ready" | "changed" | "missing" | "forbidden";
+
+/** One structured context reference the webview may carry on a draft.
+ *
+ * The ref is IDENTITY + METADATA only: `label`/`detail` are display strings and
+ * `revision` is an opaque fingerprint. No file content, row bytes or base64 may
+ * ever occupy a field of this shape (a ref is placed in DOM attributes and on
+ * the wire). `changed`/`missing` remain as the compact legacy aliases of
+ * `status`; new code reads `status`. */
 export interface AiChatContextRefV2 {
-  readonly kind: "file" | "selection" | "table" | "view" | "routine" | "schema";
+  readonly kind: AiChatContextRefKindV2;
   readonly id: string;
   readonly label: string;
+  /** Full distinguishing identity (path, or connection.schema.object). */
+  readonly detail?: string;
+  /** The literal token inserted into the composer (`@index.vue`). */
+  readonly displayToken?: string;
+  /**
+   * Opaque source signature: a URI for file/selection refs, or
+   * `connection.schema.object` for DB refs. NEVER content — it is a locator
+   * only, safe in an attribute and on the wire.
+   */
+  readonly source?: string;
+  /** Explicit status. Supersedes the `changed`/`missing` aliases. */
+  readonly status?: AiChatContextRefStatusV2;
+  /** Opaque snapshot fingerprint — never content. */
+  readonly revision?: string;
   /** Amber state: the host resolved a change since the ref was taken. */
   readonly changed?: boolean;
   /** Amber state: the host could no longer resolve the ref. */
   readonly missing?: boolean;
 }
+
+/** Coarse mention-scope filter carried on a `search_context` intent. */
+export type AiChatContextKindFilterV2 = "all" | "file" | "selection" | "database";
 
 /** Host → webview: resolved engine capability snapshot. */
 export interface AiChatHostCapabilitiesV2 extends AiChatFrameEnvelopeV2 {
@@ -645,7 +674,12 @@ export interface AiChatHostTurnFinishedV2 extends AiChatFrameEnvelopeV2 {
   readonly outcome: "completed" | "stopped" | "failed";
 }
 
-/** Host → webview: answer to `search_context`, correlated to the request. */
+/** Host → webview: answer to `search_context`, correlated to the request.
+ *
+ * `items` may now carry full structured refs (ids/status/snapshot for the chip
+ * strip). The legacy `token` field stays REQUIRED so the V1 mention popover and
+ * the single-session bridge keep parsing; a structured item sets `ref` in
+ * addition. */
 export interface AiChatHostFrameMentionResultsV2 extends AiChatFrameEnvelopeV2 {
   readonly kind: "mention_results";
   readonly requestId: string;
@@ -656,6 +690,34 @@ export interface AiChatHostFrameMentionResultsV2 extends AiChatFrameEnvelopeV2 {
     readonly label: string;
     readonly detail: string;
     readonly token: string;
+    /** Present on structured rows — the chip identity for this result. */
+    readonly ref?: AiChatContextRefV2;
+  }>;
+}
+
+/** Host → webview: the re-validated status of ONE context ref at send time.
+ * The host is authoritative; the webview never invents a status. */
+export interface AiChatHostContextResolvedV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "context_resolved";
+  readonly requestId: string;
+  readonly ref: AiChatContextRefV2;
+  readonly status: AiChatContextRefStatusV2;
+  /** Fresh snapshot fingerprint, or the captured one when unchanged. */
+  readonly revision: string;
+  readonly label: string;
+  readonly detail: string;
+  readonly displayToken: string;
+}
+
+/** Host → webview: the outcome of a `submit_turn` whose draft carried refs that
+ * were no longer clean. The turn did NOT run; the webview must present the
+ * explicit resolution choices and send again. */
+export interface AiChatHostContextBlockedV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "context_blocked";
+  readonly clientRequestId: string;
+  readonly blocked: ReadonlyArray<{
+    readonly refId: string;
+    readonly status: Exclude<AiChatContextRefStatusV2, "ready">;
   }>;
 }
 
@@ -734,6 +796,8 @@ export type AiChatHostFrameV2 =
   | AiChatHostErrorV2
   | AiChatHostTurnFinishedV2
   | AiChatHostFrameMentionResultsV2
+  | AiChatHostContextResolvedV2
+  | AiChatHostContextBlockedV2
   | AiChatHostContextStatusV2
   | AiChatHostModelsV2
   | AiChatHostSchemaV2
@@ -770,9 +834,14 @@ export type AiChatWebviewIntentV2 =
       readonly requestId: string;
       readonly draftRevision: number;
       readonly query: string;
+      /** Coarse scope filter. Absent means "all" (legacy callers). */
+      readonly kindFilter?: AiChatContextKindFilterV2;
+      /** Open generation; echoed back so a closed popover's answer is inert. */
+      readonly generation?: number;
     }
   | { readonly kind: "resolve_context"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string; readonly ref: AiChatContextRefV2 }
   | { readonly kind: "remove_context"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string; readonly refId: string }
+  | { readonly kind: "preview_context"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string; readonly ref: AiChatContextRefV2 }
   | {
       readonly kind: "permission_response";
       readonly protocolVersion: AiChatProtocolVersionV2;
@@ -829,6 +898,8 @@ const HOST_FRAME_KINDS_V2: ReadonlySet<string> = new Set([
   "error",
   "turn_finished",
   "mention_results",
+  "context_resolved",
+  "context_blocked",
   "context_status",
   "models",
   "schema",
@@ -872,6 +943,20 @@ const CONTEXT_REF_KINDS_V2: ReadonlySet<string> = new Set([
   "view",
   "routine",
   "schema",
+]);
+
+const CONTEXT_REF_STATUSES_V2: ReadonlySet<string> = new Set([
+  "ready",
+  "changed",
+  "missing",
+  "forbidden",
+]);
+
+const CONTEXT_KIND_FILTERS_V2: ReadonlySet<string> = new Set([
+  "all",
+  "file",
+  "selection",
+  "database",
 ]);
 
 /**
@@ -974,6 +1059,18 @@ function sanitizeContextRefV2(raw: unknown): AiChatContextRefV2 | null {
   const ref: {
     -readonly [K in keyof AiChatContextRefV2]: AiChatContextRefV2[K];
   } = { kind: kind as AiChatContextRefV2["kind"], id, label };
+  const detail = raw["detail"];
+  if (typeof detail === "string") ref.detail = detail;
+  const displayToken = raw["displayToken"];
+  if (typeof displayToken === "string") ref.displayToken = displayToken;
+  const source = raw["source"];
+  if (typeof source === "string") ref.source = source;
+  const status = raw["status"];
+  if (typeof status === "string" && CONTEXT_REF_STATUSES_V2.has(status)) {
+    ref.status = status as AiChatContextRefStatusV2;
+  }
+  const revision = raw["revision"];
+  if (typeof revision === "string") ref.revision = revision;
   if (raw["changed"] === true) ref.changed = true;
   if (raw["missing"] === true) ref.missing = true;
   return Object.freeze(ref);
@@ -1090,9 +1187,28 @@ export function parseAiChatWebviewIntentV2(raw: unknown): AiChatIntentParseResul
           return { ok: false, reason: "invalid-draft-revision" };
         }
         if (typeof query !== "string") return { ok: false, reason: "invalid-query" };
-        return { ok: true, intent: { kind, protocolVersion: version, clientRequestId, requestId, draftRevision, query } };
+        const intent: {
+          -readonly [K in keyof Extract<AiChatWebviewIntentV2, { kind: "search_context" }>]:
+            Extract<AiChatWebviewIntentV2, { kind: "search_context" }>[K];
+        } = { kind, protocolVersion: version, clientRequestId, requestId, draftRevision, query };
+        const kindFilter = raw["kindFilter"];
+        if (kindFilter !== undefined) {
+          if (typeof kindFilter !== "string" || !CONTEXT_KIND_FILTERS_V2.has(kindFilter)) {
+            return { ok: false, reason: "invalid-kind-filter" };
+          }
+          intent.kindFilter = kindFilter as AiChatContextKindFilterV2;
+        }
+        const generation = raw["generation"];
+        if (generation !== undefined) {
+          if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 0) {
+            return { ok: false, reason: "invalid-generation" };
+          }
+          intent.generation = generation;
+        }
+        return { ok: true, intent };
       }
-      case "resolve_context": {
+      case "resolve_context":
+      case "preview_context": {
         const ref = sanitizeContextRefV2(raw["ref"]);
         if (ref === null) return { ok: false, reason: "invalid-context-ref" };
         return { ok: true, intent: { kind, protocolVersion: version, clientRequestId, ref } };

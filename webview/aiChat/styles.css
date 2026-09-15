@@ -1630,3 +1630,206 @@
   font-size: 13px;
   color: var(--vscode-descriptionForeground, rgba(200, 200, 200, 0.7));
 }
+
+
+/* ==========================================================================
+   TASK-CHATV2-011 — grouped mention rows, status rows and context chips.
+   Clean APPEND: every rule is scoped under `.UnicDB-ai-chat-v2`.
+   ========================================================================== */
+
+.UnicDB-ai-chat-v2-autocomplete-group {
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  padding: 2px 8px 0;
+  font-size: 11px;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--vscode-descriptionForeground, rgba(200, 200, 200, 0.7));
+}
+
+.UnicDB-ai-chat-v2-autocomplete-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.UnicDB-ai-chat-v2-autocomplete-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.UnicDB-ai-chat-v2-autocomplete-icon {
+  flex: 0 0 auto;
+  width: var(--UnicDB-ac-icon, 16px);
+  height: var(--UnicDB-ac-icon, 16px);
+  color: var(--vscode-descriptionForeground, rgba(200, 200, 200, 0.8));
+}
+
+.UnicDB-ai-chat-v2-autocomplete-secondary {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.UnicDB-ai-chat-v2-autocomplete-status {
+  min-height: var(--UnicDB-row-h, 44px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--vscode-descriptionForeground, rgba(200, 200, 200, 0.7));
+}
+
+.UnicDB-ai-chat-v2-autocomplete-spinner {
+  flex: 0 0 auto;
+  animation: UnicDB-ai-chat-v2-spin 1s linear infinite;
+}
+
+@keyframes UnicDB-ai-chat-v2-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.UnicDB-ai-chat-v2-autocomplete-retry {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  color: var(--vscode-button-foreground, inherit);
+  background: var(--vscode-button-secondaryBackground, rgba(127, 127, 127, 0.2));
+  cursor: pointer;
+}
+
+/* ---- Context chips ------------------------------------------------------ */
+
+.UnicDB-ai-chat-v2-context-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 240px;
+  min-height: var(--UnicDB-chip-h, 28px);
+  border-radius: 999px;
+  border: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.35));
+  background: var(--vscode-editorWidget-background, transparent);
+}
+
+.UnicDB-ai-chat-v2-context-chip[data-status="changed"],
+.UnicDB-ai-chat-v2-context-chip[data-status="missing"] {
+  border-color: var(--vscode-editorWarning-foreground, orange);
+}
+
+.UnicDB-ai-chat-v2-context-chip[data-status="forbidden"] {
+  border-color: var(--vscode-editorError-foreground, red);
+}
+
+.UnicDB-ai-chat-v2-context-chip-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 6px;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-context-chip-icon {
+  flex: 0 0 auto;
+  width: var(--UnicDB-chip-icon, 16px);
+  height: var(--UnicDB-chip-icon, 16px);
+}
+
+.UnicDB-ai-chat-v2-context-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.UnicDB-ai-chat-v2-context-chip-status {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, rgba(200, 200, 200, 0.7));
+}
+
+.UnicDB-ai-chat-v2-context-chip-remove {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--UnicDB-chip-remove, 28px);
+  height: var(--UnicDB-chip-remove, 28px);
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* ---- Preview popover + resolution dialog -------------------------------- */
+
+.UnicDB-ai-chat-v2-context-preview,
+.UnicDB-ai-chat-v2-context-resolve {
+  position: absolute;
+  z-index: 20;
+  min-width: 240px;
+  max-width: 420px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.35));
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-editorWidget-foreground, inherit);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.UnicDB-ai-chat-v2-context-preview-title,
+.UnicDB-ai-chat-v2-context-resolve-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.UnicDB-ai-chat-v2-context-preview-detail,
+.UnicDB-ai-chat-v2-context-resolve-detail {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, rgba(200, 200, 200, 0.7));
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+
+.UnicDB-ai-chat-v2-context-preview-lines {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+}
+
+.UnicDB-ai-chat-v2-context-preview-close {
+  margin-top: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-context-resolve-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.UnicDB-ai-chat-v2-context-resolve-actions > button {
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}

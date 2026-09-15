@@ -110,11 +110,27 @@ import {
   AI_CHAT_PROTOCOL_VERSION_V2,
   nextV2Envelope,
   parseAiChatWebviewIntentV2,
+  type AiChatContextRefV2,
   type AiChatFrameEnvelopeV2,
   type AiChatHostFrameV2Body,
   type AiChatTurnPhaseV2,
   type AiChatWebviewIntentV2,
 } from "./aiChatPanelMessages";
+// TASK-CHATV2-011 — structured context identity/resolution. The host folds the
+// draft's refs through these pure helpers so status is resolved by the SAME
+// code the webview uses (one definition of "changed").
+import {
+  buildContextRefs,
+  buildTurnContext,
+  resolveContextRefs,
+  searchContext,
+  type ContextCandidate,
+  type ContextRef,
+  type ContextResolutionResult,
+  type ContextSelectionCandidate,
+  type ContextSource,
+  type ContextSourceObject,
+} from "./aiChatContext";
 import type { OmpChatEngine } from "../ai/omp/ompChatEngine";
 import type { ClaudeCodeChatEngine } from "../ai/claudeCode/claudeCodeChatEngine";
 import type { CodexChatEngine } from "../ai/codex/codexChatEngine";
@@ -226,6 +242,67 @@ function isAllowKindOptionId(optionId: unknown): optionId is "allow-once" | "all
 // ============================================================================
 // TASK-005 — @-mention references (DB objects + workspace files)
 // ============================================================================
+
+/** Serialize a `ContextSource` to its opaque wire signature. */
+export function contextSourceSignature(source: ContextSource): string {
+  return source.type === "uri"
+    ? source.uri
+    : `${source.connectionId}.${source.schema}.${source.name}`;
+}
+
+/**
+ * TASK-CHATV2-011: map a structured `ContextRef` to the wire ref. IDENTITY +
+ * METADATA only — `source` is a locator, never content.
+ */
+export function toWireContextRef(ref: {
+  id: string;
+  kind: ContextRef["kind"];
+  label: string;
+  detail: string;
+  displayToken: string;
+  status: ContextRef["status"];
+  source: ContextSource;
+  snapshot: { readonly revision: string };
+}): AiChatContextRefV2 {
+  return Object.freeze({
+    id: ref.id,
+    kind: ref.kind,
+    label: ref.label,
+    detail: ref.detail,
+    displayToken: ref.displayToken,
+    status: ref.status,
+    revision: ref.snapshot.revision,
+    source: contextSourceSignature(ref.source),
+  });
+}
+
+/**
+ * TASK-CHATV2-011: reconstruct a ref's source from an inbound wire ref. DB
+ * kinds rebuild the object signature from `source` (`connection.schema.name`);
+ * URI kinds rebuild the URI. Backward-compatible: a legacy ref with no
+ * `source` falls back to the detail (objects) or id (files) and yields a
+ * source that simply fails to resolve — never a crash and never content.
+ */
+export function wireContextSource(ref: AiChatContextRefV2): ContextSource {
+  const isObject =
+    ref.kind === "table" || ref.kind === "view" || ref.kind === "routine" || ref.kind === "schema";
+  const signature = ref.source ?? (isObject ? ref.detail ?? ref.label : ref.id);
+  if (!isObject) return { type: "uri", uri: signature };
+  const parts = signature.split(".");
+  if (parts.length >= 3) {
+    const connectionId = parts[0]!;
+    const schema = parts[1]!;
+    const name = parts.slice(2).join(".");
+    return { type: "object", connectionId, schema, name, objectKind: ref.kind as ContextSourceObject["objectKind"] };
+  }
+  return {
+    type: "object",
+    connectionId: "default",
+    schema: parts[0] ?? "",
+    name: parts[1] ?? ref.label,
+    objectKind: ref.kind as ContextSourceObject["objectKind"],
+  };
+}
 
 /** Hard cap for `mention_objects.items` (DB shortlist). Past this the list
  * is truncated; the webview filters client-side. */
@@ -1451,6 +1528,16 @@ export class AiChatPanel {
    */
   private v2OpenMention: { requestId: string; draftRevision: number; query: string } | null = null;
   /**
+   * TASK-CHATV2-011: refs the user chose "Keep snapshot" / "Refresh" for
+   * during THIS draft. They are the allowed exceptions at send time; cleared
+   * once a submit is accepted.
+   */
+  private contextSendExceptions = new Set<string>();
+  /** TASK-CHATV2-011: draft revision the exceptions were granted for. */
+  private contextSendExceptionsRevision = -1;
+  /** TASK-CHATV2-011: last connection id broadcast by `postActiveSchema`. */
+  private activeConnectionId: string | undefined = undefined;
+  /**
    * TASK-CHATV2-003: current turn correlation for V2 `turn_started` / turnId
    * stamping. Assigned when a `submit_turn` is accepted.
    */
@@ -1829,6 +1916,17 @@ export class AiChatPanel {
         await this.handleReady();
         return;
       case "submit_turn": {
+        // TASK-CHATV2-011: the host is AUTHORITATIVE for context status. Any
+        // ref that is changed/missing/forbidden (and was not explicitly kept or
+        // refreshed for THIS draft revision) BLOCKS the turn: no engine runs,
+        // and the webview receives the exact choices to present. Nothing is
+        // auto-dropped.
+        const blocked = await this.blockUnresolvedContext(
+          intent.clientRequestId,
+          intent.draft.context,
+          intent.draft.revision,
+        );
+        if (blocked) return;
         // Fresh turn correlation. Draft is cleared only by the webview once it
         // sees the matching `turn_started` ack below.
         this.v2TurnSeq += 1;
@@ -1859,10 +1957,13 @@ export class AiChatPanel {
           draftRevision: intent.draftRevision,
           query: intent.query,
         };
-        const items = await this.handleMentionList(intent.query);
+        const items = await this.handleMentionSearchWithRefs(
+          intent.query,
+          intent.kindFilter ?? "all",
+        );
         // Echo the EXACT correlation triple the webview sent; a response
-        // whose requestId/draftRevision no longer match is ignored by the
-        // webview reducer (stale query protection, PLAN §4).
+        // whose requestId/draftRevision/generation no longer match is ignored
+        // by the webview reducer (stale query protection, PLAN §4).
         this.postV2({
           kind: "mention_results",
           requestId: intent.requestId,
@@ -1873,11 +1974,18 @@ export class AiChatPanel {
         return;
       }
       case "resolve_context":
-        await this.handleMentionList(intent.ref.label);
+        await this.handleContextRefResolve(intent.clientRequestId, intent.ref);
+        return;
+      case "preview_context":
+        // A preview is METADATA ONLY and is built by the webview from the ref
+        // it already holds. The host answers with the re-validated status so a
+        // stale chip is flagged, but it NEVER runs a model or reads content.
+        await this.handleContextRefResolve(intent.clientRequestId, intent.ref);
         return;
       case "remove_context":
         // Webview-local chip removal: the host holds no draft state, so this
-        // is a semantic no-op acknowledgement (no frame, no throw).
+        // is a semantic no-op acknowledgement (no frame, no throw). Removal of
+        // ONE id is the webview's job (the reducer filters by id).
         return;
       case "permission_response":
         if (this.dbToolGate.respond(intent.requestId, intent.optionId)) return;
@@ -5129,6 +5237,399 @@ export class AiChatPanel {
     this.post({ type: "mention_objects", items });
     return items;
   }
+
+  /**
+   * TASK-CHATV2-011: structured mention search. Returns the SAME wire items
+   * shape the V1 `handleMentionList` produces (label/detail/token stay
+   * required) with an additional structured `ref` for the chip strip, plus the
+   * `selection` kind the spec adds.
+   *
+   * SEARCH IS MODEL-FREE: candidates come from schema introspection and the
+   * workspace file index only — no engine is consulted, and each source
+   * degrades to empty on failure.
+   */
+  private async handleMentionSearchWithRefs(
+    query: string,
+    kindFilter: "all" | "file" | "selection" | "database",
+  ): Promise<
+    Array<{
+      kind: "table" | "view" | "routine" | "file";
+      label: string;
+      detail: string;
+      token: string;
+      ref?: AiChatContextRefV2;
+    }>
+  > {
+    const policy = await this.resolveEffectivePolicy();
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+    const connectionId = await this.resolveConnectionId();
+
+    // One uniform pipeline: the selection, workspace files and DB objects all
+    // flow through `searchContext` so duplicate tokens are disambiguated the
+    // same way and the wire rows are stable.
+    const selectionCandidate = policy.context.workspace
+      ? this.activeSelectionCandidate(workspaceRoot)
+      : null;
+    const refs = await searchContext(
+      {
+        connectionId,
+        listFiles: async (q, limit) =>
+          policy.context.workspace ? await this.listFileCandidates(q, limit) : [],
+        activeSelection: () => selectionCandidate,
+        listObjects: async (q, limit) =>
+          policy.context.schema ? await this.listObjectCandidates(q, limit) : [],
+      },
+      { requestId: "", draftRevision: 0, query, kindFilter },
+    );
+
+    const items: Array<{
+      kind: "table" | "view" | "routine" | "file";
+      label: string;
+      detail: string;
+      token: string;
+      ref?: AiChatContextRefV2;
+    }> = [];
+    for (const ref of refs.items) {
+      // The wire `kind` vocabulary predates `selection`/`schema`; a selection
+      // rides as `file` (its ref keeps the precise kind) and a schema as view.
+      const wireKind: "table" | "view" | "routine" | "file" =
+        ref.kind === "selection" || ref.kind === "schema" ? "file" : ref.kind;
+      items.push({
+        kind: wireKind,
+        label: ref.label,
+        detail: ref.detail,
+        token: ref.displayToken.replace(/^@/, ""),
+        ref: toWireContextRef(ref),
+      });
+    }
+    return items;
+  }
+
+  /** The active editor's selection as a search candidate, or null. */
+  private activeSelectionCandidate(workspaceRoot: string): ContextSelectionCandidate | null {
+    const editor = vscode.window.activeTextEditor;
+    if (editor === undefined || editor.selection.isEmpty) return null;
+    const uri = editor.document.uri;
+    const fsPath = uri.fsPath ?? "";
+    const rel =
+      workspaceRoot.length > 0 && fsPath.startsWith(workspaceRoot)
+        ? fsPath.slice(workspaceRoot.length).replace(/^\/+/, "")
+        : fsPath.length > 0
+          ? fsPath
+          : uri.toString();
+    return {
+      label: rel.split("/").pop() ?? rel,
+      detail: rel,
+      uri: uri.toString(),
+      revision: `sel:${editor.document.version}:${editor.selection.start.line}-${editor.selection.end.line}`,
+      lineRange: {
+        start: editor.selection.start.line + 1,
+        end: editor.selection.end.line + 1,
+      },
+    };
+  }
+
+  /** Workspace files as capture-ready candidates (paths only, no reads). */
+  private async listFileCandidates(
+    query: string,
+    limit: number,
+  ): Promise<Array<{ kind: "file"; label: string; detail: string; uri: string }>> {
+    try {
+      const exclude = "{**/node_modules/**,**/.git/**,**/dist/**,**/out/**}";
+      const uris = await vscode.workspace.findFiles("**/*", exclude, limit);
+      const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+      const out: Array<{ kind: "file"; label: string; detail: string; uri: string }> = [];
+      for (const u of uris) {
+        const rel =
+          wsRoot.length > 0 && u.fsPath.startsWith(wsRoot)
+            ? u.fsPath.slice(wsRoot.length).replace(/^\/+/, "")
+            : u.fsPath;
+        if (query.length > 0 && !rel.toLowerCase().includes(query.toLowerCase())) continue;
+        out.push({ kind: "file", label: rel.split("/").pop() ?? rel, detail: rel, uri: u.toString() });
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  /** DB objects as capture-ready candidates (schema metadata only). */
+  private async listObjectCandidates(
+    query: string,
+    limit: number,
+  ): Promise<
+    Array<{
+      kind: "table" | "view" | "routine" | "schema";
+      label: string;
+      detail: string;
+      connectionId: string;
+      schema: string;
+      name: string;
+    }>
+  > {
+    const connectionId = await this.resolveConnectionId();
+    const out: Array<{
+      kind: "table" | "view" | "routine" | "schema";
+      label: string;
+      detail: string;
+      connectionId: string;
+      schema: string;
+      name: string;
+    }> = [];
+    let adapter: DbAdapter | null = null;
+    try {
+      adapter = await this.options.adapterFactory();
+    } catch {
+      adapter = null;
+    }
+    if (adapter === null) return out;
+
+    const lower = query.toLowerCase();
+    const match = (name: string, schema: string): boolean =>
+      lower.length === 0 ||
+      name.toLowerCase().includes(lower) ||
+      `${schema}.${name}`.toLowerCase().includes(lower);
+
+    try {
+      const schemas = await adapter.listSchemas(false);
+      for (const s of schemas) {
+        if (out.length >= limit) break;
+        try {
+          for (const t of await adapter.listTables(s.name)) {
+            if (out.length >= limit) break;
+            if (!match(t.name, t.schema)) continue;
+            out.push({
+              kind: "table",
+              label: t.name,
+              detail: `${connectionId}.${t.schema}.${t.name}`,
+              connectionId,
+              schema: t.schema,
+              name: t.name,
+            });
+          }
+        } catch {
+          /* per-schema failure → keep going */
+        }
+        if (out.length >= limit) break;
+        try {
+          for (const v of await adapter.listViews(s.name)) {
+            if (out.length >= limit) break;
+            if (!match(v.name, v.schema)) continue;
+            out.push({
+              kind: "view",
+              label: v.name,
+              detail: `${connectionId}.${v.schema}.${v.name}`,
+              connectionId,
+              schema: v.schema,
+              name: v.name,
+            });
+          }
+        } catch {
+          /* per-schema failure → keep going */
+        }
+        if (out.length >= limit) break;
+        try {
+          for (const r of await adapter.listRoutines(s.name)) {
+            if (out.length >= limit) break;
+            if (!match(r.name, r.schema)) continue;
+            out.push({
+              kind: "routine",
+              label: r.name,
+              detail: `${connectionId}.${r.schema}.${r.name}`,
+              connectionId,
+              schema: r.schema,
+              name: r.name,
+            });
+          }
+        } catch {
+          /* per-schema failure → keep going */
+        }
+      }
+    } catch {
+      /* introspection hard-failed → empty object list */
+    }
+    return out;
+  }
+
+  /** The live connection id used to qualify DB object identity. Seeded by
+   * `postActiveSchema` (the host's schema-store fan-out) so a mention captured
+   * on one connection never silently re-resolves against another. */
+  private async resolveConnectionId(): Promise<string> {
+    const connectionId = this.activeConnectionId;
+    return typeof connectionId === "string" && connectionId.length > 0
+      ? connectionId
+      : "default";
+  }
+
+  /**
+   * TASK-CHATV2-011: re-validate ONE ref and answer with its live status.
+   * The host is AUTHORITATIVE for status — the webview never invents one.
+   * Never throws; a probe failure degrades to `missing` (safe: the user must
+   * choose explicitly).
+   */
+  private async handleContextRefResolve(
+    clientRequestId: string,
+    ref: AiChatContextRefV2,
+  ): Promise<void> {
+    const source = wireContextSource(ref);
+    const policy = await this.resolveEffectivePolicy();
+    const revision = ref.revision ?? "";
+    const contextRef: ContextRef = {
+      id: ref.id,
+      kind: ref.kind,
+      label: ref.label,
+      detail: ref.detail ?? ref.label,
+      displayToken: ref.displayToken ?? `@${ref.label}`,
+      source,
+      snapshot: { revision, capturedAt: null },
+      status: ref.status ?? (ref.missing === true ? "missing" : ref.changed === true ? "changed" : "ready"),
+      preview: { supported: true, reason: null },
+    };
+
+    const [resolved] = await resolveContextRefs(
+      {
+        fileRevision: async (uri) => await this.workspaceRevision(uri),
+        objectSignature: async (objectSource) =>
+          await this.objectSignature(objectSource, policy.context.schema),
+        isPermitted: (candidate) =>
+          candidate.source.type === "object"
+            ? policy.context.schema
+            : policy.context.workspace,
+      },
+      [contextRef],
+    );
+
+    const result: ContextResolutionResult = resolved!;
+    // A choice the user already made for this ref (Keep/Refresh) is remembered
+    // so the send gate honours it instead of re-blocking.
+    if (result.status === "ready") this.contextSendExceptions.add(ref.id);
+
+    this.postV2({
+      kind: "context_resolved",
+      requestId: clientRequestId,
+      ref,
+      status: result.status,
+      revision: result.snapshot.revision,
+      label: result.label,
+      detail: result.detail,
+      displayToken: result.displayToken,
+    });
+  }
+
+  /** Live fingerprint for a workspace URI: `null` means "no longer exists".
+   * Returns a shape marker + size, never the file's bytes. */
+  private async workspaceRevision(uri: string): Promise<string | null> {
+    try {
+      const stat = await vscode.workspace.fs.stat(vscode.Uri.parse(uri));
+      return `${stat.type}:${stat.size}:${stat.mtime}`;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Live fingerprint for a DB object: `null` means "no longer resolvable".
+   * Metadata only — never a row. */
+  private async objectSignature(
+    source: ContextSourceObject,
+    schemaAllowed: boolean,
+  ): Promise<string | null> {
+    if (!schemaAllowed) return null;
+    let adapter: DbAdapter | null = null;
+    try {
+      adapter = await this.options.adapterFactory();
+    } catch {
+      adapter = null;
+    }
+    if (adapter === null) return null;
+    try {
+      switch (source.objectKind) {
+        case "table": {
+          const tables = await adapter.listTables(source.schema);
+          if (!tables.some((t) => t.name === source.name)) return null;
+          const columns = await adapter.listColumns(source.name, source.schema);
+          return `table:${columns.map((c) => `${c.name}:${c.dataType}`).join(",")}`;
+        }
+        case "view": {
+          const views = await adapter.listViews(source.schema);
+          return views.some((v) => v.name === source.name)
+            ? `view:${source.schema}.${source.name}`
+            : null;
+        }
+        case "routine": {
+          const routines = await adapter.listRoutines(source.schema);
+          const found = routines.find((r) => r.name === source.name);
+          return found === undefined ? null : `routine:${found.kind}:${found.name}`;
+        }
+        case "schema": {
+          const schemas = await adapter.listSchemas(false);
+          return schemas.some((s) => s.name === source.schema)
+            ? `schema:${source.schema}`
+            : null;
+        }
+        default:
+          return null;
+      }
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * TASK-CHATV2-011: block a send whose draft carries refs that are not clean.
+   * Returns true when the turn was BLOCKED (no engine runs). A ref the user
+   * explicitly resolved this draft (Refresh/Keep) is allowed through, matched by
+   * ID so duplicate labels resolve independently.
+   */
+  private async blockUnresolvedContext(
+    clientRequestId: string,
+    context: readonly AiChatContextRefV2[],
+    draftRevision: number,
+  ): Promise<boolean> {
+    if (context.length === 0) return false;
+    // A NEW draft revision invalidates every prior choice.
+    if (draftRevision !== this.contextSendExceptionsRevision) {
+      this.contextSendExceptions.clear();
+      this.contextSendExceptionsRevision = draftRevision;
+    }
+
+    const policy = await this.resolveEffectivePolicy();
+    const refs: ContextRef[] = context.map((ref) => ({
+      id: ref.id,
+      kind: ref.kind,
+      label: ref.label,
+      detail: ref.detail ?? ref.label,
+      displayToken: ref.displayToken ?? `@${ref.label}`,
+      source: wireContextSource(ref),
+      snapshot: { revision: ref.revision ?? "", capturedAt: null },
+      status: "ready",
+      preview: { supported: true, reason: null },
+    }));
+
+    const results = await resolveContextRefs(
+      {
+        fileRevision: async (uri) => await this.workspaceRevision(uri),
+        objectSignature: async (objectSource) =>
+          await this.objectSignature(objectSource, policy.context.schema),
+        isPermitted: (candidate) =>
+          candidate.source.type === "object" ? policy.context.schema : policy.context.workspace,
+      },
+      refs,
+    );
+
+    const turnContext = buildTurnContext(refs, results);
+    const blocked = turnContext.blocked.filter(
+      (entry) => !this.contextSendExceptions.has(entry.refId),
+    );
+    if (blocked.length === 0) return false;
+
+    // The turn does NOT run. The webview presents the explicit choices.
+    this.postV2({
+      kind: "context_blocked",
+      clientRequestId,
+      blocked: blocked.map((entry) => ({ refId: entry.refId, status: entry.status })),
+    });
+    return true;
+  }
   /**
    * AIX-04: user approved the plan card. Consent funnel: re-check drift
    * against the live schema, then confirmDangerousStatements, then a
@@ -5300,6 +5801,9 @@ export class AiChatPanel {
     schema: string | undefined,
     connectionId: string | undefined,
   ): void {
+    // TASK-CHATV2-011: remember the connection identity so a structured DB
+    // mention is qualified by the connection it was captured on.
+    this.activeConnectionId = connectionId;
     this.post({ type: "schemaChanged", schema, connectionId });
   }
 

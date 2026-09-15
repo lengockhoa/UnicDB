@@ -15,8 +15,12 @@ import { createInitialChatState } from "../store";
 import { ALL_UNIVERSAL_COMMANDS, resolveChatCommands, type CommandGateInput } from "../../../src/ui/aiChatPanelCommands";
 import type { EngineCapabilitySnapshot } from "../../../src/ai/capabilities";
 import {
+  AUTOCOMPLETE_ERROR_MARKER,
+  AUTOCOMPLETE_GROUP_MARKER,
   AUTOCOMPLETE_LISTBOX_MARKER,
+  AUTOCOMPLETE_LOADING_MARKER,
   AUTOCOMPLETE_OPTION_ID_PREFIX,
+  AUTOCOMPLETE_RETRY_MARKER,
   createAutocompleteView,
   type AutocompleteRowModel,
 } from "../autocomplete";
@@ -262,5 +266,106 @@ describe("geometry constants on the rendered listbox", () => {
     expect(listbox.style.getPropertyValue("--UnicDB-list-max")).toBe("420px");
     expect(listbox.style.getPropertyValue("--UnicDB-list-pad")).toBe("12px");
     expect(listbox.dataset.rowHeight).toBe("44");
+  });
+});
+
+// ---- CHATV2-011: grouped mention rows --------------------------------------
+
+describe("AutocompleteView — grouped mention rows (CHATV2-011)", () => {
+  it("paints a non-selectable group heading before the first row of a group", () => {
+    const h = makeHarness();
+    h.view.setRows(
+      [
+        { id: "f1", primary: "@a/index.vue", secondary: "a/index.vue", groupLabel: "Files", icon: "file" },
+        { id: "f2", primary: "@b/index.vue", secondary: "b/index.vue", icon: "file" },
+        { id: "d1", primary: "@public.users", secondary: "conn-1.public.users", groupLabel: "Database", icon: "table" },
+      ],
+      0,
+    );
+    const listbox = h.composer.root.querySelector<HTMLElement>(`[${AUTOCOMPLETE_LISTBOX_MARKER}]`)!;
+    const headings = listbox.querySelectorAll<HTMLElement>(`[${AUTOCOMPLETE_GROUP_MARKER}]`);
+    expect(headings).toHaveLength(2);
+    expect(headings[0]!.textContent).toBe("Files");
+    expect(headings[1]!.textContent).toBe("Database");
+    // A heading is never an option.
+    expect(headings[0]!.getAttribute("role")).not.toBe("option");
+    expect(listbox.querySelectorAll('[role="option"]')).toHaveLength(3);
+  });
+
+  it("renders a 16px semantic icon per row", () => {
+    const h = makeHarness();
+    h.view.setRows(
+      [{ id: "f1", primary: "@index.vue", secondary: "a/index.vue", icon: "file" }],
+      0,
+    );
+    const svg = h.composer.root.querySelector<SVGElement>('svg[data-icon="file"]')!;
+    expect(svg).not.toBeNull();
+    expect(svg.getAttribute("width")).toBe("16");
+    expect(svg.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("renders an inert status row that is never an option", () => {
+    const h = makeHarness();
+    h.view.setStatus({ id: "empty", text: "No matching context" });
+    const listbox = h.composer.root.querySelector<HTMLElement>(`[${AUTOCOMPLETE_LISTBOX_MARKER}]`)!;
+    expect(listbox.textContent).toContain("No matching context");
+    expect(listbox.querySelectorAll('[role="option"]')).toHaveLength(0);
+    expect(h.composer.prompt.getAttribute("aria-activedescendant")).toBeNull();
+    expect(h.composer.prompt.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("renders the error row with a Retry control that re-requests", () => {
+    const h = makeHarness();
+    const onRetry = vi.fn();
+    h.view.setOnRetry(onRetry);
+    h.view.setStatus({ id: "error", text: "Could not search context", retryLabel: "Retry" });
+    const listbox = h.composer.root.querySelector<HTMLElement>(`[${AUTOCOMPLETE_LISTBOX_MARKER}]`)!;
+    expect(listbox.querySelector(`[${AUTOCOMPLETE_ERROR_MARKER}]`)).not.toBeNull();
+    const retry = listbox.querySelector<HTMLElement>(`[${AUTOCOMPLETE_RETRY_MARKER}]`)!;
+    expect(retry.textContent).toBe("Retry");
+    retry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(h.composer.prompt);
+  });
+
+  it("renders a non-selectable loading row with a spinner", () => {
+    const h = makeHarness();
+    h.view.setLoading("Searching context…");
+    const listbox = h.composer.root.querySelector<HTMLElement>(`[${AUTOCOMPLETE_LISTBOX_MARKER}]`)!;
+    const loading = listbox.querySelector<HTMLElement>(`[${AUTOCOMPLETE_LOADING_MARKER}]`)!;
+    expect(loading).not.toBeNull();
+    expect(loading.querySelector('svg[data-icon="spinner"]')).not.toBeNull();
+    expect(listbox.querySelectorAll('[role="option"]')).toHaveLength(0);
+    expect(h.composer.prompt.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("setRows clears a previously painted status row", () => {
+    const h = makeHarness();
+    h.view.setStatus({ id: "error", text: "Could not search context", retryLabel: "Retry" });
+    h.view.setRows([{ id: "f1", primary: "@index.vue", secondary: "a/index.vue" }], 0);
+    const listbox = h.composer.root.querySelector<HTMLElement>(`[${AUTOCOMPLETE_LISTBOX_MARKER}]`)!;
+    expect(listbox.querySelector(`[${AUTOCOMPLETE_ERROR_MARKER}]`)).toBeNull();
+    expect(listbox.querySelectorAll('[role="option"]')).toHaveLength(1);
+  });
+
+  it("keeps hostile group labels and icon names inert", () => {
+    const h = makeHarness();
+    h.view.setRows(
+      [
+        {
+          id: "evil",
+          primary: "@x",
+          secondary: "<img src=x onerror=alert(1)>",
+          groupLabel: "<script>alert(1)</script>",
+          icon: "<img onerror=alert(1)>",
+        },
+      ],
+      0,
+    );
+    const listbox = h.composer.root.querySelector<HTMLElement>(`[${AUTOCOMPLETE_LISTBOX_MARKER}]`)!;
+    expect(listbox.querySelector("script")).toBeNull();
+    expect(listbox.querySelector("img")).toBeNull();
+    expect(listbox.textContent).toContain("<script>alert(1)</script>");
+    expect(listbox.querySelector('svg[data-icon="unknown"]')).not.toBeNull();
   });
 });

@@ -65,4 +65,27 @@ npm run compile
 - Produces: `ContextRef`, `searchContext()`, `resolveContext()`, mention/chip views for 013/015.
 
 ## Discussion
-(no comments yet)
+- 2026-09-15 executor: Implemented the pure context-identity layer first (`src/ui/aiChatContext.ts`) with tests written before the implementation; then the mention parser/scheduler (`webview/aiChat/mentions.ts`), the grouped-row extension of the shared listbox (`webview/aiChat/autocomplete.ts`), the chip/preview/resolve strip (`webview/aiChat/contextChips.ts`), and finally the wire contract + host handlers (`aiChatPanelMessages.ts`, `aiChatPanel.ts`). Two decisions made without a human in the loop, recorded here:
+  1. **Legacy ref fields kept.** `AiChatContextRefV2` still carries the pre-011 `changed`/`missing` booleans alongside the new `status`/`revision`. Removing them would break the already-merged V2 consumers (waves ≤6); the parser treats them as a derived view of `status`, so both stay consistent.
+  2. **`remove_context` remains an ack-only no-op.** The task spec assigns host re-validation to `resolve_context`/`submit_turn`; wiring a third mutation path would duplicate that state. The webview owns the local strip mutation; the host never invents a ref it did not receive.
+
+## Executor Report
+- **EXECUTOR_TOOL**: claude-code
+- **EXECUTOR_MODEL**: bao-sonnet (self-reported; reviewer must use a different model)
+- **EXECUTOR_SUBAGENT**: -
+- **RED_OUTPUT**: Tests were authored before each implementation milestone. Observed RED evidence (real failure, later fixed): `webview/aiChat/__tests__/mentions.test.ts` → `mentionEligibility("use @inde here", 10)` asserted `expected false to be true`; the caret sat one past the token (after the following space), so no token was found. Fixed by moving the caret to 9, which still tests the outside-code eligible path. Runtime RED for the wire-contract additions was confirmed by the new `aiChatPanelContext011.test.ts` positive cases failing type-wise until `kindFilter`/`generation`/`context_resolved`/`context_blocked` existed in `aiChatPanelMessages.ts`.
+- **Verification Output**:
+  - `npm test -- --run src/ui/__tests__/aiChatContext.test.ts webview/aiChat/__tests__/mentions.test.ts src/ui/__tests__/aiChatPanelMentions.test.ts webview/aiChat/__tests__/keyboard.test.ts`
+    ```
+    ✓ webview/aiChat/__tests__/keyboard.test.ts  (23 tests) 3ms
+    ✓ webview/aiChat/__tests__/mentions.test.ts  (33 tests) 6ms
+    ✓ src/ui/__tests__/aiChatContext.test.ts  (33 tests) 7ms
+    ✓ src/ui/__tests__/aiChatPanelMentions.test.ts  (38 tests) 9ms
+    Test Files  4 passed (4)
+          Tests  127 passed (127)
+    ```
+  - `npm run typecheck` → `tsc --noEmit`, exit 0 (no output).
+  - `npm run compile` → `esbuild: build complete`, exit 0.
+  - Additional: `npm test -- --run src/ui/__tests__/aiChatPanelContext011.test.ts` → 10 passed (new wire-contract file). `webview/aiChat/__tests__/contextChips.test.ts` → 12 passed.
+- **Status**: DONE
+- **Note**: `webview/aiChat/styles.css` was APPENDED to only (group headings, row body/text/icon, status/spinner/retry, chips, preview, resolution dialog), all under `.UnicDB-ai-chat-v2-*` selectors — the orchestrator merge-applies this file. No package/version/publish change. Files changed vs base 50c506c: `src/ui/aiChatContext.ts`, `src/ui/aiChatPanel.ts`, `src/ui/aiChatPanelMessages.ts`, `webview/aiChat/mentions.ts`, `webview/aiChat/autocomplete.ts`, `webview/aiChat/contextChips.ts`, `webview/aiChat/styles.css`, and the four test files (`src/ui/__tests__/aiChatContext.test.ts`, `src/ui/__tests__/aiChatPanelContext011.test.ts`, `webview/aiChat/__tests__/mentions.test.ts`, `webview/aiChat/__tests__/contextChips.test.ts`, `webview/aiChat/__tests__/autocomplete.test.ts`).
