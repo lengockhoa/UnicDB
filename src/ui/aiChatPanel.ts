@@ -145,6 +145,9 @@ import {
   type EngineCapabilitySnapshot,
 } from "../ai/capabilities";
 import type { ConnectionRecoveryStatus } from "../core/connectionManager";
+// TASK-CHATV2-010 — `/model` validates against the roles the capability
+// snapshot actually advertises for the active engine, not a hard-coded pair.
+import { advertisedModelRoles } from "./aiChatPanelCommands";
 
  import { buildPermissionToolInfo } from "./permissionDetail";
  
@@ -2101,14 +2104,34 @@ export class AiChatPanel {
         });
         return;
       }
-      if (args.length !== 1 || (args[0] !== "work" && args[0] !== "smart")) {
+      // TASK-CHATV2-010: validate against what the host ADVERTISES for the
+      // active engine. Before the capability snapshot exists (pre-ready, or a
+      // host that never posts one) fall back to the closed `AiModelRole` set,
+      // which is exactly what `buildModelsFrame`/`model_select` already accept —
+      // so the legacy `work|smart` surface keeps working while a newly
+      // advertised role (`lite`) is no longer rejected as invalid.
+      const advertised = advertisedModelRoles(this.capabilitySnapshot, AI_MODEL_ROLES);
+      const allowedRoles: readonly string[] = advertised.length > 0 ? advertised : AI_MODEL_ROLES;
+      const wanted =
+        args.length === 1 && typeof args[0] === "string" ? args[0].toLowerCase() : null;
+      const match = wanted === null ? undefined : allowedRoles.find((r) => r.toLowerCase() === wanted);
+      if (match === undefined) {
         this.post({
           type: "error",
-          message: "Usage: /model work|smart",
+          message: `Usage: /model ${allowedRoles.join("|")}`,
         });
         return;
       }
-      this.activeRole = args[0];
+      // `isAiModelRole` is the same closed guard `model_select` uses, so a role
+      // can never be set through this path that the chip path would reject.
+      if (!isAiModelRole(match)) {
+        this.post({ type: "error", message: `Usage: /model ${allowedRoles.join("|")}` });
+        return;
+      }
+      // A role with no configured modelId is "feature disabled" — the chip path
+      // rejects it, but `/model` is the host-settings escape hatch and keeps the
+      // documented behavior of setting the active role (existing pinned test).
+      this.activeRole = match;
       this.post({
         type: "assistant",
         text: `Active model role set to ${this.activeRole}`,

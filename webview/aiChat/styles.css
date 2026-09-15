@@ -1553,3 +1553,80 @@
 .UnicDB-ai-chat-v2 {
   --UnicDB-ai-chat-v2-hover: var(--vscode-list-hoverBackground, rgba(127, 127, 127, 0.14));
 }
+
+
+/* ---------------------------------------------------------------------------
+ * TASK-CHATV2-010 — shared anchored slash/mention listbox. APPENDED block: no
+ * earlier rule is rewritten. Every selector is scoped under the V2 root, and
+ * the geometry the renderer pins (44px row, 8 visible rows, 280-420 width,
+ * 12px vertical padding) is read from the custom properties `autocomplete.ts`
+ * sets, with inline fallbacks so a merge that drops this block still renders.
+ * ------------------------------------------------------------------------- */
+.UnicDB-ai-chat-v2-autocomplete {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: var(--UnicDB-list-min, 280px);
+  max-width: var(--UnicDB-list-max, 420px);
+  max-height: calc(
+    (var(--UnicDB-row-h, 44px) * 8) + (var(--UnicDB-list-pad, 12px) * 2)
+  );
+  overflow-y: auto;
+  padding: var(--UnicDB-list-pad, 12px);
+  border: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.35));
+  border-radius: 8px;
+  background: var(--vscode-editorWidget-background, #161b22);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+
+.UnicDB-ai-chat-v2-autocomplete-row {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-height: var(--UnicDB-row-h, 44px);
+  padding: 0 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-autocomplete-row[aria-selected="true"] {
+  background: var(--UnicDB-ai-chat-v2-hover, rgba(127, 127, 127, 0.14));
+}
+
+.UnicDB-ai-chat-v2-autocomplete-row[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.UnicDB-ai-chat-v2-autocomplete-primary {
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.UnicDB-ai-chat-v2-autocomplete-secondary,
+.UnicDB-ai-chat-v2-autocomplete-syntax {
+  font-size: 11px;
+  line-height: 1.3;
+  color: var(--vscode-descriptionForeground, rgba(200, 200, 200, 0.7));
+}
+
+.UnicDB-ai-chat-v2-autocomplete-badge {
+  align-self: flex-start;
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--vscode-editorWidget-border, rgba(127, 127, 127, 0.35));
+}
+
+.UnicDB-ai-chat-v2-autocomplete-empty {
+  min-height: var(--UnicDB-row-h, 44px);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--vscode-descriptionForeground, rgba(200, 200, 200, 0.7));
+}

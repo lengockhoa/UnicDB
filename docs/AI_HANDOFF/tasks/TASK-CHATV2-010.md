@@ -65,3 +65,63 @@ npm run compile
 
 ## Discussion
 (no comments yet)
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: |
+  Files were written incrementally, one file at a time (milestone commits on
+  handoff/task-chatv2-010). Each module was RED before GREEN:
+    - aiChatPanelCommands.test.ts → "TypeError: providerCommandsFromCapabilities
+      is not a function" (24 of 25 failed; new exports absent).
+    - slash.test.ts → "Failed to resolve import "../slash" ... Does the file exist?"
+    - autocomplete.test.ts → "Failed to resolve import "../autocomplete" ..."
+    - advertisedModelRoles block → "advertisedModelRoles is not a function".
+  Real failures found and fixed by writing the implementation:
+    - getSlashToken initially rejected an indented line-start token; fixed the
+      line-start scan (test rewritten to assert the correct eligibility rule).
+    - /engine + /model argument matching was case-sensitive; a user typing
+      `Claude-Code` was rejected. Added `includesFolded` (case-insensitive
+      membership, argument bytes preserved for the insertion template).
+    - buildSlashRows truncated a >8 list at row 8, stranding provider rows;
+      changed to a window that keeps the active row on screen.
+    - The listbox silently sliced rows and dropped `aria-expanded` on close;
+      both corrected (caller owns windowing, close collapses the attribute).
+Verification Output: |
+  $ npm test -- --run src/ui/__tests__/aiChatPanelCommands.test.ts webview/aiChat/__tests__/slash.test.ts webview/aiChat/__tests__/keyboard.test.ts
+   ✓ webview/aiChat/__tests__/keyboard.test.ts  (23 tests) 7ms
+   ✓ src/ui/__tests__/aiChatPanelCommands.test.ts  (29 tests) 5ms
+   ✓ webview/aiChat/__tests__/slash.test.ts  (24 tests) 4ms
+   Test Files  3 passed (3)
+        Tests  76 passed (76)
+
+  $ npm run typecheck
+  > tsc --noEmit
+  (no output — clean)
+
+  $ npm run compile
+  esbuild: build complete
+
+  Additional (delivered file + consumers):
+  $ npx vitest run webview/aiChat/__tests__/autocomplete.test.ts
+   ✓ webview/aiChat/__tests__/autocomplete.test.ts  (10 tests) 36ms
+  $ npx vitest run src/ui/__tests__/aiChatPanelCloneWebview.test.ts src/ai/__tests__/capabilities.test.ts webview/aiChat/__tests__/composer.test.ts webview/aiChat/__tests__/controller.test.ts src/ui/__tests__/aiChatPanelCloneHost.test.ts
+   Test Files  5 passed (5) / Tests  92 passed (92)
+  $ npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelEngine.test.ts
+   Test Files  3 passed (3) / Tests  68 passed (68)
+Status: PASS
+Note: |
+  The full-suite run shows 6 pre-existing environmental failures unrelated to
+  this task: the worktree has no installed `node_modules` (`node_modules/.bin`
+  is empty), so five webview bundle tests that spawn `node_modules/.bin/esbuild`
+  and one vsce packaging test that spawns `node_modules/.bin/vsce` fail with
+  ENOENT. They fail identically on the untouched base and are not affected by
+  these modules. No version bump, package or publish touches were made. The
+  appended `webview/aiChat/styles.css` block is a clean append under
+  `.UnicDB-ai-chat-v2` selectors for the orchestrator merge.
+  Scope decision: `/model <role>` validates against the roles the capability
+  snapshot advertises (falling back to the closed `AiModelRole` set pre-ready),
+  which is what the host's `buildModelsFrame`/`model_select` accept; the
+  host-side "not configured" check stays on the chip path so the pinned
+  `/model smart` behavior is unchanged.

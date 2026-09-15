@@ -1163,6 +1163,50 @@ describe("AiChatPanel — TASK-012 R4.5: claude/codex engine dispose on teardown
 });
 
 // ============================================================================
+// ============================================================================
+// TASK-CHATV2-010 — /model accepts every advertised role, not a legacy subset.
+// ============================================================================
+describe("AiChatPanel — /model advertised-role validation (SLASH-07)", () => {
+  it("#M1 accepts an advertised role beyond the legacy work|smart pair", async () => {
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      engine: "builtin",
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({ type: "command", command: "model", args: ["lite"] });
+    await until(() => postedMessages(p).some(isAssistant));
+    const assistant = postedMessages(p).filter(isAssistant).pop();
+    expect(assistant?.text).toContain("lite");
+    expect(postedMessages(p).filter(isError)).toHaveLength(0);
+  });
+
+  it("#M2 an unadvertised role keeps a corrective usage string", async () => {
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      engine: "builtin",
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    handler({ type: "command", command: "model", args: ["nonsense"] });
+    await until(() => postedMessages(p).some(isError));
+    const errs = postedMessages(p).filter(isError);
+    expect(errs.some((e) => /Usage: \/model/.test(e.message))).toBe(true);
+    // The listed roles are the advertised ones.
+    expect(errs.some((e) => /lite/.test(e.message))).toBe(true);
+  });
+});
+
 // TASK (§8.1) — /engine capability-gated command visibility.
 //
 // The host accepts the full four-engine vocabulary instead of the old
