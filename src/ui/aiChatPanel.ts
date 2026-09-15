@@ -153,6 +153,8 @@ import {
 // gate) from this resolver instead of a provider-name branch, so the four
 // engines can never advertise a capability the adapter does not prove.
 import {
+  engineDisplayName,
+  reasonForUnavailable,
   resolveEngineCapabilities,
   type AiEngineName,
   type ChatModelRole,
@@ -1946,10 +1948,17 @@ export class AiChatPanel {
         this.handleStop();
         return;
       case "set_engine":
-        await this.handleCommand("engine", [intent.engine]);
+        // TASK-CHATV2-012 — the acknowledged switch. The host VALIDATES, and
+        // only a validated switch posts a `capabilities` ack carrying the SAME
+        // clientRequestId. A rejection posts the exact safe failure copy and
+        // leaves the active engine untouched (the webview keeps the old pill).
+        await this.handleSetEngineV2(intent.clientRequestId, intent.engine);
         return;
       case "set_model":
-        await this.handleModelSelect(intent.role);
+        // TASK-CHATV2-012 — validated role change; the ack is the `models`
+        // frame, which now carries the request id so the chip updates only on
+        // a matching ack.
+        await this.handleSetModelV2(intent.clientRequestId, intent.role);
         return;
       case "search_context": {
         this.v2OpenMention = {
@@ -2442,6 +2451,117 @@ export class AiChatPanel {
     }
     this.activeRole = role;
     this.post(this.buildModelsFrame(cfg));
+  }
+
+  // ==========================================================================
+  // TASK-CHATV2-012 — acknowledged engine/model switching
+  // ==========================================================================
+
+  /**
+   * Validate + apply a V2 `set_engine`. The host is AUTHORITATIVE: only a
+   * validated switch mutates + re-posts capabilities with the SAME
+   * clientRequestId. A rejected target posts the exact safe failure copy and
+   * leaves `this.engine` untouched, so the webview keeps the OLD pill.
+   *
+   * The active engine was already resolved by `adapterRuntimeFor`; the panel
+   * does not re-probe. A target the adapter reports non-ready is refused with
+   * the resolver's own safe reason and no state change.
+   */
+  private async handleSetEngineV2(
+    clientRequestId: string,
+    engine: AiEngineName,
+  ): Promise<void> {
+    const runtime = this.adapterRuntimeFor(engine);
+    if (runtime.state !== "ready") {
+      // Rejection: safe copy only, exactly the shape the webview toasts.
+      this.postV2({
+        kind: "toast",
+        level: "error",
+        safeMessage: `Could not switch to ${engineDisplayName(engine)}. ${reasonForUnavailable(runtime.reason)}`,
+        clientRequestId,
+      });
+      return;
+    }
+    try {
+      await vscode.workspace
+        .getConfiguration("UnicDB")
+        .update("ai.engine", engine, vscode.ConfigurationTarget.Global);
+    } catch {
+      this.postV2({
+        kind: "toast",
+        level: "error",
+        safeMessage: `Could not switch to ${engineDisplayName(engine)}. It could not be saved.`,
+        clientRequestId,
+      });
+      return;
+    }
+    // Leaving omp tears down its persistent ACP session; the other engines own
+    // only per-turn subprocesses, so no session lingers.
+    if (this.engine === "omp" && engine !== "omp") this.disposeAcpSession();
+    this.engine = engine;
+    // Capability re-resolve so the ack carries the NEW engine's truth.
+    let cfg: AiConfig | null = null;
+    try {
+      cfg = await this.options.deps.loadConfig();
+    } catch {
+      cfg = null;
+    }
+    const effectiveCfg = cfg ?? defaultAiSettings();
+    this.capabilitySnapshot = this.resolveCapabilitiesFor(engine, effectiveCfg);
+    this.resolvedVisionCapable = this.capabilitySnapshot.supports.imageInput;
+    this.postEngine(engine);
+    this.postV2({
+      kind: "capabilities",
+      capabilities: this.capabilitySnapshot,
+      clientRequestId,
+    });
+  }
+
+  /**
+   * Validate + apply a V2 `set_model`. A role with no configured model is
+   * refused (the chip path never selects an unconfigured role). The reserved
+   * ack is the `models` frame; it carries the request id so the chip updates
+   * only on a matching ack. A rejection posts safe failure copy and leaves the
+   * active role untouched.
+   */
+  private async handleSetModelV2(
+    clientRequestId: string,
+    role: AiModelRole,
+  ): Promise<void> {
+    if (!isAiModelRole(role)) {
+      this.postV2({
+        kind: "toast",
+        level: "error",
+        safeMessage: "Could not change the model. That role is not supported.",
+        clientRequestId,
+      });
+      return;
+    }
+    let cfg: AiConfig | null = null;
+    try {
+      cfg = await this.options.deps.loadConfig();
+    } catch {
+      cfg = null;
+    }
+    const target = cfg?.models?.[role];
+    if (cfg === null || target === undefined || typeof target.modelId !== "string" || target.modelId.length === 0) {
+      this.postV2({
+        kind: "toast",
+        level: "error",
+        safeMessage: "Could not change the model. That role is not configured.",
+        clientRequestId,
+      });
+      return;
+    }
+    this.activeRole = role;
+    const frame = this.buildModelsFrame(cfg);
+    // V2 ack: same `models` body plus the correlation id.
+    this.postV2({
+      kind: "models",
+      active: frame.active,
+      roles: frame.roles,
+      clientRequestId,
+    });
   }
 
   /**

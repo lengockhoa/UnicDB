@@ -1833,3 +1833,187 @@
   border-radius: 4px;
   cursor: pointer;
 }
+
+
+/* ==========================================================================
+   TASK-CHATV2-012 — engine/model menus, overlays and the 40px header
+   APPEND-ONLY, every selector scoped under `.UnicDB-ai-chat-v2`.
+   ========================================================================== */
+
+.UnicDB-ai-chat-v2-header {
+  height: 40px;
+  min-height: 40px;
+}
+
+.UnicDB-ai-chat-v2-engine {
+  min-height: var(--UnicDB-pill-min, 32px);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.UnicDB-ai-chat-v2-engine-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--vscode-descriptionForeground, #8b949e);
+}
+
+.UnicDB-ai-chat-v2-engine-dot[data-tone="success"] {
+  background: var(--vscode-testing-iconPassed, #3fb950);
+}
+
+.UnicDB-ai-chat-v2-engine-dot[data-tone="warning"] {
+  background: var(--vscode-editorWarning-foreground, #d29922);
+}
+
+.UnicDB-ai-chat-v2-engine-dot[data-tone="danger"] {
+  background: var(--vscode-testing-iconFailed, #f85149);
+}
+
+.UnicDB-ai-chat-v2-overflow {
+  width: var(--UnicDB-overflow, 32px);
+  height: var(--UnicDB-overflow, 32px);
+  min-width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.UnicDB-ai-chat-v2-title-editor {
+  min-width: 120px;
+  font: inherit;
+  color: var(--vscode-input-foreground, #e6edf3);
+  background: var(--vscode-input-background, #10151c);
+  border: 1px solid var(--vscode-focusBorder, #5f9eff);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+/* ---- Non-modal overlay menu -------------------------------------------- */
+
+.UnicDB-ai-chat-v2-overlay-menu {
+  min-width: var(--UnicDB-list-min, 280px);
+  max-width: var(--UnicDB-list-max, 420px);
+  background: var(--vscode-editorWidget-background, #161b22);
+  border: 1px solid var(--vscode-panel-border, #3b434d);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+  padding: 4px 0;
+  z-index: 20;
+}
+
+.UnicDB-ai-chat-v2-overlay-menu-row {
+  min-height: var(--UnicDB-row-h, 44px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--vscode-foreground, #e6edf3);
+}
+
+.UnicDB-ai-chat-v2-overlay-menu-row[aria-selected="true"] {
+  background: var(--vscode-list-activeSelectionBackground, rgba(47, 129, 247, 0.22));
+}
+
+.UnicDB-ai-chat-v2-overlay-menu-row[data-available="false"] {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.UnicDB-ai-chat-v2-overlay-menu-lead {
+  width: 16px;
+  min-width: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.UnicDB-ai-chat-v2-overlay-menu-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.UnicDB-ai-chat-v2-overlay-menu-label {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.UnicDB-ai-chat-v2-overlay-menu-description {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground, #8b949e);
+}
+
+.UnicDB-ai-chat-v2-overlay-menu-meta {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-descriptionForeground, #8b949e);
+}
+
+.UnicDB-ai-chat-v2-overlay-menu-meta[data-tone="success"] {
+  color: var(--vscode-testing-iconPassed, #3fb950);
+}
+
+.UnicDB-ai-chat-v2-overlay-menu-meta[data-tone="warning"] {
+  color: var(--vscode-editorWarning-foreground, #d29922);
+}
+
+.UnicDB-ai-chat-v2-overlay-menu-meta[data-tone="danger"] {
+  color: var(--vscode-testing-iconFailed, #f85149);
+}
+
+/* ---- Modal confirmation dialog ----------------------------------------- */
+
+.UnicDB-ai-chat-v2-overlay-dialog {
+  min-width: var(--UnicDB-dialog-min, 360px);
+  max-width: var(--UnicDB-dialog-max, 560px);
+  background: var(--vscode-editorWidget-background, #161b22);
+  border: 1px solid var(--vscode-panel-border, #3b434d);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+}
+
+.UnicDB-ai-chat-v2-overlay-dialog-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.UnicDB-ai-chat-v2-overlay-dialog-body {
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--vscode-foreground, #e6edf3);
+  margin-bottom: 16px;
+}
+
+.UnicDB-ai-chat-v2-overlay-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.UnicDB-ai-chat-v2-overlay-dialog-actions > button {
+  min-height: 32px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-overlay-dialog-confirm {
+  background: var(--vscode-button-background, #2f81f7);
+  color: var(--vscode-button-foreground, #ffffff);
+  border: none;
+}
+
+.UnicDB-ai-chat-v2-overlay-dialog-cancel {
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: var(--vscode-button-secondaryForeground, #e6edf3);
+  border: 1px solid var(--vscode-panel-border, #3b434d);
+}

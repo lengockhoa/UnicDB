@@ -45,6 +45,12 @@ const ENGINE_DISPLAY_NAMES: Readonly<Record<AiEngineName, string>> = Object.free
   codex: "Codex",
 });
 
+/** Fixed, allowlisted display name for one engine. Safe user copy — never
+ * derived from raw wire input, so it is safe in a toast/label. */
+export function engineDisplayName(engine: AiEngineName): string {
+  return ENGINE_DISPLAY_NAMES[engine];
+}
+
 /** Effective engine status surfaced to the UI. */
 export type CapabilityStatus = "ready" | "starting" | "unavailable" | "fallback";
 

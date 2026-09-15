@@ -62,3 +62,46 @@ npm run compile
 
 ## Discussion
 (no comments yet)
+
+## Progress
+- 2026-09-16T04:05:00+07:00 · milestone: overlays · last-green: none · files: webview/aiChat/overlays.ts · drift: none
+- 2026-09-16T04:05:30+07:00 · milestone: engine/model menus + tests · last-green: 27 tests pass (engineModelMenus.test.ts) · files: webview/aiChat/engineModelMenus.ts, webview/aiChat/__tests__/engineModelMenus.test.ts · drift: none
+- 2026-09-16T04:06:00+07:00 · milestone: header view · last-green: 27 tests pass · files: webview/aiChat/header.ts · drift: none
+- 2026-09-16T04:06:30+07:00 · milestone: host set_engine/set_model ack + tests · last-green: 8+27 tests pass · files: src/ui/aiChatPanel.ts, src/ui/aiChatPanelMessages.ts, src/ai/capabilities.ts, src/ui/__tests__/aiChatPanelEngineSwitchV2.test.ts · drift: none
+- 2026-09-16T04:15:30+07:00 · milestone: scoped CSS + full verification · last-green: 49 tests pass, typecheck clean, compile clean · files: webview/aiChat/styles.css · drift: none
+
+## Executor Report
+STATUS: DONE
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: -
+SUMMARY: Added the V2 40px header with a truthful engine pill + acknowledged engine switching (idle select, busy stop-and-switch confirm, correlated capabilities ack, safe failure toast, stale-ack drop) and a capability-driven model chip/menu; host validates set_engine/set_model and acks with the same clientRequestId or refuses with exact safe copy.
+TEST_PLAN_FOLLOWED: task §Test Cases #1-#7 implemented inline as webview unit tests + host integration tests (task file ships no separate §4 Test Plan doc).
+FILES_CHANGED:
+  - webview/aiChat/overlays.ts: new shared non-modal listbox + confirm-dialog primitives (44px rows, ARIA activedescendant, Cancel default focus).
+  - webview/aiChat/engineModelMenus.ts: engine/model menu models, truthful pill rendering, vision icon only when true, acknowledged switch state machine.
+  - webview/aiChat/__tests__/engineModelMenus.test.ts: 27 tests for cases #1-#7.
+  - webview/aiChat/header.ts: 40px header, title inline edit, engine pill delegation, capability-gated overflow.
+  - src/ui/aiChatPanel.ts: set_engine/set_model validation + correlated capabilities/models/toast acks.
+  - src/ui/aiChatPanelMessages.ts: additive optional clientRequestId on capabilities/models/toast frames.
+  - src/ai/capabilities.ts: exported engineDisplayName() allowlisted label.
+  - src/ui/__tests__/aiChatPanelEngineSwitchV2.test.ts: 8 host tests for validated/refused/correlated switching.
+  - webview/aiChat/styles.css: APPEND-only scoped styles under .UnicDB-ai-chat-v2 (header, pill, overlay menu/dialog).
+TESTS_ADDED:
+  - webview/aiChat/__tests__/engineModelMenus.test.ts: engine rows/labels, XSS-safe text, truthful pill, listbox keyboard/ARIA, model rows + vision gating, empty-menu opens settings, idle ack, failure toast, stale ack drop, busy stop-and-switch.
+  - src/ui/__tests__/aiChatPanelEngineSwitchV2.test.ts: validated set_engine ack, refused engine copy, codex seam accept, unknown engine literal, correlated set_model ack, unconfigured role refusal, unknown role literal, no clientRequestId on first ready.
+VERIFICATION:
+  command: npm test -- --run src/ui/__tests__/aiChatPanelEngineSwitchV2.test.ts webview/aiChat/__tests__/engineModelMenus.test.ts src/ui/__tests__/aiChatPanelAgentEngines.test.ts webview/__tests__/aiChatPanelHeader.test.ts
+  result: 49 pass / 0 fail (4 files, exit 0)
+  output_excerpt: |
+    ✓ src/ui/__tests__/aiChatPanelEngineSwitchV2.test.ts  (8 tests) 70ms
+    ✓ src/ui/__tests__/aiChatPanelAgentEngines.test.ts  (4 tests) 83ms
+    ✓ webview/__tests__/aiChatPanelHeader.test.ts  (10 tests) 15ms
+    ✓ webview/aiChat/__tests__/engineModelMenus.test.ts  (27 tests) 31ms
+     Test Files  4 passed (4)
+          Tests  49 passed (49)
+  command: npm run typecheck → tsc --noEmit, exit 0
+  command: npm run compile → esbuild build complete, exit 0
+ISSUES: A full `npx vitest run` shows 6 suite-level failures that are ENVIRONMENTAL, not regressions: this worktree's node_modules lacks `.bin` (no esbuild/vsce binaries), so 5 webview-bundle test files fail with `spawnSync .../node_modules/.bin/esbuild ENOENT` and vsixSecretsExclusion fails with `MODULE_NOT_FOUND .../.bin/vsce`. All are collection-time spawn errors, zero assertions from these changes involved.
+HANDOFF_TO_REVIEWER: yes — task is a non-trivial shared UI/controller deliverable per the handoff gate.
+NEXT: ready for review

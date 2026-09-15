@@ -573,10 +573,18 @@ export interface AiChatContextRefV2 {
 /** Coarse mention-scope filter carried on a `search_context` intent. */
 export type AiChatContextKindFilterV2 = "all" | "file" | "selection" | "database";
 
-/** Host → webview: resolved engine capability snapshot. */
+/** Host → webview: resolved engine capability snapshot.
+ *
+ * TASK-CHATV2-012 (additive): an OPTIONAL `clientRequestId` echoes the
+ * `set_engine` it answers. It is present ONLY on the ack for a switch request;
+ * an unsolicited snapshot (first ready, capability refresh) omits it. The
+ * webview uses it to correlate an ack with its pending request and to IGNORE a
+ * stale ack. Absent field ⇒ not an ack ⇒ never settles a pending switch. */
 export interface AiChatHostCapabilitiesV2 extends AiChatFrameEnvelopeV2 {
   readonly kind: "capabilities";
   readonly capabilities: EngineCapabilitySnapshot;
+  /** Echo of the `set_engine.clientRequestId` this frame acknowledges. */
+  readonly clientRequestId?: string;
 }
 
 /** Host → webview: initial/paged transcript hydration. */
@@ -730,11 +738,16 @@ export interface AiChatHostContextStatusV2 extends AiChatFrameEnvelopeV2 {
   readonly excludedCount: number;
 }
 
-/** Host → webview: the configured model roles + active role. */
+/** Host → webview: the configured model roles + active role.
+ *
+ * TASK-CHATV2-012 (additive): an OPTIONAL `clientRequestId` is present only
+ * when this frame ACKS a `set_model`, so the chip commits on correlation. */
 export interface AiChatHostModelsV2 extends AiChatFrameEnvelopeV2 {
   readonly kind: "models";
   readonly active: AiModelRole;
   readonly roles: ReadonlyArray<{ readonly role: AiModelRole; readonly modelId: string; readonly vision: boolean }>;
+  /** Echo of the `set_model.clientRequestId` this frame acknowledges. */
+  readonly clientRequestId?: string;
 }
 
 /** Host → webview: the active schema chip changed. */
@@ -774,11 +787,17 @@ export interface AiChatHostTitleUpdatedV2 extends AiChatFrameEnvelopeV2 {
   readonly title: string;
 }
 
-/** Host → webview: transient toast. */
+/** Host → webview: transient toast.
+ *
+ * TASK-CHATV2-012 (additive): an OPTIONAL `clientRequestId` links the toast to
+ * the rejected request (e.g. a failed `set_engine`), so a failure can settle
+ * exactly the request it answers and leave a stale one inert. */
 export interface AiChatHostToastV2 extends AiChatFrameEnvelopeV2 {
   readonly kind: "toast";
   readonly level: "info" | "warning" | "error";
   readonly safeMessage: string;
+  /** Echo of the rejected request's clientRequestId (failure toasts only). */
+  readonly clientRequestId?: string;
 }
 
 /** Closed host → webview V2 frame union. */
