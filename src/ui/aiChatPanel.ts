@@ -1415,6 +1415,13 @@ export class AiChatPanel {
    * persisted — panel-session lifetime only.
    */
   private bypassPermissions: boolean = false;
+  /**
+   * TASK-CHATV2-014: webview-visible policy requests that have NOT yet been
+   * acknowledged. A `set_permission_policy` is only honoured for a request the
+   * host actually received; unlisted/stale ids are inert (never a silent flip).
+   * Each entry settles at most once.
+   */
+  private pendingPolicyRequests: Set<string> = new Set();
   /** Cached engine resolution — set on first show; reused on every turn. */
   private engine: EngineKind | null = null;
   /** Cached ACP session — created on first acp-mode send. */
@@ -1796,6 +1803,10 @@ export class AiChatPanel {
     // Cancel every pending permission request with one cancelled ACP
     // result per server request before tearing the session down.
     this.cancelAllPending();
+    // TASK-CHATV2-014: the bypass flag is session-scoped — a fresh panel starts
+    // default (ask). Clear it and every unacknowledged policy request.
+    this.bypassPermissions = false;
+    this.pendingPolicyRequests.clear();
     this.dbToolGate.cancelAll();
     this.disposeAcpSession();
     // R4.5 fix (critical_block): dispose the production OMP engine
@@ -2003,7 +2014,12 @@ export class AiChatPanel {
         this.handlePermissionResponse(intent.requestId, intent.optionId);
         return;
       case "set_permission_policy":
-        this.bypassPermissions = intent.policy === "bypass";
+        // TASK-CHATV2-014: correlated, acknowledged policy change. The host
+        // records the request id (so a LATERACK frame can settle exactly it),
+        // flips the session flag, and re-posts capabilities as the ack. A
+        // duplicate/stale id is accepted idempotently — the reply is always
+        // the host's authoritative current policy.
+        this.handleSetPermissionPolicyV2(intent.clientRequestId, intent.policy);
         return;
       case "list_sessions":
         // V2 picker lists the HOST-STRUCTURED saved transcripts (store-backed,
@@ -2362,6 +2378,7 @@ export class AiChatPanel {
     this.postV2({
       kind: "capabilities",
       capabilities: this.capabilitySnapshot,
+      permissionPolicy: this.bypassPermissions ? "bypass" : "default",
     });
     this.postV2({
       kind: "session_hydrated",
@@ -2515,6 +2532,7 @@ export class AiChatPanel {
       kind: "capabilities",
       capabilities: this.capabilitySnapshot,
       clientRequestId,
+      permissionPolicy: this.bypassPermissions ? "bypass" : "default",
     });
   }
 
@@ -3617,6 +3635,26 @@ export class AiChatPanel {
         resolve(optionId);
       });
       void webview.postMessage(msg);
+      // TASK-CHATV2-014: mirror the request onto the ordered V2 seam so the
+      // anchored permission sheet renders it. The opaque requestId travels
+      // verbatim; the tool name/detail stay display text.
+      this.postV2PermissionRequested(requestId, msg.tool, msg.options);
+    });
+  }
+
+  /** TASK-CHATV2-014: post ONE `permission_requested` V2 frame against the
+   * live turn. The opaque requestId is echoed unchanged. */
+  private postV2PermissionRequested(
+    requestId: string,
+    tool: { id: string; name: string; detail: string },
+    options: Array<{ optionId: string; label: string }>,
+  ): void {
+    this.postV2({
+      kind: "permission_requested",
+      turnId: this.v2TurnId ?? `turn-${this.sessionTurnSeq}`,
+      requestId,
+      tool: { id: tool.id, name: tool.name, detail: tool.detail },
+      options: options.map((o) => ({ optionId: o.optionId, label: o.label })),
     });
   }
 
@@ -4331,6 +4369,12 @@ export class AiChatPanel {
       tool: { id: toolId, name: toolName, detail: toolDetail },
       options: optionEntries,
     });
+    // TASK-CHATV2-014: same request on the V2 seam for the anchored sheet.
+    this.postV2PermissionRequested(requestId, {
+      id: toolId,
+      name: toolName,
+      detail: toolDetail,
+    }, optionEntries);
   }
 
   /**
@@ -4621,6 +4665,47 @@ export class AiChatPanel {
         vision: m?.vision === true,
       };
     });
+  }
+
+  /**
+   * TASK-CHATV2-014: apply + acknowledge a V2 `set_permission_policy`. The host
+   * is AUTHORITATIVE for policy: the flag flips, and ONLY the correlated
+   * capabilities ack tells the webview the new truth. Duplicate/stale ids are
+   * idempotent — a re-send still gets the current policy, never a second flip.
+   *
+   * The bypass flag is session-scoped (`bypassPermissions` is never persisted)
+   * and is reset on panel dispose. It can never weaken the destructive-SQL or
+   * workspace-trust gates: those live on entirely separate code paths
+   * (`confirmDangerousStatements` / `workspace.isTrusted`) that do not consult
+   * this flag.
+   */
+  private handleSetPermissionPolicyV2(
+    clientRequestId: string,
+    policy: "default" | "bypass",
+  ): void {
+    // Exactly one ack per request id: a duplicate/replayed intent is inert, so
+    // a retry can never produce two acks or a second silent flip.
+    if (this.pendingPolicyRequests.has(clientRequestId)) return;
+    this.pendingPolicyRequests.add(clientRequestId);
+    this.bypassPermissions = policy === "bypass";
+    this.postV2({
+      kind: "capabilities",
+      capabilities: this.capabilitySnapshotForPolicy(),
+      clientRequestId,
+      permissionPolicy: this.bypassPermissions ? "bypass" : "default",
+    });
+  }
+
+  /** The current capability snapshot, resolved for the LIVE policy if one has
+   * been resolved yet; a safe minimal snapshot otherwise. */
+  private capabilitySnapshotForPolicy(): EngineCapabilitySnapshot {
+    return (
+      this.capabilitySnapshot ??
+      resolveEngineCapabilities({
+        engine: (this.engine ?? "builtin") as AiEngineName,
+        adapter: { state: "unavailable" },
+      })
+    );
   }
 
   /**

@@ -350,6 +350,74 @@ describe("controller — keyboard precedence in the real DOM", () => {
   });
 });
 
+describe("controller — TASK-CHATV2-014 permission request lifecycle", () => {
+  function requestSheet(h: Harness): HTMLElement | null {
+    return h.root.querySelector<HTMLElement>("[data-chat-permission-request]");
+  }
+
+  it("a host permission_requested mounts the anchored sheet; one Deny emits one opaque response and closes it", () => {
+    const h = makeHarness();
+    type(h.prompt, "hello");
+    press(h.prompt, "Enter");
+    window.dispatchEvent(v2Frame({ kind: "turn_started", turnId: "t1", clientRequestId: "req-1" }, 1));
+    window.dispatchEvent(
+      v2Frame(
+        {
+          kind: "permission_requested",
+          turnId: "t1",
+          requestId: "perm-1",
+          tool: { id: "tool-1", name: "Run SQL", detail: "delete from t" },
+          options: [{ optionId: "allow-once", label: "Allow once" }],
+        },
+        2,
+      ),
+    );
+
+    const sheet = requestSheet(h);
+    expect(sheet).not.toBeNull();
+    expect(sheet!.hidden).toBe(false);
+
+    sheet!.querySelector<HTMLButtonElement>('[data-action="deny"]')!.click();
+
+    // Deny carries the requestId and NO optionId — never a fabricated allow.
+    const responses = sentOf(h, "permission_response");
+    expect(responses).toHaveLength(1);
+    expect(responses[0]!.requestId).toBe("perm-1");
+    expect("optionId" in responses[0]!).toBe(false);
+    expect(sheet!.hidden).toBe(true);
+    expect(h.controller.getState().pendingHostRequests).toHaveLength(0);
+  });
+
+  it("case #7: a stopped turn settles the pending request — the sheet does not stay open", () => {
+    const h = makeHarness();
+    type(h.prompt, "hello");
+    press(h.prompt, "Enter");
+    window.dispatchEvent(v2Frame({ kind: "turn_started", turnId: "t1", clientRequestId: "req-1" }, 1));
+    window.dispatchEvent(
+      v2Frame(
+        {
+          kind: "permission_requested",
+          turnId: "t1",
+          requestId: "perm-1",
+          tool: { id: "tool-1", name: "Run SQL", detail: "delete from t" },
+          options: [{ optionId: "allow-once", label: "Allow once" }],
+        },
+        2,
+      ),
+    );
+    expect(requestSheet(h)!.hidden).toBe(false);
+
+    h.controller.requestSubmit(); // busy → stop
+    window.dispatchEvent(v2Frame({ kind: "turn_finished", turnId: "t1", outcome: "stopped" }, 3));
+    h.controller.flushRender();
+
+    // The terminal turn must not leave a live sheet asking about a dead turn.
+    expect(h.controller.getState().pendingHostRequests).toHaveLength(0);
+    expect(requestSheet(h)!.hidden).toBe(true);
+    expect(h.controller.getState().phase).not.toBe("awaiting_permission");
+  });
+});
+
 describe("controller — disposal", () => {
   it("dispose removes the message listener, timers and is idempotent", () => {
     const h = makeHarness();

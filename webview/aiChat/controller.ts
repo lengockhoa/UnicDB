@@ -40,6 +40,14 @@ import {
   replaceSelection,
   type ComposerKeyDecision,
 } from "./keyboard";
+import {
+  createBypassWarning,
+  createPermissionRequestSheet,
+  createPolicySheet,
+  type BypassWarning,
+  type PermissionRequestSheet,
+  type PolicySheet,
+} from "./permissions";
 import { mountChatShellIfNeeded, type ChatShellRefs } from "./shell";
 import {
   createInitialChatState,
@@ -192,8 +200,33 @@ function mountController(options: ChatControllerOptions): ChatController {
 
   function renderState(): void {
     composer.render(state);
+    // TASK-CHATV2-014: the policy sheet reflects the HOST's policy + capability.
+    permission.setState(
+      state.capabilities?.supports.bypassPermissions === true,
+      state.permissionPolicy,
+    );
+    renderPermissionRequest();
     options.renderExtra?.(state, shell);
     options.onState?.(state);
+  }
+
+  /** Keep the anchored request sheet in sync with the single pending request. */
+  function renderPermissionRequest(): void {
+    const pending = state.pendingHostRequests[0];
+    if (pending === undefined) {
+      if (permissionRequest.isOpen()) permissionRequest.settle();
+      return;
+    }
+    if (permissionRequest.isOpen() && permissionRequest.requestId() === pending.requestId) return;
+    permissionRequest.show({
+      requestId: pending.requestId,
+      tool: {
+        id: pending.tool.id,
+        name: pending.tool.name,
+        detail: pending.tool.detail,
+      },
+      options: pending.options,
+    });
   }
 
   function scheduleRender(): void {
@@ -261,7 +294,7 @@ function mountController(options: ChatControllerOptions): ChatController {
         postIntent({ kind: "pick_active_schema", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2 });
       },
       onPermissionOpen(): void {
-        /* Permission sheet is wired by CHATV2-014. */
+        permission.open();
       },
       onPrimaryActivate(): void {
         requestSubmit();
@@ -270,6 +303,62 @@ function mountController(options: ChatControllerOptions): ChatController {
   );
 
   const prompt = composer.prompt;
+
+  // ---- Permission policy + request sheet (TASK-CHATV2-014) ----------------
+  //
+  // The composer chip opens a NON-MODAL policy sheet. Bypass is offered only
+  // when the host capability says so, and enabling it always goes through the
+  // MODAL warning first; the intent is posted but state only follows the host
+  // ack. The request sheet owns the single response for one pending request.
+  const permission = createPolicySheet({
+    anchor: shell.composer,
+    trigger: composer.permissionButton,
+    supportsBypass: state.capabilities?.supports.bypassPermissions === true,
+    currentPolicy: state.permissionPolicy,
+    onRequestBypass: () => bypassWarning.open(),
+    onClose: () => {
+      // Closing the policy sheet returns the keyboard to the composer.
+      try {
+        prompt.focus();
+      } catch {
+        /* jsdom/older engines may reject focus. */
+      }
+    },
+  });
+
+  const bypassWarning: BypassWarning = createBypassWarning({
+    mount: shell.composer,
+    onEnable: () => {
+      postIntent({
+        kind: "set_permission_policy",
+        protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+        clientRequestId: nextId(),
+        policy: "bypass",
+      });
+      // No optimistic flip: the chip changes only when the host acks.
+      try {
+        prompt.focus();
+      } catch {
+        /* jsdom/older engines may reject focus. */
+      }
+    },
+  });
+
+  const permissionRequest: PermissionRequestSheet = createPermissionRequestSheet({
+    anchor: shell.composer,
+    composer: prompt,
+    liveRegion: shell.alertLiveRegion,
+    onRespond: (response) => {
+      postIntent({
+        kind: "permission_response",
+        protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+        clientRequestId: nextId(),
+        requestId: response.requestId,
+        ...(response.optionId !== undefined ? { optionId: response.optionId } : {}),
+      });
+      dispatch({ type: "PERMISSION_RESPONDED", requestId: response.requestId });
+    },
+  });
 
   // ---- Submit / stop (ONE path each) ------------------------------------
 
@@ -395,7 +484,11 @@ function mountController(options: ChatControllerOptions): ChatController {
       phase: state.phase,
       draftText: state.draft.text,
       hasUnresolvedContext: hasUnresolvedContext(state),
-      permissionFocused: options.isPermissionFocused?.() === true,
+      // TASK-CHATV2-014: while the request sheet is open it owns the keyboard
+      // (the composer must not submit a draft behind it). An injected gate
+      // still wins so tests/hosts can force the behavior.
+      permissionFocused:
+        (options.isPermissionFocused?.() === true || permissionRequest.isOpen()),
       autocompleteOpen: state.autocomplete.open,
       autocompleteItemCount: state.autocomplete.items.length,
     });
@@ -533,6 +626,11 @@ function mountController(options: ChatControllerOptions): ChatController {
       liveMessageListeners = Math.max(0, liveMessageListeners - 1);
       releaseStopLock();
       prompt.removeAttribute("data-chat-keydown-owner");
+      // TASK-CHATV2-014: tear down the permission surfaces. The request sheet
+      // settles first (it restores focus), then the policy sheet + warning.
+      permissionRequest.destroy();
+      bypassWarning.destroy();
+      permission.destroy();
       activeMounts.delete(root);
       composer.destroy();
     },

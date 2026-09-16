@@ -21,6 +21,7 @@
 // Pure DOM TypeScript: no `vscode`, no node builtins, no framework.
 
 import { createChatIcon } from "./icons";
+import { PERMISSION_CHIP_ICON_PX, permissionChipLabel } from "./permissions";
 import { schemaChipLabel } from "./schemaControl";
 import type { ChatViewState, TurnPhase } from "./store";
 
@@ -455,12 +456,21 @@ export function renderComposerV2(
     schemaButton.setAttribute("aria-label", schemaText);
     schemaButton.replaceChildren(schemaLabel, createChatIcon("schema", 16));
 
+    // TASK-CHATV2-014: the chip renders the HOST's live policy (never a local
+    // guess) and is HIDDEN entirely on an engine that does not support
+    // permissions — an unsupported engine must not show a dead control.
     const canPermission = state.capabilities?.supports.permissions === true;
     permissionButton.hidden = !canPermission;
     if (canPermission) {
-      permissionLabel.textContent = "Permissions";
-      labelIconOnly(permissionButton, "Permissions");
-      permissionButton.replaceChildren(permissionLabel, createChatIcon("shield-check", 18));
+      const bypass = state.permissionPolicy === "bypass";
+      const text = permissionChipLabel(bypass ? "bypass" : "default");
+      permissionLabel.textContent = text;
+      labelIconOnly(permissionButton, text);
+      permissionButton.classList.toggle(cls("permission-bypass"), bypass);
+      permissionButton.replaceChildren(
+        permissionLabel,
+        createChatIcon(bypass ? "shield-alert" : "shield-check", PERMISSION_CHIP_ICON_PX),
+      );
     }
 
     renderContext(state);

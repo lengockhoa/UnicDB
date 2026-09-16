@@ -1,6 +1,6 @@
 # TASK-CHATV2-014 — Permission policy, requests and change-plan safety
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §§5–6
@@ -65,3 +65,45 @@ npm run compile
 
 ## Discussion
 (no comments yet)
+
+## Progress
+- 2026-09-16T07:58:00+07:00 · milestone: permission policy wiring + V2 tests · last-green: focused suite 63 passed · files: src/ui/aiChatPanel.ts, src/ui/aiChatPanelMessages.ts, webview/aiChat/permissions.ts, webview/aiChat/composer.ts, webview/aiChat/controller.ts, webview/aiChat/store.ts, webview/aiChat/styles.css, webview/aiChat/__tests__/permissions.test.ts, src/ui/__tests__/aiChatPanelPermissionsV2.test.ts · drift: none
+- 2026-09-16T08:02:30+07:00 · milestone: permission lifecycle integration + terminal-turn settle · last-green: focused suite 86 passed, webview suite 337 passed, typecheck + compile clean · files: webview/aiChat/store.ts, webview/aiChat/__tests__/controller.test.ts · drift: none
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: |
+  RED confirmed on webview/aiChat/__tests__/controller.test.ts (2 failures) before the store fix:
+    FAIL > a host permission_requested mounts the anchored sheet...
+      AssertionError: expected true to be false // the sheet never mounted (test lacked on open turn; harness corrected)
+    FAIL > case #7: a stopped turn settles the pending request — the sheet does not stay open
+      AssertionError: expected [ { requestId: 'perm-1', …(3) } ] to have a length of +0 but got 1
+      → root cause: `turn_finished` never cleared `pendingHostRequests`, leaving the anchored request sheet live for a dead turn.
+  Addressed by: webview/aiChat/store.ts `turn_finished` now drops requests owned by the terminated turnId.
+Verification Output: |
+  $ npm test -- --run src/ui/__tests__/aiChatPanelPermissionsV2.test.ts webview/aiChat/__tests__/permissions.test.ts webview/aiChat/__tests__/changePlan.test.ts src/ui/__tests__/aiChatPanelPlan.test.ts src/ui/__tests__/aiChatPanelPolicy.test.ts webview/aiChat/__tests__/controller.test.ts
+   ✓ src/ui/__tests__/aiChatPanelPlan.test.ts  (12 tests)
+   ✓ src/ui/__tests__/aiChatPanelPolicy.test.ts  (20 tests)
+   ✓ webview/aiChat/__tests__/changePlan.test.ts  (8 tests)
+   ✓ webview/aiChat/__tests__/permissions.test.ts  (17 tests)
+   ✓ src/ui/__tests__/aiChatPanelPermissionsV2.test.ts  (6 tests)
+   ✓ webview/aiChat/__tests__/controller.test.ts  (23 tests)
+   Test Files  6 passed (6)
+        Tests  86 passed (86)
+
+  $ npx vitest run webview/aiChat/
+   Test Files  18 passed (18)
+        Tests  337 passed (337)
+
+  $ npm run typecheck
+  > tsc --noEmit   (exit 0)
+
+  $ npm run compile
+  esbuild: build complete   (exit 0)
+Status: PASS
+Note: |
+  Store-level durable guard added so a Stop/settle cannot leave a live permission
+  sheet for a terminated turn. Host-side correctness otherwise unchanged; no scope
+  expansion beyond this task's Test Case #7.

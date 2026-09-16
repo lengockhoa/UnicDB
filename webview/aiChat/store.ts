@@ -224,6 +224,12 @@ export interface ChatViewState {
   readonly sessionId: string | null;
   readonly lastSequence: number;
   readonly capabilities: EngineCapabilitySnapshot | null;
+  /**
+   * TASK-CHATV2-014: the session's live permission policy, mirrored from the
+   * host `capabilities` frame. The webview NEVER infers it — it changes only
+   * when the host says so (an initial snapshot or a correlated policy ack).
+   */
+  readonly permissionPolicy: "default" | "bypass";
   readonly hydration: ChatHydration;
   readonly phase: TurnPhase;
   readonly turn: ChatActiveTurn | null;
@@ -309,6 +315,7 @@ export function createInitialChatState(): ChatViewState {
     sessionId: null,
     lastSequence: 0,
     capabilities: null,
+    permissionPolicy: "default",
     hydration: {
       hydrated: false,
       hasHistory: false,
@@ -454,8 +461,22 @@ function applyFrameBody(
   body: Record<string, unknown>,
 ): ChatViewState {
   switch (frame.kind) {
-    case "capabilities":
-      return { ...state, capabilities: (frame as { capabilities: EngineCapabilitySnapshot }).capabilities };
+    case "capabilities": {
+      // TASK-CHATV2-014: mirror the host's permission policy too. An absent
+      // field keeps the current value (never an invented reset).
+      const f = frame as {
+        capabilities: EngineCapabilitySnapshot;
+        permissionPolicy?: "default" | "bypass";
+      };
+      return {
+        ...state,
+        capabilities: f.capabilities,
+        permissionPolicy:
+          f.permissionPolicy === "bypass" || f.permissionPolicy === "default"
+            ? f.permissionPolicy
+            : state.permissionPolicy,
+      };
+    }
 
     case "session_hydrated": {
       const f = frame as {
@@ -602,11 +623,16 @@ function applyFrameBody(
       const f = frame as { turnId: string; outcome: "completed" | "stopped" | "failed" };
       if (state.turn === null || state.turn.closed) return state;
       const transcript = sealStreaming(state.transcript);
+      // TASK-CHATV2-014: a terminal turn can never be answered. Drop the
+      // requests it owned so a Stop/settle does not leave a live sheet asking
+      // about a dead turn (durable Stop behaviour, not host-trust dependent).
+      const pendingHostRequests = state.pendingHostRequests.filter((r) => r.turnId !== f.turnId);
       return {
         ...state,
         phase: f.outcome === "failed" ? "failed" : "completed",
         turn: { ...state.turn, closed: true, outcome: f.outcome },
         transcript,
+        pendingHostRequests,
         pendingStop: null,
       };
     }

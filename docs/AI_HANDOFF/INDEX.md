@@ -19,7 +19,7 @@ Spec/task cycle only: these files direct a future coder; this planning cycle mus
 | TASK-CHATV2-011 | Structured mentions, search races and context chips | ready | 003,004,009 | 4 |
 | TASK-CHATV2-012 | Engine/model menus and acknowledged switching | ready | 002,003,008,009 | 5 |
 | TASK-CHATV2-013 | Attachments, attach-context menu and schema controls | ready | 002,008,011 | 5 |
-| TASK-CHATV2-014 | Permission policy, requests and change-plan safety | ready | 002,003,007,008 | 5 |
+| TASK-CHATV2-014 | Permission policy, requests and change-plan safety | pending_review | 002,003,007,008 | 5 |
 | TASK-CHATV2-015 | Sessions, structured persistence, export and diagnostics | ready | 003,004,006 | 6 |
 | TASK-CHATV2-016 | Error recovery, scroll, accessibility and responsive behavior | ready | 006–015 | 6 |
 | TASK-CHATV2-017 | V1 cutover, legacy deletion and complete quality gate | ready | 001–016 | 7 |

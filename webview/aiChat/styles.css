@@ -2157,3 +2157,302 @@
   width: var(--UnicDB-schema-chip-icon, 16px);
   height: var(--UnicDB-schema-chip-icon, 16px);
 }
+
+
+/* ---- TASK-CHATV2-014: permission policy + request sheet ---------------- */
+
+/* The composer permission chip is >=36px and never wraps its label. */
+.UnicDB-ai-chat-v2-permission {
+  min-height: var(--UnicDB-permission-chip-h, 36px);
+  white-space: nowrap;
+}
+
+/* Bypass paints the amber warning tone so the state is never mistaken for
+   the default ask policy. */
+.UnicDB-ai-chat-v2-permission-bypass {
+  color: var(--vscode-editorWarning-foreground, #d29922);
+  border-color: var(--vscode-editorWarning-foreground, #d29922);
+}
+
+/* A hidden control must never occupy layout space. */
+.UnicDB-ai-chat-v2-permission[hidden] {
+  display: none;
+}
+
+/* Anchored request sheet: above the composer, clamped 360–560px. */
+.UnicDB-ai-chat-v2-permission-request {
+  display: flex;
+  flex-direction: column;
+  gap: var(--UnicDB-ai-chat-v2-space-2, 8px);
+  inline-size: clamp(
+    var(--UnicDB-request-min, 360px),
+    100%,
+    var(--UnicDB-request-max, 560px)
+  );
+  max-inline-size: var(--UnicDB-request-max, 560px);
+  margin: 0 auto var(--UnicDB-ai-chat-v2-space-2, 8px);
+  padding: var(--UnicDB-ai-chat-v2-space-3, 12px);
+  background: var(--vscode-editorWidget-background, #161b22);
+  border: 1px solid var(--vscode-panel-border, #3b434d);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--chat-shadow, rgba(0, 0, 0, 0.4));
+}
+
+.UnicDB-ai-chat-v2-permission-request[hidden] {
+  display: none;
+}
+
+.UnicDB-ai-chat-v2-permission-request-title {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--vscode-foreground, #e6edf3);
+}
+
+.UnicDB-ai-chat-v2-permission-tool-name {
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.UnicDB-ai-chat-v2-permission-tool-detail-text {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow-y: auto;
+  color: var(--vscode-descriptionForeground, #8b949e);
+}
+
+.UnicDB-ai-chat-v2-permission-request-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--UnicDB-ai-chat-v2-space-2, 8px);
+  justify-content: flex-end;
+}
+
+.UnicDB-ai-chat-v2-permission-action,
+.UnicDB-ai-chat-v2-permission-details-toggle,
+.UnicDB-ai-chat-v2-permission-detail-copy {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--vscode-panel-border, #3b434d);
+  border-radius: 6px;
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-permission-action:focus-visible,
+.UnicDB-ai-chat-v2-permission-details-toggle:focus-visible,
+.UnicDB-ai-chat-v2-permission-detail-copy:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #5f9eff);
+  outline-offset: 2px;
+}
+
+.UnicDB-ai-chat-v2-permission-action[data-action="allow-once"],
+.UnicDB-ai-chat-v2-permission-action[data-action="allow-session"] {
+  border-color: var(--vscode-focusBorder, #5f9eff);
+}
+
+.UnicDB-ai-chat-v2-permission-scope-select {
+  min-height: 32px;
+  max-width: 100%;
+}
+
+/* Modal warning / confirm primitives (bypass warning, deny confirmation). */
+.UnicDB-ai-chat-v2-overlay-modal {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--UnicDB-ai-chat-v2-space-2, 8px);
+  inline-size: clamp(
+    var(--UnicDB-dialog-min, 360px),
+    100%,
+    var(--UnicDB-dialog-max, 560px)
+  );
+  margin: 0 auto var(--UnicDB-ai-chat-v2-space-2, 8px);
+  padding: var(--UnicDB-ai-chat-v2-space-3, 12px);
+  background: var(--vscode-editorWidget-background, #161b22);
+  border: 1px solid var(--vscode-panel-border, #3b434d);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--chat-shadow, rgba(0, 0, 0, 0.4));
+  z-index: 2;
+}
+
+.UnicDB-ai-chat-v2-overlay-modal[data-tone="warning"] {
+  border-color: var(--vscode-editorWarning-foreground, #d29922);
+}
+
+.UnicDB-ai-chat-v2-overlay-modal-title {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+.UnicDB-ai-chat-v2-overlay-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--UnicDB-ai-chat-v2-space-2, 8px);
+  justify-content: flex-end;
+}
+
+.UnicDB-ai-chat-v2-overlay-modal-action {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--vscode-panel-border, #3b434d);
+  border-radius: 6px;
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-overlay-modal-action[data-tone="warning"] {
+  border-color: var(--vscode-editorWarning-foreground, #d29922);
+  color: var(--vscode-editorWarning-foreground, #d29922);
+}
+
+.UnicDB-ai-chat-v2-overlay-modal-action[data-tone="danger"] {
+  border-color: var(--vscode-testing-iconFailed, #f85149);
+  color: var(--vscode-testing-iconFailed, #f85149);
+}
+
+.UnicDB-ai-chat-v2-overlay-modal-action:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #5f9eff);
+  outline-offset: 2px;
+}
+
+/* ---- TASK-CHATV2-014: reviewed change-plan card ------------------------ */
+
+.UnicDB-ai-chat-v2-change-plan {
+  display: flex;
+  flex-direction: column;
+  gap: var(--UnicDB-ai-chat-v2-space-2, 8px);
+  max-inline-size: 880px;
+  padding: var(--UnicDB-ai-chat-v2-space-3, 12px);
+  border: 1px solid var(--vscode-panel-border, #3b434d);
+  border-left: 3px solid var(--vscode-focusBorder, #5f9eff);
+  border-radius: 10px;
+  background: var(--vscode-editorWidget-background, #161b22);
+}
+
+.UnicDB-ai-chat-v2-change-plan[data-drifted="true"] {
+  border-left-color: var(--vscode-editorWarning-foreground, #d29922);
+}
+
+.UnicDB-ai-chat-v2-change-plan-header {
+  display: flex;
+  align-items: center;
+  gap: var(--UnicDB-ai-chat-v2-space-2, 8px);
+}
+
+.UnicDB-ai-chat-v2-change-plan-title {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+.UnicDB-ai-chat-v2-change-plan-tool {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--vscode-descriptionForeground, #8b949e);
+}
+
+.UnicDB-ai-chat-v2-change-plan-intent {
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.UnicDB-ai-chat-v2-change-plan-drift {
+  padding: 8px 12px;
+  border-left: 3px solid var(--vscode-editorWarning-foreground, #d29922);
+  border-radius: 3px;
+  background: rgba(210, 153, 34, 0.12);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.UnicDB-ai-chat-v2-change-plan-drift-list {
+  margin: 4px 0 0;
+  padding-inline-start: 18px;
+  overflow-wrap: anywhere;
+}
+
+.UnicDB-ai-chat-v2-change-plan-statements {
+  margin: 0;
+  padding-inline-start: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--UnicDB-ai-chat-v2-space-2, 8px);
+}
+
+.UnicDB-ai-chat-v2-change-plan-statement-head {
+  display: flex;
+  align-items: center;
+  gap: var(--UnicDB-ai-chat-v2-space-2, 8px);
+}
+
+.UnicDB-ai-chat-v2-change-plan-tier {
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+}
+
+.UnicDB-ai-chat-v2-change-plan-tier[data-tone="warning"],
+.UnicDB-ai-chat-v2-change-plan-danger-note {
+  color: var(--vscode-editorWarning-foreground, #d29922);
+}
+
+.UnicDB-ai-chat-v2-change-plan-tier[data-tone="danger"] {
+  color: var(--vscode-testing-iconFailed, #f85149);
+}
+
+.UnicDB-ai-chat-v2-change-plan-sql {
+  margin: 4px 0 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.25));
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.UnicDB-ai-chat-v2-change-plan-actions {
+  display: flex;
+  gap: var(--UnicDB-ai-chat-v2-space-2, 8px);
+  justify-content: flex-end;
+}
+
+.UnicDB-ai-chat-v2-change-plan-action {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--vscode-panel-border, #3b434d);
+  border-radius: 6px;
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-change-plan-action[data-action="approve"] {
+  border-color: var(--vscode-button-background, #2f81f7);
+  background: var(--vscode-button-background, #2f81f7);
+  color: var(--vscode-button-foreground, #ffffff);
+}
+
+.UnicDB-ai-chat-v2-change-plan-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.UnicDB-ai-chat-v2-change-plan-action:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #5f9eff);
+  outline-offset: 2px;
+}

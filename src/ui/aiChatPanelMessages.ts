@@ -585,6 +585,13 @@ export interface AiChatHostCapabilitiesV2 extends AiChatFrameEnvelopeV2 {
   readonly capabilities: EngineCapabilitySnapshot;
   /** Echo of the `set_engine.clientRequestId` this frame acknowledges. */
   readonly clientRequestId?: string;
+  /**
+   * TASK-CHATV2-014 (additive): the session's CURRENT permission policy. It is
+   * carried on every capabilities frame so the composer chip renders the truth
+   * from the host, and on the ACK for a `set_permission_policy` (which echoes
+   * the same `clientRequestId`) so the chip only changes on an acknowledgement.
+   * Absent ⇒ default (ask). */
+  readonly permissionPolicy?: "default" | "bypass";
 }
 
 /** Host → webview: initial/paged transcript hydration. */

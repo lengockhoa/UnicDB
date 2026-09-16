@@ -611,3 +611,288 @@ export function createConfirmDialog(options: ConfirmDialogOptions): ConfirmDialo
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Modal warning / confirm primitives + focus trap (TASK-CHATV2-014)
+// ---------------------------------------------------------------------------
+//
+// `createConfirmDialog` above is deliberately minimal (two fixed controls, the
+// busy engine-switch flow). Permission surfaces need a MODAL that can carry an
+// arbitrary button set (bypass warning: Enable/Cancel; deny confirmation:
+// Deny/Keep waiting) while keeping the same non-negotiable invariants:
+//
+//   - default focus is the caller's SAFE action, never an approving one;
+//   - Escape DISMISSES (it can never activate a button);
+//   - Tab/Shift+Tab cycle only among the dialog's own controls;
+//   - focus is restored to whatever held it before the dialog opened.
+//
+// The trap is exported on its own because the permission REQUEST sheet is
+// anchored (not centered) and builds its controls dynamically — it needs the
+// same trap without the fixed dialog chrome.
+
+/** Marker attribute identifying a modal warning/confirm dialog. */
+export const OVERLAY_MODAL_MARKER = "data-chat-overlay-modal";
+/** Marker attribute carrying `1` while an element's Tab order is trapped. */
+export const OVERLAY_FOCUS_TRAP_MARKER = "data-chat-focus-trap";
+
+/** Default focusable selector used by the focus trap. Real controls only. */
+export const OVERLAY_FOCUSABLE_SELECTOR =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Why a modal dialog closed. */
+export type ModalDialogCloseReason = "action" | "escape" | "api";
+
+/** A live focus trap over one container's focusable descendants. */
+export interface FocusTrap {
+  /** Remember the current focus, trap Tab inside `container` and focus
+   * `initialFocus` (or the first control). No-op while already active. */
+  activate(initialFocus?: HTMLElement | null): void;
+  /** Release the Tab listener. Does NOT move focus. */
+  deactivate(): void;
+  isActive(): boolean;
+  /** Focusable controls inside the container, in document order. */
+  focusables(): readonly HTMLElement[];
+  /** Return focus to the element that held it before `activate()`. */
+  restoreFocus(): void;
+  destroy(): void;
+}
+
+/**
+ * Create a Tab/Shift+Tab trap over `container`. The trap listens on the
+ * container itself (capture phase) so a keydown anywhere inside it is routed
+ * before native focus traversal.
+ */
+export function createFocusTrap(
+  container: HTMLElement,
+  focusableSelector: string = OVERLAY_FOCUSABLE_SELECTOR,
+): FocusTrap {
+  let active = false;
+  let previousFocus: HTMLElement | null = null;
+
+  function focusables(): HTMLElement[] {
+    return Array.from(container.querySelectorAll<HTMLElement>(focusableSelector)).filter(
+      (node) => node.hidden !== true && node.getAttribute("aria-hidden") !== "true",
+    );
+  }
+
+  function onKeydown(event: KeyboardEvent): void {
+    if (!active || event.key !== "Tab") return;
+    const items = focusables();
+    // No focusable control: keep focus from escaping into the background.
+    if (items.length === 0) {
+      event.preventDefault();
+      return;
+    }
+    event.preventDefault();
+    const current = document.activeElement;
+    const index = current instanceof HTMLElement ? items.indexOf(current) : -1;
+    const delta = event.shiftKey ? -1 : 1;
+    let next = index === -1 ? (event.shiftKey ? items.length - 1 : 0) : index + delta;
+    if (next < 0) next = items.length - 1;
+    if (next >= items.length) next = 0;
+    try {
+      items[next]?.focus();
+    } catch {
+      /* jsdom/older engines may reject focus. */
+    }
+  }
+
+  container.setAttribute(OVERLAY_FOCUS_TRAP_MARKER, "0");
+
+  function deactivate(): void {
+    if (!active) return;
+    active = false;
+    container.removeEventListener("keydown", onKeydown, true);
+    container.setAttribute(OVERLAY_FOCUS_TRAP_MARKER, "0");
+  }
+
+  return {
+    activate(initialFocus?: HTMLElement | null): void {
+      if (active) return;
+      active = true;
+      const current = document.activeElement;
+      previousFocus = current instanceof HTMLElement ? current : null;
+      container.setAttribute(OVERLAY_FOCUS_TRAP_MARKER, "1");
+      container.addEventListener("keydown", onKeydown, true);
+      const target = initialFocus ?? focusables()[0] ?? null;
+      try {
+        target?.focus();
+      } catch {
+        /* jsdom/older engines may reject focus. */
+      }
+    },
+    deactivate,
+    isActive: () => active,
+    focusables,
+    restoreFocus(): void {
+      const target = previousFocus;
+      previousFocus = null;
+      try {
+        target?.focus?.();
+      } catch {
+        /* focus restore is best-effort */
+      }
+    },
+    destroy(): void {
+      deactivate();
+      previousFocus = null;
+    },
+  };
+}
+
+/** One button in a modal warning/confirm. */
+export interface ModalAction {
+  readonly id: string;
+  readonly label: string;
+  /** Visual tone only; it never changes what the button does. */
+  readonly tone?: "neutral" | "primary" | "warning" | "danger";
+  readonly onActivate: () => void;
+}
+
+export interface ModalDialogOptions {
+  /** Element the dialog is appended to while open. */
+  readonly mount: HTMLElement;
+  /** Dialog title (plain text). */
+  readonly title: string;
+  /** Body copy (plain text, pre-formatted with newlines preserved by CSS). */
+  readonly body: string;
+  /** Buttons, painted in order. Must contain at least one action. */
+  readonly actions: readonly ModalAction[];
+  /** Action focused on open. MUST be the caller's SAFE (non-destructive) one. */
+  readonly defaultActionId: string;
+  /** Optional extra tone hook (`warning` paints the amber variant). */
+  readonly tone?: "warning" | "confirm";
+  /** Called once on every close, including Escape and `close()`. */
+  readonly onDismiss?: (reason: ModalDialogCloseReason) => void;
+}
+
+/** The live modal handle. */
+export interface ModalDialog {
+  readonly element: HTMLElement;
+  open(): void;
+  close(reason?: ModalDialogCloseReason): void;
+  isOpen(): boolean;
+  /** The action id that currently holds focus, or null while closed. */
+  focusedActionId(): string | null;
+  destroy(): void;
+}
+
+/**
+ * Build a MODAL warning or confirmation. Same safe-default / Escape /
+ * focus-trap contract as {@link createConfirmDialog}, but with a caller-defined
+ * action set. Escape NEVER activates an action — it only dismisses.
+ */
+function buildModalDialog(options: ModalDialogOptions): ModalDialog {
+  const { mount } = options;
+  const tone = options.tone ?? "confirm";
+  let open = false;
+  let destroyed = false;
+  let focusedId: string | null = null;
+
+  const dialog = document.createElement("div");
+  dialog.className = cls("overlay-modal");
+  dialog.setAttribute(OVERLAY_MODAL_MARKER, "1");
+  dialog.setAttribute("data-tone", tone);
+  dialog.setAttribute("role", "alertdialog");
+  dialog.setAttribute("aria-modal", "true");
+  const titleId = `${ROOT_CLASS}-overlay-modal-title`;
+  const bodyId = `${ROOT_CLASS}-overlay-modal-body`;
+  dialog.setAttribute("aria-labelledby", titleId);
+  dialog.setAttribute("aria-describedby", bodyId);
+  // Same width contract as the confirmation dialog (360–560px).
+  dialog.style.setProperty("--UnicDB-dialog-min", `${OVERLAY_CONFIRM_WIDTH_MIN}px`);
+  dialog.style.setProperty("--UnicDB-dialog-max", `${OVERLAY_CONFIRM_WIDTH_MAX}px`);
+
+  const title = document.createElement("div");
+  title.className = cls("overlay-modal-title");
+  title.id = titleId;
+  // textContent only — a hostile title can never become markup.
+  title.textContent = options.title;
+  dialog.appendChild(title);
+
+  const body = document.createElement("div");
+  body.className = cls("overlay-modal-body");
+  body.id = bodyId;
+  body.textContent = options.body;
+  dialog.appendChild(body);
+
+  const actions = document.createElement("div");
+  actions.className = cls("overlay-modal-actions");
+  const actionButtons = new Map<string, HTMLButtonElement>();
+  for (const action of options.actions) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = cls("overlay-modal-action");
+    button.setAttribute("data-action-id", action.id);
+    button.setAttribute("data-tone", action.tone ?? "neutral");
+    button.textContent = action.label;
+    button.addEventListener("click", () => {
+      close("action");
+      action.onActivate();
+    });
+    actions.appendChild(button);
+    actionButtons.set(action.id, button);
+  }
+  dialog.appendChild(actions);
+
+  const trap = createFocusTrap(dialog);
+
+  // Escape dismisses; it can never select an action. Tab is owned by the trap.
+  dialog.addEventListener("keydown", (event) => {
+    if (!open || event.key !== "Escape") return;
+    event.preventDefault();
+    close("escape");
+  });
+
+  function focusAction(id: string | null): void {
+    focusedId = id;
+    if (id === null) return;
+    const button = actionButtons.get(id);
+    try {
+      button?.focus();
+    } catch {
+      /* jsdom/older engines may reject focus. */
+    }
+  }
+
+  function close(reason: ModalDialogCloseReason = "api"): void {
+    if (!open) return;
+    open = false;
+    focusedId = null;
+    trap.deactivate();
+    dialog.remove();
+    trap.restoreFocus();
+    options.onDismiss?.(reason);
+  }
+
+  return {
+    element: dialog,
+    open(): void {
+      if (destroyed || open) return;
+      open = true;
+      mount.appendChild(dialog);
+      // Default focus is the caller's SAFE action, never an approving one.
+      trap.activate(actionButtons.get(options.defaultActionId) ?? null);
+      focusAction(options.defaultActionId);
+    },
+    close,
+    isOpen: () => open,
+    focusedActionId: () => focusedId,
+    destroy(): void {
+      if (destroyed) return;
+      destroyed = true;
+      close("api");
+      dialog.remove();
+    },
+  };
+}
+
+/** Create an amber-styled modal warning (e.g. the bypass-permission notice). */
+export function createModalWarning(options: ModalDialogOptions): ModalDialog {
+  return buildModalDialog({ ...options, tone: "warning" });
+}
+
+/** Create a neutral modal confirmation with an arbitrary action set. */
+export function createModalConfirm(options: ModalDialogOptions): ModalDialog {
+  return buildModalDialog({ ...options, tone: "confirm" });
+}
