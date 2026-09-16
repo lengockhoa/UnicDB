@@ -2456,3 +2456,288 @@
   outline: 2px solid var(--vscode-focusBorder, #5f9eff);
   outline-offset: 2px;
 }
+
+
+/* ==========================================================================
+ * TASK-CHATV2-016 — final cross-cutting rules
+ *
+ * APPEND-ONLY block. Everything is scoped under `.UnicDB-ai-chat-v2`; nothing
+ * here restyles the console/results webviews or the legacy `webview/styles.css`.
+ * Covers: error card + stop advisory, scroll pill, visual matrix (320/420/480/
+ * 768/1200), 200% zoom, dark/light/high-contrast, and reduced motion.
+ * ========================================================================== */
+
+/* ---- Error card (PLAN §6: assistant width, 10x12px, 3px danger) --------- */
+
+.UnicDB-ai-chat-v2-error-card {
+  box-sizing: border-box;
+  width: 880px;
+  max-width: 92%;
+  margin: var(--UnicDB-ai-chat-v2-space-3) 0;
+  padding: 10px 12px;
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-left: 3px solid var(--UnicDB-ai-chat-v2-danger);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: color-mix(in srgb, var(--UnicDB-ai-chat-v2-danger) 10%, transparent);
+}
+
+.UnicDB-ai-chat-v2-error-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--UnicDB-ai-chat-v2-space-2);
+  min-width: 0;
+}
+
+.UnicDB-ai-chat-v2-error-card-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--UnicDB-ai-chat-v2-danger);
+}
+
+.UnicDB-ai-chat-v2-error-card-title {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+}
+
+.UnicDB-ai-chat-v2-error-card-id {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.UnicDB-ai-chat-v2-error-card-message {
+  margin: var(--UnicDB-ai-chat-v2-space-2) 0 0;
+  overflow-wrap: anywhere;
+}
+
+.UnicDB-ai-chat-v2-error-card-summary {
+  cursor: pointer;
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.UnicDB-ai-chat-v2-error-card-detail {
+  margin: var(--UnicDB-ai-chat-v2-space-1) 0 0;
+  padding: var(--UnicDB-ai-chat-v2-space-2);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: var(--vscode-textCodeBlock-background, rgba(0, 0, 0, 0.25));
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.UnicDB-ai-chat-v2-error-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--UnicDB-ai-chat-v2-space-2);
+  margin-top: var(--UnicDB-ai-chat-v2-space-3);
+}
+
+/* Real controls: >=32x32; the card never clips an action. */
+.UnicDB-ai-chat-v2-error-card-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--UnicDB-ai-chat-v2-space-1);
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: var(--vscode-button-secondaryBackground, transparent);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-error-card-action[data-action="retry"] {
+  border-color: var(--UnicDB-ai-chat-v2-primary);
+  background: var(--UnicDB-ai-chat-v2-primary);
+  color: var(--vscode-button-foreground, #ffffff);
+}
+
+.UnicDB-ai-chat-v2-error-card-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.UnicDB-ai-chat-v2-error-card-action:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
+}
+
+/* ---- Stop-failure advisory (Stop stays active) --------------------------- */
+
+.UnicDB-ai-chat-v2-stop-failure {
+  display: flex;
+  align-items: center;
+  gap: var(--UnicDB-ai-chat-v2-space-2);
+  padding: 10px 12px;
+  border-left: 3px solid var(--UnicDB-ai-chat-v2-warning);
+  background: color-mix(in srgb, var(--UnicDB-ai-chat-v2-warning) 12%, transparent);
+}
+
+.UnicDB-ai-chat-v2-stop-failure-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--UnicDB-ai-chat-v2-warning);
+}
+
+/* ---- Scroll pill (bottom-right, min 28px) -------------------------------- */
+
+.UnicDB-ai-chat-v2-scroll-pill {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-md);
+  background: var(--UnicDB-ai-chat-v2-surface);
+  color: var(--UnicDB-ai-chat-v2-text);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  box-shadow: 0 8px 24px var(--UnicDB-ai-chat-v2-shadow);
+}
+
+.UnicDB-ai-chat-v2-scroll-pill[hidden] {
+  display: none;
+}
+
+.UnicDB-ai-chat-v2-scroll-pill:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
+}
+
+/* ---- Tooltip (optional custom tooltip; native title is the minimum) ------ */
+
+.UnicDB-ai-chat-v2-tooltip {
+  position: absolute;
+  z-index: 4;
+  max-width: 240px;
+  padding: 4px 8px;
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: var(--UnicDB-ai-chat-v2-surface);
+  color: var(--UnicDB-ai-chat-v2-text);
+  font-size: 11px;
+  line-height: 16px;
+  box-shadow: 0 8px 24px var(--UnicDB-ai-chat-v2-shadow);
+}
+
+.UnicDB-ai-chat-v2-tooltip[hidden] {
+  display: none;
+}
+
+/* ---- Visual matrix: 480 / 768 / 1200 boundaries -------------------------- */
+
+@media (min-width: 480px) and (max-width: 767px) {
+  .UnicDB-ai-chat-v2-error-card {
+    max-width: 100%;
+  }
+}
+
+@media (min-width: 768px) {
+  .UnicDB-ai-chat-v2-error-card {
+    max-width: 92%;
+  }
+}
+
+@media (min-width: 1200px) {
+  .UnicDB-ai-chat-v2-error-card {
+    max-width: 880px;
+  }
+}
+
+/* ---- 200% zoom: no clipped control, no page overflow -------------------- */
+
+.UnicDB-ai-chat-v2,
+.UnicDB-ai-chat-v2-error-card,
+.UnicDB-ai-chat-v2-stop-failure {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Narrow: <420px labels hide, aria-label persists ------------------- */
+
+@media (max-width: 419px) {
+  .UnicDB-ai-chat-v2-error-card-id {
+    display: none;
+  }
+
+  .UnicDB-ai-chat-v2-error-card-actions {
+    justify-content: flex-start;
+  }
+}
+
+/* ---- Narrow: <320px composer/card actions wrap into two rows ----------- */
+
+@media (max-width: 319px) {
+  .UnicDB-ai-chat-v2-error-card-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(32px, 1fr));
+    gap: var(--UnicDB-ai-chat-v2-space-1);
+    width: 100%;
+  }
+
+  .UnicDB-ai-chat-v2-error-card-action {
+    justify-content: center;
+    min-height: 32px;
+  }
+}
+
+/* ---- High contrast: rely on system colors, keep 2px ring --------------- */
+
+@media (forced-colors: active) {
+  .UnicDB-ai-chat-v2-error-card {
+    border-left-color: Mark;
+    background: Canvas;
+  }
+
+  .UnicDB-ai-chat-v2-error-card-action,
+  .UnicDB-ai-chat-v2-scroll-pill {
+    border-color: ButtonBorder;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+
+  .UnicDB-ai-chat-v2-error-card-action:focus-visible,
+  .UnicDB-ai-chat-v2-scroll-pill:focus-visible {
+    outline-color: Highlight;
+  }
+}
+
+/* ---- Reduced motion: remove caret/spinner/pulse/scroll animation -------- */
+/* The static status icon + text remain, so state stays understandable. */
+
+@media (prefers-reduced-motion: reduce) {
+  .UnicDB-ai-chat-v2-error-card,
+  .UnicDB-ai-chat-v2-error-card-action,
+  .UnicDB-ai-chat-v2-scroll-pill,
+  .UnicDB-ai-chat-v2-tooltip,
+  .UnicDB-ai-chat-v2-stop-failure {
+    transition: none;
+    animation: none;
+    scroll-behavior: auto;
+  }
+
+  .UnicDB-ai-chat-v2-scroll-pill {
+    scroll-behavior: auto;
+  }
+
+  .UnicDB-ai-chat-v2-transcript {
+    scroll-behavior: auto;
+  }
+}

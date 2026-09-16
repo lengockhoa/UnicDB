@@ -65,3 +65,68 @@ npm run compile
 
 ## Discussion
 (no comments yet)
+
+## Executor Report
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: |
+  Files were written incrementally (module + its tests per milestone). Real RED
+  captured each milestone by running the suite and pasting actual failures:
+
+  1. src/ui/aiChatErrors tier — 2 real failures on first run:
+     FAIL aiChatErrors.test.ts > privacy > raw provider detail never survives into the frame
+     AssertionError: expected '...ECONNREFUSED 127.0.0.1:5432...' to not contain 'ECONNREFUSED'
+     (frame echoed raw detail because the allowlist accepted ':' and '.')
+     FAIL aiChatErrors.test.ts > privacy > safeErrorDetail drops anything with markup...
+     AssertionError: expected 'token' to be undefined
+     Fix: tightened SAFE_DETAIL_RE (dropped ':' '.' and added whole-word
+     token/credential/host/port rejection). GREEN: 24/24.
+
+  2. webview/aiChat/errors.ts tier — mutation check of the retry guard:
+     FAIL errorsScrollA11y.test.ts > race: Retry double activation > a retry is re-armed only by settleRetry
+     AssertionError: expected true to be false
+     (removing `retryInFlight` from the guard let a 2nd retry through) — reverted.
+
+  3. webview/aiChat/scroll.ts tier — mutation check of reasoning handling:
+     FAIL errorsScrollA11y.test.ts > proximity discipline > reasoning-only events neither increment nor scroll
+     AssertionError: expected 2 to be +0  (reasoning was counted as a response) — reverted.
+
+  4. webview/aiChat/a11y.ts tier — mutation check of token refusal:
+     FAIL errorsScrollA11y.test.ts > live regions > refuses token and reasoning updates
+     AssertionError: expected true to be false — reverted.
+
+  5. styles.css tier — ran the CSS contract suite against the pre-append
+     stylesheet (git show HEAD:...styles.css): 8 real failures, first:
+     AssertionError: expected '/* webview/aiChat/styles.css ...' to contain '.UnicDB-ai-chat-v2-error-card'
+     Restored the appended block; 42/42 green.
+
+Verification Output: |
+  $ npm test -- --run src/ui/__tests__/aiChatErrors.test.ts webview/aiChat/__tests__/errorsScrollA11y.test.ts webview/aiChat/__tests__/controller.test.ts webview/aiChat/__tests__/transcript.test.ts
+   ✓ src/ui/__tests__/aiChatErrors.test.ts  (24 tests) 5ms
+   ✓ webview/aiChat/__tests__/errorsScrollA11y.test.ts  (42 tests) 39ms
+   ✓ webview/aiChat/__tests__/controller.test.ts  (23 tests) 102ms
+   ✓ webview/aiChat/__tests__/transcript.test.ts  (20 tests) 161ms
+   Test Files  4 passed (4)   Tests  109 passed (109)
+
+  $ npm run typecheck
+  > tsc --noEmit   (exit 0, no output)
+
+  $ npm run compile
+  esbuild: build complete   (dist/aiChatPanel.js, dist/extension.js, dist/webview.js/css)
+
+Status: PASS
+Note: |
+  - Delivered all six target files plus the two test files. Modules are
+    standalone and consume the landed V2 modules (store/shell/icons + src/ui);
+    wiring the scroll controller into the transcript viewport and the announcer
+    into the shell/controller is the CHATV2-017 cutover step, matching the
+    task's Interfaces ("Produces ... shared a11y/responsive behavior for final
+    cutover"). No V2 component was duplicated.
+  - No lint script exists in package.json; typecheck is the static gate and is clean.
+  - Manual visual matrix (320/420/480/768/1200, dark/light/HC, 200% zoom,
+    reduced motion) is prepared as CHAT_V2_SCREENSHOT_FIXTURES in shell.ts and
+    is executed in the CHATV2-017 bundled-webview gate — jsdom does not assert
+    pixel geometry.
+  - Milestone commits on branch handoff/task-chatv2-016:
+    26195d7, e84a093, b54ade6, 9812661, 6a977dc.
