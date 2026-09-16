@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Fix AI Chat V2 UX: composer size/bottom-pinning, transcript scrollbar + auto-scroll, Claude Code-style tool timeline, and working message action icons
 Base: main
-Phase: I4
-Cursor: wave 3 done — 004 PASS; all 4 tasks PASS, worktrees/branches cleaned, INDEX -> pending_review
-Next: R1 — review setup, then R2-R4 reviewer batches (max 2 parallel)
+Phase: done
+Cursor: Cycle COMPLETE. 4/4 tasks done (001 approved; 002 approved_minor + 004 approved after fix round 1; 003 approved_minor). Waves 3769f97/f33ac75/fead237, fixes 3108f99/61af841, wrap pushed. Final suite 4666 pass / 5 skip / 0 fail.
+Next: none — cycle done. Minor advisories live in task files (IN card cap host-bounded, test #5 string-anchor) — follow-ups only.

@@ -9,10 +9,10 @@ this live queue and the cycle is summarized in `RUN.md` + `REVIEW-CHATV2-R1.md`.
 
 | Task | Title | Status | Dependencies | Wave |
 |---|---|---|---|---:|
-| TASK-CHATFIX-001 | Explicit shell grid placement (composer size/pinning/crush + scroll region) | pending_review | none | 1 |
-| TASK-CHATFIX-002 | Drive the scroll controller (auto-scroll to newest + unread pill) | pending_review | 001 | 2 |
+| TASK-CHATFIX-001 | Explicit shell grid placement (composer size/pinning/crush + scroll region) | done | none | 1 |
+| TASK-CHATFIX-002 | Drive the scroll controller (auto-scroll to newest + unread pill) | done | 001 | 2 |
 | TASK-CHATFIX-003 | Tool activity timeline (Claude Code-style) + live-turn indicator | done | 001 | 2 |
-| TASK-CHATFIX-004 | Wire the dead message action icons (copy/edit/retry/3-dot) | in_progress | 002 | 3 |
+| TASK-CHATFIX-004 | Wire the dead message action icons (copy/edit/retry/3-dot) | done | 002 | 3 |
 
 Execution: lowest ready ID first; tasks in a wave may run in parallel only when they do not edit
 the same file (wave 2 = 002+003, disjoint file sets). Each task is TDD RED→GREEN, focused tests +

@@ -226,3 +226,17 @@ Note: mock geometry caveat documented in test #6 — bumps are +clientHeight
 scrollHeight where a real browser clamps; a real browser's pre-frame capture
 (old scrollHeight) tolerates any growth per frame. Milestone commit d94ad64 on
 handoff/fix-002 (worktree .worktrees/fix-002), never pushed.
+
+## Reviewer Verdict (fix round 1)
+
+VERDICT: approved_minor
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - webview/aiChat/__tests__/autoScroll.test.ts:209-212 — test #5 anchors the coalesced pass by source-string slicing ("function renderState" / "function renderChangePlan"); renaming either function silently voids the ONE-driver guard. Previously judged acceptable; consider structural anchors (e.g. AST or marker comment) if the pass is ever refactored.
+NEXT_STATUS_FOR_INDEX: done
+NOTES: Fix verified: controller.ts:292 captures preDistance = scroll.beginFrame() pre-paint and the growth branch (controller.ts:322-326) routes to notifyNewResponse while pinned (<= SCROLL_BOTTOM_THRESHOLD_PX) and to notifyReasoningActivity far away, matching scroll.ts:178-199 semantics with input-focus suppression intact. Re-ran all verification from repo root: autoScroll 7/7 + errorsScrollA11y 42/42 + controller 23/23 + controllerSurfaces 13/13, typecheck exit 0, compile exit 0. No lint script exists in package.json, so verification commands cover the available static checks. Test #5 correctly re-expressed as zero notify sites outside the pass (global count === in-pass count). Model isolation confirmed (bao-sonnet executor / bao-opus reviewer); INDEX.md row left for the orchestrator per fix-round instructions.

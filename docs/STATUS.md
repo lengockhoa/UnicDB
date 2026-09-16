@@ -1,3 +1,13 @@
+# STATUS — 2026-09-17 (CHATFIX cycle shipped to main — chat grid/scroll/timeline/actions fixed, 4/4 done)
+
+## LATEST — Cycle CHATFIX (2026-09-17)
+- **All 4 tasks done** in `docs/AI_HANDOFF/INDEX.md`; fix round 1 used (002, 004); re-reviews approved; final suite 4666 pass / 5 skip / 0 fail.
+- Composer: explicit grid-row placement — compact at fresh open, pinned above the hint row, never crushed; transcript is the real scroll region.
+- Transcript: auto-scroll driven from the render pass (follows streaming growth; user-scroll-up respected; composer focus never scroll-jacks).
+- Tool activity: Claude Code-style timeline with status dots, Bash IN/OUT blocks, pulsing live indicator (additive `detail?` frame field, textContent-only).
+- Message actions: copy/edit/retry/3-dot wired (live snapshot copy; DRAFT_CHANGED edit; requestRetry; overlay menu).
+- Cycle wrap commits: plan `a2665b3` -> waves `3769f97`/`f33ac75`/`fead237` -> fixes `3108f99`/`61af841`. Pushed to `origin/main`.
+
 # STATUS — 2026-09-16 (v1.54.0 SHIPPED — CHATV2 V2 sole production chat UI, 17/17 done)
 
 ## SHIPPED — v1.54.0 CHATV2 (2026-09-16, GitHub Release + Marketplace)

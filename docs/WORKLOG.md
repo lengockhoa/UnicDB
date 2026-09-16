@@ -20,6 +20,16 @@ For each significant action, append:
 - Verification run
 - Outcome
 
+## 2026-09-17 — Cycle CHATFIX (chat UX: grid fix, auto-scroll, tool timeline, action icons), 4/4 done, pushed
+- Full handoff cycle: P2 planner (bao-opus) -> P2.5 independent plan review (Approved, 3 minor) -> P3 plan commit `a2665b3` -> 3 waves (001 grid `3769f97`, 002+003 `f33ac75`, 004 `fead237`) -> R2-R4 4 reviewer verdicts -> R4.5 fix round 1 (`3108f99` scroll-follow, `61af841` live copy snapshot) -> re-reviews approved -> wrap push.
+- Root cause (001): shell grid relied on auto-placement; hidden banner at fresh open shifted rows — composer got the 1fr row (giant on open, crushed after turns) and transcript got the auto row (no scroll region). Fix: explicit grid-row 1..5 + `.UnicDB-ai-chat-v2-main` flex rule; mutation-checked CSS-contract test (`shellGrid.test.ts`).
+- 002: scroll controller finally driven from the render pass; fix round 1 routes streaming same-message growth through `beginFrame()` pre-frame distance (auto-follow during streaming, no spurious unread pill; `autoScroll.test.ts` 7->8 cases).
+- 003: Claude Code-style tool activity timeline (bold tool label + muted summary, pulsing/green/red status dots + connector, Bash IN/OUT monospace inset blocks capped with internal scroll, pulsing live indicator); additive `detail?: string` host frame field; textContent-only (XSS-safe).
+- 004: message action icons wired — copy (live snapshot via mutable `messageMenuRaw`, fix round 1), edit -> draft via DRAFT_CHANGED + autocomplete resync, retry via requestRetry, 3-dot overlay menu with tracked keydown teardown; onInsertSql hidden (no existing intent kind).
+- Reviewers: 001 approved · 002 approved_minor (after fix) · 003 approved_minor · 004 approved (after fix). Model isolation sonnet/opus held throughout.
+- Verification: per-task suites + typecheck + compile green each wave; final full suite 4666 pass / 5 skip / 0 fail.
+- Files: `webview/aiChat/{styles.css,controller.ts,transcript.ts,store.ts,__tests__/{shellGrid,autoScroll,transcript,store,messageActions}.test.ts}`, `src/ui/{aiChatPanel.ts,aiChatPanelMessages.ts}`, handoff docs.
+
 ## 2026-09-08 — Cycle RES-BAR (WHERE/ORDER BY toolbar + hover polish), R4 batch 2 in flight
 - Full handoff cycle: P0 (locked: server-side re-run · free SQL fragment · between `tsv` dropdown and `Search…`) → P1 (lite agent recalled prior cycle summary) → P2 (strong model wrote PLAN.md 6 sections + 3 TASK-xxx files) → P2.5 (independent unic-smart plan review: 4 minor findings applied — compile-on-wave-2, property-level hover assertion, wave-1 census `title`-clause rewrite, toolbar DOM-order pin; PLAN_REVIEW: Approved) → P3 (plan committed at 2bc0544).
 - Wave plan: wave 1 = RES-001 ∥ RES-002 (parallel, disjoint files); wave 2 = RES-003 sequenced after RES-001 (shares `webview/main.ts` + `webview/styles.css`).

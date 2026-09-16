@@ -357,3 +357,23 @@ Worktree: `.worktrees/fix-004` (branch `handoff/fix-004`, commit `361be91` "mile
 Status: PASS
 Note: none. All three reviewer findings (1 important, 2 relevant minors) fixed; third minor
 (test-7 regex) taken as well. No behavior beyond the reviewer scope changed.
+
+## Reviewer Verdict (fix round 1)
+
+VERDICT: APPROVED
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN: PASS
+  command: npx vitest run webview/aiChat/__tests__/messageActions.test.ts webview/aiChat/__tests__/controller.test.ts webview/aiChat/__tests__/transcript.test.ts && npm run typecheck && npm run compile
+  result: 57 pass / 0 fail (messageActions now 8 tests) — fresh run from repo root; tsc exit 0; esbuild build complete
+FIX_FINDINGS_RESOLUTION:
+  - important (stale-copy closure) — FIXED. `messageMenuRaw` slot re-pointed on EVERY open before `open()` (controller.ts:1019) and read by `onActivate` (controller.ts:1031); new test #8 drives the exact reviewer scenario (open mid-stream → Escape → stream grows → re-open same trigger → Copy) and its RED_OUTPUT shows the genuine stale-snapshot failure ("answer text" vs "answer text + streamed tail").
+  - minor (trigger keydown leak) — FIXED. `teardownMessageMenu()` (controller.ts:1005-1013) removes the tracked `messageMenuTriggerKeydown` from the old trigger; used on trigger swap (controller.ts:1022) and routed through `dispose()`.
+  - minor (stale autocomplete on edit) — FIXED. `syncAutocompleteFromDraft()` added right after `applyDraftEdit` in `onEditUser` (controller.ts:824).
+  - minor (weak test-7 pin) — FIXED. Comments stripped before matching; patterns pin the wiring signatures (`onEditUser\(\s*_messageId` etc.), which comments can no longer satisfy; stripping can only remove text, so it cannot fabricate a pass.
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: done
+NOTES: All four round-0 findings resolved with real behavioral assertions; verification re-run fresh in the main checkout is fully green. Model isolation confirmed (executor bao-sonnet ≠ reviewer bao-opus, matches handoff.reviewer.model unic-smart).
