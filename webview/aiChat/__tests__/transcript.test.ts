@@ -504,6 +504,106 @@ describe("transcript — case 7: SQL action and callback payloads", () => {
 });
 
 // ---------------------------------------------------------------------------
+// TASK-CHATFIX-003 — Claude Code-style tool activity timeline
+// (bold label + muted summary, per-step status dot joined by a connector,
+// expandable IN/OUT cards, trailing live indicator). State via the real
+// reducer; stylesheet text assertions pin the polish bar.
+// ---------------------------------------------------------------------------
+
+describe("transcript — TASK-CHATFIX-003 tool activity timeline", () => {
+  const css = existsSync(resolve(process.cwd(), "webview", "aiChat", "styles.css"))
+    ? readFileSync(resolve(process.cwd(), "webview", "aiChat", "styles.css"), "utf8")
+    : "";
+
+  /** Drive one tool through the real reducer and render it. */
+  function runToolTurn(detail?: string, summary = "3 files changed"): HTMLElement {
+    let { state, next } = openTurn();
+    state = host(
+      state,
+      {
+        kind: "tool_started",
+        turnId: "t1",
+        toolId: "tool1",
+        label: "Bash",
+        action: "run",
+        ...(detail !== undefined ? { detail } : {}),
+      },
+      next++,
+    );
+    state = host(
+      state,
+      { kind: "tool_finished", turnId: "t1", toolId: "tool1", label: "Bash", status: "ok", summary },
+      next++,
+    );
+    renderer.render(state);
+    const tool = byKey("tool1");
+    expect(tool).not.toBeNull();
+    return tool!;
+  }
+
+  it("case 1 (happy): Bash step renders bold label, IN/OUT blocks and ok dot", () => {
+    const tool = runToolTurn("git status");
+    expect(tool.querySelector(`.${PREFIX}-tool-label`)?.textContent).toBe("Bash");
+    expect(tool.querySelector('[data-tool-block="in"]')?.textContent).toBe("git status");
+    expect(tool.querySelector('[data-tool-block="out"]')?.textContent).toBe("3 files changed");
+    expect(tool.querySelector(`.${PREFIX}-tool-status`)?.getAttribute("data-status")).toBe("ok");
+
+    // Polish bar is pinned by the scoped stylesheet: bold high-contrast label,
+    // muted summary line, connector line between the step dots.
+    const labelRule = /\.UnicDB-ai-chat-v2-tool-label\s*\{([^}]*)\}/.exec(css);
+    expect(labelRule?.[1] ?? "").toContain("font-weight");
+    const summaryRule = /\.UnicDB-ai-chat-v2-tool-summary\s*\{([^}]*)\}/.exec(css);
+    expect(summaryRule?.[1] ?? "").toContain("var(--UnicDB-ai-chat-v2-muted)");
+    expect(css).toMatch(/\.UnicDB-ai-chat-v2-item-tool::before\s*\{[^}]*border-left/);
+  });
+
+  it("case 2 (happy): live indicator appears while the turn is open, leaves on turn_finished", () => {
+    let { state, next } = openTurn();
+    renderer.render(state);
+    expect(container.querySelectorAll(`.${PREFIX}-live`).length).toBe(1);
+    renderer.render(state); // idempotent — still exactly ONE trailing node
+    expect(container.querySelectorAll(`.${PREFIX}-live`).length).toBe(1);
+    state = finishTurn(state, next++);
+    renderer.render(state);
+    expect(container.querySelector(`.${PREFIX}-live`)).toBeNull();
+  });
+
+  it("case 3 (edge): legacy frame without detail — label + dot + OUT card, no IN card, no throw", () => {
+    const tool = runToolTurn(undefined, "12 rows");
+    expect(tool.querySelector('[data-tool-block="in"]')).toBeNull();
+    expect(tool.querySelector(`.${PREFIX}-tool-label`)?.textContent).toBe("Bash");
+    expect(tool.querySelector(`.${PREFIX}-tool-status`)).not.toBeNull();
+    expect(tool.querySelector('[data-tool-block="out"]')?.textContent).toBe("12 rows");
+  });
+
+  it("case 4 (edge): hostile detail/summary stays escaped text, never an <img>", () => {
+    const hostile = "<img src=x onerror=alert(1)>";
+    const tool = runToolTurn(hostile, hostile);
+    expect(tool.innerHTML).not.toContain("<img");
+    expect(tool.querySelector('[data-tool-block="in"]')?.textContent).toBe(hostile);
+    expect(tool.querySelector('[data-tool-block="out"]')?.textContent).toBe(hostile);
+    expect(tool.querySelector("img")).toBeNull();
+  });
+
+  it("case 5 (boundary): 2000-char output renders in full while CSS caps the OUT card", () => {
+    const long = "x".repeat(2000);
+    const tool = runToolTurn(undefined, long);
+    expect(tool.querySelector('[data-tool-block="out"]')?.textContent).toBe(long);
+    const rule = /\.UnicDB-ai-chat-v2-tool-io-text\[data-tool-block="out"\]\s*\{([^}]*)\}/.exec(css);
+    expect(rule).not.toBeNull();
+    expect(rule![1]!).toContain("max-height");
+    expect(rule![1]!).toContain("overflow-y: auto");
+  });
+
+  it("case 6 (regression): running status gains a namespaced pulse rule", () => {
+    const rule = /\.UnicDB-ai-chat-v2-tool-status\[data-status="running"\]\s*\{([^}]*)\}/.exec(css);
+    expect(rule).not.toBeNull();
+    expect(rule![1]!).toMatch(/animation:[^;]*UnicDB-ai-chat-v2-[\w-]+/);
+    expect(css).toMatch(/@keyframes UnicDB-ai-chat-v2-[\w-]+\s*\{/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Visual contract is pinned in the scoped stylesheet (jsdom cannot prove
 // geometry; these assertions guard against the rules silently disappearing).
 // ---------------------------------------------------------------------------

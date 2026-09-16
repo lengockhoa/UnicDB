@@ -44,7 +44,7 @@
    type ToolRegistry,
   type TurnUsageSummary,
  } from "../ai/agent";
-import type { ChatMessage, ChatContentPart } from "../ai/provider";
+import type { ChatMessage, ChatContentPart, ToolCall } from "../ai/provider";
 import type { AdapterFactory } from "../ai/tools/types";
 import type { GroundingDeps } from "./groundingService";
 import {
@@ -1108,6 +1108,62 @@ export class DbToolPermissionGate {
  * arguments (never DB row bytes) and are truncated so a giant generated SQL
  * string cannot blow up the card.
  */
+/** TASK-CHATFIX-003 — hard cap for the shape-only tool timeline detail. */
+const TOOL_DETAIL_MAX_CHARS = 120;
+
+/** TASK-CHATFIX-003 — strip control characters and collapse whitespace so the
+ * hint is always a single clean line. Shape only — never row bytes. */
+function sanitizeToolDetailLine(text: string): string {
+  const line = text
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return line.length > TOOL_DETAIL_MAX_CHARS
+    ? `${line.slice(0, TOOL_DETAIL_MAX_CHARS)}\u2026`
+    : line;
+}
+
+function describeToolArgs(argumentsJson: string): string {
+  if (argumentsJson.trim() === "") return "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(argumentsJson);
+  } catch {
+    return "";
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return "";
+  const args = parsed as Record<string, unknown>;
+  const str = (key: string): string | null => {
+    const value = args[key];
+    return typeof value === "string" && value.trim() !== "" ? value : null;
+  };
+  const num = (key: string): number | null => {
+    const value = args[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  };
+  const command = str("command");
+  if (command !== null) return command;
+  const filePath = str("file_path") ?? str("path");
+  if (filePath !== null) {
+    const offset = num("offset");
+    const limit = num("limit");
+    return offset !== null && limit !== null && offset >= 1 && limit >= 1
+      ? `${filePath} (lines ${offset}-${offset + limit - 1})`
+      : filePath;
+  }
+  const pattern = str("pattern") ?? str("query") ?? str("url");
+  return pattern ?? "";
+}
+
+/** TASK-CHATFIX-003 — single timeline detail line for one tool call:
+ * sanitized arg hint when one exists, the tool name alone otherwise.
+ * ≤120 chars, control chars stripped, never provider row bytes. */
+function toolCallDetailLine(call: ToolCall): string {
+  const name = (call.name || "tool").trim();
+  const hint = sanitizeToolDetailLine(describeToolArgs(call.argumentsJson));
+  return hint === "" ? name : hint;
+}
+
 function summarizeDbToolArgs(args: Record<string, unknown>): string {
   // AIX-02: file-op cards show path + +/- counts, never the whole content.
   if (
@@ -3045,6 +3101,10 @@ export class AiChatPanel {
           action: "tool",
           status: "running",
           summary: "",
+          // TASK-CHATFIX-003: shape-only single line (≤120 chars, control
+          // chars stripped) from the closed arg-field allowlist; degrades to
+          // the tool name alone when args are not shape-safe.
+          detail: toolCallDetailLine(call),
         });
       },
       // AIX-03: visible tool-call outcome card — shape only, never rows.
@@ -5027,6 +5087,9 @@ export class AiChatPanel {
     action: string;
     status: AiChatStoredActivity["status"];
     summary: string;
+    /** TASK-CHATFIX-003: shape-only single-line arg hint for the live
+     * timeline. Optional — legacy/degraded calls omit it. */
+    detail?: string;
     durationMs?: number;
   }): void {
     if (this.sessionAssistantMessageId === null) return;
@@ -5051,6 +5114,7 @@ export class AiChatPanel {
         toolId: input.toolId,
         label: input.label,
         action: input.action,
+        ...(input.detail !== undefined ? { detail: input.detail } : {}),
       });
       return;
     }

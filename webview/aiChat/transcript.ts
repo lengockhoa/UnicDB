@@ -51,6 +51,10 @@ export const LOAD_EARLIER_LABEL = "Load earlier messages";
 /** Copy shown on a stopped assistant message. */
 export const STOPPED_LABEL = "Stopped";
 
+/** TASK-CHATFIX-003: trailing live-turn indicator copy. Decorative — the real
+ * status stays in the shell's live regions. */
+const LIVE_LABEL = "Working…";
+
 /** The transcript container plus the two shell live regions. `ChatShellRefs`
  * satisfies this shape, so callers pass the shell refs directly. */
 export interface ChatTranscriptRefs {
@@ -103,6 +107,12 @@ interface KeyedRecord {
   finalized: boolean;
   /** SQL payload, present only while a fence exists. */
   sql: string | null;
+  /** TASK-CHATFIX-003 timeline: IN/OUT card container + its two text nodes
+   * and the expand/collapse toggle. Created lazily, removed with the row. */
+  io: HTMLElement | null;
+  ioIn: HTMLElement | null;
+  ioOut: HTMLElement | null;
+  toolToggle: HTMLButtonElement | null;
 }
 
 function cls(name: string): string {
@@ -150,6 +160,8 @@ export function createTranscriptRenderer(
   const timers = new Set<ReturnType<typeof setTimeout>>();
 
   let loadEarlier: HTMLButtonElement | null = null;
+  /** TASK-CHATFIX-003: the single trailing live-turn indicator node. */
+  let liveNode: HTMLElement | null = null;
   let rafHandle: number | null = null;
   let fallbackHandle: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
@@ -302,6 +314,10 @@ export function createTranscriptRenderer(
       streaming: false,
       finalized: false,
       sql: null,
+      io: null,
+      ioIn: null,
+      ioOut: null,
+      toolToggle: null,
     };
 
     if (item.kind === "text" || item.kind === "reasoning") {
@@ -317,10 +333,31 @@ export function createTranscriptRenderer(
       root.appendChild(actions);
       record.actions = actions;
     } else if (item.kind === "tool") {
-      const label = el("span", "tool-label");
+      // TASK-CHATFIX-003 timeline row: status dot column + content column.
+      // The dot is decorative; the bold label carries the tool name and the
+      // muted line carries the arg hint / result summary (textContent only).
       const status = el("span", "tool-status");
+      status.setAttribute("data-status", "running");
+      status.setAttribute("aria-hidden", "true");
+      const head = el("div", "tool-head");
+      const label = el("span", "tool-label");
       const summary = el("span", "tool-summary");
-      root.append(label, status, summary);
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = cls("tool-toggle");
+      toggle.setAttribute("aria-expanded", "true");
+      toggle.setAttribute("aria-label", "Toggle tool output");
+      toggle.title = "Toggle tool output";
+      toggle.appendChild(createChatIcon("chevron-down", 12));
+      toggle.addEventListener("click", () => {
+        const collapsed = root.getAttribute("data-collapsed") === "1";
+        if (collapsed) root.removeAttribute("data-collapsed");
+        else root.setAttribute("data-collapsed", "1");
+        toggle.setAttribute("aria-expanded", collapsed ? "true" : "false");
+      });
+      head.append(label, summary, toggle);
+      root.append(status, head);
+      record.toolToggle = toggle;
     }
     // `user` bubbles are the root node itself; actions + context are children.
 
@@ -451,11 +488,77 @@ export function createTranscriptRenderer(
     const status = record.root.querySelector<HTMLElement>(`.${cls("tool-status")}`);
     const summary = record.root.querySelector<HTMLElement>(`.${cls("tool-summary")}`);
     if (label) label.textContent = item.label;
-    if (status) {
-      status.textContent = item.status;
-      status.setAttribute("data-status", item.status);
+    if (status) status.setAttribute("data-status", item.status);
+    if (summary) {
+      // TASK-CHATFIX-003: the muted line carries the arg hint when it adds
+      // information beyond the bold label; degraded frames (detail === label)
+      // and legacy frames fall back to the result summary.
+      summary.textContent =
+        item.detail !== "" && item.detail !== item.label ? item.detail : item.summary;
     }
-    if (summary) summary.textContent = item.summary;
+    syncToolIo(item, record);
+  }
+
+  /** TASK-CHATFIX-003: keep the expandable IN/OUT monospace cards in sync with
+   * the item. IN mirrors `item.detail`, OUT mirrors `item.summary`; a card is
+   * only mounted while its text is non-empty and non-degenerate, and every
+   * wire string enters through `textContent`. */
+  function syncToolIo(
+    item: Extract<ChatTranscriptItem, { kind: "tool" }>,
+    record: KeyedRecord,
+  ): void {
+    const wantIn = item.detail !== "" && item.detail !== item.label;
+    const wantOut = item.summary !== "";
+    ensureIoText(record, "in", wantIn, item.detail);
+    ensureIoText(record, "out", wantOut, item.summary);
+    if (record.toolToggle) {
+      record.toolToggle.hidden = record.ioIn === null && record.ioOut === null;
+    }
+  }
+
+  function ensureIoText(
+    record: KeyedRecord,
+    which: "in" | "out",
+    wanted: boolean,
+    text: string,
+  ): void {
+    const current = which === "in" ? record.ioIn : record.ioOut;
+    if (!wanted) {
+      if (current !== null) {
+        current.parentElement?.remove();
+        if (which === "in") record.ioIn = null;
+        else record.ioOut = null;
+      }
+      if (record.ioIn === null && record.ioOut === null && record.io !== null) {
+        record.io.remove();
+        record.io = null;
+      }
+      return;
+    }
+    if (record.io === null) {
+      record.io = el("div", "tool-io");
+      record.root.appendChild(record.io);
+    }
+    let node = current;
+    if (node === null) {
+      const row = el("div", "tool-io-row");
+      const tag = el("span", "tool-io-tag");
+      tag.textContent = which === "in" ? "IN" : "OUT";
+      const textNode = el("pre", "tool-io-text");
+      textNode.setAttribute("data-tool-block", which);
+      row.append(tag, textNode);
+      record.io.appendChild(row);
+      node = textNode;
+      if (which === "in") record.ioIn = textNode;
+      else record.ioOut = textNode;
+    }
+    node.textContent = text;
+    // Fade mask only when the cap actually clips — otherwise short output
+    // would lose its last line to the gradient. jsdom reports 0/0 → "0".
+    node.setAttribute(
+      "data-scrollable",
+      node.scrollHeight > node.clientHeight + 1 ? "1" : "0",
+    );
   }
 
   // ------------------------------------------------------------------
@@ -539,6 +642,29 @@ export function createTranscriptRenderer(
     }
 
     applyStopped(state);
+    syncLiveIndicator(state);
+  }
+
+  /** TASK-CHATFIX-003: ONE trailing pulsing indicator while the current turn
+   * is still open; removed the moment it closes (or when no turn is live). */
+  function syncLiveIndicator(state: ChatViewState): void {
+    const live = state.turn !== null && !state.turn.closed;
+    if (!live) {
+      if (liveNode !== null) {
+        liveNode.remove();
+        liveNode = null;
+      }
+      return;
+    }
+    if (liveNode === null) {
+      liveNode = el("div", "live");
+      liveNode.setAttribute("aria-hidden", "true");
+      const dot = el("span", "live-dot");
+      const text = el("span", "live-text");
+      text.textContent = LIVE_LABEL;
+      liveNode.append(dot, text);
+    }
+    if (liveNode.parentNode !== container) container.appendChild(liveNode);
   }
 
   /** One muted `Stopped` footer on the partial assistant message of a stopped
@@ -577,6 +703,10 @@ export function createTranscriptRenderer(
     if (loadEarlier) {
       loadEarlier.remove();
       loadEarlier = null;
+    }
+    if (liveNode) {
+      liveNode.remove();
+      liveNode = null;
     }
     for (const toast of Array.from(container.querySelectorAll(`.${cls("toast")}`))) toast.remove();
   }

@@ -130,6 +130,9 @@ export interface ChatToolItem {
   readonly toolId: string;
   readonly label: string;
   readonly action: string;
+  /** TASK-CHATFIX-003: shape-only IN line from the host ("" when absent —
+   * legacy frames degrade to label + summary only). */
+  readonly detail: string;
   readonly status: "running" | AiChatToolStatusV2;
   readonly summary: string;
   readonly durationMs: number | null;
@@ -579,7 +582,13 @@ function applyFrameBody(
     }
 
     case "tool_started": {
-      const f = frame as { turnId: string; toolId: string; label: string; action: string };
+      const f = frame as {
+        turnId: string;
+        toolId: string;
+        label: string;
+        action: string;
+        detail?: string;
+      };
       const item: ChatToolItem = {
         id: f.toolId,
         kind: "tool",
@@ -587,6 +596,8 @@ function applyFrameBody(
         toolId: f.toolId,
         label: f.label,
         action: f.action,
+        // TASK-CHATFIX-003: absent/legacy field degrades to "" (never invented).
+        detail: typeof f.detail === "string" ? f.detail : "",
         status: "running",
         summary: "",
         durationMs: null,
@@ -611,6 +622,9 @@ function applyFrameBody(
         toolId: f.toolId,
         label: f.label,
         action: existing?.kind === "tool" ? existing.action : "",
+        // TASK-CHATFIX-003: the terminal frame carries no detail — the start
+        // frame's value is authoritative and is preserved here.
+        detail: existing?.kind === "tool" ? existing.detail : "",
         status: f.status,
         summary: f.summary,
         durationMs: typeof f.durationMs === "number" ? f.durationMs : null,

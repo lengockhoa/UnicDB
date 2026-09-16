@@ -642,22 +642,181 @@
   line-height: 16px;
 }
 
-.UnicDB-ai-chat-v2-tool {
+/* TASK-CHATFIX-003 — Claude Code-style tool activity timeline. Each step is
+   one row: a status-dot column + a content column, steps joined by a subtle
+   vertical connector drawn on the row's left edge. */
+
+.UnicDB-ai-chat-v2-item-tool {
+  position: relative;
   align-self: flex-start;
   max-width: 92%;
-  padding: 6px 10px;
-  border: 1px solid var(--UnicDB-ai-chat-v2-border);
-  border-left-width: 3px;
-  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
-  background: var(--UnicDB-ai-chat-v2-surface);
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 6px;
+  align-items: start;
+  padding: 4px 10px 4px 2px;
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: 12px;
   line-height: 18px;
 }
 
+/* Vertical connector joining the step dots (subtle, sits behind the dot). */
+.UnicDB-ai-chat-v2-item-tool::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--UnicDB-ai-chat-v2-border);
+  opacity: 0.5;
+}
+
+.UnicDB-ai-chat-v2-tool-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Bold, high-contrast step label. */
+.UnicDB-ai-chat-v2-tool-label {
+  font-weight: 600;
+  color: var(--UnicDB-ai-chat-v2-text);
+  overflow-wrap: anywhere;
+}
+
+/* Muted one-line arg hint / result summary. */
+.UnicDB-ai-chat-v2-tool-summary {
+  color: var(--UnicDB-ai-chat-v2-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Per-step status dot. Decorative — the shell live regions carry status. */
+.UnicDB-ai-chat-v2-tool-status {
+  position: relative;
+  z-index: 1;
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  justify-self: center;
+  border-radius: 50%;
+  background: var(--UnicDB-ai-chat-v2-muted);
+}
+
+/* queued/idle: muted (base above) · running: pulsing primary. */
+.UnicDB-ai-chat-v2-tool-status[data-status="running"] {
+  background: var(--UnicDB-ai-chat-v2-primary);
+  animation: UnicDB-ai-chat-v2-pulse 1.2s ease-in-out infinite;
+}
+
+.UnicDB-ai-chat-v2-tool-status[data-status="ok"] {
+  background: var(--UnicDB-ai-chat-v2-success);
+}
+
 .UnicDB-ai-chat-v2-tool-status[data-status="failed"],
 .UnicDB-ai-chat-v2-tool-status[data-status="denied"] {
   color: var(--UnicDB-ai-chat-v2-danger);
+  background: var(--UnicDB-ai-chat-v2-danger);
+}
+
+/* Expand/collapse chevron for the IN/OUT cards. */
+.UnicDB-ai-chat-v2-tool-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: transparent;
+  color: var(--UnicDB-ai-chat-v2-muted);
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-tool-toggle:hover {
+  color: var(--UnicDB-ai-chat-v2-text);
+  background: var(--UnicDB-ai-chat-v2-hover);
+}
+
+.UnicDB-ai-chat-v2-item-tool[data-collapsed="1"] .UnicDB-ai-chat-v2-tool-toggle svg {
+  transform: rotate(-90deg);
+}
+
+.UnicDB-ai-chat-v2-item-tool[data-collapsed="1"] .UnicDB-ai-chat-v2-tool-io {
+  display: none;
+}
+
+/* IN/OUT cards: inset monospace blocks under the step. */
+.UnicDB-ai-chat-v2-tool-io {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  min-width: 0;
+}
+
+.UnicDB-ai-chat-v2-tool-io-row {
+  display: block;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: var(--UnicDB-ai-chat-v2-input);
+}
+
+.UnicDB-ai-chat-v2-tool-io-tag {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 10px;
+  line-height: 12px;
+  letter-spacing: 0.08em;
+  color: var(--UnicDB-ai-chat-v2-muted);
+}
+
+.UnicDB-ai-chat-v2-tool-io-text {
+  display: block;
+  margin: 0;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--UnicDB-ai-chat-v2-text);
+}
+
+/* Capped visible height with internal scroll (≈8 rows at 16px). */
+.UnicDB-ai-chat-v2-tool-io-text[data-tool-block="out"] {
+  max-height: 128px;
+  overflow-y: auto;
+}
+
+/* Fade at the cut — applied only when the content actually clips
+   (data-scrollable is computed by the renderer). */
+.UnicDB-ai-chat-v2-tool-io-text[data-scrollable="1"] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent);
+}
+
+/* Trailing live-turn indicator (pulsing dot + copy). */
+.UnicDB-ai-chat-v2-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.UnicDB-ai-chat-v2-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--UnicDB-ai-chat-v2-primary);
+  animation: UnicDB-ai-chat-v2-pulse 1.2s ease-in-out infinite;
 }
 
 /* Action row: visible on hover or keyboard focus-within, never on touch-only

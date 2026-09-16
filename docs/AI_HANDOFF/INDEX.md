@@ -11,7 +11,7 @@ this live queue and the cycle is summarized in `RUN.md` + `REVIEW-CHATV2-R1.md`.
 |---|---|---|---|---:|
 | TASK-CHATFIX-001 | Explicit shell grid placement (composer size/pinning/crush + scroll region) | ready | none | 1 |
 | TASK-CHATFIX-002 | Drive the scroll controller (auto-scroll to newest + unread pill) | ready | 001 | 2 |
-| TASK-CHATFIX-003 | Tool activity timeline (Claude Code-style) + live-turn indicator | ready | 001 | 2 |
+| TASK-CHATFIX-003 | Tool activity timeline (Claude Code-style) + live-turn indicator | pending_review | 001 | 2 |
 | TASK-CHATFIX-004 | Wire the dead message action icons (copy/edit/retry/3-dot) | ready | 002 | 3 |
 
 Execution: lowest ready ID first; tasks in a wave may run in parallel only when they do not edit

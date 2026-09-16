@@ -372,6 +372,56 @@ describe("CHATV2-004 #6 — more than 200 rendered items (boundary)", () => {
   });
 });
 
+// ---- CHATFIX-003 tool detail plumbing --------------------------------------
+
+describe("CHATFIX-003 — tool detail plumbs through the store", () => {
+  function toolOf(state: ReturnType<typeof createInitialChatState>, id: string) {
+    const item = state.transcript.entities[id];
+    return item !== undefined && item.kind === "tool" ? item : null;
+  }
+
+  /** Open a live turn so turn-scoped tool frames are accepted. */
+  function openLiveTurn() {
+    let s = hydrated();
+    s = reduceChatState(s, { type: "DRAFT_CHANGED", text: "hello", selectionEnd: 5 });
+    s = reduceChatState(s, { type: "SUBMIT_REQUESTED", clientRequestId: "req-1" });
+    return host(s, f({ kind: "turn_started", turnId: "t1", clientRequestId: "req-1" }));
+  }
+
+  it("case 7 (reducer): tool_started stores detail; tool_finished WITHOUT detail preserves it", () => {
+    let s = openLiveTurn();
+    s = host(
+      s,
+      f({ kind: "tool_started", turnId: "t1", toolId: "tool-1", label: "Bash", action: "run", detail: "git status" }),
+    );
+    expect(toolOf(s, "tool-1")?.detail).toBe("git status");
+    s = host(
+      s,
+      f({
+        kind: "tool_finished",
+        turnId: "t1",
+        toolId: "tool-1",
+        label: "Bash",
+        status: "ok",
+        summary: "3 files changed",
+      }),
+    );
+    const done = toolOf(s, "tool-1");
+    expect(done?.detail).toBe("git status");
+    expect(done?.summary).toBe("3 files changed");
+    expect(done?.status).toBe("ok");
+  });
+
+  it("legacy tool_started without the detail field defaults it to an empty string", () => {
+    const s0 = openLiveTurn();
+    const s = host(
+      s0,
+      f({ kind: "tool_started", turnId: "t1", toolId: "tool-1", label: "Read", action: "file" }),
+    );
+    expect(toolOf(s, "tool-1")?.detail).toBe("");
+  });
+});
+
 // ---- #7 serializable state (purity) ----------------------------------------
 
 describe("CHATV2-004 #7 — serializable state (purity)", () => {

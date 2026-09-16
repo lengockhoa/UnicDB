@@ -642,6 +642,11 @@ export interface AiChatHostToolStartedV2 extends AiChatFrameEnvelopeV2 {
   readonly label: string;
   /** Coarse icon semantic — never a provider name. */
   readonly action: string;
+  /** TASK-CHATFIX-003: shape-only single-line arg hint for the live timeline
+   * (Bash command / Read path+range). Control chars stripped, ≤120 chars.
+   * Same privacy contract as `tool_finished.summary` — never row bytes.
+   * Optional: legacy frames and unusable args safely omit it. */
+  readonly detail?: string;
 }
 
 /** Host → webview: a tool finished. `summary` is SHAPE ONLY (never row bytes). */

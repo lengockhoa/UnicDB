@@ -119,6 +119,27 @@ function createCounterIdSource(): () => string {
 /** Distance reported to the reducer when the viewport is NOT near the bottom. */
 const SCROLL_FAR_PX = 10_000;
 
+/**
+ * The user-visible projection of a transcript state (TASK-CHATFIX-002): ids of
+ * `user`/`text`/`tool` rows in `order`, plus each `text` row's streamed
+ * `raw.length`. `reasoning` rows are deliberately invisible here — they are
+ * never a new response and never move the viewport.
+ */
+function userVisibleSignature(transcript: ChatViewState["transcript"]): {
+  ids: string[];
+  lengths: number[];
+} {
+  const ids: string[] = [];
+  const lengths: number[] = [];
+  for (const id of transcript.order) {
+    const item = transcript.entities[id];
+    if (item === undefined || item.kind === "reasoning") continue;
+    ids.push(item.id);
+    lengths.push(item.kind === "text" ? item.raw.length : 0);
+  }
+  return { ids, lengths };
+}
+
 /** Terminal-phase announcement copy (never streamed prose). */
 const FAILED_ANNOUNCEMENT = "Response failed";
 
@@ -249,6 +270,12 @@ function mountController(options: ChatControllerOptions): ChatController {
   // ---- Render batching ---------------------------------------------------
   let renderScheduled = false;
 
+  // TASK-CHATFIX-002: the user-visible signature the LAST paint left on
+  // screen. The single coalesced pass diffs it to decide whether the change
+  // was a new response (follow it) or reasoning/stream growth (never scroll).
+  let lastVisibleIds: readonly string[] = [];
+  let lastVisibleLengths: readonly number[] = [];
+
   /** Schema control + context strip: one paint pass from reducer state only. */
   function renderSchemaAndContext(): void {
     const schema = state.schema;
@@ -261,6 +288,12 @@ function mountController(options: ChatControllerOptions): ChatController {
   }
 
   function renderState(): void {
+    // TASK-CHATFIX-002: capture the pre-paint bottom distance BEFORE anything
+    // paints, so "was the reader pinned?" is judged against the geometry the
+    // user was actually looking at, not the post-insert one.
+    scroll.beginFrame();
+    const beforeIds = lastVisibleIds;
+    const beforeLengths = lastVisibleLengths;
     composer.render(state);
     renderAttachments();
     renderAutocomplete();
@@ -269,6 +302,24 @@ function mountController(options: ChatControllerOptions): ChatController {
     // SAME reducer state the composer does — one state, one paint pass.
     transcript.render(state);
     activity.render(state);
+    // TASK-CHATFIX-002: ONE driver, this coalesced pass — no scattered notify
+    // calls inside frame handlers. A user-visible id the previous paint did
+    // not have is a new response; reasoning rows and raw-length growth inside
+    // an existing row are mere activity and never scroll.
+    const painted = userVisibleSignature(state.transcript);
+    lastVisibleIds = painted.ids;
+    lastVisibleLengths = painted.lengths;
+    const tail = painted.ids.length > 0 ? painted.ids[painted.ids.length - 1]! : null;
+    if (tail !== null && !beforeIds.includes(tail)) {
+      scroll.notifyNewResponse();
+    } else if (
+      beforeIds.length !== painted.ids.length ||
+      beforeIds.some((id, index) => id !== painted.ids[index]) ||
+      beforeLengths.length !== painted.lengths.length ||
+      beforeLengths.some((length, index) => length !== painted.lengths[index])
+    ) {
+      scroll.notifyReasoningActivity();
+    }
     announcePhase(state.phase);
     // TASK-CHATV2-014: the policy sheet reflects the HOST's policy + capability.
     permission.setState(
@@ -781,6 +832,9 @@ function mountController(options: ChatControllerOptions): ChatController {
       dispatch({ type: "SCROLL_PROXIMITY_CHANGED", distancePx: near ? 0 : SCROLL_FAR_PX });
     },
   });
+  // TASK-CHATFIX-002: one explicit sync at mount so the pill/proximity state
+  // reflects the live viewport even before the first coalesced pass runs.
+  scroll.sync();
 
   const announcer: LiveAnnouncer = createLiveAnnouncer({
     polite: shell.statusLiveRegion,

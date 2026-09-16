@@ -1,6 +1,6 @@
 Command: handoff-fullstack
 Goal: Fix AI Chat V2 UX: composer size/bottom-pinning, transcript scrollbar + auto-scroll, Claude Code-style tool timeline, and working message action icons
 Base: main
-Phase: P3
-Cursor: plan Approved (Round 1, 0 critical/0 important/3 minor) and committed a2665b3
-Next: I1 — setup + verify, then implement wave 1 (TASK-CHATFIX-001)
+Phase: I3
+Cursor: wave 1 done — TASK-CHATFIX-001 PASS (grid-row placement, copied back, committed)
+Next: wave 2 — spawn TASK-CHATFIX-002 + TASK-CHATFIX-003 in parallel (max 2)
