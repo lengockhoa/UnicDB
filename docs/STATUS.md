@@ -140,10 +140,17 @@ Cycle RES-BAR kicked off 2026-09-08 and closed 2026-09-08 (single-day cycle). WH
 - Pre-existing flaky failure in `webviewServerFilter` (1 of 3 full runs — needs separate triage).
 - AGT vague minors (stale comments / dead export alias / smoke-helper docs) — descriptions too generic; needs a triage task.
 
-## Queued for next cycle
-- AGT vague minors (stale comments, dead export alias, smoke-helper docs) — needs triage to locate specific files/lines before planning.
+## Queued for next cycle (updated 2026-09-16, post-CHATV2)
+- **CHATV2 R2 P2 advisories (advisory, non-blocking, no P1)** — full detail in `docs/AI_HANDOFF/REVIEW-CHATV2-R1.md` `## R2 Verdict`:
+  1. Labeled non-canonical deny option (ACP `reject_once`/`no1`) has no reachable permission-sheet control — `webview/aiChat/permissions.ts:482,495`.
+  2. Single-permission-surface invariant is order-dependent, not structural — `webview/aiChatPanelMain.ts:1202`.
+  3. Bypass auto-answer matches raw id literal, ignoring ACP `kind`, and can auto-deny — `src/ui/aiChatPanel.ts:4388`.
+  4. Orphaned `postV2` JSDoc — `src/ui/aiChatPanel.ts:6110`.
+  - Test tightening: `#R1 model chip` pin overclaims; add deny-label + bypass-kind pins.
+- **Task #10 — Bump + publish redesigned composer** (card composer + engine-aware slash): the ONLY pending release item; user's separate decision, out of CHATV2 scope. `npm run bump` then verify.
 - `renderMarkdown` / `escapeHtml` dedup (intentional per pinned-class rationale; consolidate in a follow-up cycle to prevent drift).
 - Pre-existing flaky test in `webviewServerFilter` area (1 of 3 runs) — worth a future triage task.
+- AGT vague minors (stale comments, dead export alias, smoke-helper docs) — needs triage to locate specific files/lines before planning.
 
 ## Housekeeping done this turn (2026-09-08)
 - Updated `docs/AI_HANDOFF/ACTIVE.md` (AGT-UI implementation_done → cycle shipped).
