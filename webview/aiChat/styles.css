@@ -69,6 +69,7 @@
 /* ---- Header (40px) ------------------------------------------------------- */
 
 .UnicDB-ai-chat-v2-header {
+  grid-row: 1;
   display: flex;
   align-items: center;
   gap: var(--UnicDB-ai-chat-v2-space-2);
@@ -188,6 +189,7 @@
 /* ---- Banner (conditional 28–40px) ---------------------------------------- */
 
 .UnicDB-ai-chat-v2-banner {
+  grid-row: 2;
   display: flex;
   align-items: center;
   gap: var(--UnicDB-ai-chat-v2-space-2);
@@ -217,6 +219,19 @@
 .UnicDB-ai-chat-v2-banner-danger {
   border-color: var(--UnicDB-ai-chat-v2-danger);
   color: var(--UnicDB-ai-chat-v2-danger);
+}
+
+/* ---- Main (minmax(0,1fr) track; transcript is the sole scroll region) ---- */
+
+/* The main element wraps transcript + context strip. As a flex column with
+ * min-height:0 it never clips and never scrolls itself; the transcript's
+ * overflow-y:auto stays the single scroll region. */
+.UnicDB-ai-chat-v2-main {
+  grid-row: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* ---- Transcript (minmax(0,1fr)) ------------------------------------------ */
@@ -265,6 +280,7 @@
 /* ---- Composer (sticky, 16px-radius two-row shell) ------------------------ */
 
 .UnicDB-ai-chat-v2-composer {
+  grid-row: 4;
   position: sticky;
   bottom: 0;
   z-index: 2;
@@ -384,6 +400,7 @@
 /* ---- Keyboard hint (20px) ------------------------------------------------ */
 
 .UnicDB-ai-chat-v2-hint {
+  grid-row: 5;
   display: flex;
   align-items: center;
   min-width: 0;

@@ -86,3 +86,88 @@ out-of-flow and never claim a track — do not give them grid-row values.
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+
+### RED (before implementation)
+
+Command: `cd .worktrees/task-chatfix-001 && npx vitest run webview/aiChat/__tests__/shellGrid.test.ts`
+
+```
+ RUN  v1.6.1 /Volumes/KHOA_EXTENAL/DOCKER_CREATE/UnicDB/.worktrees/task-chatfix-001
+
+ ❯ webview/aiChat/__tests__/shellGrid.test.ts  (6 tests | 6 failed) 5ms
+   ❯ ... > pins all five shell children to explicit grid-row 1..5
+     → expected \.UnicDB-ai-chat-v2-header to declare grid-row: 1: expected false to be true
+   ❯ ... > keeps the composer on a content-sized track that cannot be crushed
+     → expected false to be true
+   ❯ ... > makes the transcript the sole scroll region via a flex main
+     → .UnicDB-ai-chat-v2-main rule must exist: expected undefined not to be undefined
+   ❯ ... > clips at the root only — main never hides overflow
+     → expected undefined not to be undefined
+   ❯ ... > keeps every new placement rule V2-scoped with balanced braces
+     → expected false to be true
+   ❯ ... > lets a hidden banner keep its explicit track
+     → expected false to be true
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ Test Files  1 failed (1)
+      Tests  6 failed (6)
+```
+
+All 6 failed for the expected reason: no `grid-row` declarations existed and no
+`.UnicDB-ai-chat-v2-main` rule existed. No test was immediately GREEN, so no
+test fix was needed.
+
+### GREEN + Verification (after implementation)
+
+Command 1: `npx vitest run webview/aiChat/__tests__/shellGrid.test.ts webview/aiChat/__tests__/shell.test.ts`
+
+```
+ ✓ webview/aiChat/__tests__/shellGrid.test.ts  (6 tests) 3ms
+ ✓ webview/aiChat/__tests__/shell.test.ts  (14 tests) 28ms
+
+ Test Files  2 passed (2)
+      Tests  20 passed (20)
+   Start at  22:38:16
+   Duration  604ms (transform 48ms, setup 0ms, collect 12ms, tests 31ms, environment 386ms, prepare 79ms)
+```
+
+Command 2: `npm run typecheck`
+
+```
+> UnicDB@1.54.0 typecheck
+> tsc --noEmit
+```
+(exit 0, no errors)
+
+Command 3: `npm run compile`
+
+```
+  dist/extension.js       6.6mb ⚠️
+  dist/extension.js.map  12.0mb
+
+⚡ Done in 160ms
+esbuild: build complete
+```
+
+### Files changed (worktree commit d51b2d0, milestone: TASK-CHATFIX-001)
+
+- `webview/aiChat/styles.css` (+17): `grid-row: 1` on `-header`, `2` on
+  `-banner`, `4` on `-composer`, `5` on `-hint`; new `.UnicDB-ai-chat-v2-main`
+  rule (`grid-row: 3; display: flex; flex-direction: column; min-width: 0;
+  min-height: 0`) before the transcript section. Root `grid-template-rows`,
+  root `overflow: hidden`, `-banner[hidden]`, and the `-transcript` rule are
+  untouched. Composer auto-grow logic (COMPOSER_AUTO_GROW_*) untouched.
+- `webview/aiChat/__tests__/shellGrid.test.ts` (new, +101): tests 1-6 from
+  §Test Cases, node environment, same `readFileSync(process.cwd())/styles.css`
+  pattern as `shell.test.ts:135-141`.
+
+Status: PASS
+Note: none — diff is insertions-only on the two target files; no other rules changed.
+
