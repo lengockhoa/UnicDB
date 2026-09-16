@@ -635,25 +635,14 @@ describe("AiChatPanelWebview — init re-enable (TASK-003)", () => {
 });
 
 // ============================================================================
-// TASK-AG-001 — icon-only composer toolbar: behavior + a11y on live source
+// TASK-AG-001 — composer defensive guard. The V1 icon-only composer sweep
+// that lived here (resumeBtn/clearBtn/regenerateBtn/stopBtn/attachBtn/sendBtn)
+// was ORPHANED by the V1 cutover (TASK-CHATV2-017); it is re-pinned on the V2
+// composer in aiChatPanelV2E2e.test.ts (#AG1/#AG2/#AG3/#AG9). Only the
+// still-valid null-guard regression remains.
 // ============================================================================
 
-/** The six composer action buttons, in DOM order. */
-const COMPOSER_BUTTON_IDS = [
-  "resumeBtn",
-  "clearBtn",
-  "regenerateBtn",
-  "stopBtn",
-  "attachBtn",
-  "sendBtn",
-] as const;
-
-describe("AiChatPanelWebview — TASK-AG-001 icon-only composer", () => {
-  ;
-
-  ;
-
-  ;
+describe("AiChatPanelWebview — TASK-AG-001 composer guards", () => {
 
   it("#AG6 defensive null-guards: composer-absent messages do not throw", () => {
     const h = makeHarness();
@@ -668,8 +657,6 @@ describe("AiChatPanelWebview — TASK-AG-001 icon-only composer", () => {
       h.dispatch({ type: "error", message: "boom" });
     }).not.toThrow();
   });
-
-  ;
 });
 
 // ============================================================================
