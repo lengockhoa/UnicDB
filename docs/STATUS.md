@@ -1,3 +1,12 @@
+# STATUS — 2026-09-16 (CHATV2 shipped: V2 sole production chat UI, 17/17 done)
+
+## SHIPPED — CHATV2 (2026-09-16, no version bump / package / publish)
+- **AI Chat V2 replacement complete.** V2 is the sole production chat UI; V1 adapter/composer/header/thread deleted.
+- **Tasks:** TASK-CHATV2-001..017 all `done` in `docs/AI_HANDOFF/INDEX.md` (0 `pending_review`).
+- **Commits:** waves `b0f7170..b95c0cb` · R1 fixes `18efae2`/`4eb97de`/`57223e5`/`e34c8d3` · R2 review `985856a` (APPROVED-WITH-MINOR).
+- **Verification:** typecheck + compile clean · full suite 4637 pass / 5 skip / 0 fail · forbidden-token + file-absence gates pass.
+- **Follow-ups (advisory, no P1 — see `docs/AI_HANDOFF/REVIEW-CHATV2-R1.md` `## R2 Verdict`):** (a) labeled non-canonical deny option has no reachable sheet control; (b) single-permission-surface invariant is order-dependent, not structural; (c) bypass auto-allow matches raw id literal ignoring ACP `kind` (can auto-deny); (d) orphaned postV2 JSDoc at `src/ui/aiChatPanel.ts:6110`. Test-tightening suggestions: model-chip pin overclaims; add deny-label and bypass-kind pins.
+
 # STATUS — 2026-09-08 (cycle AGT-UI shipped → v1.53.25 + cleanup pass → cbf277a)
 
 ## IN FLIGHT — 2026-09-15 (composer redesign + engine-aware slash landed; publish + CHATV2 pending)
