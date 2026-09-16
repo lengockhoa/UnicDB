@@ -13,6 +13,8 @@
 //   5 edge   clipboard rejection → "Could not copy" toast at error level
 //   6 edge   blank message       → edit focuses an empty composer, retry inert
 //   7 regression                 → the callbacks object must stay wired
+//   8 regression                 → a RE-OPENED streaming 3-dot copies the grown
+//                                  text, never the first click's snapshot
 //
 // Test #6 drives the controller's REAL captured callbacks against a
 // reducer-built blank user item: `canSubmitDraft` blocks blank UI submits, so a
@@ -308,12 +310,71 @@ describe("message actions — TASK-CHATFIX-004", () => {
   it("#7 regression: the controller wires edit/retry/3-dot (no dead buttons)", () => {
     // Pre-implementation these names appear NOWHERE in controller.ts — the
     // buttons rendered but did nothing. This pins the wiring permanently.
+    // Comments are stripped first so prose cannot satisfy the pin, and the
+    // patterns then match only the wiring signatures (`onEditUser(_messageId,
+    // …)`) — reviewer fix-round-1: the old bare `onEditUser\s*\(` also matched
+    // comments, making the pin weaker than it looked.
     const source = readFileSync(
       resolve(process.cwd(), "webview", "aiChat", "controller.ts"),
       "utf8",
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/\/\/[^\n]*/g, " ");
+    expect(source).toMatch(/onEditUser\s*\(\s*_messageId/);
+    expect(source).toMatch(/onRetryUser\s*\(\s*_messageId/);
+    expect(source).toMatch(/onMoreAssistant\s*\(\s*_messageId/);
+  });
+
+  it("#8 regression: re-opening a streaming 3-dot copies the GROWN text, not the first snapshot", async () => {
+    // Reviewer CHANGES-REQUESTED (fix round 1): openMessageActions reused one
+    // overlay menu per trigger whose onActivate closed over the FIRST click's
+    // raw text, while record.source keeps growing during streaming — so a
+    // re-opened menu silently copied a stale truncated message.
+    const h = makeHarness();
+    const writeText = stubClipboard(() => Promise.resolve());
+    seedIdleUserTurn(h);
+    // Open a turn and stream the first chunk.
+    type(h.controller.prompt, "q2");
+    h.controller.requestSubmit();
+    h.send({ kind: "turn_started", sessionId: "s1", sequence: 4, turnId: "t2", clientRequestId: "req-2" });
+    seedAssistantMessage(h, 5, "t2");
+
+    const more = h.root.querySelector<HTMLButtonElement>(
+      '[data-chat-key="m1"] [data-action="more"]',
     );
-    expect(source).toMatch(/onEditUser\s*\(/);
-    expect(source).toMatch(/onRetryUser\s*\(/);
-    expect(source).toMatch(/onMoreAssistant\s*\(/);
+    expect(more, "expected the assistant 3-dot button").not.toBeNull();
+
+    // First open mid-stream, then dismiss (Escape).
+    more!.click();
+    expect(h.root.querySelector(`[${OVERLAY_MENU_MARKER}]`)).not.toBeNull();
+    more!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+    expect(h.root.querySelector(`[${OVERLAY_MENU_MARKER}]`)).toBeNull();
+
+    // The stream grows (record.source = item.raw keeps appending)…
+    h.send({
+      kind: "text_delta",
+      sessionId: "s1",
+      sequence: 6,
+      turnId: "t2",
+      messageId: "m1",
+      text: " + streamed tail",
+    });
+    h.controller.flushRender();
+
+    // …the SAME trigger re-opens the menu…
+    more!.click();
+    const menu = h.root.querySelector<HTMLElement>(`[${OVERLAY_MENU_MARKER}]`);
+    expect(menu, "expected the re-opened overlay menu to be mounted").not.toBeNull();
+
+    // …and activating Copy must copy the CURRENT (grown) text.
+    const copyRow = Array.from(menu!.querySelectorAll<HTMLDivElement>('[role="option"]')).find(
+      (row) => (row.textContent ?? "").includes("Copy message"),
+    );
+    expect(copyRow, "expected a Copy message row").not.toBeNull();
+    copyRow!.click();
+
+    expect(writeText).toHaveBeenCalledWith("answer text + streamed tail");
   });
 });

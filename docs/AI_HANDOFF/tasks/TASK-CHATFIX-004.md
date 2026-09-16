@@ -250,3 +250,110 @@ FINDINGS:
     - webview/aiChat/__tests__/messageActions.test.ts:306-318 — test 7's /onEditUser\s*\(/ also matches comments, so the pin is weaker than it looks; behavioral tests 2/3/4 carry the real coverage. Optionally match a wiring-specific pattern (e.g. onEditUser\(_messageId).
 NEXT_STATUS_FOR_INDEX: in_progress
 NOTES: Verification is clean and the wiring follows the plan (DRAFT_CHANGED / requestRetry / createOverlayMenu, no new subsystems); the one blocking defect is the stale-raw menu closure, a one-line-state fix. Scoping otherwise correct: user-row actions read record.source per click, retry is submit-lock guarded (no double-submit), clipboard receives plain text only.
+
+### 2026-09-17 · executor (fix round 1) · bao-sonnet
+- **Stale-copy fix shape**: chose the reviewer's first option — a mutable `messageMenuRaw`
+  slot that `openMessageActions` re-points on EVERY open (before `open()`), with `onActivate`
+  reading the slot instead of a click-time closure. The menu object is still reused per
+  trigger (no per-click destroy/recreate churn); correctness comes from the slot, so Copy
+  always sees the current `record.source` even though it keeps growing while streaming.
+- **Keydown-leak fix shape**: the trigger keydown handler is kept in
+  `messageMenuTriggerKeydown`; a new `teardownMessageMenu()` helper removes it from the old
+  trigger before destroying the swapped menu, and `dispose()` routes through the same helper
+  (reviewer's minor a — destroy+recreate alone would NOT have removed it, since
+  `overlays.destroy()` only unmounts its own document mousedown listener).
+- **Minor b**: `onEditUser` now runs `syncAutocompleteFromDraft()` right after
+  `applyDraftEdit`, mirroring the composer input path (controller.ts onInput) so an open
+  mention/slash panel cannot survive the edit with a stale query.
+- **Test 7 pin strengthened** per reviewer: comments are stripped from controller.ts before
+  matching, and the patterns require the wiring signatures (`onEditUser\(_messageId` etc.),
+  which prose can no longer satisfy.
+- **Test #8 added**: open 3-dot mid-stream → Escape → stream grows the message → re-open the
+  SAME trigger → activate Copy → must receive the grown text. RED before the fix (copied the
+  first-click snapshot), GREEN after.
+
+## Executor Report (fix round 1)
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+
+### What was fixed (reviewer findings → changes)
+
+- **important (stale-copy closure)** `webview/aiChat/controller.ts` — `openMessageActions` now
+  writes every click's `raw` into a mutable `messageMenuRaw` slot before `open()`; the menu's
+  `onActivate` reads the slot (`writeClipboard(messageMenuRaw)`), never the first click's
+  closure. Re-opening the same trigger mid-stream copies the GROWN `record.source`.
+- **minor (trigger keydown leak)** same file — the keydown handler is kept in
+  `messageMenuTriggerKeydown` and removed by a new `teardownMessageMenu()` helper on trigger
+  swap AND in `dispose()` (previously `destroy()` never removed it; alternating 3-dot clicks
+  leaked one inert closure per cycle on each trigger).
+- **minor (stale autocomplete on edit)** `controller.ts` `onEditUser` — added
+  `syncAutocompleteFromDraft()` after `applyDraftEdit`, same as the composer input path, so an
+  open mention/slash panel can't survive an edit with a stale query.
+- **minor (weak test-7 pin)** `webview/aiChat/__tests__/messageActions.test.ts` — comments are
+  stripped before matching and the regexes now pin the wiring signatures
+  (`onEditUser\(_messageId`, `onRetryUser\(_messageId`, `onMoreAssistant\(_messageId`), which
+  comments can no longer satisfy.
+- **regression test #8 added** — the stale-copy scenario (open → dismiss → grow → re-open →
+  Copy must deliver the grown text).
+
+### RED_OUTPUT
+
+New test #8 against the unfixed controller (commit `3108f99`), before the fix:
+
+```
+FAIL  webview/aiChat/__tests__/messageActions.test.ts > message actions — TASK-CHATFIX-004 > #8 regression: re-opening a streaming 3-dot copies the GROWN text, not the first snapshot
+AssertionError: expected "spy" to be called with arguments: [ 'answer text + streamed tail' ]
+
+Received:
+
+  1st spy call:
+
+Array [
+-   "answer text + streamed tail",
++   "answer text",
+]
+
+Number of calls: 1
+
+❯ webview/aiChat/__tests__/messageActions.test.ts:378:23
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 passed (8)
+```
+
+Exactly the defect the reviewer described: Copy received the FIRST click's snapshot
+("answer text"), missing the streamed tail. (Test 7 with the strengthened regex already
+passes pre-fix — the wiring exists since round 0; its weakness was comments, now stripped.)
+
+### Verification Output
+
+Worktree: `.worktrees/fix-004` (branch `handoff/fix-004`, commit `361be91` "milestone: fix-round-1").
+`node_modules` symlinked from the repo root (gitignored, worktree-local) for the missing shims.
+
+1. `npx vitest run webview/aiChat/__tests__/messageActions.test.ts webview/aiChat/__tests__/controller.test.ts webview/aiChat/__tests__/transcript.test.ts`
+
+```
+ ✓ webview/aiChat/__tests__/transcript.test.ts (26 tests) 175ms
+ ✓ webview/aiChat/__tests__/controller.test.ts (23 tests) 160ms
+ ✓ webview/aiChat/__tests__/messageActions.test.ts (8 tests) 208ms
+
+ Test Files  3 passed (3)
+      Tests  57 passed (57)
+```
+
+2. `npm run typecheck` → `> tsc --noEmit` — exit 0, no errors.
+
+3. `npm run compile` →
+
+```
+ dist/extension.js       6.6mb ⚠️
+ dist/extension.js.map  12.0mb
+ ⚡ Done in 171ms
+ esbuild: build complete
+```
+
+Status: PASS
+Note: none. All three reviewer findings (1 important, 2 relevant minors) fixed; third minor
+(test-7 regex) taken as well. No behavior beyond the reviewer scope changed.

@@ -821,6 +821,9 @@ function mountController(options: ChatControllerOptions): ChatController {
       // lands at the end so Continue-typing just works.
       onEditUser(_messageId, text) {
         applyDraftEdit(text, text.length, text.length);
+        // Same autocomplete sync the composer input path always runs, so an
+        // open mention/slash panel cannot survive the edit with a stale query.
+        syncAutocompleteFromDraft();
         try {
           prompt.focus();
         } catch {
@@ -987,14 +990,36 @@ function mountController(options: ChatControllerOptions): ChatController {
   /** Live 3-dot menu + the trigger it is wired to (one menu at a time). */
   let messageMenu: OverlayMenu | null = null;
   let messageMenuTrigger: HTMLElement | null = null;
+  /** The trigger keydown handler, kept so a trigger swap / dispose removes it. */
+  let messageMenuTriggerKeydown: ((event: KeyboardEvent) => void) | null = null;
+  /**
+   * The CURRENT message text the live menu acts on. `record.source` keeps
+   * growing while a turn streams, and the menu object may be reused across
+   * opens, so `onActivate` must read this mutable slot — never a click-time
+   * closure — or a re-opened menu copies the first click's stale snapshot
+   * (reviewer fix round 1).
+   */
+  let messageMenuRaw: string | null = null;
+
+  /** Unmount the live message menu and its trigger keydown listener. */
+  function teardownMessageMenu(): void {
+    if (messageMenuTrigger !== null && messageMenuTriggerKeydown !== null) {
+      messageMenuTrigger.removeEventListener("keydown", messageMenuTriggerKeydown);
+    }
+    messageMenuTriggerKeydown = null;
+    messageMenu?.destroy();
+    messageMenu = null;
+    messageMenuTrigger = null;
+  }
 
   /** Open the assistant message's overflow menu from its clicked trigger. */
   function openMessageActions(raw: string, trigger?: HTMLElement): void {
     if (disposed || trigger === undefined) return;
+    // Always re-point the menu at the CURRENT text before opening.
+    messageMenuRaw = raw;
     if (messageMenu !== null && messageMenuTrigger !== trigger) {
       // A different message's button: tear the old menu down before re-anchoring.
-      messageMenu.destroy();
-      messageMenu = null;
+      teardownMessageMenu();
     }
     if (messageMenu === null) {
       const menu = createOverlayMenu({
@@ -1003,15 +1028,18 @@ function mountController(options: ChatControllerOptions): ChatController {
         ariaLabel: "Message actions",
         onActivate: (row) => {
           menu.close("select");
-          if (row.id === "copy") writeClipboard(raw);
+          if (row.id === "copy" && messageMenuRaw !== null) writeClipboard(messageMenuRaw);
           else if (row.id === "regenerate") requestRegenerate();
         },
       });
       // The trigger keeps focus while the menu is open (non-modal contract),
       // so its keydown owns listbox routing (same pattern as the header menus).
-      trigger.addEventListener("keydown", (event) => {
+      // The reference is kept so the next trigger swap removes it (no leak).
+      const onTriggerKeydown = (event: KeyboardEvent): void => {
         menu.handleKey(event);
-      });
+      };
+      trigger.addEventListener("keydown", onTriggerKeydown);
+      messageMenuTriggerKeydown = onTriggerKeydown;
       messageMenu = menu;
       messageMenuTrigger = trigger;
     }
@@ -1514,9 +1542,8 @@ function mountController(options: ChatControllerOptions): ChatController {
       shell.banner.hidden = true;
       // TASK-CHATV2-017: tear down the V2 surfaces so a remount leaves no node,
       // timer or listener behind.
-      messageMenu?.destroy();
-      messageMenu = null;
-      messageMenuTrigger = null;
+      teardownMessageMenu();
+      messageMenuRaw = null;
       announcer.destroy();
       activity.dispose();
       transcript.dispose();
