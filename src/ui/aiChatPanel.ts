@@ -2367,7 +2367,17 @@ export class AiChatPanel {
     // Post the `models` frame BEFORE `init` — the chip / dropdown render
     // consumes it eagerly, and snapshotting postedMessages after init
     // arrival must observe every frame this method will produce.
-    this.post(this.buildModelsFrame(cfg));
+    const modelsFrame = this.buildModelsFrame(cfg);
+    this.post(modelsFrame);
+    // REVIEW-CHATV2-R1 P1-2: the V2 webview consumes ONLY the V2 `models`
+    // frame (the V1 models handler is gone), so the ready handshake must
+    // mirror it on the V2 seam or the model chip boots dead. Same body as
+    // the set_model ack — active role + the resolved role catalog.
+    this.postV2({
+      kind: "models",
+      active: modelsFrame.active,
+      roles: modelsFrame.roles,
+    });
     this.post({
       type: "init",
       hasHistory: this.history.length > 0,
