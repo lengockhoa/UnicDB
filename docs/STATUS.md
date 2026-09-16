@@ -1,6 +1,7 @@
-# STATUS — 2026-09-16 (CHATV2 shipped: V2 sole production chat UI, 17/17 done)
+# STATUS — 2026-09-16 (v1.54.0 SHIPPED — CHATV2 V2 sole production chat UI, 17/17 done)
 
-## SHIPPED — CHATV2 (2026-09-16, no version bump / package / publish)
+## SHIPPED — v1.54.0 CHATV2 (2026-09-16, GitHub Release + Marketplace)
+- **Released as v1.54.0** (minor) — GitHub Release `v1.54.0` (asset `UnicDB-1.54.0.vsix`, 2,265,537 B) + VS Code Marketplace `lengockhoa.UnicDB v1.54.0`, both at the same version. Release commit `a745d00`, tag `v1.54.0` pushed.
 - **AI Chat V2 replacement complete.** V2 is the sole production chat UI; V1 adapter/composer/header/thread deleted.
 - **Tasks:** TASK-CHATV2-001..017 all `done` in `docs/AI_HANDOFF/INDEX.md` (0 `pending_review`).
 - **Commits:** waves `b0f7170..b95c0cb` · R1 fixes `18efae2`/`4eb97de`/`57223e5`/`e34c8d3` · R2 review `985856a` (APPROVED-WITH-MINOR).
@@ -15,7 +16,7 @@
   - Slash menu is engine-aware: `aiChatCommandsForEngine()` (in `src/ui/aiChatPanelCommands.ts`) gates `/resume` unavailable-with-reason on non-omp engines; rows carry name + description; webview tracks the announced engine and refreshes an open menu (`webview/aiChatPanelMain.ts`).
   - Host `/engine` widened from `builtin|omp` to the full 4-engine vocabulary with capability gating (`src/ui/aiChatPanel.ts` `handleCommand`).
   - Verification: typecheck clean · compile clean · targeted tests PASS (composer 12, commands 7, engine 25, clone-webview 14) · full suite 4176 passed / 5 skipped / 0 failed before the final commit.
-- **NEXT — PUBLISH (task #10):** `npm run bump` to ship the composer redesign + engine-aware slash (verify already done; only bump/publish remains).
+- **DONE — PUBLISH (task #10):** composer redesign + engine-aware slash shipped in **v1.53.49**; the CHATV2 V2 replacement that followed shipped in **v1.54.0**. Both channels live.
 - **DEFERRED — CHATV2 pipeline (task #11):** `handoff: plan — AI Chat V2 replacement (17 coder-ready tasks)` committed. `docs/AI_HANDOFF/RUN.md` Phase=done = PLANNING ONLY, no runtime work. Start in a FRESH context: `/ukit:handoff-fullstack` → TASK-CHATV2-001 first, follow dependency order in `docs/AI_HANDOFF/INDEX.md`. The 17 `TASK-CHATV2-*.md` files were authored in another session — read/verify INDEX.md before executing; they have not been independently reviewed here.
 - Housekeeping: stray `.smbdeleteAAA*` files under `docs/AI_HANDOFF/` (SMB volume artifacts) left untouched — not deleted, origin unconfirmed.
 
