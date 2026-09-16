@@ -9,6 +9,12 @@
 //   #4 composer textarea focus mid-turn never scroll-jacks the transcript
 //      (plan-review edge row, scroll.ts isInputFocused contract)
 //   #5 regression: the coalesced pass is the ONE driver (RED today)
+//   #6 fix-round-1 regression: same-message streaming growth keeps following
+//      while pinned (fix-round verdict: growth routed to
+//      notifyReasoningActivity stopped auto-follow after the FIRST delta of a
+//      message and let drift past 48px raise a spurious unread pill)
+//   #7 fix-round-1 sibling: the same growth while scrolled up never scrolls
+//      and never counts (the far side of the pinned-growth branch)
 // Rows 1/3/5 were executed RED against the pre-wiring controller and pasted
 // into the task's Executor Report; rows 2/4 are "never scrolls" invariants.
 // jsdom does no layout: geometry is mocked with defineProperty, per the task.
@@ -27,11 +33,14 @@ let controllers: ChatController[] = [];
 interface MockedViewport {
   readonly el: HTMLElement;
   top: number;
+  /** Mutable content height — streaming growth re-pins against taller content. */
+  height: number;
 }
 
 /** Mock the geometry the scroll controller reads (jsdom does no layout). */
 function mockScrollGeometry(el: HTMLElement, top: number, height = 2000, client = 400): MockedViewport {
   let currentTop = top;
+  let currentHeight = height;
   Object.defineProperty(el, "scrollTop", {
     get: () => currentTop,
     set: (value: number) => {
@@ -39,7 +48,7 @@ function mockScrollGeometry(el: HTMLElement, top: number, height = 2000, client 
     },
     configurable: true,
   });
-  Object.defineProperty(el, "scrollHeight", { get: () => height, configurable: true });
+  Object.defineProperty(el, "scrollHeight", { get: () => currentHeight, configurable: true });
   Object.defineProperty(el, "clientHeight", { get: () => client, configurable: true });
   // Both scroll.ts branches converge on a scrollTop write; mirror scrollTo so
   // the smooth branch stays honest too.
@@ -53,6 +62,12 @@ function mockScrollGeometry(el: HTMLElement, top: number, height = 2000, client 
     },
     set top(value: number) {
       currentTop = value;
+    },
+    get height(): number {
+      return currentHeight;
+    },
+    set height(value: number) {
+      currentHeight = value;
     },
   };
 }
@@ -186,10 +201,9 @@ describe("auto-scroll — the render pass drives the scroll controller (TASK-CHA
 
   it("#5 regression: the coalesced render pass is the ONE driver of the scroll controller", () => {
     const source = readFileSync(resolve(process.cwd(), "webview", "aiChat", "controller.ts"), "utf8");
-    // Exactly one call site per driver method — no scattered notify calls.
+    // Exactly one beginFrame capture — the pre-frame distance every notify in
+    // the pass is judged on.
     expect(source.match(/scroll\.beginFrame\(\)/g)?.length).toBe(1);
-    expect(source.match(/scroll\.notifyNewResponse\(\)/g)?.length).toBe(1);
-    expect(source.match(/scroll\.notifyReasoningActivity\(\)/g)?.length).toBe(1);
     // The driver lives inside the single coalesced pass: beginFrame BEFORE the
     // transcript/activity paints, the notify diff after them, sync last.
     const passStart = source.indexOf("function renderState");
@@ -202,5 +216,87 @@ describe("auto-scroll — the render pass drives the scroll controller (TASK-CHA
     expect(renderPass).toContain("scroll.notifyNewResponse()");
     expect(renderPass).toContain("scroll.notifyReasoningActivity()");
     expect(renderPass).toContain("scroll.sync()");
+    // Fix round 1: the pinned-growth branch legitimately calls
+    // notifyNewResponse a second time (new id vs growth of an existing id) —
+    // the invariant is not a textual count, it is that ZERO driver sites live
+    // OUTSIDE the single coalesced pass.
+    expect(source.match(/scroll\.notifyNewResponse\(\)/g)?.length).toBe(
+      renderPass.match(/scroll\.notifyNewResponse\(\)/g)?.length,
+    );
+    expect(source.match(/scroll\.notifyReasoningActivity\(\)/g)?.length).toBe(
+      renderPass.match(/scroll\.notifyReasoningActivity\(\)/g)?.length,
+    );
+  });
+
+  it("#6 fix-round regression: same-message streaming growth keeps following (no spurious pill)", () => {
+    const h = makeHarness();
+    openTurn(h);
+    h.send({ kind: "text_delta", sessionId: "s1", sequence: h.nextSequence(), turnId: "t1", messageId: "m1", text: "hi" });
+    h.controller.flushRender();
+    expect(h.viewport.top).toBe(2000); // first delta pinned at the bottom
+    // Mid-message growth: SAME messageId (store.ts merges deltas into one
+    // item), longer raw — the viewport must keep following instead of
+    // stopping after the first delta.
+    h.viewport.height = 2400;
+    h.send({
+      kind: "text_delta",
+      sessionId: "s1",
+      sequence: h.nextSequence(),
+      turnId: "t1",
+      messageId: "m1",
+      text: "hi — now a much longer streamed answer",
+    });
+    h.controller.flushRender();
+    expect(h.viewport.top).toBe(2400);
+    expect(h.pill.hidden).toBe(true);
+    // Growth again — each bump is exactly clientHeight (400px): the mock's
+    // scrollTo overshoots to scrollTop = scrollHeight where a real browser
+    // clamps, leaving 400px of slack per frame; beyond that the mock's static
+    // geometry would read "far" where a real browser's PRE-frame capture
+    // (old scrollHeight) still reads pinned. Cumulative growth is now 800px
+    // and the viewport has followed every frame.
+    h.viewport.height = 2800;
+    h.send({
+      kind: "text_delta",
+      sessionId: "s1",
+      sequence: h.nextSequence(),
+      turnId: "t1",
+      messageId: "m1",
+      text: "hi — now a much longer streamed answer, still streaming on",
+    });
+    h.controller.flushRender();
+    expect(h.viewport.top).toBe(2800);
+    expect(h.pill.hidden).toBe(true);
+    // …so the NEXT new id never lands far-from-bottom: no spurious unread
+    // pill for content the user never scrolled away from (unread stays 0).
+    h.send({ kind: "text_delta", sessionId: "s1", sequence: h.nextSequence(), turnId: "t1", messageId: "m2", text: "next block" });
+    h.controller.flushRender();
+    expect(h.viewport.top).toBe(2800);
+    expect(h.pill.hidden).toBe(true);
+    expect(h.pill.textContent).toBe("↓ 0 new responses");
+  });
+
+  it("#7 fix-round sibling: same-message growth while scrolled up never scrolls and never counts", () => {
+    const h = makeHarness();
+    openTurn(h);
+    h.send({ kind: "text_delta", sessionId: "s1", sequence: h.nextSequence(), turnId: "t1", messageId: "m1", text: "hi" });
+    h.controller.flushRender();
+    h.viewport.top = 0; // reader scrolled far up mid-stream
+    h.viewport.height = 2400; // the message keeps growing below
+    h.send({
+      kind: "text_delta",
+      sessionId: "s1",
+      sequence: h.nextSequence(),
+      turnId: "t1",
+      messageId: "m1",
+      text: "hi — now a much longer streamed answer",
+    });
+    h.controller.flushRender();
+    // Far from the bottom, growth stays mere activity: position preserved,
+    // no scroll, and the unread count is never incremented (still 0 — a
+    // spurious count would read "↓ 1 new response" with the pill visible).
+    expect(h.viewport.top).toBe(0);
+    expect(h.pill.hidden).toBe(true);
+    expect(h.pill.textContent).toBe("↓ 0 new responses");
   });
 });

@@ -61,7 +61,7 @@ import {
 } from "./store";
 import { createTranscriptRenderer, type TranscriptRenderer } from "./transcript";
 import { createOverlayMenu, type OverlayMenu } from "./overlays";
-import { createScrollController, type ScrollController } from "./scroll";
+import { createScrollController, SCROLL_BOTTOM_THRESHOLD_PX, type ScrollController } from "./scroll";
 import { createActivityTimeline, phaseCopyLabel, type ActivityTimeline } from "./activity";
 import { createLiveAnnouncer, type LiveAnnouncer } from "./a11y";
 import { renderChangePlanCard, type ChangePlanCard } from "./changePlan";
@@ -292,7 +292,7 @@ function mountController(options: ChatControllerOptions): ChatController {
     // TASK-CHATFIX-002: capture the pre-paint bottom distance BEFORE anything
     // paints, so "was the reader pinned?" is judged against the geometry the
     // user was actually looking at, not the post-insert one.
-    scroll.beginFrame();
+    const preDistance = scroll.beginFrame();
     const beforeIds = lastVisibleIds;
     const beforeLengths = lastVisibleLengths;
     composer.render(state);
@@ -305,8 +305,7 @@ function mountController(options: ChatControllerOptions): ChatController {
     activity.render(state);
     // TASK-CHATFIX-002: ONE driver, this coalesced pass — no scattered notify
     // calls inside frame handlers. A user-visible id the previous paint did
-    // not have is a new response; reasoning rows and raw-length growth inside
-    // an existing row are mere activity and never scroll.
+    // not have is a new response; reasoning rows are mere activity.
     const painted = userVisibleSignature(state.transcript);
     lastVisibleIds = painted.ids;
     lastVisibleLengths = painted.lengths;
@@ -319,7 +318,19 @@ function mountController(options: ChatControllerOptions): ChatController {
       beforeLengths.length !== painted.lengths.length ||
       beforeLengths.some((length, index) => length !== painted.lengths[index])
     ) {
-      scroll.notifyReasoningActivity();
+      // TASK-CHATFIX-002 fix round 1: raw-length growth inside an EXISTING row
+      // (store.ts merges every text_delta of one messageId into that item) is
+      // a new response to FOLLOW while the reader is pinned — routing it to
+      // notifyReasoningActivity stopped auto-follow after the first delta of
+      // a message and let drift past the pin window raise a spurious unread
+      // pill on the next id. Judged on the PRE-frame distance so input-focus
+      // suppression stays intact; far from the bottom it stays mere activity
+      // (no scroll, no count).
+      if (preDistance <= SCROLL_BOTTOM_THRESHOLD_PX) {
+        scroll.notifyNewResponse();
+      } else {
+        scroll.notifyReasoningActivity();
+      }
     }
     announcePhase(state.phase);
     // TASK-CHATV2-014: the policy sheet reflects the HOST's policy + capability.

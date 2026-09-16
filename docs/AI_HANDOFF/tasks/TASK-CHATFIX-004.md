@@ -230,3 +230,23 @@ and each previously failing file passes individually.
 Status: PASS
 Note: none blocking. `onInsertSql` left hidden per plan (no host intent); recorded in Discussion.
 Reviewer verdict pending (phase 4).
+
+## Reviewer Verdict
+
+VERDICT: CHANGES-REQUESTED
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN: PASS
+  command: npx vitest run webview/aiChat/__tests__/messageActions.test.ts webview/aiChat/__tests__/controller.test.ts webview/aiChat/__tests__/transcript.test.ts && npm run typecheck && npm run compile
+  result: 56 pass / 0 fail; tsc exit 0; esbuild build complete
+TEST_PLAN_COVERAGE: all-followed — 7/7 tests with real assertions; RED_OUTPUT is genuine failing output (5 failed | 2 passed with assertion diffs); onInsertSql documented-as-hidden in Discussion, claim re-verified against the AiChatWebviewIntentV2 union (no insert-SQL kind exists).
+FINDINGS:
+  critical: none
+  important:
+    - webview/aiChat/controller.ts:975-1004 — openMessageActions creates the overlay menu ONCE per trigger and reuses it; onActivate closes over the raw string from the FIRST click. The 3-dot exists on assistant rows from record creation and record.source keeps growing while streaming (transcript.ts:428 `record.source = item.raw`), so: open 3-dot mid-stream → dismiss → re-open the same trigger → "Copy message" silently copies the stale first-click snapshot (missing the streamed tail) while the row's inline copy button copies the current text. Fix: store `let messageMenuRaw: string | null`, set it in openMessageActions before open(), and have onActivate read it — or destroy+recreate the menu on every click (also resolves the minor leak below).
+  minor:
+    - webview/aiChat/controller.ts:989-992 — the trigger keydown listener is added each time a menu is created but never removed when a DIFFERENT trigger replaces the menu (overlays.ts destroy() only unmounts its own document mousedown listener). Alternating 3-dot clicks across messages leaves one inert closure per cycle on each trigger (handleKey no-ops when closed, so behavior is safe; it is a slow listener leak). Fix: keep the handler reference and removeEventListener on teardown, or rebuild per click.
+    - webview/aiChat/controller.ts:811-818 — onEditUser calls applyDraftEdit without the syncAutocompleteFromDraft() that the composer input path always runs (controller.ts:500, 508); an open mention/slash panel survives the edit with a stale query until the next real input. One-line fix.
+    - webview/aiChat/__tests__/messageActions.test.ts:306-318 — test 7's /onEditUser\s*\(/ also matches comments, so the pin is weaker than it looks; behavioral tests 2/3/4 carry the real coverage. Optionally match a wiring-specific pattern (e.g. onEditUser\(_messageId).
+NEXT_STATUS_FOR_INDEX: in_progress
+NOTES: Verification is clean and the wiring follows the plan (DRAFT_CHANGED / requestRetry / createOverlayMenu, no new subsystems); the one blocking defect is the stale-raw menu closure, a one-line-state fix. Scoping otherwise correct: user-row actions read record.source per click, retry is submit-lock guarded (no double-submit), clipboard receives plain text only.

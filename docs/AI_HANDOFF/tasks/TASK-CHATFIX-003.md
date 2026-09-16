@@ -200,3 +200,21 @@ Note:
 
 <!-- Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: npx vitest run webview/aiChat/__tests__/transcript.test.ts webview/aiChat/__tests__/store.test.ts webview/aiChat/__tests__/shell.test.ts && npm run typecheck && npm run compile
+  result: 56 pass / 0 fail; typecheck exit 0; compile exit 0; wave-boundary full npm test 4663 pass / 0 fail
+TEST_PLAN_COVERAGE: all-followed — cases 1-7 implemented with real assertions; RED_OUTPUT genuine (8 failed / 34 passed)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - webview/aiChat/styles.css:793 — only OUT carries max-height/overflow-y; the plan's styles bullet asked the cap on both IN/OUT cards. IN is host-capped at 121 chars single-line (src/ui/aiChatPanel.ts:1118) so it cannot overflow in practice — acceptable, noted for TASK-CHATFIX-004 consumers.
+    - webview/aiChat/transcript.ts:561 — data-scrollable is computed at text-set time; while a row is collapsed (display:none) scrollHeight/clientHeight read 0 so the fade flag can clear until the next item update re-syncs. Cosmetic only.
+NEXT_STATUS_FOR_INDEX: done
+NOTES: All wire text enters via textContent (hostile-input test pins no <img>); reconcile() inserts rows before the live node so it stays trailing; every new selector/keyframes name carries the UnicDB-ai-chat-v2 prefix (shell guard green); no lint script exists in package.json, typecheck is the required check and is present.

@@ -95,6 +95,7 @@ awkward, a simpler equivalent (last user-visible id comparison) is acceptable as
 
 - 2026-09-16T22:54+0700 · milestone: red-tests · last-green: none (RED confirmed: tests 1/3/5 fail for the expected reason) · files: webview/aiChat/__tests__/autoScroll.test.ts · drift: none
 - 2026-09-16T22:56+0700 · milestone: drive-scroll-controller · last-green: autoScroll 5/5 + errorsScrollA11y 42 + controller 23 + controllerSurfaces 13; typecheck exit 0; compile exit 0 · files: webview/aiChat/controller.ts, webview/aiChat/__tests__/autoScroll.test.ts · drift: none
+- 2026-09-17T00:12+0700 · milestone: fix-round-1 · last-green: autoScroll 7/7 + errorsScrollA11y 42 + controller 23 + controllerSurfaces 13 (85/85); full suite 4665 passed / 0 failed / 5 skipped; typecheck exit 0; compile exit 0 · files: webview/aiChat/controller.ts, webview/aiChat/__tests__/autoScroll.test.ts · drift: none
 
 ## Executor Report
 
@@ -157,3 +158,71 @@ textarea focused mid-turn). Test #5 also asserts the driver runs before `transcr
 inside `renderState` and that `scroll.sync()` closes the pass.
 
 <!-- Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report. -->
+
+## Executor Report (fix round 1)
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT: |
+  npx vitest run webview/aiChat/__tests__/autoScroll.test.ts  (new tests #6/#7 added, fix NOT yet applied)
+
+  FAIL #6 fix-round regression: same-message streaming growth keeps following (no spurious pill)
+  AssertionError: expected 2000 to be 2400  // Object.is equality
+    ❯ webview/aiChat/__tests__/autoScroll.test.ts:241:28
+    (first mid-message growth delta on the SAME messageId left scrollTop at
+     2000 — growth routed to notifyReasoningActivity, which never scrolls)
+  #7 passed pre-fix by design (never-scroll invariant side: far-from-bottom
+  growth already went to notifyReasoningActivity); it guards the far branch of
+  the new conditional (a regression that always calls notifyNewResponse on
+  growth would flip it RED with "↓ 1 new response").
+  Test Files  1 failed (1) | Tests  1 failed | 6 passed (7)
+Verification Output: |
+  npx vitest run webview/aiChat/__tests__/autoScroll.test.ts webview/aiChat/__tests__/errorsScrollA11y.test.ts
+    ✓ errorsScrollA11y.test.ts (42 tests)
+    ✓ autoScroll.test.ts (7 tests)
+    Test Files  2 passed (2) | Tests  49 passed (49)
+
+  npx vitest run webview/aiChat/__tests__/controller.test.ts
+       webview/aiChat/__tests__/controllerSurfaces.test.ts (same run as above two)
+    ✓ controller.test.ts (23 tests) / ✓ controllerSurfaces.test.ts (13 tests)
+    Test Files  4 passed (4) | Tests  85 passed (85)
+
+  npm run typecheck
+    > tsc --noEmit      → exit 0
+
+  npm run compile
+    > node esbuild.js → dist/extension.js 6.6mb → esbuild: build complete → exit 0
+
+  Extra: full `npx vitest run` in the worktree = 4665 passed / 0 failed / 5 skipped
+  (312 files passed, 2 skipped) — the wave report's 6 environmental ENOENT
+  failures are gone because this worktree has the node_modules symlink.
+Implementation: |
+  - controller.ts renderState(): `const preDistance = scroll.beginFrame()` (the
+    interface already returned the pre-frame distance; it was discarded) and the
+    growth-only diff branch now follows while pinned:
+    `if (preDistance <= SCROLL_BOTTOM_THRESHOLD_PX) scroll.notifyNewResponse();
+    else scroll.notifyReasoningActivity();` — judged on the PRE-frame distance,
+    so input-focus suppression (scroll.ts) stays intact and the far-from-bottom
+    case keeps zero scroll / zero unread count. SCROLL_BOTTOM_THRESHOLD_PX
+    imported from ./scroll. No exported signature changes.
+  - Test #5 updated: the "ONE driver" guard now asserts ZERO notify sites
+    outside the coalesced pass (global count === in-pass count) instead of a
+    textual count of 1 — the pinned-growth branch legitimately calls
+    notifyNewResponse a second time inside the SAME pass (reviewer-prescribed).
+  - Tests #6/#7 added per the verdict: #6 same-message growth keeps following
+    across two +clientHeight bumps and the NEXT new id never lands far-from-bottom
+    (pill stays hidden, "↓ 0 new responses"); #7 the same growth while scrolled up
+    keeps position 0, pill hidden, count 0.
+  - Minor findings: NOT taken — (a) hydration tail pill: the "suppress when ids
+    were fully replaced" option would also suppress the pinned session-switch
+    follow-to-newest behavior (no test covers it; a behavior regression risk),
+    and "accept + pin with a test" needs session-history hydration fixtures the
+    current harness lacks — left to the planner as deliberate follow-up;
+    (b) test #5 anchor strings: reviewer already judged acceptable as-is.
+Status: PASS
+Note: mock geometry caveat documented in test #6 — bumps are +clientHeight
+(400px) per frame because the mock's scrollTo overshoots to scrollTop =
+scrollHeight where a real browser clamps; a real browser's pre-frame capture
+(old scrollHeight) tolerates any growth per frame. Milestone commit d94ad64 on
+handoff/fix-002 (worktree .worktrees/fix-002), never pushed.

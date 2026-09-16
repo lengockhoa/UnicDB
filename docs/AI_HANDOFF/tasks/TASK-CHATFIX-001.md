@@ -171,3 +171,19 @@ esbuild: build complete
 Status: PASS
 Note: none — diff is insertions-only on the two target files; no other rules changed.
 
+
+## Reviewer Verdict
+
+VERDICT: approved
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN: PASS
+  - `npx vitest run webview/aiChat/__tests__/shellGrid.test.ts webview/aiChat/__tests__/shell.test.ts` — 20 pass / 0 fail (fresh, repo root)
+  - `npm run typecheck` — exit 0; `npm run compile` — exit 0
+TEST_PLAN_COVERAGE: all-followed — all 6 §Test Cases implemented in shellGrid.test.ts; RED_OUTPUT contains real failing output (6 failed with assertion messages); mutation check: deleting `grid-row: 4` from styles.css fails tests 1+2, file restored.
+FINDINGS:
+  critical: none
+  important: none
+  minor: webview/aiChat/__tests__/shellGrid.test.ts:74 — `expect(selector).toContain("\\.UnicDB-ai-chat-v2")` asserts the test file's own string literals, so it is a tautology; the meaningful CSS-side V2-scoping check is the preceding regex against stripped() — the dead assertion can be dropped or replaced by a check that each CSS match is V2-prefixed.
+NEXT_STATUS_FOR_INDEX: done
+NOTES: Wave-1 diff is insertions-only; root grid template, overflow:hidden, banner[hidden], and transcript rule intact at HEAD. Later waves' only added overflow-y:auto is the wave-3 inner tool-IO scroller (styles.css:2916 region excluded; .UnicDB-ai-chat-v2-tool-io-text[data-tool-block=out]), not a shell child — no cross-task regression. Live regions are position:absolute visually-hidden and claim no track.
