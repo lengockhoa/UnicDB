@@ -2017,3 +2017,143 @@
   color: var(--vscode-button-secondaryForeground, #e6edf3);
   border: 1px solid var(--vscode-panel-border, #3b434d);
 }
+
+
+/* =========================================================================
+   TASK-CHATV2-013 — attach menu, image attachments and schema chip.
+   Clean APPEND under `.UnicDB-ai-chat-v2` selectors only.
+   ========================================================================= */
+
+/* ---- Attach-context menu (300–420px, 40px rows) ------------------------ */
+
+.UnicDB-ai-chat-v2-attach-menu {
+  min-width: var(--UnicDB-list-min, 300px);
+  max-width: var(--UnicDB-list-max, 420px);
+}
+
+.UnicDB-ai-chat-v2-attach-menu .UnicDB-ai-chat-v2-overlay-menu-row {
+  min-height: var(--UnicDB-row-h, 40px);
+  padding: 4px 12px;
+  gap: 12px;
+}
+
+.UnicDB-ai-chat-v2-attach-menu .UnicDB-ai-chat-v2-overlay-menu-lead {
+  width: var(--UnicDB-attach-icon, 16px);
+  min-width: var(--UnicDB-attach-icon, 16px);
+  height: var(--UnicDB-attach-icon, 16px);
+}
+
+.UnicDB-ai-chat-v2-attach-menu .UnicDB-ai-chat-v2-overlay-menu-label {
+  font-size: var(--UnicDB-attach-title, 13px);
+  font-weight: 500;
+}
+
+.UnicDB-ai-chat-v2-attach-menu .UnicDB-ai-chat-v2-overlay-menu-description {
+  font-size: var(--UnicDB-attach-detail, 11px);
+}
+
+/* The Image… row has no allowlisted glyph — a neutral 16px framed box keeps
+   the lead column aligned without inventing raw SVG markup. */
+.UnicDB-ai-chat-v2-attach-menu .UnicDB-ai-chat-v2-overlay-menu-lead[data-glyph="image"] {
+  border: 1px solid var(--vscode-descriptionForeground, #8b949e);
+  border-radius: 3px;
+  box-sizing: border-box;
+}
+
+.UnicDB-ai-chat-v2-attach-menu
+  [data-attach-disabled="true"]
+  .UnicDB-ai-chat-v2-overlay-menu-description {
+  color: var(--vscode-editorWarning-foreground, #d29922);
+}
+
+/* ---- Thumbnail strip (max 72px, horizontal scroll) --------------------- */
+
+.UnicDB-ai-chat-v2-attachment-strip {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  max-height: var(--UnicDB-thumb-strip-max, 72px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+
+.UnicDB-ai-chat-v2-attachment-strip[hidden] {
+  display: none;
+}
+
+.UnicDB-ai-chat-v2-attachment-thumb {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--UnicDB-thumb-size, 44px);
+  height: var(--UnicDB-thumb-size, 44px);
+  border-radius: var(--UnicDB-thumb-radius, 6px);
+  overflow: hidden;
+  border: 1px solid var(--vscode-panel-border, #3b434d);
+}
+
+.UnicDB-ai-chat-v2-attachment-thumb-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.UnicDB-ai-chat-v2-attachment-thumb-remove {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--UnicDB-thumb-remove, 24px);
+  height: var(--UnicDB-thumb-remove, 24px);
+  min-width: var(--UnicDB-thumb-remove, 24px);
+  min-height: var(--UnicDB-thumb-remove, 24px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 0 0 0 var(--UnicDB-thumb-radius, 6px);
+  background: rgba(13, 17, 23, 0.72);
+  color: var(--vscode-foreground, #e6edf3);
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-attachment-thumb-remove:hover {
+  background: rgba(13, 17, 23, 0.9);
+}
+
+/* ---- Inline amber rejection notices ----------------------------------- */
+
+.UnicDB-ai-chat-v2-attachment-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.UnicDB-ai-chat-v2-attachment-notices[hidden] {
+  display: none;
+}
+
+.UnicDB-ai-chat-v2-attachment-notice {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--vscode-editorWarning-foreground, #d29922);
+  background: rgba(210, 153, 34, 0.12);
+  border-left: 3px solid var(--vscode-editorWarning-foreground, #d29922);
+  border-radius: 3px;
+  padding: 4px 8px;
+  overflow-wrap: anywhere;
+}
+
+/* ---- Active-schema chip (>=36px) -------------------------------------- */
+
+.UnicDB-ai-chat-v2-schema-chip {
+  min-height: var(--UnicDB-schema-chip-h, 36px);
+}
+
+.UnicDB-ai-chat-v2-schema-chip svg {
+  width: var(--UnicDB-schema-chip-icon, 16px);
+  height: var(--UnicDB-schema-chip-icon, 16px);
+}

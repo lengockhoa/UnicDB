@@ -738,6 +738,24 @@ export interface AiChatHostContextStatusV2 extends AiChatFrameEnvelopeV2 {
   readonly excludedCount: number;
 }
 
+/** Host → webview: one attachment was rejected by the AUTHORITATIVE host
+ * validation (MIME allowlist, magic bytes, count cap, byte cap, active-model
+ * vision, engine transport). TASK-CHATV2-013.
+ *
+ * PRIVACY: the frame names the attachment by id and carries the exact, mapped
+ * reason copy — it NEVER echoes base64, a data URL or any raw bytes. The host
+ * re-validates independently of the webview's early warning; a rejection of one
+ * image never discards a valid sibling or a text-only request. */
+export interface AiChatHostAttachErrorV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "attach_error";
+  /** The attachment id the webview sent. */
+  readonly id: string;
+  /** Mapped reject reason, mirrored from `AttachRejectReason`. */
+  readonly reason: "oversize" | "count_cap" | "unsupported_type" | "mime_mismatch" | "vision_unsupported";
+  /** Safe, user-facing single-line copy (never contains payload bytes). */
+  readonly message: string;
+}
+
 /** Host → webview: the configured model roles + active role.
  *
  * TASK-CHATV2-012 (additive): an OPTIONAL `clientRequestId` is present only
@@ -818,6 +836,7 @@ export type AiChatHostFrameV2 =
   | AiChatHostContextResolvedV2
   | AiChatHostContextBlockedV2
   | AiChatHostContextStatusV2
+  | AiChatHostAttachErrorV2
   | AiChatHostModelsV2
   | AiChatHostSchemaV2
   | AiChatHostExportCompletedV2
@@ -920,6 +939,7 @@ const HOST_FRAME_KINDS_V2: ReadonlySet<string> = new Set([
   "context_resolved",
   "context_blocked",
   "context_status",
+  "attach_error",
   "models",
   "schema",
   "export_completed",

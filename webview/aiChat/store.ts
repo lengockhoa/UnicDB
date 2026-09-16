@@ -203,6 +203,15 @@ export interface ChatSchemaState {
   readonly connectionId: string | null;
 }
 
+/** TASK-CHATV2-013: one inline amber attachment rejection. `message` is safe
+ * host copy; `reason` is a closed vocabulary. No payload bytes, ever. */
+export interface ChatAttachNotice {
+  readonly id: string;
+  readonly attachmentId: string;
+  readonly reason: "oversize" | "count_cap" | "unsupported_type" | "mime_mismatch" | "vision_unsupported";
+  readonly message: string;
+}
+
 export interface ChatActiveTurn {
   readonly turnId: string;
   readonly closed: boolean;
@@ -224,6 +233,8 @@ export interface ChatViewState {
   readonly layout: ChatLayout;
   readonly banners: readonly ChatBanner[];
   readonly toasts: readonly ChatToast[];
+  /** TASK-CHATV2-013: inline, per-item attachment rejection notices. */
+  readonly attachNotices: readonly ChatAttachNotice[];
   readonly models: ChatModelsState | null;
   readonly schema: ChatSchemaState | null;
   readonly sessionTitle: string | null;
@@ -271,6 +282,9 @@ export const RENDER_CAP = 200;
 
 /** Maximum retained toasts. */
 export const TOAST_CAP = 3;
+
+/** Maximum retained inline attachment rejection notices. */
+export const ATTACH_NOTICE_CAP = 8;
 
 /** Distance (px) within which the transcript counts as "at the bottom". */
 export const SCROLL_NEAR_BOTTOM_PX = 48;
@@ -332,6 +346,7 @@ export function createInitialChatState(): ChatViewState {
     },
     banners: [],
     toasts: [],
+    attachNotices: [],
     models: null,
     schema: null,
     sessionTitle: null,
@@ -475,6 +490,9 @@ function applyFrameBody(
         turn: { turnId: f.turnId, closed: false, outcome: null },
         awaitingAckRequestId: null,
         pendingSubmit: null,
+        // A new turn consumes the previous draft: inline rejection notices for
+        // the sent batch have served their purpose.
+        attachNotices: [],
         draft: {
           ...state.draft,
           text: "",
@@ -641,6 +659,26 @@ function applyFrameBody(
       // Grounded-context status is advisory; no reducer field is authoritative
       // for it yet (a later task adds the strip model).
       return state;
+
+    case "attach_error": {
+      // TASK-CHATV2-013: a host-side rejection is INLINE, per-item state. It
+      // names one attachment id and the exact reason — it never mutates the
+      // draft (a rejected sibling must not drop survivors), and its message is
+      // already safe copy produced by the host.
+      const f = frame as {
+        id: string;
+        reason: ChatAttachNotice["reason"];
+        message: string;
+      };
+      const notice: ChatAttachNotice = {
+        id: `attach-${f.id}-${f.reason}`,
+        attachmentId: f.id,
+        reason: f.reason,
+        message: f.message,
+      };
+      if (state.attachNotices.some((n) => n.id === notice.id)) return state;
+      return { ...state, attachNotices: [...state.attachNotices, notice].slice(-ATTACH_NOTICE_CAP) };
+    }
 
     default:
       return state;

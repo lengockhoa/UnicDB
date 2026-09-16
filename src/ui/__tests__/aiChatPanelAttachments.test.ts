@@ -926,6 +926,198 @@ describe("AiChatPanel — TASK-011 builtin respects work.vision flag", () => {
   });
 });
 
+// =========================================================================
+// TASK-CHATV2-013 — V2 attachment + schema seam.
+//
+// The V2 `submit_turn` intent carries the draft; the host re-validates
+// attachments and mirrors every rejection onto the V2 wire as an
+// `attach_error` frame (id + mapped reason + safe copy, NEVER base64). A
+// rejected sibling never discards valid siblings. The active-schema chip is
+// fed by a V2 `schema` frame mirroring `schemaChanged`.
+// =========================================================================
+
+interface V2AttachError {
+  protocolVersion: 2;
+  kind: "attach_error";
+  id: string;
+  reason: string;
+  message: string;
+}
+function v2AttachErrors(p: MockPanel): V2AttachError[] {
+  return postedMessages(p).filter(
+    (m): m is V2AttachError =>
+      !!m &&
+      typeof m === "object" &&
+      (m as { protocolVersion?: unknown }).protocolVersion === 2 &&
+      (m as { kind?: unknown }).kind === "attach_error",
+  );
+}
+
+interface V2SchemaFrame {
+  protocolVersion: 2;
+  kind: "schema";
+  schema: string | undefined;
+  connectionId: string | undefined;
+}
+function v2SchemaFrames(p: MockPanel): V2SchemaFrame[] {
+  return postedMessages(p).filter(
+    (m): m is V2SchemaFrame =>
+      !!m &&
+      typeof m === "object" &&
+      (m as { protocolVersion?: unknown }).protocolVersion === 2 &&
+      (m as { kind?: unknown }).kind === "schema",
+  );
+}
+
+function v2Submit(
+  handler: (msg: unknown) => void,
+  text: string,
+  attachments: ImageAttachment[],
+  revision = 1,
+): void {
+  handler({
+    protocolVersion: 2,
+    kind: "submit_turn",
+    clientRequestId: "c1",
+    draft: { text, revision, context: [], attachments },
+  });
+}
+
+describe("AiChatPanel — TASK-CHATV2-013 V2 attachment seam", () => {
+  it("#013-a V2 submit with a valid attachment: no V2 attach_error frame; engine receives the image", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    v2Submit(handler, "describe", [makeValidAttachment("v1", "image/png")]);
+    await until(() => postedMessages(p).some(isAssistant));
+
+    expect(v2AttachErrors(p)).toEqual([]);
+    const input = agentState.runAgentMock.mock.calls.at(-1)?.[0] as { messages: ChatMessage[] };
+    const last = input.messages[input.messages.length - 1] as ChatMessage;
+    expect(Array.isArray(last.content)).toBe(true);
+    expect((last.content as Array<{ type: string }>).filter((x) => x.type === "image_url")).toHaveLength(1);
+  });
+
+  it("#013-b V2 submit with an invalid attachment: exact V2 attach_error frame, no base64 echoed", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    const bad = makeJpegWithPdfMagic("evil");
+    v2Submit(handler, "go", [bad]);
+    await until(() => v2AttachErrors(p).length >= 1);
+
+    const err = v2AttachErrors(p)[0]!;
+    expect(err.id).toBe("evil");
+    expect(err.reason).toBe("mime_mismatch");
+    // Safe copy only — the raw base64 payload never rides the frame.
+    expect(err.message).not.toContain(bad.base64);
+    expect(JSON.stringify(err)).not.toContain("base64");
+  });
+
+  it("#013-c V2 partial rejection: invalid sibling dropped with a warning, valid sibling still forwarded", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    const good = makeValidAttachment("good", "image/png");
+    const bad = makeJpegWithPdfMagic("bad");
+    v2Submit(handler, "go", [good, bad]);
+    await until(() => postedMessages(p).some(isAssistant));
+
+    const errs = v2AttachErrors(p);
+    expect(errs).toHaveLength(1);
+    expect(errs[0]!.id).toBe("bad");
+    const input = agentState.runAgentMock.mock.calls.at(-1)?.[0] as { messages: ChatMessage[] };
+    const last = input.messages[input.messages.length - 1] as ChatMessage;
+    const imageParts = (last.content as Array<{ type: string }>).filter((x) => x.type === "image_url");
+    expect(imageParts).toHaveLength(1);
+  });
+
+  it("#013-d omp engine: V2 attach_error carries vision_unsupported for the batch; text-only turn proceeds", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const sendMock: Mock = vi.fn(async (_text: string, events: { onDone?: () => void }) => {
+      events.onDone?.();
+    });
+    const ompEngine = {
+      send: sendMock,
+      resume: vi.fn(async () => undefined),
+      shutdown: vi.fn(async () => undefined),
+      cancel: vi.fn(() => undefined),
+      attachTrace: vi.fn(() => undefined),
+    };
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      engine: "omp",
+      acp: { start: vi.fn(async () => {}) },
+      ompChatEngine: ompEngine as never,
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some(isInit));
+
+    v2Submit(handler, "go", [makeValidAttachment("o1", "image/png")]);
+    await until(() => v2AttachErrors(p).length >= 1);
+    expect(v2AttachErrors(p).every((e) => e.reason === "vision_unsupported")).toBe(true);
+  });
+});
+
+describe("AiChatPanel — TASK-CHATV2-013 V2 schema seam", () => {
+  it("#013-e postActiveSchema mirrors onto the V2 schema frame (future draft semantics)", () => {
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({ extensionUri: extUri, deps: makeDeps(), adapterFactory: factory });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+
+    panel.postActiveSchema("public", "conn-1");
+    const frames = v2SchemaFrames(p);
+    expect(frames.length).toBeGreaterThanOrEqual(1);
+    const last = frames.at(-1)!;
+    expect(last.schema).toBe("public");
+    expect(last.connectionId).toBe("conn-1");
+
+    // Clearing the schema still emits a frame with the safe absence.
+    panel.postActiveSchema(undefined, undefined);
+    const cleared = v2SchemaFrames(p).at(-1)!;
+    expect(cleared.schema).toBeUndefined();
+    expect(cleared.connectionId).toBeUndefined();
+  });
+
+  it("#013-f V2 pick_active_schema intent routes to the host picker without a clientRequestId", () => {
+    const onPickSchema = vi.fn();
+    const factory: AdapterFactory = vi.fn(async () => null);
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: factory,
+      onPickSchema,
+    });
+    panel.show();
+    const { handler } = panelHarness();
+    handler({ type: "ready" });
+    handler({ protocolVersion: 2, kind: "pick_active_schema" });
+    expect(onPickSchema).toHaveBeenCalledTimes(1);
+  });
+});
+
 // -------------------------------------------------------------------------
 // #T011-6 — panel no longer hardcodes visionCapable=false for ALL external
 // engines. Claude Code + Codex init posts visionCapable:true; omp stays

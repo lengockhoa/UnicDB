@@ -21,6 +21,7 @@
 // Pure DOM TypeScript: no `vscode`, no node builtins, no framework.
 
 import { createChatIcon } from "./icons";
+import { schemaChipLabel } from "./schemaControl";
 import type { ChatViewState, TurnPhase } from "./store";
 
 /** The V2 root class every scoped style selector hangs off. */
@@ -442,10 +443,16 @@ export function renderComposerV2(
     // Rebuild (never append) so repeated renders cannot stack duplicate glyphs.
     modelButton.replaceChildren(modelLabel, createChatIcon("chevron-down", 16));
 
-    const schemaName = state.schema?.schema ?? "No schema";
-    schemaLabel.textContent = schemaName;
-    schemaButton.title = `Schema: ${schemaName}`;
-    schemaButton.setAttribute("aria-label", `Schema: ${schemaName}`);
+    // TASK-CHATV2-013: the chip label is the single `schemaChipLabel` helper —
+    // `Schema: <name>` while a schema is active, or the safe `No active
+    // schema` otherwise. Never a guessed default.
+    const schemaText = schemaChipLabel({
+      schema: state.schema?.schema ?? null,
+      connectionId: state.schema?.connectionId ?? null,
+    });
+    schemaLabel.textContent = schemaText;
+    schemaButton.title = schemaText;
+    schemaButton.setAttribute("aria-label", schemaText);
     schemaButton.replaceChildren(schemaLabel, createChatIcon("schema", 16));
 
     const canPermission = state.capabilities?.supports.permissions === true;

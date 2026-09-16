@@ -52,6 +52,7 @@ import {
   validateImageAttachment,
   validateAttachmentsForVision,
   summarizeAttachmentsForLog,
+  type AttachRejectReason,
   type MinimalAttachment,
 } from "./aiChatAttachments";
 import { defaultAiSettings, type AiConfig, type AiSettings, type AiModelRole } from "../ai/settings";
@@ -2848,12 +2849,11 @@ export class AiChatPanel {
     const visionOk = validateAttachmentsForVision(attachments, visionCapable);
     if (!visionOk.ok) {
       for (const a of attachments) {
-        this.post({
-          type: "attach_error",
-          id: a.id,
-          reason: "vision_unsupported",
-          message: `Attachment "${a.id}" rejected: image attachments are not supported in this engine.`,
-        });
+        this.postAttachError(
+          a.id,
+          "vision_unsupported",
+          `Attachment "${a.id}" rejected: image attachments are not supported in this engine.`,
+        );
       }
       return "empty";
     }
@@ -2863,24 +2863,22 @@ export class AiChatPanel {
     for (let i = 0; i < attachments.length; i++) {
       const a = attachments[i]!;
       if (accepted.length >= MAX_ATTACHMENTS_PER_TURN) {
-        this.post({
-          type: "attach_error",
-          id: a.id,
-          reason: "count_cap",
-          message: `Attachment "${a.id}" rejected: more than ${MAX_ATTACHMENTS_PER_TURN} attachments in one turn.`,
-        });
+        this.postAttachError(
+          a.id,
+          "count_cap",
+          `Attachment "${a.id}" rejected: more than ${MAX_ATTACHMENTS_PER_TURN} attachments in one turn.`,
+        );
         continue;
       }
       const r = validateImageAttachment(a, accepted);
       if (r.ok) {
         accepted.push(a);
       } else {
-        this.post({
-          type: "attach_error",
-          id: r.attachmentId ?? a.id,
-          reason: r.reason,
-          message: `Attachment "${a.id}" rejected: ${r.reason}.`,
-        });
+        this.postAttachError(
+          r.attachmentId ?? a.id,
+          r.reason,
+          `Attachment "${a.id}" rejected: ${r.reason}.`,
+        );
       }
     }
     return accepted.length > 0 ? accepted : "empty";
@@ -5897,6 +5895,23 @@ export class AiChatPanel {
    * and sends it. This is the seam CHATV2-004…017 build on; the sequence is
    * always host-generated — a client-supplied sequence is never consulted.
    */
+  /**
+   * TASK-CHATV2-013: post ONE attachment rejection on BOTH wires — the legacy
+   * `attach_error` bubble (still consumed by the V1 renderer) and the V2
+   * `attach_error` frame (the inline amber notice in the V2 store). The frame
+   * carries the id + mapped reason + safe copy; it NEVER echoes base64 or a
+   * data URL. The host stays authoritative: this is emitted only after the
+   * host's own MIME/magic/count/size/vision re-validation.
+   */
+  private postAttachError(
+    id: string,
+    reason: AttachRejectReason,
+    message: string,
+  ): void {
+    this.post({ type: "attach_error", id, reason, message });
+    this.postV2({ kind: "attach_error", id, reason, message });
+  }
+
   private postV2(body: AiChatHostFrameV2Body): void {
     // TASK-CHATV2-015: the live session id IS the store record id once a
     // session exists; the envelope follows it across resume/create.
@@ -5925,6 +5940,10 @@ export class AiChatPanel {
     // mention is qualified by the connection it was captured on.
     this.activeConnectionId = connectionId;
     this.post({ type: "schemaChanged", schema, connectionId });
+    // TASK-CHATV2-013: mirror the active schema onto the V2 seam so the schema
+    // chip follows the host frame. A schema change applies to the NEXT draft
+    // only — the running turn's context is never retargeted here.
+    this.postV2({ kind: "schema", schema, connectionId });
   }
 
   /**
