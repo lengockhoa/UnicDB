@@ -246,3 +246,52 @@ demonstrated for every fix before it went GREEN (see per-item evidence below).
   → PASS
 - No version bump, no package/publish/.vsix, no push. CSP untouched; no browser storage; no
   base64/binary in DOM/persistence/export.
+
+## R2 Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+
+REVIEWER_MODEL: bao-opus (config handoff.reviewer.model=unic-smart)
+EXECUTOR_MODEL: bao-sonnet (Fix Round 1 self-report) — differs, isolation OK.
+SCOPE: adversarially verify the 4 fix commits (18efae2, 4eb97de, 57223e5, e34c8d3) and hunt for new P1s.
+
+VERIFICATION_RERUN (fresh, this review):
+- `npx vitest run aiChatPanelV2E2e.test.ts aiChatPanelReadyV2Models.test.ts aiChatPanelAcp.test.ts` → 3 files, 56 passed | 0 failed
+- (orchestrator independently re-ran the full gate: typecheck 0, compile 0, V2E2e 20/20, webview/aiChat 393/393, suite 4637 pass/5 skip/0 fail, forbidden-token PASS)
+
+### P1-1 — single-renderer seam — CLOSED
+- Gate fires synchronously before any batched render: `webview/aiChat/controller.ts:1290` (turn_started ⇒ live=true) / `:1297` (turn_finished ⇒ live=false), called at the TOP of `applyHostFrame` (`:1274`). Both wires flow through the ONE `onMessage` listener (`:1260-1272`), so the legacy twin in the next message already sees the latch.
+- Suppression is real and covers exactly the V2-owned families: `webview/aiChatPanelMain.ts:1138,1142,1150,1166,1202,1209` (step/tool_result/delta/assistant/thought/permission_request). Ungated families (init/change_plan/error/done/engine_state/usage/grounding/mention/resume/history/attach_error) have ZERO host V2 emitters (grep `kind: "<family>"` in aiChatPanel.ts ⇒ 0 matches), so no other family can dual-render.
+- Final-text ordering verified correct on every engine: legacy `assistant` posts while the gate is still live, `turn_finished` comes later in `finally`/`sessionEndTurn` — builtin 3136→3194, omp 3970→4010, claude-code funnel 2067, raw-ACP 3816/3835.
+- claude-code reasoning mirror added (`src/ui/aiChatPanel.ts:3245` sessionNoteReasoning) so the suppressed `step` twin has a V2 renderer — parity with omp (3285) / raw-ACP (4326).
+- attach_error decision is SOUND: `store.ts:266,755` `attachNotices` has no non-test consumer anywhere in webview/ (grep) — V2 side is store-only, so the legacy bubble is the ONE surface. Bundle test asserts exactly 1 from the legacy twin, 0 from the V2 frame.
+- Other webviews sharing the host path: no behavioural change — the gate lives entirely in the chat webview module; the host diff adds no frame to any other consumer.
+- Test quality: the #R1 dual-wire cases do BASELINE-then-TWIN with exact occurrence counts (`aiChatPanelV2E2e.test.ts` #R1 text/final/tools/attach_error/permission), so they FAIL if the duplicate returns — not green-by-construction.
+
+### P1-2 — V2 models frame on ready — CLOSED
+- `src/ui/aiChatPanel.ts` handleReady mirrors the legacy frame on the V2 seam next to the legacy post, before `init`/`capabilities`/`session_hydrated`. Envelope is monotonic (`postV2` 6134-6146) and the store accepts it at boot (`store.ts:467-472` short-circuits true while `state.sessionId === null`), so ORDERING IS CONSUMABLE — models lands before the sessionId is pinned.
+- `models` reducer writes `{active, roles}` (`store.ts:698-701`); `set_model` ack unchanged and still carries clientRequestId (host pin asserts the ready frame has NO clientRequestId).
+- Ordering pinned: `aiChatPanelReadyV2Models.test.ts` asserts the V2 models index precedes `session_hydrated`.
+- Bundle pin `#R1 model chip` proves the legacy `models` twin does NOT populate the chip and the V2 frame does.
+
+### P1-3 — single permission surface + invertible optionIds — CLOSED
+- Legacy card emission is SUPPRESSED, not hidden: the bridge returns before `renderPermissionRequest` (`aiChatPanelMain.ts:1202`); bundle test asserts `.UnicDB-chat-permission` count is 0 (a hidden node would still count).
+- No wedge: host settles-once (`aiChatPanel.ts:4452-4457`), timeout default-denies (`:4418-4420`), stop/dispose cancel (`cancelAllPending` 4486-4498); webview drops the request on `turn_finished` (`store.ts:674`) and on respond (`:936`), so `permissionRequest.isOpen()` cannot stay true behind the keyboard ladder. Bundle test asserts composer Enter posts `submit_turn` after settle.
+- Invertible mapping verified: `normalizeV2PermissionOptionId` forward (`aiChatPanel.ts:246-262`, applied at 3703-3706) and `pending.v2OptionIdMap` reverse (`:4464-4467`); ACP pin #7 asserts the result carries the SERVER id `ok1` exactly once; #8 asserts canonical/kindless ids pass verbatim both ways.
+
+### New P1 findings: 0
+
+Interleave/handoff races examined and ruled out (evidence): two interleaved turns are unreachable — `requestSubmit` is busy-gated + `submitLock` (`controller.ts:951-966`), and the store refuses a second live turn (`store.ts:535`). A late/unsolicited `turn_started` would flip the gate while the store ignores it, but no reachable host path posts `turn_started` without the ack id matching `awaitingAckRequestId` (host posts it only from `submit_turn`, `aiChatPanel.ts:1972-1978`). dispose/remount leaves no stale latch (controller rebuilds per `renderInitial`, `aiChatPanelMain.ts:223`).
+
+### New P2 findings (advisory — do not block; none re-introduce a P1)
+1. `webview/aiChat/permissions.ts:482,495` — the sheet's deny/allow-session controls are keyed on the CANONICAL literals only, and store `options` (`store.ts:626-631`) are not consulted for labels. A labeled deny option whose id is non-canonical (e.g. ACP `reject_once`/`no1`) has NO reachable control — deny only via Esc/timeout. The ALLOW path was the P1-3 fix and is complete; deny-label fidelity remains.
+2. `webview/aiChatPanelMain.ts:1202` — the single-surface invariant is ORDER-dependent: the legacy card mounts iff the legacy twin arrives before the V2 `permission_requested`. The host posts legacy-then-V2 (`aiChatPanel.ts:4425` then 4432) so it is correct today, but the invariant is not structural. Consider suppressing the legacy `permission_request` bridge case unconditionally, or pin the arrival order host-side.
+3. `src/ui/aiChatPanel.ts:4388` — bypass auto-answer still matches by RAW id literal (`isAllowKindOptionId(o.optionId)`), ignoring the ACP `kind` the new normalizer reads. A raw-ACP server whose allow option carries `kind:"allow_once"` with a non-literal id is auto-DENIED under bypass. Make the bypass pick consistent with `normalizeV2PermissionOptionId`.
+4. `src/ui/aiChatPanel.ts:6110-6116` — orphaned `postV2` JSDoc now sits directly above `postAttachError` (which was inserted between the comment and its function); move it back above `postV2` (6146). Cosmetic.
+
+### Tests that could be tightened
+- `#R1 model chip` (`aiChatPanelV2E2e.test.ts`) posts `{kind:"models"}` with no `sessionId`, so `frameAccepted` short-circuits on `state.sessionId === null` — the case does not exercise envelope acceptance, so its name overclaims. (The host pin covers the real ordering.)
+- Add: a bundle-level case asserting a non-canonical labeled deny option still yields a reachable deny control (P2-1); a host pin that bypass auto-allow honours the ACP `kind` (P2-3).
+
+### Bottom line
+All three R1 P1s are genuinely closed with production-path, bundle-level evidence; the E2E additions are real regression guards, not tautologies. Zero new P1s. The four P2s are hardening/hygiene and can be scheduled. Round R2 is the FINAL round: APPROVED-WITH-MINOR.
