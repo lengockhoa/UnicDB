@@ -60,6 +60,7 @@ import {
   type TurnPhase,
 } from "./store";
 import { createTranscriptRenderer, type TranscriptRenderer } from "./transcript";
+import { createOverlayMenu, type OverlayMenu } from "./overlays";
 import { createScrollController, type ScrollController } from "./scroll";
 import { createActivityTimeline, phaseCopyLabel, type ActivityTimeline } from "./activity";
 import { createLiveAnnouncer, type LiveAnnouncer } from "./a11y";
@@ -804,12 +805,35 @@ function mountController(options: ChatControllerOptions): ChatController {
       onCopyUser(_messageId, text) {
         writeClipboard(text);
       },
-      onRegenerateAssistant() {
-        postIntent({
-          kind: "regenerate",
-          protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
-          clientRequestId: nextId(),
+      // TASK-CHATFIX-004: put the message text back into the composer draft.
+      // The coalesced composer.render paints the reducer's draft; the caret
+      // lands at the end so Continue-typing just works.
+      onEditUser(_messageId, text) {
+        applyDraftEdit(text, text.length, text.length);
+        try {
+          prompt.focus();
+        } catch {
+          /* jsdom/older engines may reject focus. */
+        }
+      },
+      // TASK-CHATFIX-004: re-issue the message through the ONE retry path.
+      // `requestRetry` no-ops while a turn is busy; blank text never posts.
+      onRetryUser(_messageId, text) {
+        if (text.trim().length === 0) return;
+        requestRetry({
+          draft: {
+            text,
+            revision: state.draft.revision,
+            context: [],
+            attachments: [],
+          },
         });
+      },
+      onMoreAssistant(_messageId, raw, trigger) {
+        openMessageActions(raw, trigger);
+      },
+      onRegenerateAssistant() {
+        requestRegenerate();
       },
       onLoadEarlier() {
         postIntent({ kind: "list_sessions", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2 });
@@ -918,16 +942,73 @@ function mountController(options: ChatControllerOptions): ChatController {
     onOpenSettings: () => postIntent({ kind: "open_settings", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2 }),
   });
 
-  /** Best-effort clipboard write for transcript Copy actions (never throws). */
+  /** Best-effort clipboard write for transcript Copy actions (never throws,
+   * never leaves a rejected promise unhandled — the transcript's own toast
+   * reports the failure). */
   function writeClipboard(text: string): void {
     try {
       const nav = (globalThis as {
         navigator?: { clipboard?: { writeText(t: string): Promise<void> } };
       }).navigator;
-      void nav?.clipboard?.writeText(text);
+      nav?.clipboard?.writeText(text)?.catch(() => {
+        /* clipboard rejection is advisory — the renderer already announced it */
+      });
     } catch {
       /* clipboard is unavailable in some hosts — the action is advisory */
     }
+  }
+
+  // ---- Message actions (TASK-CHATFIX-004) --------------------------------
+  //
+  // The assistant 3-dot overflow opens ONE non-modal `createOverlayMenu` per
+  // clicked trigger, anchored to the shell root, carrying exactly the two
+  // actions the host already supports: Copy + Regenerate.
+
+  /** The single regenerate intent (shared by the row button and the menu). */
+  function requestRegenerate(): void {
+    postIntent({
+      kind: "regenerate",
+      protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+      clientRequestId: nextId(),
+    });
+  }
+
+  /** Live 3-dot menu + the trigger it is wired to (one menu at a time). */
+  let messageMenu: OverlayMenu | null = null;
+  let messageMenuTrigger: HTMLElement | null = null;
+
+  /** Open the assistant message's overflow menu from its clicked trigger. */
+  function openMessageActions(raw: string, trigger?: HTMLElement): void {
+    if (disposed || trigger === undefined) return;
+    if (messageMenu !== null && messageMenuTrigger !== trigger) {
+      // A different message's button: tear the old menu down before re-anchoring.
+      messageMenu.destroy();
+      messageMenu = null;
+    }
+    if (messageMenu === null) {
+      const menu = createOverlayMenu({
+        anchor: shell.root,
+        trigger,
+        ariaLabel: "Message actions",
+        onActivate: (row) => {
+          menu.close("select");
+          if (row.id === "copy") writeClipboard(raw);
+          else if (row.id === "regenerate") requestRegenerate();
+        },
+      });
+      // The trigger keeps focus while the menu is open (non-modal contract),
+      // so its keydown owns listbox routing (same pattern as the header menus).
+      trigger.addEventListener("keydown", (event) => {
+        menu.handleKey(event);
+      });
+      messageMenu = menu;
+      messageMenuTrigger = trigger;
+    }
+    messageMenu.setRows([
+      { id: "copy", label: "Copy message", icon: "copy" },
+      { id: "regenerate", label: "Regenerate response", icon: "retry" },
+    ]);
+    messageMenu.open();
   }
 
   /** Announce the current phase without letting a stream chunk reach a region. */
@@ -1422,6 +1503,9 @@ function mountController(options: ChatControllerOptions): ChatController {
       shell.banner.hidden = true;
       // TASK-CHATV2-017: tear down the V2 surfaces so a remount leaves no node,
       // timer or listener behind.
+      messageMenu?.destroy();
+      messageMenu = null;
+      messageMenuTrigger = null;
       announcer.destroy();
       activity.dispose();
       transcript.dispose();

@@ -76,7 +76,9 @@ export interface TranscriptCallbacks {
   /** Assistant message: Copy / Regenerate / More. */
   onCopyAssistant?(messageId: string, raw: string): void;
   onRegenerateAssistant?(messageId: string, raw: string): void;
-  onMoreAssistant?(messageId: string, raw: string): void;
+  /** `trigger` is the clicked More button — the overlay's ARIA anchor
+   * (TASK-CHATFIX-004; additive, callers may ignore it). */
+  onMoreAssistant?(messageId: string, raw: string, trigger?: HTMLElement): void;
   /** Assistant SQL action — fires only when a SQL fence exists. */
   onInsertSql?(messageId: string, sql: string): void;
   /** Viewport paging request. */
@@ -293,7 +295,7 @@ export function createTranscriptRenderer(
       insert.hidden = true;
       row.appendChild(insert);
       const more = actionButton("more", "ellipsis", "More actions");
-      more.addEventListener("click", () => callbacks.onMoreAssistant?.(id, record.source));
+      more.addEventListener("click", () => callbacks.onMoreAssistant?.(id, record.source, more));
       row.appendChild(more);
     }
     return row;
