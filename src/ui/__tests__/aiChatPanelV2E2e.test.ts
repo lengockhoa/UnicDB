@@ -257,4 +257,217 @@ describeIfBundle("chat V2 production bundle — TASK-CHATV2-017", () => {
     expect(document.querySelectorAll("#composerV2").length).toBe(1);
     expect(document.querySelectorAll("#promptV2").length).toBe(1);
   });
+
+  // ------------------------------------------------------------------------
+  // REVIEW-CHATV2-R1 fix round 1 — the dual-wire hole. Production speaks
+  // BOTH frame families; each logical event must render EXACTLY ONCE even
+  // when the legacy twin and its V2 seam frame arrive together.
+  // ------------------------------------------------------------------------
+
+  /** Count how many times `needle` occurs in the rendered root text. */
+  function occurrences(needle: string): number {
+    return root().textContent.split(needle).length - 1;
+  }
+
+  let dualSeq = 2;
+  function dualEnvelope(): Record<string, unknown> {
+    dualSeq += 1;
+    return { protocolVersion: 2, sessionId: "s1", sequence: dualSeq };
+  }
+
+  itIfBundle("#R1 dual-wire text: legacy delta twin adds NOTHING to the V2 render", async () => {
+    await bootWithOpenTurn();
+    dualSeq = 2;
+    dispatch({ ...dualEnvelope(), kind: "text_delta", turnId: "t1", messageId: "m1", text: "DUPMARKERXYZ" });
+    await flushStreamPaint();
+    const v2Baseline = occurrences("DUPMARKERXYZ");
+    expect(v2Baseline).toBe(1);
+    dispatch({ type: "delta", text: "DUPMARKERXYZ" } as Record<string, unknown>);
+    await flushStreamPaint();
+    expect(occurrences("DUPMARKERXYZ")).toBe(v2Baseline);
+  });
+
+  itIfBundle("#R1 dual-wire final: legacy assistant twin adds NOTHING; the V2 seal closes the turn", async () => {
+    await bootWithOpenTurn();
+    dualSeq = 2;
+    dispatch({ ...dualEnvelope(), kind: "text_delta", turnId: "t1", messageId: "m1", text: "STREAMBODYMARKER" });
+    await flushStreamPaint();
+    const v2Baseline = occurrences("STREAMBODYMARKER");
+    expect(v2Baseline).toBe(1);
+    // The legacy final-assistant twin (never sent by the V2-authoritative
+    // host) must not paint a second copy of the turn's text.
+    dispatch({ type: "assistant", text: "STREAMBODYMARKER FINALMARKERXYZ", markdown: true } as Record<string, unknown>);
+    dispatch({ ...dualEnvelope(), kind: "turn_finished", turnId: "t1", outcome: "completed" });
+    await flushStreamPaint();
+    expect(occurrences("STREAMBODYMARKER")).toBe(v2Baseline);
+    expect(occurrences("FINALMARKERXYZ")).toBe(0);
+  });
+
+  itIfBundle("#R1 dual-wire tools: legacy step/tool_result twins add NOTHING to the V2 timeline", async () => {
+    await bootWithOpenTurn();
+    dualSeq = 2;
+    dispatch({ ...dualEnvelope(), kind: "tool_started", turnId: "t1", toolId: "tool-1", label: "TOOLMARKERXYZ", action: "tool" });
+    dispatch({
+      ...dualEnvelope(),
+      kind: "tool_finished",
+      turnId: "t1",
+      toolId: "tool-1",
+      label: "TOOLMARKERXYZ",
+      status: "ok",
+      summary: "did a thing",
+    });
+    await flushStreamPaint();
+    // V2 baseline: the tool paints once per V2 surface (keyed transcript row
+    // + activity timeline row — the store keeps ONE entity per toolId).
+    const v2Baseline = occurrences("TOOLMARKERXYZ");
+    expect(v2Baseline).toBeGreaterThanOrEqual(1);
+    dispatch({ type: "step", label: "TOOLMARKERXYZ" } as Record<string, unknown>);
+    dispatch({
+      type: "tool_result",
+      tool: "TOOLMARKERXYZ",
+      status: "ok",
+      summary: "did a thing",
+    } as Record<string, unknown>);
+    await flushStreamPaint();
+    expect(occurrences("TOOLMARKERXYZ")).toBe(v2Baseline);
+  });
+
+  itIfBundle("#R1 dual-wire attach_error: exactly ONE visible notice (legacy bridge is its live renderer)", async () => {
+    await bootWithOpenTurn();
+    dualSeq = 2;
+    // The V2 attach_error frame is store-only (no live V2 renderer yet) —
+    // it must not change the visible output.
+    dispatch({ ...dualEnvelope(), kind: "attach_error", id: "att-1", reason: "type", message: "ATTACHMARKERXYZ" });
+    await flushStreamPaint();
+    expect(occurrences("ATTACHMARKERXYZ")).toBe(0);
+    dispatch({
+      type: "attach_error",
+      id: "att-1",
+      reason: "type",
+      message: "ATTACHMARKERXYZ",
+    } as Record<string, unknown>);
+    await flushStreamPaint();
+    expect(occurrences("ATTACHMARKERXYZ")).toBe(1);
+  });
+
+  itIfBundle("#R1 model chip populates from the V2 models frame, never the legacy twin", async () => {
+    const { received } = loadBundle();
+    void received;
+    // The legacy `models` frame is NOT a V2-seam surface: it must not
+    // populate the chip (the host mirrors models on the V2 ready seam).
+    dispatch({ type: "models", active: "work", roles: [{ role: "work", modelId: "unic-sonnet", vision: true }] } as Record<string, unknown>);
+    await flush();
+    expect(byId("modelChipBtnV2")!.textContent).toContain("No model");
+    dispatch({
+      kind: "models",
+      protocolVersion: 2,
+      sessionId: "boot",
+      sequence: 1,
+      active: "work",
+      roles: [{ role: "work", modelId: "unic-sonnet", vision: true }],
+    });
+    await flush();
+    expect(byId("modelChipBtnV2")!.textContent).toContain("unic-sonnet");
+    expect(byId("modelChipBtnV2")!.getAttribute("aria-label")).toContain("unic-sonnet");
+  });
+
+  itIfBundle("#R1 dual-wire permission: ONE surface, one response, composer never wedges", async () => {
+    const { received } = await bootWithOpenTurn();
+    dualSeq = 2;
+    const legacyCard = {
+      type: "permission_request",
+      requestId: "pr-dual",
+      tool: { id: "tool-1", name: "workspace_write", detail: "write a file" },
+      options: [{ optionId: "allow-once", label: "Allow once" }, { optionId: "deny", label: "Deny" }],
+    } as Record<string, unknown>;
+    const v2Sheet = {
+      ...dualEnvelope(),
+      kind: "permission_requested" as const,
+      turnId: "t1",
+      requestId: "pr-dual",
+      tool: { id: "tool-1", name: "workspace_write", detail: "write a file" },
+      options: [{ optionId: "allow-once", label: "Allow once" }, { optionId: "deny", label: "Deny" }],
+    };
+    dispatch(legacyCard);
+    dispatch(v2Sheet);
+    await flush();
+    // Exactly ONE live surface: the V2 anchored sheet. The legacy in-thread
+    // card must never mount alongside it.
+    expect(document.querySelectorAll(".UnicDB-chat-permission").length).toBe(0);
+    expect(document.querySelectorAll("[data-chat-permission-request]").length).toBe(1);
+    // Allow is reachable and answers EXACTLY once.
+    const allow = document.querySelector<HTMLButtonElement>('[data-chat-permission-request] [data-action="allow-once"]');
+    expect(allow).not.toBeNull();
+    expect(allow!.disabled).toBe(false);
+    allow!.click();
+    await flush();
+    const responses = received.filter((m) => m.kind === "permission_response");
+    expect(responses.length).toBe(1);
+    expect((responses[0] as { optionId?: string }).optionId).toBe("allow-once");
+    // Settling the sheet must never leave the composer keyboard wedged.
+    dispatch({ ...dualEnvelope(), kind: "turn_finished", turnId: "t1", outcome: "completed" });
+    await flush();
+    const before = received.filter((m) => m.kind === "submit_turn").length;
+    const prompt = byId<HTMLTextAreaElement>("promptV2")!;
+    prompt.value = "next turn";
+    prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    await flush();
+    prompt.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await flush();
+    expect(received.filter((m) => m.kind === "submit_turn").length).toBe(before + 1);
+  });
+
+  // ------------------------------------------------------------------------
+  // TASK-AG-001 (restored) — icon-only composer controls: one inline SVG,
+  // synced tooltip + accessible name, pointer-events CSS guard. Re-pinned on
+  // the V2 composer after the V1 archive (the deleted bundle suite's sweep).
+  // ------------------------------------------------------------------------
+
+  /** The V2 icon-only controls, in composer DOM order. */
+  const V2_ICON_BUTTON_IDS = ["attachContextBtn", "slashCommandBtn", "primaryTurnBtn"] as const;
+
+  itIfBundle("#AG1 each V2 icon-only control renders exactly one inline SVG icon", () => {
+    loadBundle();
+    for (const id of V2_ICON_BUTTON_IDS) {
+      const b = byId(id);
+      expect(b, `#${id} must exist in the V2 composer`).not.toBeNull();
+      const svgs = b!.querySelectorAll("svg");
+      expect(svgs.length, `#${id} must contain exactly one <svg>`).toBe(1);
+      expect(svgs[0]!.getAttribute("aria-hidden"), `#${id} svg must be aria-hidden`).toBe("true");
+    }
+  });
+
+  itIfBundle("#AG2 each V2 icon-only control is icon-only (no visible text label)", () => {
+    loadBundle();
+    for (const id of V2_ICON_BUTTON_IDS) {
+      const b = byId(id)!;
+      expect((b.textContent ?? "").trim(), `#${id} must be icon-only`).toBe("");
+    }
+  });
+
+  itIfBundle("#AG3 every V2 icon-only control has a non-empty title synced with aria-label", () => {
+    loadBundle();
+    for (const id of V2_ICON_BUTTON_IDS) {
+      const b = byId(id)!;
+      const title = b.getAttribute("title") ?? "";
+      const aria = b.getAttribute("aria-label") ?? "";
+      expect(title, `#${id} must carry a hover tooltip`).not.toBe("");
+      expect(aria, `#${id} must carry an accessible name`).not.toBe("");
+      expect(title === aria, `#${id} title and aria-label must match`).toBe(true);
+    }
+  });
+
+  itIfBundle("#AG9 V2 svg sizing rules keep the pointer-events guard in styles.css", () => {
+    const cssPath = resolve(process.cwd(), "webview", "aiChat", "styles.css");
+    const css = readFileSync(cssPath, "utf8");
+    for (const rule of [
+      ".UnicDB-ai-chat-v2-control svg",
+      ".UnicDB-ai-chat-v2-primary svg",
+    ]) {
+      expect(
+        new RegExp(`${rule.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{[^}]*pointer-events:\\s*none`).test(css),
+        `${rule} must keep pointer-events: none`,
+      ).toBe(true);
+    }
+  });
 });

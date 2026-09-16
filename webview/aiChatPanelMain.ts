@@ -223,6 +223,14 @@ function renderInitial(): void {
     root,
     vscode: vscodeApi as VsCodeApiLike | null,
     onLegacyMessage: (data) => handleLegacyHostMessage(data),
+    // REVIEW-CHATV2-R1 P1-1/P1-3: while a V2 turn is live the V2 seam is the
+    // ONLY renderer for assistant text/reasoning, the tool timeline, inline
+    // attach notices and the permission sheet. The gate flips synchronously
+    // with turn_started/turn_finished so a legacy twin arriving in the very
+    // next message is already suppressed.
+    onV2TurnGate: (live) => {
+      v2TurnOwnsStreaming = live;
+    },
   });
   chatController.announceReady();
 
@@ -1100,6 +1108,21 @@ function renderHistory(msg: HistoryMsg): void {
 // ---- Wire host messages ----------------------------------------------------
 //
 // TASK-CHATV2-009 — the controller is the ONLY `window.message` listener now.
+//
+// REVIEW-CHATV2-R1 P1-1/P1-3 — single-renderer cutover seam. While a V2 turn
+// is live, the V2 transcript/timeline OWNS every family it covers: assistant
+// text + reasoning (text_delta / reasoning_delta), the tool timeline
+// (tool_started / tool_finished) and the permission sheet
+// (permission_requested). The legacy twins of those families are suppressed
+// below so one logical event can never render twice. Families with NO live
+// V2 counterpart (init, change_plan, error, done, engine_state, usage,
+// grounding, mention_miss, resume, history, attach_error — whose V2 notices
+// are store-only) keep rendering through this bridge for every host path
+// still using them, and legacy-only tests that never open a V2 turn are
+// unaffected.
+
+let v2TurnOwnsStreaming = false;
+
 // This legacy dispatcher is invoked BY the controller (via `onLegacyMessage`)
 // for non-V2 frames, so V1 frame handling survives without a second listener.
 function handleLegacyHostMessage(data: unknown): void {
@@ -1109,15 +1132,22 @@ function handleLegacyHostMessage(data: unknown): void {
       applyInit(msg);
       return;
     case "step":
+      // V2 seam owns live activity while a turn is open (tool timeline +
+      // reasoning block). Out-of-turn notices (plan-apply progress) still
+      // render here — the gate is closed between turns.
+      if (v2TurnOwnsStreaming) return;
       appendStep(msg.label);
       return;
     case "tool_result":
+      if (v2TurnOwnsStreaming) return;
       appendToolResult(msg.tool, msg.status, msg.summary);
       return;
     case "change_plan":
+      // No V2 host emitter exists for change_plan — always legacy-owned.
       appendChangePlan(msg);
       return;
     case "delta":
+      if (v2TurnOwnsStreaming) return;
       appendDelta(msg.text);
       return;
     case "engine_state":
@@ -1129,7 +1159,11 @@ function handleLegacyHostMessage(data: unknown): void {
     case "assistant":
       // Final assistant message: replace any open streaming bubble with a
       // rendered markdown version. If no streaming bubble exists, render a
-      // new one (builtin path).
+      // new one (builtin path). Suppressed while a V2 turn owns the seam —
+      // the V2 transcript already holds the streamed text and the
+      // turn_finished seal closes it (out-of-turn notices like
+      // "Plan applied: …" keep rendering here).
+      if (v2TurnOwnsStreaming) return;
       {
         const thread = document.getElementById("thread");
         const streaming = thread?.querySelector(
@@ -1164,9 +1198,15 @@ function handleLegacyHostMessage(data: unknown): void {
       // send drops it via appendUser -> resetThinkingBlock.
       return;
     case "thought":
+      // V2 seam owns reasoning while a turn is open (reasoning_delta).
+      if (v2TurnOwnsStreaming) return;
       applyThought(msg.text);
       return;
     case "permission_request":
+      // P1-3: the V2 anchored sheet is the ONE permission surface while a
+      // V2 turn is live. A legacy card mounted beside it would leave a
+      // stale second answer path that wedges the composer keyboard.
+      if (v2TurnOwnsStreaming) return;
       renderPermissionRequest(msg);
       return;
     case "resume_sessions":
@@ -1179,6 +1219,10 @@ function handleLegacyHostMessage(data: unknown): void {
       renderMentionMiss(msg.token);
       return;
     case "attach_error":
+      // The host posts this family on both wires (postAttachError), but the
+      // V2 store's attachNotices have NO live V2 renderer yet (store-only
+      // state) — the legacy amber bubble is the ONE visible surface, so it
+      // must stay mounted even while a V2 turn owns the other families.
       renderAttachWarning(msg.message);
       return;
     case "grounding_state":

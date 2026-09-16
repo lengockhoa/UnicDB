@@ -3241,8 +3241,13 @@ export class AiChatPanel {
             runningPosted = true;
             this.postSessionState("running");
           }
-          // AIX-07: same wire-hygiene pass as onDelta.
+          // AIX-07: same wire-hygiene pass as onDelta. REVIEW-CHATV2-R1
+          // P1-1: the V2 seam owns the reasoning block while a turn is
+          // live — mirror every chunk so the legacy `step` twin
+          // (suppressed in the webview bridge) has a V2 renderer, exactly
+          // like the omp and raw-ACP funnels.
           this.post({ type: "step", label: String(redact(chunk)) });
+          this.sessionNoteReasoning(String(redact(chunk)));
         },
         onToolStart: (toolName) => {
           if (token?.aborted) return;

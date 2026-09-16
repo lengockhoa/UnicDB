@@ -158,6 +158,15 @@ export interface ChatControllerOptions {
    * instead of adding a second listener is what keeps "one message effect" true.
    */
   readonly onLegacyMessage?: (data: unknown) => void;
+  /**
+   * REVIEW-CHATV2-R1 P1-1/P1-3: synchronous turn-ownership gate. Fires the
+   * moment the controller applies a V2 `turn_started` (live=true) or
+   * `turn_finished` (live=false) — BEFORE any batched render — so the legacy
+   * bridge can suppress the streaming families the V2 seam now owns while a
+   * V2 turn is live. One logical event, one renderer, even when the host's
+   * legacy twin and its V2 frame arrive back to back.
+   */
+  readonly onV2TurnGate?: (live: boolean) => void;
 }
 
 /** The live controller handle. */
@@ -1276,12 +1285,16 @@ function mountController(options: ChatControllerOptions): ChatController {
     // Ack/rejection bookkeeping runs against the post-dispatch state.
     if (frame.kind === "turn_started") {
       const f = frame as { clientRequestId: string };
+      // Gate FIRST, synchronously: a legacy twin frame in the NEXT message
+      // must already see the V2 seam as the turn's only renderer.
+      options.onV2TurnGate?.(true);
       attachmentController?.acknowledgeSubmit(f.clientRequestId);
       if (submitLock !== null && f.clientRequestId === submitLock) submitLock = null;
       releaseStopLock();
       return;
     }
     if (frame.kind === "turn_finished") {
+      options.onV2TurnGate?.(false);
       releaseStopLock();
       return;
     }
