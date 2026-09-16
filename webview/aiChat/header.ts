@@ -97,10 +97,38 @@ export interface HeaderOptions {
   /** The shell's header mount point (`refs.header`). */
   readonly header: HTMLElement;
   readonly callbacks: HeaderCallbacks;
-  /** Gate map; actions whose gate is false are not rendered. */
-  readonly gates: HeaderOverflowGates;
+  /**
+   * Gate map; actions whose gate is false are not rendered. Omit it when the
+   * header does not own the overflow menu (`ownOverflow: false`) — the map is
+   * then never consulted.
+   */
+  readonly gates?: HeaderOverflowGates;
+  /**
+   * TASK-CHATV2-017: whether this view also binds the overflow MENU. The
+   * session surface (sessions.ts) already owns that menu, so the controller
+   * mounts the header with `ownOverflow: false` — the header then only exposes
+   * the (already wired) overflow button instead of stacking a second menu and a
+   * second click listener on the same node. Defaults to `true`.
+   */
+  readonly ownOverflow?: boolean;
+  /**
+   * TASK-CHATV2-017: whether this view also owns the session title display and
+   * its inline rename. The session surface (sessions.ts) already renders that
+   * title from the same reducer state and owns rename (dblclick/F2, host
+   * `title_updated` ack), so the controller mounts the header with
+   * `ownTitle: false`: the shell's placeholder title node is removed instead of
+   * leaving a second visible title, and no editor/listener is stacked on top of
+   * the sessions-owned one. Defaults to `true`.
+   */
+  readonly ownTitle?: boolean;
   /** Host-provided engine entries. DATA — never derived by engine name. */
   readonly engineEntries: readonly EngineMenuEntry[];
+  /**
+   * TASK-CHATV2-017: called when the engine pill is activated, BEFORE the menu
+   * toggles — the controller re-syncs the entries from the current reducer
+   * state so the menu always shows host truth, never a stale snapshot.
+   */
+  readonly onEngineOpen?: () => void;
   /** Present only when a session list genuinely exists (else the mark is
    * decorative, per PLAN §5). */
   readonly hasSessionList?: boolean;
@@ -149,6 +177,7 @@ export function createChatHeader(options: HeaderOptions): ChatHeaderView {
 
   // ---- Mark (decorative unless a real session list exists) ---------------
   const mark = header.querySelector<HTMLElement>(`.${cls("mark")}`);
+  const onMarkActivate = (): void => options.onOpenSessions?.();
   if (mark !== null) {
     if (options.hasSessionList === true) {
       mark.removeAttribute("aria-hidden");
@@ -156,8 +185,7 @@ export function createChatHeader(options: HeaderOptions): ChatHeaderView {
       mark.setAttribute("tabindex", "0");
       mark.setAttribute("aria-label", "Open chats");
       if (options.onOpenSessions !== undefined) {
-        const open = options.onOpenSessions;
-        mark.addEventListener("click", () => open());
+        mark.addEventListener("click", onMarkActivate);
       }
     } else {
       mark.setAttribute("aria-hidden", "true");
@@ -165,29 +193,39 @@ export function createChatHeader(options: HeaderOptions): ChatHeaderView {
   }
 
   // ---- Session title -----------------------------------------------------
-  const title = header.querySelector<HTMLElement>(`.${cls("title")}`) ?? (() => {
-    const node = document.createElement("span");
-    node.className = cls("title");
-    header.appendChild(node);
-    return node;
-  })();
-  title.setAttribute("tabindex", "0");
-  title.setAttribute("role", "textbox");
-  title.setAttribute("aria-label", "Chat title");
-  title.title = "Rename chat (F2)";
+  // TASK-CHATV2-017: when the session surface already owns the title, the
+  // shell's placeholder node is REMOVED here rather than left behind as a
+  // second visible title (two titles on one 40px row would also overflow it).
+  const ownTitle = options.ownTitle !== false;
+  const existingTitle = header.querySelector<HTMLElement>(`.${cls("title")}`);
+  if (!ownTitle) existingTitle?.remove();
+  const title = ownTitle
+    ? existingTitle ?? (() => {
+        const node = document.createElement("span");
+        node.className = cls("title");
+        header.appendChild(node);
+        return node;
+      })()
+    : document.createElement("span");
+  if (ownTitle) {
+    title.setAttribute("tabindex", "0");
+    title.setAttribute("role", "textbox");
+    title.setAttribute("aria-label", "Chat title");
+    title.title = "Rename chat (F2)";
+  }
 
   const editor = document.createElement("input");
   editor.type = "text";
   editor.className = cls("title-editor");
   editor.hidden = true;
   editor.setAttribute("aria-label", "Chat title");
-  header.appendChild(editor);
+  if (ownTitle) header.appendChild(editor);
 
   let editing = false;
   let committedTitle: string | null = null;
 
   function openEditor(): void {
-    if (editing) return;
+    if (!ownTitle || editing) return;
     editing = true;
     editor.value = title.textContent ?? "";
     editor.hidden = false;
@@ -221,14 +259,16 @@ export function createChatHeader(options: HeaderOptions): ChatHeaderView {
     title.textContent = committedTitle ?? title.textContent ?? HEADER_PRODUCT_TITLE;
   }
 
-  title.addEventListener("click", () => openEditor());
-  title.addEventListener("keydown", (event) => {
+  // Named refs so destroy() can remove exactly what was added (a remount must
+  // never stack a second listener on the shell's persistent header nodes).
+  const onTitleClick = (): void => openEditor();
+  const onTitleKeydown = (event: KeyboardEvent): void => {
     if (event.key === "F2" || event.key === "Enter") {
       event.preventDefault();
       openEditor();
     }
-  });
-  editor.addEventListener("keydown", (event) => {
+  };
+  const onEditorKeydown = (event: KeyboardEvent): void => {
     if (event.key === "Enter") {
       event.preventDefault();
       commit();
@@ -238,7 +278,13 @@ export function createChatHeader(options: HeaderOptions): ChatHeaderView {
       event.preventDefault();
       cancel();
     }
-  });
+  };
+
+  if (ownTitle) {
+    title.addEventListener("click", onTitleClick);
+    title.addEventListener("keydown", onTitleKeydown);
+    editor.addEventListener("keydown", onEditorKeydown);
+  }
 
   // ---- Engine pill -------------------------------------------------------
   const enginePill = header.querySelector<HTMLButtonElement>(`.${cls("engine")}`) ?? (() => {
@@ -274,16 +320,28 @@ export function createChatHeader(options: HeaderOptions): ChatHeaderView {
   });
   engineMenu.setEntries(options.engineEntries);
 
-  enginePill.addEventListener("click", () => engineMenu.toggle());
-  enginePill.addEventListener("keydown", (event) => {
+  // Named refs (see the title handlers above) + the onEngineOpen seam: the
+  // controller re-syncs the entries from reducer state before the menu shows.
+  const onPillClick = (): void => {
+    options.onEngineOpen?.();
+    engineMenu.toggle();
+  };
+  const onPillKeydown = (event: KeyboardEvent): void => {
     if (engineMenu.handleKey(event)) return;
     if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
       event.preventDefault();
+      options.onEngineOpen?.();
       engineMenu.open();
     }
-  });
+  };
+  enginePill.addEventListener("click", onPillClick);
+  enginePill.addEventListener("keydown", onPillKeydown);
 
   // ---- Overflow ----------------------------------------------------------
+  // TASK-CHATV2-017: the session surface owns the overflow MENU. With
+  // `ownOverflow: false` this view exposes the (already wired) button but adds
+  // NO second menu and NO second click listener on the same node.
+  const ownOverflow = options.ownOverflow !== false;
   const overflowButton = header.querySelector<HTMLButtonElement>(`.${cls("overflow")}`) ?? (() => {
     const node = document.createElement("button");
     node.type = "button";
@@ -329,7 +387,7 @@ export function createChatHeader(options: HeaderOptions): ChatHeaderView {
     return menu;
   }
 
-  overflowButton.addEventListener("click", () => {
+  const onOverflowClick = (): void => {
     const m = ensureOverflowMenu();
     if (m.isOpen()) {
       m.close("api");
@@ -339,10 +397,10 @@ export function createChatHeader(options: HeaderOptions): ChatHeaderView {
       buildOverflowRows().map((row) => ({ id: row.id, label: row.label })),
     );
     m.open();
-  });
+  };
 
   // Keyboard: the button opens with the platform keys and routes the listbox.
-  overflowButton.addEventListener("keydown", (event) => {
+  const onOverflowKeydown = (event: KeyboardEvent): void => {
     const m = ensureOverflowMenu();
     if (m.isOpen() && m.handleKey(event)) return;
     if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
@@ -350,7 +408,12 @@ export function createChatHeader(options: HeaderOptions): ChatHeaderView {
       m.setRows(buildOverflowRows().map((row) => ({ id: row.id, label: row.label })));
       m.open();
     }
-  });
+  };
+
+  if (ownOverflow) {
+    overflowButton.addEventListener("click", onOverflowClick);
+    overflowButton.addEventListener("keydown", onOverflowKeydown);
+  }
 
   return {
     root: header,
@@ -362,25 +425,43 @@ export function createChatHeader(options: HeaderOptions): ChatHeaderView {
     cancelTitleEdit: cancel,
     commitTitleEdit: commit,
     render(state: ChatViewState): void {
-      if (!editing) {
+      // With `ownTitle: false` the session surface writes the visible title —
+      // this view never stacks a second writer on the same 40px row.
+      if (ownTitle && !editing) {
         title.textContent = titleFor(state);
       }
       renderEnginePill(enginePill, state);
     },
     setTitleFromHost(next: string | null): void {
       committedTitle = next;
-      if (!editing) title.textContent = next ?? HEADER_PRODUCT_TITLE;
+      if (ownTitle && !editing) title.textContent = next ?? HEADER_PRODUCT_TITLE;
     },
     setEngineEntries(entries: readonly EngineMenuEntry[]): void {
       engineMenu.setEntries(entries);
     },
     engineMenu,
-    menu: () => menu,
+    menu: () => (ownOverflow ? menu : null),
     destroy(): void {
       engineMenu.destroy();
       menu?.destroy();
       menu = null;
       editing = false;
+      // Remove exactly the listeners this mount added on the shell's persistent
+      // nodes so a remount (dispose → createChatController again) cannot stack
+      // a second engine-menu binding or overflow binding.
+      if (options.onOpenSessions !== undefined) mark?.removeEventListener("click", onMarkActivate);
+      if (ownTitle) {
+        title.removeEventListener("click", onTitleClick);
+        title.removeEventListener("keydown", onTitleKeydown);
+        editor.removeEventListener("keydown", onEditorKeydown);
+      }
+      enginePill.removeEventListener("click", onPillClick);
+      enginePill.removeEventListener("keydown", onPillKeydown);
+      if (ownOverflow) {
+        overflowButton.removeEventListener("click", onOverflowClick);
+        overflowButton.removeEventListener("keydown", onOverflowKeydown);
+      }
+      editor.remove();
     },
   };
 }

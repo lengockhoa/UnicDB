@@ -2,15 +2,19 @@
 //
 // Pure protocol tests for the versioned V2 host/webview contract:
 //   - frame/intent unions + runtime narrow guards (src/ui/aiChatPanelMessages.ts)
-//   - the temporary V1→V2 compatibility translation
-//     (src/ui/aiChatPanelV1Adapter.ts)
 //
-// These tests are pure — no vscode, no DOM. They cover the six cases named in
+// These tests are pure — no vscode, no DOM. They cover the cases named in
 // the task file: ordered turn frames, unknown/malformed intents, stale/wrong
-// session frames, mention correlation, forbidden-field security shape, and V1
-// compatibility (one legacy frame → one semantic V2 frame).
+// session frames, mention correlation and forbidden-field security shape.
+//
+// TASK-CHATV2-017 — the temporary V1→V2 compatibility translation
+// (`src/ui/aiChatPanelV1Adapter.ts`) was deleted with the V1 cutover, so the
+// former "#6 V1 compatibility" block is replaced by a regression assertion
+// that no V1 adapter module survives (see the last describe block).
 
 import { describe, it, expect } from "vitest";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { resolveEngineCapabilities } from "../../ai/capabilities";
 import type {
   AiChatFrameEnvelopeV2,
@@ -26,12 +30,6 @@ import {
   parseAiChatWebviewIntentV2,
   shouldAcceptHostFrameV2,
 } from "../aiChatPanelMessages";
-import {
-  V1_ADAPTER_DELETION_TASK,
-  translateV1HostMessage,
-  type V1TranslationContext,
-} from "../aiChatPanelV1Adapter";
-import type { AiChatPanelHostMessage } from "../aiChatPanelMessages";
 
 // ---- Fixtures --------------------------------------------------------------
 
@@ -42,15 +40,6 @@ const capabilities = resolveEngineCapabilities({
   activeRole: "work",
   policy: { dbContext: true, workspaceContext: true, bypassAllowed: true },
 });
-
-const baseCtx: V1TranslationContext = {
-  sessionId: "sess-1",
-  sequence: 1,
-  turnId: "turn-1",
-  messageId: "msg-1",
-  toolId: "tool-1",
-  capabilities,
-};
 
 describe("CHATV2-003 #1 — ordered turn frames (unit)", () => {
   it("V2 envelope is mandatory: version/session/sequence and turnId on turn frames", () => {
@@ -339,91 +328,11 @@ describe("CHATV2-003 #5 — forbidden fields (security)", () => {
   });
 });
 
-// ---- #6 — V1 compatibility -------------------------------------------------
+// ---- #6 — V1 cutover (regression) -----------------------------------------
 
-interface Expected {
-  v1: AiChatPanelHostMessage;
-  kind: AiChatHostFrameV2["kind"];
-}
-
-const legacyCases: Expected[] = [
-  { v1: { type: "init", hasHistory: true, visionCapable: true }, kind: "session_hydrated" },
-  { v1: { type: "engine", name: "omp", version: "18.0.1" }, kind: "capabilities" },
-  { v1: { type: "session_state", state: "connecting", turnId: "turn-1" }, kind: "phase" },
-  { v1: { type: "delta", text: "x" }, kind: "text_delta" },
-  { v1: { type: "thought", text: "y" }, kind: "reasoning_delta" },
-  { v1: { type: "step", label: "list_tables" }, kind: "tool_started" },
-  { v1: { type: "tool_result", tool: "list_tables", status: "ok", summary: "3 rows" }, kind: "tool_finished" },
-  { v1: { type: "assistant", text: "done", markdown: true }, kind: "text_delta" },
-  { v1: { type: "error", message: "boom" }, kind: "error" },
-  { v1: { type: "done" }, kind: "turn_finished" },
-  { v1: { type: "models", active: "work", roles: [] }, kind: "models" },
-  { v1: { type: "schemaChanged", schema: "public", connectionId: "c1" }, kind: "schema" },
-  {
-    v1: { type: "grounding_state", selectionPath: "a.ts", fileCount: 1, excludedCount: 0, turnId: "turn-1" },
-    kind: "context_status",
-  },
-  {
-    v1: {
-      type: "permission_request",
-      requestId: "r1",
-      tool: { id: "t", name: "write", detail: "d" },
-      options: [{ optionId: "allow-once", label: "Allow once" }],
-    },
-    kind: "permission_requested",
-  },
-  {
-    v1: { type: "history", items: [{ kind: "user", text: "hi" }], truncated: false, truncatedCount: 0 },
-    kind: "session_hydrated",
-  },
-];
-
-describe("CHATV2-003 #6 — V1 compatibility (regression)", () => {
-  it("each legacy frame maps once to its semantic V2 form", () => {
-    for (const { v1, kind } of legacyCases) {
-      const frame = translateV1HostMessage(v1, baseCtx);
-      expect(frame, `translate(${v1.type})`).not.toBeNull();
-      expect(frame!.kind).toBe(kind);
-      expect(isAiChatHostFrameV2(frame)).toBe(true);
-      expect(frame!.sessionId).toBe("sess-1");
-      expect(frame!.protocolVersion).toBe(2);
-    }
-  });
-
-  it("semantic payload is preserved (not a passthrough of the V1 shape)", () => {
-    const errorFrame = translateV1HostMessage({ type: "error", message: "boom" }, baseCtx);
-    expect(errorFrame).not.toBeNull();
-    if (errorFrame!.kind === "error") {
-      // V2 error exposes only safeMessage + diagnosticId (+ optional safeDetail).
-      expect(errorFrame!.safeMessage).toBe("boom");
-      expect(typeof errorFrame!.diagnosticId).toBe("string");
-      expect("message" in errorFrame!).toBe(false);
-    }
-    const permFrame = translateV1HostMessage(
-      {
-        type: "permission_request",
-        requestId: "r1",
-        tool: { id: "t", name: "write", detail: "d" },
-        options: [{ optionId: "allow-once", label: "Allow once" }],
-      },
-      baseCtx,
-    );
-    expect(permFrame!.kind).toBe("permission_requested");
-    if (permFrame!.kind === "permission_requested") {
-      expect(permFrame!.requestId).toBe("r1");
-      expect(permFrame!.options[0]?.optionId).toBe("allow-once");
-    }
-  });
-
-  it("a legacy kind with no V2 semantic form returns null, never throws", () => {
-    const unknown = { type: "engine_state", state: "ready" } as AiChatPanelHostMessage;
-    expect(translateV1HostMessage(unknown, baseCtx)).toBeNull();
-    const bogus = { type: "totally-not-real" } as unknown as AiChatPanelHostMessage;
-    expect(() => translateV1HostMessage(bogus, baseCtx)).not.toThrow();
-    expect(translateV1HostMessage(bogus, baseCtx)).toBeNull();
-  });
-
-  it("the adapter is explicitly scheduled for deletion in 017", () => {
-    expect(V1_ADAPTER_DELETION_TASK).toBe("CHATV2-017");
+describe("CHATV2-017 #6 — V1 adapter deleted (regression)", () => {
+  it("no V1 compatibility adapter module survives the cutover", () => {
+    const adapter = resolve(process.cwd(), "src", "ui", "aiChatPanelV1Adapter.ts");
+    expect(existsSync(adapter)).toBe(false);
   });
 });

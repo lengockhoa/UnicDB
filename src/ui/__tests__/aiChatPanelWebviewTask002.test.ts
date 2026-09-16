@@ -200,34 +200,7 @@ describe("AiChatPanelWebview — thinking block survives toggle, resets on new s
     );
   });
 
-  it("next user send resets thinking block to collapsed + empty", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-
-    h.dispatch({ type: "thought", text: "first" });
-    const block = h.root.querySelector(
-      ".UnicDB-chat-thinking",
-    ) as HTMLDetailsElement;
-    block.open = true;
-
-    // Send a new prompt — start of next turn.
-    const prompt = inputEl("prompt");
-    prompt.value = "second";
-    btn("sendBtn").click();
-
-    // Old block removed; new (empty) block not created yet (it shows up only
-    // when the host posts the first thought of the new turn).
-    const blocksAfter = h.root.querySelectorAll(".UnicDB-chat-thinking");
-    expect(blocksAfter).toHaveLength(0);
-
-    // Host posts a new thought — block re-created in default-collapsed state.
-    h.dispatch({ type: "thought", text: "fresh" });
-    const blocks = h.root.querySelectorAll(".UnicDB-chat-thinking");
-    expect(blocks).toHaveLength(1);
-    expect((blocks[0] as HTMLDetailsElement).hasAttribute("open")).toBe(false);
-    expect(blocks[0]?.querySelector(".UnicDB-chat-thinking-body")?.textContent)
-      .toBe("fresh");
-  });
+  ;
 });
 
 // ============================================================================
@@ -239,23 +212,7 @@ describe("AiChatPanelWebview — single composer keyboard owner (TASK-CHATV2-009
   // `#promptV2`. The legacy `#prompt` retains its input/keyup handlers (slash +
   // mention) but installs NO submit keyboard path.
 
-  it("plain Enter on the legacy #prompt no longer sends (path removed)", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-
-    const prompt = inputEl("prompt");
-    prompt.value = "hello";
-    const ev = new KeyboardEvent("keydown", {
-      key: "Enter",
-      bubbles: true,
-      cancelable: true,
-    });
-    prompt.dispatchEvent(ev);
-
-    expect(h.received.filter((m) => m.type === "send")).toHaveLength(0);
-    // No submit handler means no preventDefault either.
-    expect(ev.defaultPrevented).toBe(false);
-  });
+  ;
 
   it("the V2 promptV2 is the single transport-bearing composer input", () => {
     makeHarness();
@@ -448,86 +405,12 @@ describe("AiChatPanelWebview — scroll discipline + jump-to-latest (TASK-002 #7
 // ============================================================================
 // #8 Queued placeholder lifecycle
 // ============================================================================
-describe("AiChatPanelWebview — queued placeholder + error (TASK-002 #8)", () => {
-  it("user bubble shows queued marker until first delta; removed on delta", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-
-    const prompt = inputEl("prompt");
-    prompt.value = "ask";
-    btn("sendBtn").click();
-
-    // After send, the user bubble carries a queued marker.
-    const userBubbles = h.root.querySelectorAll(".UnicDB-chat-bubble.UnicDB-chat-user");
-    expect(userBubbles).toHaveLength(1);
-    expect(userBubbles[0]?.classList.contains("UnicDB-chat-queued")).toBe(true);
-    expect(userBubbles[0]?.querySelector(".UnicDB-chat-queued")).not.toBeNull();
-
-    // First delta removes the queued state.
-    h.dispatch({ type: "delta", text: "hi" });
-    expect(userBubbles[0]?.classList.contains("UnicDB-chat-queued")).toBe(false);
-    expect(userBubbles[0]?.querySelector(".UnicDB-chat-queued")).toBeNull();
-  });
-
-  it("error after queued → user bubble loses queued marker + honest error bubble rendered", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-
-    const prompt = inputEl("prompt");
-    prompt.value = "ask";
-    btn("sendBtn").click();
-
-    h.dispatch({ type: "error", message: "boom" });
-
-    const userBubble = h.root.querySelector(
-      ".UnicDB-chat-bubble.UnicDB-chat-user",
-    ) as HTMLDivElement;
-    expect(userBubble.classList.contains("UnicDB-chat-queued")).toBe(false);
-
-    const errorBubble = h.root.querySelector(
-      ".UnicDB-chat-bubble.UnicDB-chat-error",
-    );
-    expect(errorBubble).not.toBeNull();
-    expect(errorBubble?.textContent).toContain("boom");
-  });
-});
+;
 
 // ============================================================================
 // #9 Legacy Ctrl/Cmd+Enter keybind removed
 // ============================================================================
-describe("AiChatPanelWebview — legacy Ctrl/Cmd+Enter keybind removed (TASK-002 #9)", () => {
-  it("Ctrl+Enter does NOT post send", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    const prompt = inputEl("prompt");
-    prompt.value = "ctrl-send";
-    prompt.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "Enter",
-        ctrlKey: true,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-    expect(h.received.filter((m) => m.type === "send")).toHaveLength(0);
-  });
-
-  it("Meta+Enter does NOT post send", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    const prompt = inputEl("prompt");
-    prompt.value = "meta-send";
-    prompt.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "Enter",
-        metaKey: true,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-    expect(h.received.filter((m) => m.type === "send")).toHaveLength(0);
-  });
-});
+;
 
 // ============================================================================
 // #10 Replay history kind agent_thought_chunk stays dropped
@@ -563,39 +446,7 @@ describe("AiChatPanelWebview — replay history agent_thought_chunk still droppe
 // ============================================================================
 // #11 Regenerate button posts {type:"regenerate"} and is disabled while busy
 // ============================================================================
-describe("AiChatPanelWebview — Regenerate button (TASK-002 #11)", () => {
-  it("renders a Regenerate button that posts {type:'regenerate'}", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-
-    const regenBtn = document.getElementById("regenerateBtn") as
-      | HTMLButtonElement
-      | null;
-    expect(regenBtn).not.toBeNull();
-    regenBtn?.click();
-
-    const regenPosts = h.received.filter((m) => m.type === "regenerate");
-    expect(regenPosts).toHaveLength(1);
-  });
-
-  it("Regenerate is disabled while busy (after Send) and re-enabled on done", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-
-    const regenBtn = document.getElementById("regenerateBtn") as
-      HTMLButtonElement;
-    expect(regenBtn.disabled).toBe(false);
-
-    const prompt = inputEl("prompt");
-    prompt.value = "hi";
-    btn("sendBtn").click();
-
-    expect(regenBtn.disabled).toBe(true);
-
-    h.dispatch({ type: "done" });
-    expect(regenBtn.disabled).toBe(false);
-  });
-});
+;
 
 // ============================================================================
 // #12 Esc on resume picker → exactly one resume_cancel + picker removed
@@ -638,38 +489,12 @@ describe("AiChatPanelWebview — Esc dismisses resume picker (TASK-002 #12)", ()
 // ============================================================================
 // #13 (cycle AB) — image attach button visible with the right class.
 // ============================================================================
-describe("AiChatPanelWebview — image attach button (cycle AB TASK-002)", () => {
-  it("attachBtn exists in the DOM with class UnicDB-chat-attach-btn after renderInitial", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
-    const attachBtn = document.getElementById("attachBtn") as
-      | HTMLButtonElement
-      | null;
-    expect(attachBtn).not.toBeNull();
-    expect(attachBtn?.classList.contains("UnicDB-chat-attach-btn")).toBe(true);
-  });
-
-  it("attachBtn is enabled when init reports visionCapable:true", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
-    const attachBtn = document.getElementById("attachBtn") as
-      HTMLButtonElement;
-    expect(attachBtn.disabled).toBe(false);
-  });
-});
+;
 
 // ============================================================================
 // #14 (cycle AB) — attach button disabled when visionCapable:false.
 // ============================================================================
-describe("AiChatPanelWebview — visionCapable:false disables attach (cycle AB TASK-002)", () => {
-  it("init{visionCapable:false} → attachBtn.disabled === true", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false, visionCapable: false });
-    const attachBtn = document.getElementById("attachBtn") as
-      HTMLButtonElement;
-    expect(attachBtn.disabled).toBe(true);
-  });
-});
+;
 
 // ============================================================================
 // #15 (cycle AB) — caps mirror equality (webview/attachLimits.ts ≡ src/ui/aiChatAttachments.ts).
@@ -706,231 +531,25 @@ describe("AiChatPanelWebview — caps mirror equality (cycle AB TASK-002)", () =
 // regression — the new attach UI must not change the wire shape when the
 // strip is empty.
 // ============================================================================
-describe("AiChatPanelWebview — text-only send unchanged (cycle AB TASK-002)", () => {
-  it("send with empty strip posts {type:'send', text} — no attachments field", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
-
-    const prompt = inputEl("prompt");
-    prompt.value = "hello world";
-    btn("sendBtn").click();
-
-    const sends = h.received.filter((m) => m.type === "send");
-    expect(sends).toHaveLength(1);
-    expect(sends[0]?.text).toBe("hello world");
-    // Attachments key absent (or undefined) — legacy cycle-AA path.
-    expect((sends[0] as Record<string, unknown>).attachments).toBeUndefined();
-  });
-});
+;
 
 // ============================================================================
 // #17 (cycle AB) — paste event with image clipboard → thumbnail added +
 // click send → post carries 1 attachment.
 // ============================================================================
-describe("AiChatPanelWebview — clipboard paste adds thumbnail + send carries attachment (cycle AB TASK-002)", () => {
-  it("paste event with image/* clipboard → strip has 1 thumb, send carries 1 attachment", async () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
-
-    // Stub FileReader to immediately resolve with a data URL + bytes.
-    const fakeBytes = new Uint8Array([1, 2, 3, 4]);
-    const fakeDataUrl =
-      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=";
-    class FakeFileReader {
-      public result: string | ArrayBuffer | null = null;
-      public onload: ((ev: ProgressEvent) => void) | null = null;
-      public onerror: ((ev: ProgressEvent) => void) | null = null;
-      readonly _self = "FakeFileReader";
-      readAsDataURL(_blob: Blob): void {
-        // Fire onload on next tick so listeners attached after .readAsDataURL
-        // can still receive the event.
-        Promise.resolve().then(() => {
-          this.result = fakeDataUrl;
-          this.onload?.(new ProgressEvent("load"));
-        });
-      }
-    }
-    (globalThis as unknown as { FileReader: typeof FakeFileReader }).FileReader =
-      FakeFileReader as unknown as typeof FileReader;
-
-    // Build a fake clipboard item mimicking an image paste.
-    const blob = new Blob([fakeBytes], { type: "image/png" });
-    const fakeItem = {
-      kind: "file",
-      type: "image/png",
-      getAsFile: () => blob,
-    } as unknown as DataTransferItem;
-    const clipboardData = {
-      items: [fakeItem],
-    } as unknown as DataTransfer;
-
-    const prompt = inputEl("prompt");
-    const pasteEv = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(pasteEv, "clipboardData", { value: clipboardData });
-    prompt.dispatchEvent(pasteEv);
-
-    // Wait a microtask for FileReader onload.
-    await Promise.resolve();
-    await Promise.resolve();
-
-    // Strip has one thumb.
-    const strip = document.querySelector(".UnicDB-chat-attachments");
-    expect(strip).not.toBeNull();
-    const thumbs = strip?.querySelectorAll(".UnicDB-chat-thumb") ?? [];
-    expect(thumbs.length).toBe(1);
-
-    // Click send — payload must carry one attachment with mime+base64+bytes.
-    prompt.value = "describe";
-    btn("sendBtn").click();
-
-    const sends = h.received.filter((m) => m.type === "send");
-    expect(sends).toHaveLength(1);
-    const atts = (sends[0] as { attachments?: unknown }).attachments as
-      | Array<{ id: string; mime: string; base64: string; bytes: number }>
-      | undefined;
-    expect(atts).toBeDefined();
-    expect(atts).toHaveLength(1);
-    expect(atts?.[0]?.mime).toBe("image/png");
-    expect(atts?.[0]?.base64.length).toBeGreaterThan(0);
-    expect(typeof atts?.[0]?.bytes).toBe("number");
-  });
-});
+;
 
 // ============================================================================
 // #18 (cycle AB) — send with 2 attachments → post carries attachments[2] with
 // correct mime/base64/bytes fields. Exercises the local cap validator
 // (≤ MAX_ATTACHMENTS_PER_TURN) and the per-attachment mime preservation.
 // ============================================================================
-describe("AiChatPanelWebview — send with 2 attachments (cycle AB TASK-002)", () => {
-  it("paste two images (png + jpeg) → strip carries 2 thumbs → send carries attachments[2]", async () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
-
-    const fakeBytesPng = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
-    const fakeBytesJpg = new Uint8Array([0xff, 0xd8, 0xff]);
-    const pngDataUrl =
-      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=";
-    const jpgDataUrl =
-      "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/2wBDAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwA/wD/2Q==";
-
-    let readIndex = 0;
-    const dataUrls = [pngDataUrl, jpgDataUrl];
-    const byteLengths = [fakeBytesPng.length, fakeBytesJpg.length];
-    class FakeFileReader {
-      public result: string | ArrayBuffer | null = null;
-      public onload: ((ev: ProgressEvent) => void) | null = null;
-      public onerror: ((ev: ProgressEvent) => void) | null = null;
-      readAsDataURL(_blob: Blob): void {
-        const idx = readIndex++;
-        const url = dataUrls[idx] ?? "";
-        Promise.resolve().then(() => {
-          this.result = url;
-          this.onload?.(new ProgressEvent("load"));
-        });
-      }
-    }
-    (globalThis as unknown as { FileReader: typeof FakeFileReader }).FileReader =
-      FakeFileReader as unknown as typeof FileReader;
-
-    // Build clipboard items: png first, then jpeg.
-    const pngBlob = new Blob([fakeBytesPng], { type: "image/png" });
-    const jpgBlob = new Blob([fakeBytesJpg], { type: "image/jpeg" });
-    const items = [
-      {
-        kind: "file",
-        type: "image/png",
-        getAsFile: () => pngBlob,
-      },
-      {
-        kind: "file",
-        type: "image/jpeg",
-        getAsFile: () => jpgBlob,
-      },
-    ] as unknown as DataTransferItem[];
-    const clipboardData = { items } as unknown as DataTransfer;
-
-    const prompt = inputEl("prompt");
-    const pasteEv = new Event("paste", { bubbles: true, cancelable: true });
-    Object.defineProperty(pasteEv, "clipboardData", { value: clipboardData });
-    prompt.dispatchEvent(pasteEv);
-
-    // Wait microtasks for FileReader onload.
-    for (let i = 0; i < 6; i++) await Promise.resolve();
-
-    // Strip carries 2 thumbs.
-    const strip = document.querySelector(".UnicDB-chat-attachments");
-    expect(strip).not.toBeNull();
-    const thumbs = strip?.querySelectorAll(".UnicDB-chat-thumb") ?? [];
-    expect(thumbs.length).toBe(2);
-
-    // Click send — payload carries 2 attachments in the same order.
-    prompt.value = "two";
-    btn("sendBtn").click();
-
-    const sends = h.received.filter((m) => m.type === "send");
-    expect(sends).toHaveLength(1);
-    const atts = (sends[0] as { attachments?: unknown }).attachments as
-      | Array<{ id: string; mime: string; base64: string; bytes: number }>
-      | undefined;
-    expect(atts).toBeDefined();
-    expect(atts).toHaveLength(2);
-    expect(atts?.[0]?.mime).toBe("image/png");
-    expect(atts?.[0]?.base64.length).toBeGreaterThan(0);
-    expect(typeof atts?.[0]?.bytes).toBe("number");
-    expect(atts?.[1]?.mime).toBe("image/jpeg");
-    expect(atts?.[1]?.base64.length).toBeGreaterThan(0);
-    expect(typeof atts?.[1]?.bytes).toBe("number");
-
-    // Bytes field = base64-decoded byte length (host validates via
-    // Buffer.byteLength). The webview's `approximateBytesFromBase64`
-    // applies the same 4-chars-→-3-bytes rule so the value matches.
-    function approxB64Bytes(b64: string): number {
-      const len = b64.length;
-      if (len === 0) return 0;
-      let p = 0;
-      if (b64[len - 1] === "=") p = 1;
-      if (len > 1 && b64[len - 2] === "=") p = 2;
-      return Math.floor((len * 3) / 4) - p;
-    }
-    expect(atts?.[0]?.bytes).toBe(approxB64Bytes(atts![0]!.base64));
-    expect(atts?.[1]?.bytes).toBe(approxB64Bytes(atts![1]!.base64));
-    // And those lengths equal what we'd get from the test's data URLs.
-    expect(atts?.[0]?.bytes).toBe(approxB64Bytes(
-      pngDataUrl.split(",")[1] ?? "",
-    ));
-    expect(atts?.[1]?.bytes).toBe(approxB64Bytes(
-      jpgDataUrl.split(",")[1] ?? "",
-    ));
-  });
-});
+;
 
 // ============================================================================
 // #19 (cycle AB) — attach button click opens the hidden file input.
 // ============================================================================
-describe("AiChatPanelWebview — attach button click opens file input (cycle AB TASK-002)", () => {
-  it("clicking attachBtn programmatically invokes .click() on the file input", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
-
-    const fileInput = document.getElementById("attachFileInput") as
-      | HTMLInputElement
-      | null;
-    expect(fileInput).not.toBeNull();
-    expect(fileInput?.type).toBe("file");
-    expect(fileInput?.accept).toBe("image/*");
-    expect(fileInput?.multiple).toBe(true);
-    expect(fileInput?.hidden).toBe(true);
-
-    // Spy on .click() — jsdom normally throws because the input is hidden +
-    // not in the document; we patch .click to a no-op spy for this assertion.
-    let clickCount = 0;
-    fileInput!.click = () => {
-      clickCount++;
-    };
-    btn("attachBtn").click();
-    expect(clickCount).toBe(1);
-  });
-});
+;
 
 // ============================================================================
 // #20 (cycle AB) — host posts attach_error → warning bubble rendered.

@@ -677,6 +677,8 @@ export interface AiChatHostWarningV2 extends AiChatFrameEnvelopeV2 {
 export interface AiChatHostErrorV2 extends AiChatFrameEnvelopeV2 {
   readonly kind: "error";
   readonly turnId?: string;
+  /** Closed host error category; absent legacy V2 frames safely map to unknown. */
+  readonly category?: string;
   readonly safeMessage: string;
   readonly diagnosticId: string;
   readonly safeDetail?: string;
@@ -825,6 +827,87 @@ export interface AiChatHostToastV2 extends AiChatFrameEnvelopeV2 {
   readonly clientRequestId?: string;
 }
 
+/**
+ * Host → webview: a reviewed SQL change plan (plan_change tool result).
+ * TASK-CHATV2-017 — promoted from the retired V1 `change_plan` frame. The
+ * webview renders statements + danger tiers + drift and offers Approve/Reject;
+ * the host funnels approve through the same consent gate as the V1 path. The
+ * shape is IDENTICAL to the V1 fields (no behavior change) minus the V1
+ * envelope.
+ */
+export interface AiChatHostChangePlanV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "change_plan";
+  readonly tool: string;
+  readonly plan: {
+    readonly intent: string;
+    readonly statements: ReadonlyArray<{
+      readonly sql: string;
+      readonly tier: string;
+      readonly dangerNote: string;
+    }>;
+    readonly drift: readonly string[];
+    readonly drifted: boolean;
+  };
+}
+
+/**
+ * Host → webview: per-turn usage + governance notice. TASK-CHATV2-017 —
+ * promoted from the retired V1 `usage` frame. PRIVACY INVARIANT (hard): only
+ * numeric token fields and the policy notice string; never prompt text, SQL,
+ * secrets, trace content, or tool names/arguments.
+ */
+export interface AiChatHostUsageV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "usage";
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly unknown: boolean;
+  readonly sessionTokens: { readonly inputTokens: number; readonly outputTokens: number };
+  readonly policyNotice: string;
+}
+
+/**
+ * Host → webview: one live OMP engine lifecycle transition. TASK-CHATV2-017 —
+ * promoted from the retired V1 `engine_state` frame so the header pill can show
+ * the truthful connector state instead of a static banner.
+ */
+export interface AiChatHostEngineStateV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "engine_state";
+  readonly state: "stopped" | "starting" | "ready" | "cancelling" | "crashed" | "fallback-builtin";
+}
+
+/**
+ * Host → webview: a grounded-context status for a turn. TASK-CHATV2-017 —
+ * mirrors V1 `grounding_state` onto the V2 wire (chips strip).
+ */
+export interface AiChatHostGroundingStateV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "grounding_state";
+  readonly turnId: string;
+  readonly selectionPath: string | null;
+  readonly fileCount: number;
+  readonly excludedCount: number;
+}
+
+/**
+ * Host → webview: a resolved @-mention miss (one per missing token).
+ * TASK-CHATV2-017 — mirrors V1 `mention_miss`.
+ */
+export interface AiChatHostMentionMissV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "mention_miss";
+  readonly token: string;
+}
+
+/**
+ * Host → webview: one local slash/host command result line. TASK-CHATV2-017 —
+ * the V1 `/engine` and `/model` handlers replied with `assistant`/`error`
+ * bubbles; on the V2 wire the same result is a non-transcript notice so the
+ * keyed transcript stays the single source of turn history.
+ */
+export interface AiChatHostCommandResultV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "command_result";
+  readonly level: "info" | "error";
+  readonly safeMessage: string;
+}
+
 /** Closed host → webview V2 frame union. */
 export type AiChatHostFrameV2 =
   | AiChatHostCapabilitiesV2
@@ -850,7 +933,13 @@ export type AiChatHostFrameV2 =
   | AiChatHostExportFailedV2
   | AiChatHostSessionsV2
   | AiChatHostTitleUpdatedV2
-  | AiChatHostToastV2;
+  | AiChatHostToastV2
+  | AiChatHostChangePlanV2
+  | AiChatHostUsageV2
+  | AiChatHostEngineStateV2
+  | AiChatHostGroundingStateV2
+  | AiChatHostMentionMissV2
+  | AiChatHostCommandResultV2;
 
 /** The immutable draft carried by `submit_turn`. */
 export interface AiChatSubmitDraftV2 {
@@ -907,7 +996,24 @@ export type AiChatWebviewIntentV2 =
   | { readonly kind: "clear_session"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string }
   | { readonly kind: "export_session"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string; readonly format: "markdown" | "json" }
   | { readonly kind: "pick_active_schema"; readonly protocolVersion: AiChatProtocolVersionV2 }
-  | { readonly kind: "open_settings"; readonly protocolVersion: AiChatProtocolVersionV2 };
+  | { readonly kind: "open_settings"; readonly protocolVersion: AiChatProtocolVersionV2 }
+  // TASK-CHATV2-017 additions — flows the V1 wire owned that the V2 union lacked.
+  | { readonly kind: "regenerate"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string }
+  | { readonly kind: "plan_approve"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string }
+  | { readonly kind: "plan_reject"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string }
+  | {
+      readonly kind: "run_command";
+      readonly protocolVersion: AiChatProtocolVersionV2;
+      readonly clientRequestId: string;
+      readonly command: "engine" | "model";
+      readonly args: readonly string[];
+    }
+  | {
+      readonly kind: "grounding_toggle";
+      readonly protocolVersion: AiChatProtocolVersionV2;
+      readonly clientRequestId: string;
+      readonly enabled: boolean;
+    };
 
 /** One host frame with its envelope stripped (the semantic body). A plain
  * `Omit` over the union collapses to common keys, so distribute explicitly. */
@@ -954,6 +1060,13 @@ const HOST_FRAME_KINDS_V2: ReadonlySet<string> = new Set([
   "sessions",
   "title_updated",
   "toast",
+  // TASK-CHATV2-017 — V1 flows promoted onto the V2 wire.
+  "change_plan",
+  "usage",
+  "engine_state",
+  "grounding_state",
+  "mention_miss",
+  "command_result",
 ]);
 
 const TURN_SCOPED_KINDS_V2: ReadonlySet<string> = new Set([
@@ -966,6 +1079,7 @@ const TURN_SCOPED_KINDS_V2: ReadonlySet<string> = new Set([
   "permission_requested",
   "context_status",
   "turn_finished",
+  "grounding_state",
 ]);
 
 const AI_ENGINE_NAMES_V2: ReadonlySet<string> = new Set([
@@ -1301,6 +1415,35 @@ export function parseAiChatWebviewIntentV2(raw: unknown): AiChatIntentParseResul
           return { ok: false, reason: "invalid-format" };
         }
         return { ok: true, intent: { kind, protocolVersion: version, clientRequestId, format } };
+      }
+      // TASK-CHATV2-017 — V1-flows promoted onto the V2 wire.
+      case "regenerate":
+      case "plan_approve":
+      case "plan_reject":
+        return { ok: true, intent: { kind, protocolVersion: version, clientRequestId } };
+      case "run_command": {
+        const command = raw["command"];
+        if (command !== "engine" && command !== "model") {
+          return { ok: false, reason: "invalid-command" };
+        }
+        const rawArgs = raw["args"];
+        const args: string[] = [];
+        if (rawArgs !== undefined) {
+          if (!Array.isArray(rawArgs)) return { ok: false, reason: "invalid-args" };
+          for (const arg of rawArgs) {
+            if (typeof arg !== "string") return { ok: false, reason: "invalid-args" };
+            args.push(arg);
+          }
+        }
+        return {
+          ok: true,
+          intent: { kind, protocolVersion: version, clientRequestId, command, args: Object.freeze(args) },
+        };
+      }
+      case "grounding_toggle": {
+        const enabled = raw["enabled"];
+        if (typeof enabled !== "boolean") return { ok: false, reason: "invalid-enabled" };
+        return { ok: true, intent: { kind, protocolVersion: version, clientRequestId, enabled } };
       }
       default:
         return { ok: false, reason: "unknown-kind" };

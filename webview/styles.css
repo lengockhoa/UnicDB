@@ -1117,22 +1117,6 @@
   --UnicDB-chat-stop: #dc2626;
   --UnicDB-chat-warn: #f59e0b;
 }
-
-/* AI chat panel — engine banner + bubbles */
-.UnicDB-chat-engine {
-  padding: 4px 8px;
-  margin-bottom: 8px;
-  font-size: 12px;
-  border-radius: 2px;
-  background: var(--vscode-editorWidgetBackground, #252526);
-  color: var(--vscode-foreground, #cccccc);
-}
-.UnicDB-chat-engine-omp {
-  border-left: 3px solid var(--vscode-textLink-foreground, #3794ff);
-}
-.UnicDB-chat-engine-builtin {
-  border-left: 3px solid var(--vscode-inputValidation-warningBorder, #cca700);
-}
 .UnicDB-chat-thread {
   display: flex;
   flex-direction: column;
@@ -1186,107 +1170,6 @@
   background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
   color: var(--vscode-errorForeground, #f48771);
 }
-/* Composer card — one rounded container holding the textarea plus the
- * action row, mirroring the Claude-style single-card composer. The border,
- * radius, and internal padding live here; the textarea inside sheds its own
- * box so the card reads as one surface instead of an input floating above a
- * loose button row. */
-.UnicDB-chat-input {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--vscode-input-border, #3c3c3c);
-  border-radius: 8px;
-  background: var(--vscode-input-background, #3c3c3c);
-}
-.UnicDB-chat-input textarea {
-  resize: vertical;
-  min-height: 60px;
-  font-family: inherit;
-  background: transparent;
-  color: var(--vscode-input-foreground, #cccccc);
-  border: none;
-  padding: 2px 0;
-}
-.UnicDB-chat-input textarea:focus {
-  outline: none;
-}
-.UnicDB-chat-actions {
-  display: flex;
-  gap: 6px;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-/* Left cluster — destructive/ghost tools (resume/clear/regenerate, chips,
- * slash, bypass, mic, attach). Right cluster — the single primary action
- * (send, which swaps to stop while busy). The split is what gives the row
- * its breathing room: the accent sits alone on the right. */
-.UnicDB-chat-actions-left,
-.UnicDB-chat-actions-right {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-.UnicDB-chat-actions-right {
-  margin-left: auto;
-}
-/* Icon-only tiles (resume/clear/regenerate/mic/attach/send/stop/slash).
- * Scoped with :not() so variable-width text chips and the labeled
- * bypass switch are NOT crushed to 28px — that was the overlap culprit:
- * long chip text ("work · model", "no connection") compressed into a
- * 28px box bled over its neighbours and made the row unusable. */
-.UnicDB-chat-actions button:not(.UnicDB-chat-chip):not(.UnicDB-chat-toggle) {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--vscode-button-secondaryBackground, #3a3d41);
-  color: var(--vscode-button-secondaryForeground, #cccccc);
-  border: none;
-  border-radius: 2px;
-  cursor: pointer;
-}
-/* Visual divider between the legacy icon group and the new affordances. */
-.UnicDB-chat-actions-sep {
-  width: 1px;
-  align-self: stretch;
-  min-height: 20px;
-  background: var(--vscode-panel-border, #444);
-  flex: 0 0 auto;
-}
-/* Composer scaffold — positioned ancestor for the absolute chip menu. */
-.UnicDB-chat-composer {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-.UnicDB-chat-actions button svg {
-  width: 16px;
-  height: 16px;
-  display: block;
-  pointer-events: none;
-}
-.UnicDB-chat-actions button:hover:not(:disabled) {
-  background: var(--UnicDB-input-hover-bg);
-}
-.UnicDB-chat-actions button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.UnicDB-chat-actions button:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder, #007acc);
-  outline-offset: 1px;
-}
 .UnicDB-chat-primary {
   background: var(--vscode-button-background, #0e639c) !important;
   color: var(--vscode-button-foreground, #ffffff) !important;
@@ -1294,26 +1177,7 @@
 /* Send is the one strong accent on the right; round it so it reads as the
  * card's primary action rather than another square tool tile. Scoped by tag
  * + class (higher specificity than the shared tile rule) so the stop button
- * keeps its frozen square/red contract. */
-.UnicDB-chat-actions button.UnicDB-chat-primary {
-  border-radius: 999px;
-}
-/* Dead affordances (voice placeholder, "/" shortcut) read as ghost tiles:
- * same 28px footprint, dashed outline, 40% opacity — visibly inert, never
- * mistaken for a working button. They become opaque only via a future
- * `.UnicDB-chat-affordance-live` opt-in when the feature ships. */
-.UnicDB-chat-mic,
-.UnicDB-chat-slash-hint {
-  opacity: 0.4;
-  border: 1px dashed var(--vscode-panel-border, #444) !important;
-}
-.UnicDB-chat-mic.UnicDB-chat-affordance-live,
-.UnicDB-chat-slash-hint.UnicDB-chat-affordance-live {
-  opacity: 1;
-  border-style: solid;
-}
-
-/* --- Permission card (TASK-001) --- */
+ * keeps its frozen square/red contract. *//* --- Permission card (TASK-001) --- */
 .UnicDB-chat-permission {
   border: 1px solid var(--vscode-panel-border, #444);
   padding: 8px;
@@ -1735,15 +1599,6 @@ body.UnicDB-console-body {
   gap: 4px;
   margin-bottom: 8px;
 }
-.UnicDB-chat-resume-card {
-  border: 1px solid var(--vscode-panel-border, #444);
-  padding: 8px;
-  margin: 4px 0;
-  background: var(--vscode-editorWidget-background, #252526);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
 .UnicDB-chat-resume-row {
   display: flex;
   flex-direction: column;
@@ -1756,120 +1611,7 @@ body.UnicDB-console-body {
 .UnicDB-chat-resume-row:hover {
   background: var(--vscode-list-hoverBackground, #2a2d2e);
   border-color: var(--vscode-panel-border, #444);
-}
-.UnicDB-chat-resume-row.UnicDB-chat-resume-row-active {
-  background: var(--vscode-list-activeSelectionBackground, #094771);
-  color: var(--vscode-list-activeSelectionForeground, #ffffff);
-}
-.UnicDB-chat-resume-label {
-  font-weight: 600;
-  color: var(--vscode-foreground);
-  font-size: 12px;
-}
-.UnicDB-chat-resume-detail {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground, #8c8c8c);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.UnicDB-chat-slash-dropdown {
-  position: absolute;
-  z-index: 71;
-  min-width: 180px;
-  max-width: 300px;
-  padding: 4px 0;
-  border: 1px solid var(--vscode-panel-border, #444);
-  border-radius: 3px;
-  background: var(--vscode-editorWidget-background, #252526);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-  display: flex;
-  flex-direction: column;
-}
-.UnicDB-chat-slash-row {
-  border: 0;
-  padding: 5px 12px;
-  text-align: left;
-  cursor: pointer;
-  background: transparent;
-  color: var(--vscode-foreground, #cccccc);
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.UnicDB-chat-slash-name {
-  font-size: 13px;
-  font-weight: 600;
-}
-.UnicDB-chat-slash-detail {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground, #8c8c8c);
-}
-.UnicDB-chat-slash-row:hover,
-.UnicDB-chat-slash-row:focus {
-  background: var(--vscode-list-activeSelectionBackground, #094771);
-  color: var(--vscode-list-activeSelectionForeground, #ffffff);
-}
-/* Engine-gated unavailable row (§8.6): stays listed and focusable so the
- * user learns why it is not offered, but reads as inert. The detail line
- * carries the reason. */
-.UnicDB-chat-slash-row-unavailable {
-  opacity: 0.55;
-  cursor: default;
-}
-.UnicDB-chat-slash-row-unavailable .UnicDB-chat-slash-name {
-  text-decoration: line-through;
-}
-.UnicDB-chat-local-notice {
-  align-self: flex-start;
-  color: var(--vscode-descriptionForeground, #8c8c8c);
-  font-size: 12px;
-  white-space: pre-wrap;
-}
-
-.UnicDB-chat-mention-dropdown {
-  position: absolute;
-  z-index: 70;
-  min-width: 220px;
-  max-width: 360px;
-  padding: 4px 0;
-  border: 1px solid var(--vscode-panel-border, #444);
-  border-radius: 3px;
-  background: var(--vscode-editorWidget-background, #252526);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-  display: flex;
-  flex-direction: column;
-}
-.UnicDB-chat-mention-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 12px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--vscode-foreground, #cccccc);
-}
-.UnicDB-chat-mention-row:hover {
-  background: var(--vscode-menu-selectionBackground, var(--vscode-button-background, #0e639c));
-  color: var(--vscode-menu-selectionForeground, var(--vscode-button-foreground, #ffffff));
-}
-.UnicDB-chat-mention-row.UnicDB-chat-mention-row-active {
-  background: var(--vscode-list-activeSelectionBackground, #094771);
-  color: var(--vscode-list-activeSelectionForeground, #ffffff);
-}
-.UnicDB-chat-mention-kind {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--vscode-descriptionForeground, #8c8c8c);
-  font-family: var(--vscode-editor-font-family, monospace);
-  padding: 1px 4px;
-  border: 1px solid var(--vscode-panel-border, #444);
-  border-radius: 2px;
-}
-
-
-/* --- TASK-003 fix-round-1: height-chain (CRITICAL) --- */
+}/* --- TASK-003 fix-round-1: height-chain (CRITICAL) --- */
 /* The chat webview body MUST establish a real height chain so .UnicDB-chat
  * { height:100% } resolves against the viewport, not auto. Only this body
  * class gets the rule — .UnicDB-form-body (shared by connectionForm etc.) is
@@ -1978,31 +1720,6 @@ body.UnicDB-chat-body {
   50% { opacity: 0; }
 }
 
-/* #regenerateBtn is now an icon tile (TASK-AG-001); the shared
- * .UnicDB-chat-actions button rules size and style it — no per-ID override
- * remains. */
-
-/* --- TASK-003 cycle AB — image-attach strip + button + warning + dark theme --
- * Style hooks consumed by TASK-002 webview (ui/aiChatPanelMain.ts). All colors
- * route through theme tokens declared on :root and overridden in
- * [data-theme="dark"], so the strip tracks the user's VS Code light/dark theme
- * without hardcoded hex.
- *
- * Token rationale:
- *   --UnicDB-warning-bg/fg/border : amber notice (oversize, count-cap, mime-mismatch)
- *   --UnicDB-overlay-bg           : translucent backdrop (future re-use)
- *   --UnicDB-input-hover-bg       : generic input hover surface (composer strip hover)
- *   --UnicDB-error-bg             : error surface (attach-blocked reason)
- */
-:root {
-  --UnicDB-warning-bg: var(--vscode-inputValidation-warningBackground, #5a4a00);
-  --UnicDB-warning-fg: var(--vscode-inputValidation-warningForeground, #ffcc00);
-  --UnicDB-warning-border: var(--vscode-inputValidation-warningBorder, #cca700);
-  --UnicDB-overlay-bg: var(--vscode-widget-shadow, rgba(0, 0, 0, 0.4));
-  --UnicDB-input-hover-bg: var(--vscode-list-hoverBackground, #2a2d2e);
-  --UnicDB-error-bg: var(--vscode-inputValidation-errorBackground, #5a1d1d);
-}
-
 [data-theme="dark"] {
   /* Cycle-AB tokens get explicit dark overrides so the amber notice and error
    * surface stay readable against the deeper editor backgrounds VS Code uses
@@ -2015,83 +1732,6 @@ body.UnicDB-chat-body {
   --UnicDB-overlay-bg: var(--vscode-widget-shadow, rgba(0, 0, 0, 0.6));
   --UnicDB-input-hover-bg: var(--vscode-list-hoverBackground, #2a2d2e);
   --UnicDB-error-bg: var(--vscode-inputValidation-errorBackground, #5a1d1d);
-}
-
-/* Attach button — small icon-only control that sits next to the Send button.
- * Mirrors the .UnicDB-chat-actions button pattern but stays compact: 24×24 hit
- * target, transparent background, currentColor glyph. */
-.UnicDB-chat-attach-btn {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 1px solid var(--vscode-button-secondaryBackground, #3a3d41);
-  background: var(--vscode-button-secondaryBackground, #3a3d41);
-  color: var(--vscode-button-secondaryForeground, #cccccc);
-  border-radius: 2px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.UnicDB-chat-attach-btn:hover:not(:disabled) {
-  background: var(--UnicDB-input-hover-bg);
-}
-.UnicDB-chat-attach-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.UnicDB-chat-attach-btn:focus-visible {
-  outline: 1px solid var(--vscode-focusBorder, #007acc);
-  outline-offset: 1px;
-}
-
-/* Attachment strip — horizontal scroll row above the textarea. 56×56 thumbs,
- * 8px gap, capped at 80px row height so it never pushes the composer out of
- * view; the composer column still pins to the bottom per the cycle-AA lock. */
-.UnicDB-chat-attachments {
-  display: flex;
-  gap: 8px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  max-height: 80px;
-  padding: 4px 0;
-}
-.UnicDB-chat-thumb {
-  position: relative;
-  width: 56px;
-  height: 56px;
-  flex: 0 0 auto;
-  border: 1px solid var(--vscode-panel-border, #444);
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--vscode-editorWidget-background, #252526);
-}
-.UnicDB-chat-thumb img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-/* Per-thumbnail remove "×" — absolute overlay anchored to the thumb's
- * top-right. Compact (16×16), high contrast against the image underneath. */
-.UnicDB-chat-thumb-remove {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: var(--UnicDB-overlay-bg);
-  color: var(--vscode-button-foreground, #ffffff);
-  font-size: 11px;
-  line-height: 14px;
-  text-align: center;
-  cursor: pointer;
-}
-.UnicDB-chat-thumb-remove:hover {
-  background: var(--UnicDB-error-bg);
 }
 
 /* Amber notice bubble — surfaces oversize / overcount / wrong-mime /
@@ -2227,83 +1867,7 @@ body.UnicDB-chat-body {
  * webview panels are unaffected. JS tasks (TASK-AGTUI-003..008) emit DOM
  * that consumes these classes — DO NOT rename selectors without a plan
  * call to those tasks.
- */
-.UnicDB-chat-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--vscode-panel-border, #444);
-}
-.UnicDB-chat-brand {
-  font-size: 28px;
-  font-weight: 700;
-  font-family: var(--vscode-font-family, system-ui, sans-serif);
-  color: var(--UnicDB-chat-accent, #3b82f6);
-  line-height: 1;
-  /* Tight, square footprint so it reads as a glyph, not a word. */
-  letter-spacing: -0.02em;
-  user-select: none;
-}
-.UnicDB-chat-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--vscode-foreground, #cccccc);
-}
-.UnicDB-chat-sessionchip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  font-size: 11px;
-  font-family: var(--vscode-editor-font-family, monospace);
-  color: var(--vscode-descriptionForeground, #8c8c8c);
-  border: 1px solid var(--vscode-panel-border, #444);
-  border-radius: 999px;
-}
-.UnicDB-chat-msg-user {
-  align-self: flex-end;
-  background: var(--UnicDB-chat-accent, #3b82f6);
-  color: #ffffff;
-  padding: 6px 10px;
-  border-radius: 12px 12px 2px 12px;
-  max-width: 80%;
-}
-.UnicDB-chat-msg-assistant {
-  align-self: flex-start;
-  background: var(--vscode-editorWidget-background, #252526);
-  color: var(--vscode-foreground, #cccccc);
-  padding: 6px 10px;
-  border-radius: 12px 12px 12px 2px;
-  max-width: 85%;
-}
-.UnicDB-chat-thought {
-  align-self: flex-start;
-  font-style: italic;
-  color: var(--vscode-descriptionForeground, #8c8c8c);
-  padding: 4px 10px;
-  border-left: 2px solid var(--UnicDB-chat-accent, #3b82f6);
-  max-width: 85%;
-}
-.UnicDB-chat-tool {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 10px;
-  border: 1px solid var(--vscode-panel-border, #444);
-  border-radius: 6px;
-  background: var(--vscode-editorWidget-background, #252526);
-}
-.UnicDB-chat-tool-failed {
-  border-color: var(--vscode-inputValidation-errorBorder, #be1100);
-  background: var(--vscode-inputValidation-errorBackground, #5a1d1d);
-}
-.UnicDB-chat-tool-denied {
-  border-color: var(--UnicDB-chat-warn, #f59e0b);
-  background: var(--vscode-inputValidation-warningBackground, #5a4a1a);
-}
-
-/* TASK-AGTUI-008: legacy tool-result card expand/collapse polish. The
+ *//* TASK-AGTUI-008: legacy tool-result card expand/collapse polish. The
  * clickable header + collapsible body comes from webview/aiChatPanelMain.ts
  * (#appendToolResult). The body transitions with 150ms ease, matching
  * the Claude Code card affordance. The card itself stays in the DOM in
@@ -2389,151 +1953,6 @@ body.UnicDB-chat-body {
   padding: 2px 10px;
   text-align: right;
 }
-.UnicDB-chat-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  border: 1px solid var(--vscode-panel-border, #444);
-  border-radius: 999px;
-  background: var(--vscode-editorWidget-background, #252526);
-  color: var(--vscode-foreground, #cccccc);
-  cursor: pointer;
-  user-select: none;
-  /* Long labels ("work · model-id", schema names) must truncate instead
-   * of bleeding over neighbouring buttons in the crowded actions row. */
-  min-width: 0;
-  max-width: 180px;
-  flex: 0 1 auto;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* Two-tone model chip body: role in the accent, a muted separator, model id
- * in the secondary color. Only the model id truncates (it is the unbounded
- * half); the role stays legible so the user can always read which role is
- * active even in a narrow composer. */
-.UnicDB-chat-chip-role {
-  color: var(--UnicDB-chat-accent-hover, #60a5fa);
-  flex: 0 0 auto;
-}
-.UnicDB-chat-chip-dot {
-  color: var(--vscode-descriptionForeground, #8c8c8c);
-  flex: 0 0 auto;
-}
-.UnicDB-chat-chip-model {
-  color: var(--vscode-descriptionForeground, #8c8c8c);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.UnicDB-chat-chip:hover {
-  border-color: var(--UnicDB-chat-accent-hover, #60a5fa);
-}
-/* ACTIVE-SCHEMA chip — composer variant. Inherits the pill shape from
- * `.UnicDB-chat-chip`; the additional class only adds the disabled
- * state so a panel without an active connection (or while the host
- * has not yet pushed a schemaChanged frame) reads as inert instead of
- * silently clickable. */
-.UnicDB-chat-schema-chip:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.UnicDB-chat-chipmenu {
-  position: absolute;
-  z-index: 50;
-  min-width: 160px;
-  padding: 4px 0;
-  border: 1px solid var(--vscode-panel-border, #444);
-  border-radius: 4px;
-  background: var(--vscode-editorWidget-background, #252526);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-}
-/* Labeled Bypass switch — auto-width pill carrying its own "Bypass"
- * text label (aiChatPanelComposer.ts sets textContent). The fixed 28px
- * switch size used to clip that label into neighbouring buttons. Height
- * matches the 28px icon tiles so the row stays visually level. */
-.UnicDB-chat-toggle {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  width: auto;
-  flex: 0 0 auto;
-  padding: 0 10px 0 24px;
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-  border-radius: 999px;
-  background: var(--vscode-input-background, #3c3c3c);
-  border: 1px solid var(--vscode-panel-border, #444);
-  cursor: pointer;
-  vertical-align: middle;
-  /* OFF state — BLUE accent shows up only on the thumb ring (subtle). */
-  outline: 1px solid var(--UnicDB-chat-accent, #3b82f6);
-  outline-offset: -2px;
-}
-.UnicDB-chat-toggle::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 7px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  transform: translateY(-50%);
-  background: var(--UnicDB-chat-accent, #3b82f6);
-  /* TASK-AGTUI-008: 100ms ease-in-out per spec — old token (0.15s) was
-   * too sluggish for a Claude Code–style toggle thumb. Thumb position
-   * is fixed; the token stays so the polish guard keeps passing. */
-  transition: left 0.1s ease-in-out;
-}
-.UnicDB-chat-toggle-on {
-  background: var(--UnicDB-chat-warn, #f59e0b);
-  border-color: var(--UnicDB-chat-warn, #f59e0b);
-  outline-color: var(--UnicDB-chat-warn, #f59e0b);
-}
-.UnicDB-chat-toggle-on::after {
-  background: #ffffff;
-}
-.UnicDB-chat-chipmenu-row {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  padding: 6px 10px;
-  font-size: 12px;
-  background: transparent;
-  color: var(--vscode-foreground, #cccccc);
-  border: none;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.UnicDB-chat-chipmenu-row:hover {
-  background: var(--UnicDB-input-hover-bg);
-}
-.UnicDB-chat-chipmenu-row-active {
-  font-weight: 600;
-  color: var(--UnicDB-chat-accent, #3b82f6);
-}
-/* Stop tile — red 28px tile mirroring the other icon tiles. The
- * width/height are declared again here (duplicating the shared
- * `.UnicDB-chat-actions button:not(...)` sizing) because the frozen
- * TASK-AGTUI-001 guard asserts the square directly on THIS rule block. */
-.UnicDB-chat-stop {
-  width: 28px;
-  height: 28px;
-  border-radius: 0;
-  background: var(--UnicDB-chat-stop, #dc2626) !important;
-  border-color: var(--UnicDB-chat-stop, #dc2626) !important;
-  color: #ffffff !important;
-}
-.UnicDB-chat-stop-live {
-  animation: UnicDB-chat-pulse 1s ease-in-out infinite;
-}
 .UnicDB-chat-secondary {
   background: transparent;
   color: var(--vscode-foreground, #cccccc);
@@ -2547,20 +1966,11 @@ body.UnicDB-chat-body {
   border-color: var(--UnicDB-chat-accent, #3b82f6);
   color: var(--UnicDB-chat-accent-hover, #60a5fa);
 }
-@keyframes UnicDB-chat-pulse {
-  0% { opacity: 1; }
-  50% { opacity: 0.45; }
-  100% { opacity: 1; }
-}
 @media (prefers-reduced-motion: reduce) {
   .UnicDB-chat-stop-live,
   .UnicDB-chat-caret,
   .UnicDB-chat-queued {
     animation: none !important;
-  }
-  .UnicDB-chat-toggle::after,
-  .UnicDB-chat-toggle-on::after {
-    transition: none !important;
   }
   /* TASK-AGTUI-008: cancel the gentle scroll the chat-thread declaration
    * above opts into. The user explicitly opted out of motion — keep
@@ -2569,5 +1979,4 @@ body.UnicDB-chat-body {
    * the file) to preserve the chat-scoped frozen-selector rule. */
   .UnicDB-chat-thread {
     scroll-behavior: auto !important;
-  }
-}
+  }}

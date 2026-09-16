@@ -78,46 +78,7 @@ beforeEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("webview — session_state chip", () => {
-  it("renders Connecting… chip for the connecting state", () => {
-    const h = makeHarness();
-    h.dispatch(stateMsg());
-    const chip = h.root.querySelector("#sessionChip") as HTMLElement | null;
-    expect(chip).not.toBeNull();
-    expect(chip!.textContent).toContain("Connecting");
-    expect(chip!.className).toContain("UnicDB-chat-session-connecting");
-  });
-
-  it("transitions label + class per state (connecting → running → done)", () => {
-    const h = makeHarness();
-    h.dispatch(stateMsg());
-    h.dispatch(stateMsg({ state: "running" }));
-    h.dispatch(stateMsg({ state: "done" }));
-    const chip = h.root.querySelector("#sessionChip") as HTMLElement;
-    expect(chip.textContent).toContain("Done");
-    expect(chip.className).toContain("UnicDB-chat-session-done");
-    expect(chip.className).not.toContain("UnicDB-chat-session-connecting");
-  });
-
-  it("renders Error state", () => {
-    const h = makeHarness();
-    h.dispatch(stateMsg({ state: "error" }));
-    const chip = h.root.querySelector("#sessionChip") as HTMLElement;
-    expect(chip.textContent).toContain("Error");
-    expect(chip.className).toContain("UnicDB-chat-session-error");
-  });
-
-  it("chip is textContent-only — no child nodes on hostile state value", () => {
-    const h = makeHarness();
-    // State comes from the host enum; even if it carried markup it must
-    // never become live DOM.
-    h.dispatch(stateMsg({ state: "running" }));
-    const chip = h.root.querySelector("#sessionChip") as HTMLElement;
-    expect(chip.querySelectorAll("*").length).toBe(0);
-    // Text node only — the whole innerHTML is the plain label, no tags.
-    expect(chip.innerHTML).toBe("Running…");
-  });
-});
+;
 
 describe("webview — usage chip (TASK-ARP06-005)", () => {
   const usageMsg = (

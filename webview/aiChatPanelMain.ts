@@ -1,43 +1,24 @@
-// webview/aiChatPanelMain.ts — TASK-003 + TASK-AGTUI-007 integration seam.
+// webview/aiChatPanelMain.ts — AiChatPanel webview entry (V2-only).
 //
-// Webview entry cho AiChatPanel — composes the Claude Code–style panel
-// out of the wave-1 modules (renderHeader from TASK-AGTUI-003, the inline
-// thread renderers + renderMarkdown moved to aiChatPanelThread.ts by
-// TASK-AGTUI-005, and renderComposer from TASK-AGTUI-004) while keeping
-// every element id, behavior, and message handler the existing suite
-// pins. Bubbles host messages, renders minimal markdown (no CDN), and a
-// text-only ACP permission request renderer (TEXT RENDERING ONLY — never
-// innerHTML or any markdown interpreter for untrusted host text).
+// TASK-CHATV2-017 (Lane 3): the V1 header/composer modules and the V1 boot
+// are DELETED. `renderInitial()` mounts the V2 shell + controller (the ONE
+// keyboard/transport/message owner on `#promptV2`, posting `ready_v2`
+// exactly once) plus the legacy `#thread` + `#jumpLatest` affordances. The
+// legacy bubble builders remain as the renderer for non-V2 host frames,
+// which the controller forwards here via `onLegacyMessage` (one message
+// effect; no second `window.message` listener). Bubbles host messages,
+// render minimal markdown (no CDN), and text-only ACP permission request
+// cards (TEXT RENDERING ONLY — never innerHTML for untrusted host text).
 //
-// SECURITY: webview only ever POSTS send/stop/clear/permission_response /
-// model_select / bypass_permissions / regenerate / resume_list /
-// resume_pick / resume_cancel / plan_approve / plan_reject to host. It
-// NEVER receives apiKey material. Permission requests carry a
-// host-generated opaque requestId + opaque optionIds; the webview echoes
-// them verbatim or denies (no optionId field on the wire). The webview
-// yields AT MOST ONE response per visible request.
+// SECURITY: the V2 controller posts typed intents only; the legacy bridge
+// here posts send/stop/clear/permission_response / regenerate /
+// resume_list / resume_pick / resume_cancel / plan_approve / plan_reject /
+// grounding_toggle to host. It NEVER receives apiKey material. Permission
+// requests carry a host-generated opaque requestId + opaque optionIds; the
+// webview echoes them verbatim or denies (no optionId field on the wire).
+// The webview yields AT MOST ONE response per visible request.
 
 import { highlightSql } from "./sqlHighlight";
-import {
-  ATTACH_ALLOWED_MIME,
-  MAX_ATTACH_BYTES,
-  MAX_ATTACHMENTS_PER_TURN,
-} from "./attachLimits";
-import {
-  parseAiChatCommand,
-  aiChatCommandsForEngine,
-  type AiChatCommandEntry,
-} from "../src/ui/aiChatPanelCommands";
-import {
-  renderHeader,
-  type UnicDBHeader,
-} from "./aiChatPanelHeader";
-import {
-  renderComposer,
-  type UnicDBComposer,
-  type ComposerCallbacks,
-  type ComposerAttachment,
-} from "./aiChatPanelComposer";
 // TASK-CHATV2-005 — semantic V2 skeleton. Mounted into the live transcript
 // region established here; later tasks (006–017) fill the placeholders.
 // The V2 stylesheet (webview/aiChat/styles.css) is built as its own esbuild
@@ -52,9 +33,6 @@ import {
   type ChatController,
   type VsCodeApiLike,
 } from "./aiChat/controller";
-import { COMPOSER_IDS as V2_COMPOSER_IDS } from "./aiChat/composer";
-import type { ChatShellRefs } from "./aiChat/shell";
-import type { ChatViewState } from "./aiChat/store";
 
 declare const acquireVsCodeApi: undefined | (() => {
   postMessage: (msg: unknown) => void;
@@ -92,20 +70,6 @@ interface DeltaMsg {
   type: "delta";
   text: string;
 }
-/** Engine mode announcement — emitted on first ready (and on crash fallback).
- *
- * TASK-012 widens `name` to the full `AiEngine` vocabulary so the webview
- * accepts `omp`, `claude-code`, `codex`, and `builtin`. Unknown values
- * (migrated / corrupted / hostile hosts) MUST render as the safe builtin
- * state — no unsafe class injection, no verbatim text passthrough. The
- * label-mapping function below implements this fail-safe behavior.
- */
-interface EngineMsg {
-  type: "engine";
-  name: string;
-  hint?: string;
-  version?: string;
-}
 /** ACP permission request — host-generated opaque requestId, opaque optionIds,
  * and tool name/detail that MUST be rendered as plain text only. */
 interface PermissionRequestMsg {
@@ -139,18 +103,6 @@ interface HistoryMsg {
   truncated: boolean;
   truncatedCount: number;
 }
-/** TASK-005: host answer to `mention_list`. `items` carries the candidate
- * DB objects + workspace files. Webview filters client-side on each
- * keystroke; the same full list is reused across the open dropdown. */
-interface MentionObjectsMsg {
-  type: "mention_objects";
-  items: Array<{
-    kind: "table" | "view" | "routine" | "file";
-    label: string;
-    detail: string;
-    token: string;
-  }>;
-}
 /** TASK-005: host reports a token the user mentioned that the host could
  * not resolve (no matching DB object AND no matching workspace file).
  * Rendered as an inline notice bubble on the thread. */
@@ -180,19 +132,15 @@ type HostMsg =
   | ErrorMsg
   | DoneMsg
   | DeltaMsg
-  | EngineMsg
   | EngineStateMsg
-  | { type: "session_state"; state: "connecting" | "running" | "done" | "error"; turnId: string }
   | PermissionRequestMsg
   | ResumeSessionsMsg
   | HistoryMsg
   | ThoughtMsg
-  | MentionObjectsMsg
   | MentionMissMsg
   | AttachErrorMsg
   | ChangePlanMsg
   | UsageMsg
-  | ModelsMsg
   | { type: "grounding_state"; selectionPath: string | null; fileCount: number; excludedCount: number; turnId: string };
 /** AIX-04: reviewed change plan card with Approve/Reject consent
  * buttons. `drifted` disables Approve — a stale plan must not apply. */
@@ -219,21 +167,6 @@ interface UsageMsg {
   policyNotice: string;
 }
 
-/** TASK-AGTUI-002 (clone protocol) — host → webview announcement of the
- * configured model roles and the active role. `active` is always one of
- * `roles[].role` (the host reconciles them before posting). `roles[]`
- * may be empty (the "nothing configured" signal — chip becomes inert).
- * Inline mirror of `AiChatPanelModels` so the webview bundle doesn't pull
- * the full src/ tree. */
-interface ModelsMsg {
-  type: "models";
-  active: "work" | "smart" | "autocomplete" | "lite";
-  roles: Array<{
-    role: "work" | "smart" | "autocomplete" | "lite";
-    modelId: string;
-    vision: boolean;
-  }>;
-}
 /** TASK-AIX05-103 — host reports the OMP runtime lifecycle state. Inline
  * mirror of `AiChatPanelEngineState` (six closed literals — see
  * aiChatPanelMessages.ts). */
@@ -242,249 +175,13 @@ interface EngineStateMsg {
   state: string;
 }
 
-// ---- State -----------------------------------------------------------------
-interface State {
-  busy: boolean;
-  hasHistory: boolean;
-  /** TASK-002 (cycle AB): true iff the active model's vision flag is on.
-   * Drives attach-button enabled state + clipboard-paste-image gating. */
-  visionCapable: boolean;
-  /** TASK-002 (cycle AB): image attachments queued in the strip above the
-   * textarea. Each entry carries id+mime+base64+bytes; `id` is a client-
-   * minted UUID (no apiKey path). Cleared on send. Main owns this list
-   * (not the composer) so the strip render path can finish within the
-   * test's 2-microtask budget — the composer's `addAttachments` is async
-   * and would push to its own private list, missing the wire payload the
-   * test pins. The composer module's `atts` stays empty in main-driven
-   * flows; `cb.onSend` reads attachments from this list instead. */
-  pendingAtts: Array<{ id: string; mime: string; base64: string; bytes: number }>;
-}
-const state: State = {
-  busy: false,
-  hasHistory: false,
-  visionCapable: true,
-  pendingAtts: [],
-};
-
-/** TASK-AGTUI-007 — module-scope handles returned by the wave-1 modules.
- * Populated by `renderInitial()`. The header owns `#engineBanner` /
- * `#sessionChip` / `#chatBrandMark` / `.UnicDB-chat-title`; the
- * composer owns `#sendBtn` / `#stopBtn` / `#attachBtn` / `#resumeBtn` /
- * `#clearBtn` / `#regenerateBtn` / `#modelChipBtn` / `#bypassToggle` /
- * `#micBtn` / `#slashHintBtn` / `#prompt` / `#attachStrip` /
- * `#modelChipMenu`. The legacy inline renderers still own the thread
- * bubbles because the existing suite pins the legacy `UnicDB-chat-bubble
- * UnicDB-chat-user` / `…-assistant` / `…-error` class names — the
- * thread module's clone classes are additive but not sufficient on their
- * own. The pinned assertions in aiChatPanelWebview.test.ts:424-461 etc.
- * therefore ride on the inline builders; everything that migrated to
- * the wave-1 modules carries the right id contract because the modules
- * expose them directly. */
-let header: UnicDBHeader | null = null;
 /** TASK-CHATV2-009 — the single keyboard/transport owner. Every composer send,
- * stop and draft edit now flows through this handle; the legacy composer module
- * below is retained only as an archived compatibility shim. */
+ * stop and draft edit flows through this handle; mounted once by
+ * `renderInitial()`. */
 let chatController: ChatController | null = null;
-/** The archived (V1) composer handle. Kept for V1 flows that still address
- * `#prompt` (mention token insertion, slash dropdown, `/clear`); it no longer
- * carries an independent send/keyboard path. */
-let composer: UnicDBComposer | null = null;
-let slashOpen = false;
-let slashActiveIndex = 0;
-let slashCandidates: AiChatCommandEntry[] = [];
-/** Active engine, tracked from `engine` frames so the slash menu can gate
- * commands per engine (§8.6). Defaults to `builtin` until the host announces
- * its resolved engine — the fail-safe value that offers no engine-specific
- * commands. */
-let slashEngine = "builtin";
-
-// ---- TASK-005 — @-mention dropdown state ----------------------------------
-//
-// `mentionOpen` tracks whether the candidate dropdown is currently visible.
-// Critical interop with the wave-2 Enter=send keybind (TASK-002): when the
-// dropdown is open, Enter / Tab SELECTS the active row instead of sending.
-// Send handler checks this flag BEFORE dispatching `{type:"send"}` so a
-// stray selection can never accidentally fire a send in the same keystroke.
-let mentionOpen = false;
-let mentionActiveIndex = 0;
-/** Last full candidate list posted by the host. Filtered client-side on
- * each keystroke; the host posts the full shortlist once per `@` keyup. */
-let mentionItems: MentionObjectsMsg["items"] = [];
-/** Last filter query. Used both for filtering and for matching against
- * the trailing `@…` span when inserting a token on selection. */
-let mentionQuery = "";
-/** Last caret position from the textarea — captured on every keyup so
- * insertion knows where to write the token. */
-let lastCaretPos = 0;
-
-/** Pure helper: find the start index of an `@token` ending at `caret`.
- * Returns -1 if no `@` precedes `caret` within the same line. */
-function findAtTokenStart(text: string, caret: number): number {
-  for (let i = caret - 1; i >= 0; i--) {
-    const ch = text[i];
-    if (ch === "@") return i;
-    if (ch === undefined) break;
-    // Token chars only — anything else (space, newline, punctuation that
-    // isn't part of the token grammar) breaks the span.
-    if (!/[\w.\-/]/.test(ch)) break;
-  }
-  return -1;
-}
 
 function post(msg: unknown): void {
   vscodeApi?.postMessage(msg);
-}
-
-/** Build / replace the dropdown DOM with the filtered items. All labels +
- * details + kinds are rendered via textContent (no innerHTML for untrusted
- * host data). Returns the rendered dropdown element. */
-function renderMentionDropdown(
-  items: MentionObjectsMsg["items"],
-): HTMLDivElement | null {
-  const input = document.getElementById("prompt") as HTMLTextAreaElement | null;
-  if (!input) return null;
-  disposeMentionDropdown();
-  if (items.length === 0) {
-    // Empty result → still render a "No matches" row so the user can
-    // dismiss with Enter / Esc instead of being trapped with an invisible
-    // dropdown.
-    const dropdown = document.createElement("div");
-    dropdown.className = "UnicDB-chat-mention-dropdown";
-    dropdown.id = "UnicDBMentionDropdown";
-    const row = document.createElement("div");
-    row.className = "UnicDB-chat-mention-row UnicDB-chat-mention-row-empty";
-    row.textContent = "No matches";
-    dropdown.appendChild(row);
-    document.body.appendChild(dropdown);
-    positionDropdown(dropdown, input);
-    return dropdown;
-  }
-  const dropdown = document.createElement("div");
-  dropdown.className = "UnicDB-chat-mention-dropdown";
-  dropdown.id = "UnicDBMentionDropdown";
-  for (let i = 0; i < items.length; i++) {
-    const it = items[i];
-    if (it === undefined) continue;
-    const row = document.createElement("div");
-    row.className = "UnicDB-chat-mention-row";
-    row.setAttribute("data-token", it.token);
-    row.setAttribute("data-index", i.toString());
-    if (i === mentionActiveIndex) {
-      row.classList.add("UnicDB-chat-mention-row-active");
-    }
-    const kind = document.createElement("span");
-    kind.className = "UnicDB-chat-mention-kind";
-    kind.textContent = it.kind;
-    const label = document.createElement("span");
-    label.className = "UnicDB-chat-mention-label";
-    label.textContent = it.label;
-    const detail = document.createElement("span");
-    detail.className = "UnicDB-chat-mention-detail";
-    detail.textContent = it.detail;
-    row.appendChild(kind);
-    row.appendChild(label);
-    row.appendChild(detail);
-    row.addEventListener("mousedown", (ev) => {
-      // mousedown (not click) so the textarea blur doesn't fire first
-      // and close the dropdown before the row click resolves.
-      ev.preventDefault();
-      selectMentionToken(it.token);
-    });
-    dropdown.appendChild(row);
-  }
-  document.body.appendChild(dropdown);
-  positionDropdown(dropdown, input);
-  return dropdown;
-}
-
-/** Position the dropdown anchored to the textarea. Uses fixed positioning
- * so the dropdown floats above scrolling content. */
-function positionDropdown(
-  dropdown: HTMLDivElement,
-  input: HTMLTextAreaElement,
-): void {
-  const rect = input.getBoundingClientRect();
-  dropdown.style.left = `${rect.left}px`;
-  dropdown.style.bottom = `${window.innerHeight - rect.top + 4}px`;
-  dropdown.style.width = `${Math.max(rect.width, 240)}px`;
-}
-
-/** Remove the dropdown DOM node + clear dropdown state. */
-function disposeMentionDropdown(): void {
-  const existing = document.getElementById("UnicDBMentionDropdown");
-  if (existing) existing.remove();
-  mentionOpen = false;
-  mentionActiveIndex = 0;
-  mentionQuery = "";
-}
-
-/** Filter the cached `mentionItems` against `query` (case-insensitive
- * substring match against label + token). Updates the rendered DOM in
- * place. The host already returned the full shortlist; we narrow
- * client-side so a fast typing burst doesn't burn round trips. */
-function filterMentionDropdown(query: string): void {
-  mentionQuery = query;
-  const q = query.toLowerCase();
-  const filtered = mentionItems.filter((it) => {
-    return (
-      it.label.toLowerCase().includes(q) ||
-      it.token.toLowerCase().includes(q)
-    );
-  });
-  if (filtered.length === 0 && q.length > 0) {
-    // No matches with a query → still show "No matches" so Enter/Esc work.
-    mentionActiveIndex = 0;
-    renderMentionDropdown([]);
-    mentionOpen = true;
-    return;
-  }
-  mentionActiveIndex = 0;
-  renderMentionDropdown(filtered);
-  mentionOpen = true;
-}
-
-/** Set the active row index and update the DOM class. Wraps around so the
- * user can hold ArrowDown indefinitely without escaping the list. */
-function moveMentionActive(delta: number): void {
-  const dropdown = document.getElementById("UnicDBMentionDropdown");
-  if (!dropdown) return;
-  const rows = dropdown.querySelectorAll<HTMLDivElement>(
-    ".UnicDB-chat-mention-row",
-  );
-  if (rows.length === 0) return;
-  let next = mentionActiveIndex + delta;
-  if (next < 0) next = rows.length - 1;
-  if (next >= rows.length) next = 0;
-  mentionActiveIndex = next;
-  rows.forEach((r, i) => {
-    r.classList.toggle("UnicDB-chat-mention-row-active", i === next);
-  });
-}
-
-/** Insert the given @-token at the cursor position, replacing any partial
- * `@…` span that precedes it. Closes the dropdown. */
-function selectMentionToken(token: string): void {
-  const input = document.getElementById("prompt") as HTMLTextAreaElement | null;
-  if (!input) return;
-  const text = input.value;
-  const caret = input.selectionStart ?? lastCaretPos ?? text.length;
-  const start = findAtTokenStart(text, caret);
-  let before: string;
-  let after: string;
-  if (start >= 0) {
-    before = text.slice(0, start);
-    after = text.slice(caret);
-  } else {
-    // No `@` prefix visible — insert at caret verbatim.
-    before = text.slice(0, caret);
-    after = text.slice(caret);
-  }
-  const insertion = `@${token} `;
-  input.value = `${before}${insertion}${after}`;
-  const newCaret = before.length + insertion.length;
-  input.setSelectionRange(newCaret, newCaret);
-  input.focus();
-  disposeMentionDropdown();
 }
 
 // ------------------------------------------------------------------
@@ -495,76 +192,25 @@ function selectMentionToken(token: string): void {
 // Copy-button wire-up (the host-side clone layout), not the render pass.
 // ------------------------------------------------------------------
 import { escapeHtml, renderMarkdown } from "./markdownSafe";
-function setBusy(busy: boolean): void {
-  state.busy = busy;
-  // The composer module (TASK-AGTUI-004) owns the action buttons + the
-  // prompt + the attach button + the visionCapable gate. It honours the
-  // legacy contract (clearBtn NEVER touched) so the existing suite's
-  // busy-disable assertions (aiChatPanelWebview.test.ts:788-801) keep
-  // passing unchanged.
-  composer?.setBusy(busy);
-}
 
 /**
- * TASK-CHATV2-009 — archive the V1 composer card. It is KEPT in the DOM (the
- * legacy id contract `#prompt` / `#sendBtn` still resolves for V1 flows such as
- * `/clear`, the slash dropdown and mention-token insertion) but it carries no
- * independent send or keyboard behavior anymore: this task strips the composer
- * module's Enter=send path and the main module's capture-phase keydown, and the
- * single controller on `#promptV2` is the only transport owner. Removed in
- * CHATV2-017.
+ * TASK-CHATV2-017 (Lane 3) — V2-only boot. The legacy wave-1 header/composer
+ * modules (renderHeader / renderComposer) are DELETED; every live surface is
+ * owned by the V2 shell + controller.
+ *   1. mountChatShellIfNeeded(root) → the semantic `.UnicDB-ai-chat-v2`
+ *      skeleton (header / banner / transcript / composer / hint + live
+ *      regions). Idempotent on repeat boots.
+ *   2. <#thread> — the legacy live message container inside the shell's
+ *      transcript mount. The legacy bubble builders (appendUser /
+ *      appendAssistant / appendDelta / appendError / …) still write here:
+ *      the host keeps emitting non-V2 frames and `handleLegacyHostMessage`
+ *      renders them with the suite-pinned legacy class names.
+ *   3. createChatController → the ONE keyboard / transport / message owner
+ *      on `#promptV2`; mounts the V2 composer, transcript, header, menus and
+ *      cards, and posts `ready_v2` exactly once via `announceReady()`.
+ *   4. <#jumpLatest> — floating scroll affordance for the legacy thread.
  */
-function archiveV1Composer(): void {
-  const v1 = document.getElementById("composer");
-  if (v1) {
-    v1.setAttribute("data-chat-v1-archived", "1");
-    v1.setAttribute("aria-hidden", "true");
-  }
-  // The hidden host keyboard shortcut is not a real VS Code keybinding, so do
-  // not advertise a fake one on the archived affordance.
-  const hiddenHint = document.getElementById("kbdHint");
-  if (hiddenHint) hiddenHint.hidden = true;
-}
-
-/**
- * TASK-CHATV2-009 — compatibility bridge from the V2 controller state to the
- * legacy DOM builders. The controller owns the transcript in V2 contract terms;
- * this adapter drives the EXISTING V1 bubble builders (not a second renderer) so
- * there is one visual transcript. Deleted in CHATV2-017 together with the V1
- * builders.
- */
-function applyV2StateToLegacy(state: ChatViewState, refs: ChatShellRefs): void {
-  setBusy(state.turn !== null && !state.turn.closed);
-  // Status live region copy is the controller's render output, never authority.
-  refs.statusLiveRegion.textContent = "";
-}
-
 function renderInitial(): void {
-  // TASK-AGTUI-007 — the integration seam. Build the panel out of the
-  // wave-1 modules instead of one big inline innerHTML blob:
-  //   1. renderHeader(root) → mounts the Claude Code–style header bar
-  //      (brand "U" glyph, static "UnicDB AI" title, #engineBanner, and
-  //      the lazily-created #sessionChip). Owns the engine banner /
-  //      session-state chip setSessionState path.
-  //   2. <#thread> — the live message container. The legacy inline
-  //      bubble builders (appendUser / appendAssistant / appendDelta /
-  //      appendError / etc.) write here; their class names are pinned by
-  //      the existing suite.
-  //   3. <#jumpLatest> — floating scroll affordance (TASK-UX1-009).
-  //   4. renderComposer(root, cb) → mounts the Claude Code–style sticky
-  //      composer (attach strip + textarea + actions row with the legacy
-  //      resume/clear/regenerate buttons + the new model chip /
-  //      bypass toggle / mic / slash affordance + send/stop). Owns the
-  //      send/stop/bypass/model_select/attach-picker click paths.
-  header = renderHeader(root);
-
-  // TASK-CHATV2-005 — mount the V2 skeleton FIRST so #thread can nest inside
-  // its semantic `transcript` mount point. Nesting (rather than mounting the
-  // shell inside #thread) keeps `thread.children` and every `thread.children[0]`
-  // assertion owned by the legacy suite unchanged, while later V2 components
-  // still address the semantic mount points (header/banner/main/context/
-  // composer/hint + live regions). `mountChatShellIfNeeded` only creates
-  // missing nodes on repeat boots.
   const shell = mountChatShellIfNeeded(root);
 
   const thread = document.createElement("div");
@@ -573,18 +219,9 @@ function renderInitial(): void {
   thread.setAttribute("aria-live", "polite");
   shell.transcript.appendChild(thread);
 
-  // TASK-CHATV2-009 — the V2 composer becomes the ONE live composer. The
-  // controller (mounted here) owns its capture-phase keydown, message stream
-  // and submit/stop dedupe. `promptV2` is the single transport-bearing input.
-  const v2App = document.createElement("div");
-  v2App.id = "UnicDB-ai-chat-v2-app";
-  v2App.className = "UnicDB-ai-chat-v2-app";
-  shell.composer.appendChild(v2App);
-
   chatController = createChatController({
     root,
     vscode: vscodeApi as VsCodeApiLike | null,
-    renderExtra: (state, refs) => applyV2StateToLegacy(state, refs),
     onLegacyMessage: (data) => handleLegacyHostMessage(data),
   });
   chatController.announceReady();
@@ -597,497 +234,7 @@ function renderInitial(): void {
   jump.textContent = "Jump to latest";
   root.appendChild(jump);
 
-  // Hidden file input lives on <body> (not inside the composer card) so
-  // jsdom + the VS Code webview can fire its `change` event without being
-  // clipped by the composer column. Created exactly once; never re-created.
-  if (!document.getElementById("attachFileInput")) {
-    const fi = document.createElement("input");
-    fi.type = "file";
-    fi.id = "attachFileInput";
-    fi.accept = "image/*";
-    fi.multiple = true;
-    fi.hidden = true;
-    fi.setAttribute("aria-hidden", "true");
-    document.body.appendChild(fi);
-  }
-
-  composer = renderComposer(root, buildComposerCallbacks());
-
-  // Post-process composer buttons to align with the TASK-AG-001 icon-only
-  // composer contract. The composer module (TASK-AGTUI-004) is frozen —
-  // its source of truth for the SVG/titling pipeline — but it ships
-  // buttons whose SVG lacks `aria-hidden` and whose #stopBtn has a
-  // mismatched `title` vs `aria-label` (pinned by
-  // aiChatPanelBundle.test.ts #AG1 / #AG3). We patch the rendered DOM
-  // after creation so the legacy title-aria-label sync invariant holds
-  // without modifying the composer module itself.
-  for (const id of COMPOSER_BUTTON_IDS) {
-    const btn = document.getElementById(id) as HTMLButtonElement | null;
-    if (!btn) continue;
-    const svg = btn.querySelector("svg");
-    if (svg && svg.getAttribute("aria-hidden") !== "true") {
-      svg.setAttribute("aria-hidden", "true");
-    }
-    const aria = btn.getAttribute("aria-label") ?? "";
-    if (aria && btn.title !== aria) {
-      btn.title = aria;
-    }
-  }
-
-  archiveV1Composer();
-  wireControls();
   wireJumpLatest();
-}
-
-/** The six composer action buttons (TASK-AG-001 contract) — order matches
- * the DOM order produced by `renderComposer()`. The bundle test iterates
- * this set to assert each button has exactly one inline SVG and matching
- * title/aria-label; main reads it once at renderInitial() to post-process
- * the composer DOM after creation. */
-const COMPOSER_BUTTON_IDS = [
-  "resumeBtn",
-  "clearBtn",
-  "regenerateBtn",
-  "stopBtn",
-  "attachBtn",
-  "sendBtn",
-] as const;
-
-function disposeSlashDropdown(): void {
-  slashOpen = false;
-  slashActiveIndex = 0;
-  slashCandidates = [];
-  document.querySelector(".UnicDB-chat-slash-dropdown")?.remove();
-}
-
-function renderSlashDropdown(candidates: AiChatCommandEntry[]): void {
-  document.querySelector(".UnicDB-chat-slash-dropdown")?.remove();
-  if (candidates.length === 0) {
-    slashOpen = false;
-    return;
-  }
-  slashOpen = true;
-  slashCandidates = candidates;
-  slashActiveIndex = Math.min(slashActiveIndex, candidates.length - 1);
-  const dropdown = document.createElement("div");
-  dropdown.className = "UnicDB-chat-slash-dropdown";
-  dropdown.setAttribute("role", "listbox");
-  for (const [index, entry] of candidates.entries()) {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "UnicDB-chat-slash-row";
-    row.setAttribute("role", "option");
-    row.dataset.command = entry.command;
-    // Primary line: the command name. Secondary line: description, or the
-    // engine-gated reason when the command is unavailable here (§8.6 — keep
-    // the row visible and focusable, mark it aria-disabled).
-    const name = document.createElement("span");
-    name.className = "UnicDB-chat-slash-name";
-    name.textContent = `/${entry.command}`;
-    const detail = document.createElement("span");
-    detail.className = "UnicDB-chat-slash-detail";
-    detail.textContent = entry.reason ?? entry.description;
-    row.append(name, detail);
-    if (!entry.available) {
-      row.setAttribute("aria-disabled", "true");
-      row.classList.add("UnicDB-chat-slash-row-unavailable");
-    }
-    row.setAttribute("aria-selected", String(index === slashActiveIndex));
-    row.addEventListener("mousedown", (ev) => ev.preventDefault());
-    row.addEventListener("click", () => {
-      // Unavailable rows are informational only — selecting one would only
-      // produce a host error, so they never fill the composer.
-      if (!entry.available) return;
-      const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
-      if (prompt) {
-        prompt.value = `/${entry.command} `;
-        prompt.focus();
-      }
-      disposeSlashDropdown();
-    });
-    dropdown.appendChild(row);
-  }
-  document.querySelector(".UnicDB-chat-input")?.appendChild(dropdown);
-}
-
-function updateSlashDropdown(value: string): void {
-  const trimmed = value.trimStart();
-  if (!trimmed.startsWith("/") || /\s/.test(trimmed.slice(1).split(/\s/, 1)[0] ?? "")) {
-    disposeSlashDropdown();
-    return;
-  }
-  const query = trimmed.slice(1).toLowerCase();
-  const candidates = aiChatCommandsForEngine(slashEngine).filter((entry) =>
-    entry.command.startsWith(query),
-  );
-  slashActiveIndex = 0;
-  renderSlashDropdown(candidates);
-}
-
-function appendLocalNotice(message: string): void {
-  const thread = document.getElementById("thread");
-  if (!thread) return;
-  const notice = document.createElement("div");
-  notice.className = "UnicDB-chat-local-notice";
-  notice.textContent = message;
-  thread.appendChild(notice);
-  autoScroll(notice);
-}
-
-function exportTranscript(filename?: string): void {
-  const thread = document.getElementById("thread");
-  const text = thread?.innerText?.trim() ?? "";
-  const safeName = (filename?.trim() || "UnicDB-ai-transcript.md").replace(/[\\/:*?\"<>|]/g, "_");
-  const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = safeName;
-  link.click();
-  URL.revokeObjectURL(url);
-  appendLocalNotice(`Transcript exported as ${safeName}`);
-}
-
-function executeSlashCommand(text: string): boolean {
-  const parsed = parseAiChatCommand(text);
-  if (!parsed) return false;
-  const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
-  disposeSlashDropdown();
-  if (prompt) prompt.value = "";
-  switch (parsed.command) {
-    case "clear":
-      post({ type: "clear" });
-      document.getElementById("thread")?.replaceChildren();
-      clearAttachments();
-      return true;
-    case "resume":
-      post({ type: "resume_list" });
-      return true;
-    case "context":
-      appendLocalNotice(
-        `Context: ${state.hasHistory ? "session history" : "no session history"}; ${state.pendingAtts.length} queued attachment(s).`,
-      );
-      return true;
-    case "export":
-      exportTranscript(parsed.args[0]);
-      return true;
-    case "engine":
-    case "model":
-      post({ type: "command", command: parsed.command, args: parsed.args });
-      return true;
-  }
-}
-
-/** TASK-AGTUI-007 — composer callbacks wired by `renderInitial()`. The
- * composer module owns the click/keydown handlers; this function exposes
- * the wire side-effects. Order of operations mirrors the legacy inline
- * send path so existing pinned assertions still hold (liveTurnPending
- * flag, busy set, attachments cleared). */
-function buildComposerCallbacks(): ComposerCallbacks {
-  return {
-    onSend(text: string, _attachments: ComposerAttachment[]) {
-      if (mentionOpen) {
-        disposeMentionDropdown();
-        return;
-      }
-      if (executeSlashCommand(text)) return;
-      if (text.trim().length === 0) return;
-      liveTurnPending = true;
-      appendUser(text);
-      // The composer's second-arg `attachments` is always empty in the
-      // main-driven attachment flow (we own `state.pendingAtts` so the
-      // strip can render synchronously). Carry the queued attachments on
-      // the wire from the main-owned list so the host validates the same
-      // ids / base64 / bytes the user sees on the strip.
-      if (state.pendingAtts.length > 0) {
-        post({
-          type: "send",
-          text,
-          attachments: state.pendingAtts.map((a) => ({
-            id: a.id,
-            mime: a.mime,
-            base64: a.base64,
-            bytes: a.bytes,
-          })),
-        });
-      } else {
-        post({ type: "send", text });
-      }
-      setBusy(true);
-      composer?.setValue("");
-      disposeMentionDropdown();
-      clearAttachments();
-    },
-    onStop() {
-      post({ type: "stop" });
-    },
-    onModelSelect(role: string) {
-      // TASK-AGTUI-002 wire: chip click → host applies role on receipt and
-      // answers with a fresh `models` frame. The webview does NOT mutate
-      // local chip state until that reply lands.
-      post({ type: "model_select", role });
-    },
-    onBypassChange(enabled: boolean) {
-      // TASK-AGTUI-002 wire: bypass toggle → host enables/disables session-
-      // scoped permission bypass. No outbound mutation; the host owns the
-      // authoritative policy.
-      post({ type: "bypass_permissions", enabled });
-    },
-    onAttachPicker() {
-      // Main owns the hidden file input (lives on <body>, not inside the
-      // composer card — see renderInitial). The composer's "+" button
-      // delegates the click here.
-      const fi = document.getElementById("attachFileInput") as
-        | HTMLInputElement
-        | null;
-      fi?.click();
-    },
-    // ACTIVE-SCHEMA chip — composer chip click. Host runs the same
-    // QuickPick flow as the status-bar chip; the resulting store
-    // mutation re-broadcasts as `schemaChanged` to every webview.
-    onPickSchema() {
-      post({ type: "pickActiveSchema" });
-    },
-  };
-}
-
-function wireControls(): void {
-  // TASK-AGTUI-007 — the wave-1 composer module (TASK-AGTUI-004) owns
-  // the send / stop / bypass / model-select / attach-picker click paths
-  // and the Enter=send keyboard path. Main keeps the listeners the
-  // composer can't see: resume / clear / regenerate, mention / slash
-  // dropdown keyboard navigation, file input + paste ingestion.
-  const prompt = document.getElementById("prompt") as HTMLTextAreaElement | null;
-
-  const resumeBtn = document.getElementById("resumeBtn") as HTMLButtonElement | null;
-  resumeBtn?.addEventListener("click", () => {
-    if (state.busy) return;
-    post({ type: "resume_list" });
-  });
-
-  // Regenerate: host pops the trailing history pair and re-runs the last
-  // user prompt (semantics in PLAN §3). Disabled while busy — the button
-  // reflects `state.busy` via setBusy.
-  const regenBtn = document.getElementById("regenerateBtn") as HTMLButtonElement | null;
-  regenBtn?.addEventListener("click", () => {
-    if (state.busy) return;
-    post({ type: "regenerate" });
-  });
-
-  // Clear: immediately wipe the local thread (UI responsiveness) and tell
-  // host to reset. Host replies with init{hasHistory:false}+done; applyInit
-  // re-enables the input + de-streams any orphaned bubble. The local wipe
-  // is best-effort UX — applyInit is the authoritative reset.
-  const clearBtn = document.getElementById("clearBtn") as HTMLButtonElement | null;
-  clearBtn?.addEventListener("click", () => {
-    disposeMentionDropdown();
-    post({ type: "clear" });
-    const thread = document.getElementById("thread");
-    if (thread) thread.innerHTML = "";
-  });
-
-  // Enter / Tab / Esc / Arrow keys — TASK-005 dropdown semantics layered
-  // ON TOP of the wave-2 Enter=send keybind (TASK-002 #3). The dropdown
-  // MUST absorb these keys when open so the active row selects / moves
-  // without sending.
-  //
-  // Listener is attached in the CAPTURE phase (third arg = true) so it
-  // runs BEFORE the composer module's bubble-phase keydown listener. For
-  // Enter/Tab while a dropdown is open we handle the action AND call
-  // stopImmediatePropagation so the composer's Enter=send listener never
-  // sees the key — preventing a stray `send` post on a dropdown select.
-  // For everything else (no dropdown) we let the composer handle it.
-  prompt?.addEventListener(
-    "keydown",
-    (ev: KeyboardEvent) => {
-      // TASK-CHATV2-009 — the Ctrl/Cmd+Enter prevent branch was removed here:
-      // it existed only to suppress the composer module's bubble-phase
-      // Enter=send listener, which this task also removed. The V2 controller on
-      // `#promptV2` owns modifier-Enter now. The dropdown branches below are V1
-      // behavior on the archived `#prompt` and stay for compatibility.
-      if (mentionOpen) {
-        if (ev.key === "Enter" || ev.key === "Tab") {
-          ev.preventDefault();
-          ev.stopImmediatePropagation();
-          const dropdown = document.getElementById("UnicDBMentionDropdown");
-          const rows = dropdown?.querySelectorAll<HTMLDivElement>(
-            ".UnicDB-chat-mention-row",
-          );
-          const row = rows?.[mentionActiveIndex];
-          const token = row?.getAttribute("data-token");
-          if (typeof token === "string" && token.length > 0) {
-            selectMentionToken(token);
-          } else {
-            disposeMentionDropdown();
-          }
-          return;
-        }
-        if (ev.key === "Escape") {
-          ev.preventDefault();
-          disposeMentionDropdown();
-          return;
-        }
-        if (ev.key === "ArrowDown") {
-          ev.preventDefault();
-          moveMentionActive(1);
-          return;
-        }
-        if (ev.key === "ArrowUp") {
-          ev.preventDefault();
-          moveMentionActive(-1);
-          return;
-        }
-      }
-      if (slashOpen) {
-        if (ev.key === "Escape") {
-          ev.preventDefault();
-          disposeSlashDropdown();
-          return;
-        }
-        if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
-          ev.preventDefault();
-          ev.stopImmediatePropagation();
-          const delta = ev.key === "ArrowDown" ? 1 : -1;
-          slashActiveIndex =
-            (slashActiveIndex + delta + slashCandidates.length) % slashCandidates.length;
-          renderSlashDropdown(slashCandidates);
-          return;
-        }
-        if (ev.key === "Tab") {
-          ev.preventDefault();
-          ev.stopImmediatePropagation();
-          const entry = slashCandidates[slashActiveIndex];
-          // Unavailable rows are informational — Tab leaves the composer
-          // untouched (the row stays focusable per the menu contract).
-          if (entry?.available && prompt) {
-            const next = `/${entry.command} `;
-            prompt.value = next;
-            composer?.setValue(next);
-            prompt.focus();
-          }
-          disposeSlashDropdown();
-          return;
-        }
-        if (ev.key === "Enter") {
-          // Intercept BEFORE composer sees Enter — executeSlashCommand
-          // or fill the textarea with the active candidate. Either way,
-          // never post a send from this path.
-          ev.preventDefault();
-          ev.stopImmediatePropagation();
-          if (executeSlashCommand(prompt?.value ?? "")) {
-            disposeSlashDropdown();
-            return;
-          }
-          const entry = slashCandidates[slashActiveIndex];
-          if (entry?.available && prompt) {
-            const next = `/${entry.command} `;
-            prompt.value = next;
-            composer?.setValue(next);
-            prompt.focus();
-          }
-          disposeSlashDropdown();
-          return;
-        }
-      }
-    },
-    true,
-  );
-
-  prompt?.addEventListener("input", () => {
-    if (!prompt || state.busy || mentionOpen) return;
-    updateSlashDropdown(prompt.value);
-  });
-
-  // TASK-005: open / refresh the @-mention dropdown on each keystroke that
-  // introduces an `@` at the cursor. We post `mention_list` and the host
-  // answers with the full shortlist; client-side filter on each keystroke
-  // narrows without burning round trips. Backspace through the `@` closes
-  // the dropdown.
-  prompt?.addEventListener("keyup", (ev: KeyboardEvent) => {
-    if (!prompt) return;
-    lastCaretPos = prompt.selectionStart ?? lastCaretPos;
-    if (state.busy) {
-      // Mention dropdown can't open while a turn is streaming (the input
-      // is disabled by setBusy anyway; this is belt-and-braces).
-      if (mentionOpen) disposeMentionDropdown();
-      return;
-    }
-    const caret = prompt.selectionStart ?? prompt.value.length;
-    const text = prompt.value;
-    const atIdx = findAtTokenStart(text, caret);
-    if (atIdx < 0) {
-      // No active `@…` span — close any open dropdown.
-      if (mentionOpen) disposeMentionDropdown();
-      return;
-    }
-    const query = text.slice(atIdx + 1, caret);
-    // Opening (or refreshing the query) — post the request.
-    if (!mentionOpen || query !== mentionQuery) {
-      // Store the query immediately so a quick second keystroke doesn't
-      // re-post before the host reply lands.
-      mentionQuery = query;
-      post({ type: "mention_list", query });
-    }
-  });
-
-  // Click outside the textarea or dropdown closes the dropdown. Listener
-  // attached with capture so it wins against the textarea blur race.
-  document.addEventListener("mousedown", (ev) => {
-    if (!mentionOpen) return;
-    const target = ev.target as Node | null;
-    const dropdown = document.getElementById("UnicDBMentionDropdown");
-    if (
-      target !== null &&
-      (target === prompt || (dropdown !== null && dropdown.contains(target)))
-    ) {
-      return;
-    }
-    disposeMentionDropdown();
-  });
-
-  // TASK-002 (cycle AB) — hidden file input + clipboard paste. The
-  // composer module owns the attach-button click + disabled gating; main
-  // owns the file-input + paste ingest pipeline (data URL → base64 →
-  // `state.pendingAtts` → strip re-render). The composer's `addAttachments`
-  // is bypassed because it pushes asynchronously through a Promise.all
-  // chain — the existing test suite (cycle AB #17) waits only 2
-  // microtasks after the paste event, which isn't enough for the
-  // composer's async push to land on the strip. Keeping the queue in
-  // main lets us resolve and re-render synchronously.
-  const fileInput = document.getElementById("attachFileInput") as
-    | HTMLInputElement
-    | null;
-  fileInput?.addEventListener("change", () => {
-    if (!fileInput.files) return;
-    for (const f of Array.from(fileInput.files)) {
-      void ingestFile(f);
-    }
-    // Reset so picking the same file twice still fires change.
-    fileInput.value = "";
-  });
-  // Clipboard image paste — same pipeline as the file picker.
-  prompt?.addEventListener("paste", (ev: ClipboardEvent) => {
-    const items = ev.clipboardData?.items;
-    if (!items) return;
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (!item) continue;
-      if (!item.type.startsWith("image/")) continue;
-      // Vision-disabled model → reject the paste with an inline warning;
-      // do NOT add to the strip, do NOT swallow the event (text paste
-      // should still work — see cycle-AA paste regression).
-      if (!state.visionCapable) {
-        renderAttachWarning(
-          `Cannot attach image — current model does not support images`,
-        );
-        continue;
-      }
-      const blob = item.getAsFile();
-      if (!blob) continue;
-      void ingestFile(blob);
-    }
-  });
-
 }
 
 // TASK-UX1-009 (R11) — turn-state flag. The "AI is thinking…" row is
@@ -1598,63 +745,6 @@ function appendCopyMessageAction(bubble: HTMLElement, rawSource: string): void {
 
 const root = document.getElementById("UnicDB-root") as HTMLDivElement;
 
-/** TASK-AGTUI-007 — delegate the engine banner to the renderHeader
- * module (TASK-AGTUI-003). The header owns the closed-set whitelist
- * (`omp` / `claude-code` / `codex` / `builtin`) and the legacy text
- * format `Engine: <label>[ v<version>] — streaming`, and the static
- * `UnicDB AI` title node stays untouched. Hint messages still surface
- * as part of the banner body via the legacy "Engine: builtin — <hint>
- * — streaming" branch (the header treats `name === "builtin"` with a
- * hint as a regular banner update). */
-function applyEngine(msg: EngineMsg): void {
-  if (!header) return;
-  if (msg.name === "builtin" && msg.hint) {
-    // The legacy builtin+hint case embeds the hint inside the banner
-    // body. The header module knows how to render "Engine: builtin
-    // — <hint> — streaming" via setEngine("builtin", undefined) + a
-    // follow-up textContent rewrite — but the simplest path is to
-    // pass the hint through the version channel: format the banner
-    // manually since the header doesn't expose a hint parameter.
-    const banner = document.getElementById("engineBanner");
-    if (banner) {
-      // Class the banner first so the hint path inherits the same
-      // `UnicDB-chat-engine UnicDB-chat-engine-builtin` styling as a
-      // plain builtin frame — the manual textContent rewrite
-      // below only overrides the body, never the className.
-      header.setEngine("builtin");
-      const safeHint = String(msg.hint)
-        .replace(/[\u0000-\u001F\u007F]/g, "")
-        .slice(0, 120);
-      banner.textContent = `Engine: builtin — ${safeHint} — streaming`;
-    }
-    return;
-  }
-  header.setEngine(
-    msg.name as Parameters<UnicDBHeader["setEngine"]>[0],
-    msg.version,
-  );
-}
-
-/** TASK-AGTUI-007 / AIX-05 — delegate the session-state chip to the
- * renderHeader module. The header owns the closed-set label map
- * (Connecting… / Running… / Done / Error) AND the additive
- * `UnicDB-chat-sessionchip` clone class — the existing
- * aiChatPanelSessionStateWebview.test.ts:85-118 suite pins both.
- *
- * SECURITY: the chip is textContent-only — no innerHTML, no child
- * elements other than the closed-set label text node. The header's
- * `setSessionState` writes the chip body via `textContent = SESSION_LABELS[state]`
- * (see aiChatPanelHeader.ts:166), so a hostile host can never smuggle
- * live markup into the chip through this path. */
-function applySessionState(
-  st: "connecting" | "running" | "done" | "error",
-): void {
-  // The header writes the chip via textContent (textContent-only — see
-  // aiChatPanelHeader.ts:166) so the label string is never parsed as HTML
-  // and a hostile host cannot smuggle live markup into the chip.
-  header?.setSessionState(st);
-}
-
 /** TASK-ARP06-005: render the per-turn usage + policy notice chip. The
  * `usage` frame is SHAPE-SAFE (numeric fields + notice string only — no
  * prompt/SQL/secret/trace/tool args ever ride on it), but the notice is a
@@ -1727,50 +817,13 @@ function applyEngineState(state: string): void {
   chip.textContent = labels[state] ?? state;
 }
 
-/** TASK-AGTUI-007 — `models` host frame drives the composer's role
- * chip. The composer owns the chip label + dropdown rows; main just
- * pushes the (entries, active) pair down. `roles: []` is the empty
- * assertion case (test #3) — the composer disables the chip and
- * shows the inert "No models configured" label. */
-function applyModels(msg: ModelsMsg): void {
-  composer?.setModels(
-    msg.roles.map((r) => ({
-      role: r.role,
-      modelId: r.modelId,
-      vision: r.vision,
-    })),
-    msg.active,
-  );
-}
-
+/** TASK-CHATV2-017 (Lane 3) — init{hasHistory:false} arrives after the panel
+ * was busy (Clear path) → de-stream any orphaned streaming bubble. The V2
+ * controller owns busy state; the host also posts `done`, but `done` alone
+ * does not de-stream when the panel replays init. */
 function applyInit(msg: InitMsg): void {
-  state.hasHistory = msg.hasHistory;
-  state.visionCapable = msg.visionCapable;
-  // init{hasHistory:false} đến sau khi panel từng busy (Clear path) →
-  // chắc chắn re-enable input + đóng streaming bubble. Host cũng post
-  // done, nhưng done một mình không de-stream nếu panel replay init.
   if (!msg.hasHistory) {
     deStreamOpenBubble();
-    setBusy(false);
-  }
-  // Push the visionCapable flag down to the composer so the attach
-  // button's disabled state stays in sync (composer disables attach
-  // when busy OR !visionCapable, see aiChatPanelComposer.ts:applyBusyVisual).
-  composer?.setVisionCapable(state.visionCapable);
-  // Compose module initialises title/aria-label to "Attach image" — when
-  // visionCapable flips to false we re-assert the "Current model does
-  // not support images" tooltip so the hover text and accessible name
-  // never drift apart (TASK-AG-001 contract pinned by
-  // aiChatPanelWebview.test.ts:#AG5b).
-  const attachBtn = document.getElementById("attachBtn") as
-    | HTMLButtonElement
-    | null;
-  if (attachBtn) {
-    const attachLabel = !state.visionCapable
-      ? "Current model does not support images"
-      : "Attach image";
-    attachBtn.title = attachLabel;
-    attachBtn.setAttribute("aria-label", attachLabel);
   }
 }
 
@@ -2067,27 +1120,10 @@ function handleLegacyHostMessage(data: unknown): void {
     case "delta":
       appendDelta(msg.text);
       return;
-    case "engine": {
-      applyEngine(msg);
-      // Track the announced engine so the slash menu can gate commands per
-      // engine (§8.6). Only a recognized engine updates the gate; an unknown
-      // wire name leaves the previous value so no unsafe engine string can
-      // widen the command set.
-      const KNOWN_ENGINES = ["builtin", "omp", "claude-code", "codex"];
-      if (typeof msg.name === "string" && KNOWN_ENGINES.includes(msg.name)) {
-        slashEngine = msg.name;
-        // Refresh an open menu so availability reflects the new engine.
-        if (slashOpen) {
-          const promptEl = document.getElementById("prompt") as HTMLTextAreaElement | null;
-          if (promptEl) updateSlashDropdown(promptEl.value);
-        }
-      }
-      return;
-    }
-    case "session_state":
-      applySessionState(msg.state);
-      return;
     case "engine_state":
+      // TASK-CHATV2-017 (Lane 3): engine identity is owned by the V2 header
+      // pill (from the V2 `capabilities` frame); this legacy OMP lifecycle
+      // frame still surfaces the runtime state (Stopped/Starting/Ready/…).
       applyEngineState((msg as { state: string }).state);
       return;
     case "assistant":
@@ -2123,8 +1159,6 @@ function handleLegacyHostMessage(data: unknown): void {
       // `done` is the terminal lifecycle event for the turn, so any
       // leftover spinner is dishonest state.
       removeThinking();
-      // Re-enable input/actions (Send, Regenerate, Resume, textarea).
-      setBusy(false);
       // The thinking block stays visible after `done` — it summarizes
       // the just-finished turn's reasoning for the user. The next user
       // send drops it via appendUser -> resetThinkingBlock.
@@ -2141,12 +1175,6 @@ function handleLegacyHostMessage(data: unknown): void {
     case "history":
       renderHistory(msg);
       return;
-    case "mention_objects":
-      // Cache the host shortlist; render the dropdown with the
-      // current filter query.
-      mentionItems = msg.items;
-      filterMentionDropdown(mentionQuery);
-      return;
     case "mention_miss":
       renderMentionMiss(msg.token);
       return;
@@ -2159,21 +1187,6 @@ function handleLegacyHostMessage(data: unknown): void {
     case "usage":
       applyUsage(msg as UsageMsg);
       return;
-    case "models":
-      applyModels(msg);
-      return;
-    // ACTIVE-SCHEMA chip — host fans out every store/connection change
-    // to keep every panel's chip in sync. Forward to the composer; the
-    // console + results webviews own their own listeners and DOM.
-    case "schemaChanged": {
-      const sm = msg as {
-        type: "schemaChanged";
-        schema: string | undefined;
-        connectionId: string | undefined;
-      };
-      composer?.setActiveSchema(sm.schema, sm.connectionId);
-      return;
-    }
   }
 }
 
@@ -2190,64 +1203,6 @@ function renderMentionMiss(token: string): void {
   thread.appendChild(div);
 }
 
-// ---- TASK-002 (cycle AB) — attachment strip + warning bubble ---------------
-//
-// The strip lives above the textarea, inside the composer card, and is
-// rendered as `.UnicDB-chat-attachments` with one `.UnicDB-chat-thumb` per
-// attachment. Each thumb has a `.UnicDB-chat-thumb-remove` button (top-right)
-// that drops the attachment from local state. The composer module
-// (TASK-AGTUI-004) ships the `#attachStrip` DOM container + its private
-// `atts` list; main owns `state.pendingAtts` and re-renders the strip
-// directly so the existing cycle-AB #17 fixture (which waits only 2
-// microtasks after the paste event) still sees a populated strip on the
-// same tick the ingest promise resolves. The composer module's `atts`
-// stays empty in main-driven flows.
-
-/** Reset the strip and local attachment state. Called on send + on Clear. */
-function clearAttachments(): void {
-  state.pendingAtts = [];
-  // Also clear the composer's list (defensive — if anything ever routes
-  // through composer.addAttachments it shouldn't bleed across turns).
-  composer?.clearAttachments();
-  renderAttachStrip();
-}
-
-/** Render the attachment strip from `state.pendingAtts`. Idempotent —
- * drops + recreates the strip contents (cheap, ≤4 nodes) so a thumb add /
- * remove doesn't have to track individual nodes. */
-function renderAttachStrip(): void {
-  const strip = document.getElementById("attachStrip") as
-    | HTMLDivElement
-    | null;
-  if (!strip) return;
-  strip.replaceChildren();
-  if (state.pendingAtts.length === 0) {
-    strip.hidden = true;
-    return;
-  }
-  strip.hidden = false;
-  for (const att of state.pendingAtts) {
-    const thumb = document.createElement("div");
-    thumb.className = "UnicDB-chat-thumb";
-    thumb.dataset.attachId = att.id;
-    const img = document.createElement("img");
-    img.alt = "";
-    img.src = `data:${att.mime};base64,${att.base64}`;
-    thumb.appendChild(img);
-    const rm = document.createElement("button");
-    rm.type = "button";
-    rm.className = "UnicDB-chat-thumb-remove";
-    rm.setAttribute("aria-label", "Remove attachment");
-    rm.textContent = "×";
-    rm.addEventListener("click", () => {
-      state.pendingAtts = state.pendingAtts.filter((a) => a.id !== att.id);
-      renderAttachStrip();
-    });
-    thumb.appendChild(rm);
-    strip.appendChild(thumb);
-  }
-}
-
 /** Render an amber warning bubble naming the offending attachment. textContent
  * only — host-supplied strings never reach innerHTML. */
 function renderAttachWarning(message: string): void {
@@ -2257,84 +1212,6 @@ function renderAttachWarning(message: string): void {
   div.className = "UnicDB-chat-attach-warning";
   div.textContent = message;
   thread.appendChild(div);
-}
-
-/** Client-minted attachment id (no apiKey path). Uses crypto.randomUUID when
- * available (modern webview + jsdom 22+), falls back to a counter for older
- * runtimes so the test harness can stay deterministic. */
-let __attachCounter = 0;
-function mintAttachId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  __attachCounter += 1;
-  return `att-${__attachCounter}`;
-}
-
-/** Ingest a single File / Blob through the local cap validator. Reads as
- * data URL, splits the base64 payload, checks the byte + count caps and
- * the MIME whitelist, then appends to the strip state. Rejected entries
- * surface an amber warning instead of being silently dropped. */
-async function ingestFile(file: File | Blob): Promise<void> {
-  const mime = file.type;
-  if (!ATTACH_ALLOWED_MIME.has(mime)) {
-    renderAttachWarning(
-      `Unsupported image type: ${mime || "unknown"}`,
-    );
-    return;
-  }
-  if (state.pendingAtts.length >= MAX_ATTACHMENTS_PER_TURN) {
-    renderAttachWarning(
-      `Too many attachments (limit ${MAX_ATTACHMENTS_PER_TURN})`,
-    );
-    return;
-  }
-  const dataUrl = await readAsDataUrl(file);
-  if (!dataUrl) {
-    renderAttachWarning(`Could not read file — file is unreadable.`);
-    return;
-  }
-  const base64 = dataUrl.split(",")[1] ?? "";
-  const bytes = approximateBytesFromBase64(base64);
-  if (bytes > MAX_ATTACH_BYTES) {
-    renderAttachWarning(
-      `Image too large (${Math.round(bytes / 1024 / 1024)} MB > ${MAX_ATTACH_BYTES / 1024 / 1024} MB cap)`,
-    );
-    return;
-  }
-  state.pendingAtts.push({
-    id: mintAttachId(),
-    mime,
-    base64,
-    bytes,
-  });
-  renderAttachStrip();
-}
-
-/** Read a Blob as a data URL via FileReader. Returns the URL on success;
- * resolves with empty string on failure (caller drops + warns). */
-function readAsDataUrl(blob: Blob): Promise<string> {
-  return new Promise<string>((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      resolve(typeof reader.result === "string" ? reader.result : "");
-    };
-    reader.onerror = () => resolve("");
-    reader.readAsDataURL(blob);
-  });
-}
-
-/** Best-effort base64 byte length. We don't have Buffer in the webview, so
- * decode the base64 alphabet (4 chars → 3 bytes) with a pad fix-up. Good
- * enough for the cap validator; the host re-validates with the real
- * base64 decoder before forwarding to the model. */
-function approximateBytesFromBase64(b64: string): number {
-  const len = b64.length;
-  if (len === 0) return 0;
-  let padding = 0;
-  if (b64[len - 1] === "=") padding = 1;
-  if (len > 1 && b64[len - 2] === "=") padding = 2;
-  return Math.floor((len * 3) / 4) - padding;
 }
 
 // ---- AIX-01 — grounding chips + panel toggle -------------------------------
@@ -2354,8 +1231,9 @@ function renderGroundingChips(msg: {
     strip = document.createElement("div");
     strip.id = "UnicDB-grounding-strip";
     strip.className = "UnicDB-grounding-strip";
-    const composer = document.getElementById("composer") ?? document.body;
-    composer.appendChild(strip);
+    // The V1 composer card is deleted (CHATV2-017); the strip mounts on
+    // <body> and positions via the `.UnicDB-grounding-strip` rules.
+    document.body.appendChild(strip);
     strip.addEventListener("click", () => {
       vscodeApi.postMessage({ type: "grounding_toggle", enabled: false });
     });

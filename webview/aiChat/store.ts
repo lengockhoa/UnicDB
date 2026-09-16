@@ -17,8 +17,10 @@
 // SAME state object (identity), so callers can cheaply detect a no-op.
 
 import type { EngineCapabilitySnapshot } from "../../src/ai/capabilities";
+import { mapHostChatError, type AiChatErrorFrame } from "../../src/ui/aiChatErrors";
 import type { MinimalAttachment } from "../../src/ui/aiChatAttachments";
 import type {
+  AiChatContextRefStatusV2,
   AiChatContextRefV2,
   AiChatHostFrameMentionResultsV2,
   AiChatHostFrameV2,
@@ -164,6 +166,23 @@ export interface ChatBanner {
   readonly diagnosticId: string | null;
 }
 
+/** Host-reviewed change plan waiting for one explicit user outcome. */
+export interface ChatChangePlan {
+  readonly tool: string;
+  readonly plan: {
+    readonly intent: string;
+    readonly statements: readonly { readonly sql: string; readonly tier: string; readonly dangerNote: string }[];
+    readonly drift: readonly string[];
+    readonly drifted: boolean;
+  };
+}
+
+/** Safe failed-turn data. The structured retry draft never comes from DOM. */
+export interface ChatErrorState {
+  readonly frame: AiChatErrorFrame;
+  readonly request: { readonly clientRequestId: string; readonly draft: ComposerDraft } | null;
+}
+
 /** Transient toasts. Capped ring — oldest evicted first. */
 export interface ChatToast {
   readonly id: string;
@@ -238,6 +257,10 @@ export interface ChatViewState {
   readonly autocomplete: AutocompleteState;
   readonly layout: ChatLayout;
   readonly banners: readonly ChatBanner[];
+  /** The one pending reviewed plan, if the host has offered one. */
+  readonly changePlan: ChatChangePlan | null;
+  /** The current terminal error card, derived only from safe host metadata. */
+  readonly error: ChatErrorState | null;
   readonly toasts: readonly ChatToast[];
   /** TASK-CHATV2-013: inline, per-item attachment rejection notices. */
   readonly attachNotices: readonly ChatAttachNotice[];
@@ -248,6 +271,8 @@ export interface ChatViewState {
   readonly pendingHostRequests: readonly ChatPendingRequest[];
   /** The submit effect awaiting controller dispatch (null once posted). */
   readonly pendingSubmit: { readonly clientRequestId: string; readonly draft: ComposerDraft } | null;
+  /** Last immutable structured request, retained only to offer a safe Retry. */
+  readonly lastSubmittedRequest: { readonly clientRequestId: string; readonly draft: ComposerDraft } | null;
   /** The submit effect awaiting controller dispatch, kept until the host acks. */
   readonly pendingStop: { readonly clientRequestId: string } | null;
   /** The last submitted clientRequestId; cleared when the host acknowledges it. */
@@ -263,6 +288,11 @@ export type ChatLocalAction =
   | { readonly type: "CONTEXT_ADDED"; readonly ref: AiChatContextRefV2 }
   | { readonly type: "CONTEXT_REMOVED"; readonly refId: string }
   | {
+      readonly type: "CONTEXT_REF_RESOLVED";
+      readonly refId: string;
+      readonly status: AiChatContextRefStatusV2;
+    }
+  | {
       readonly type: "AUTOCOMPLETE_OPENED";
       readonly mode: ComposerMode;
       readonly requestId: string;
@@ -273,7 +303,7 @@ export type ChatLocalAction =
   | { readonly type: "AUTOCOMPLETE_ACTIVE_MOVED"; readonly delta: number }
   | { readonly type: "COLLAPSE_TOGGLED"; readonly panel: "transcript" | "activities" }
   | { readonly type: "SCROLL_PROXIMITY_CHANGED"; readonly distancePx: number }
-  | { readonly type: "SUBMIT_REQUESTED"; readonly clientRequestId: string }
+  | { readonly type: "SUBMIT_REQUESTED"; readonly clientRequestId: string; readonly draft?: ComposerDraft }
   | { readonly type: "SUBMIT_CONSUMED"; readonly clientRequestId: string }
   | { readonly type: "STOP_REQUESTED"; readonly clientRequestId: string }
   | { readonly type: "STOP_DISPATCHED"; readonly clientRequestId: string }
@@ -352,6 +382,8 @@ export function createInitialChatState(): ChatViewState {
       unreadCount: 0,
     },
     banners: [],
+    changePlan: null,
+    error: null,
     toasts: [],
     attachNotices: [],
     models: null,
@@ -360,6 +392,7 @@ export function createInitialChatState(): ChatViewState {
     sessions: [],
     pendingHostRequests: [],
     pendingSubmit: null,
+    lastSubmittedRequest: null,
     pendingStop: null,
     awaitingAckRequestId: null,
   };
@@ -603,7 +636,19 @@ function applyFrameBody(
       return pushToast(state, "warning", (frame as { safeMessage: string }).safeMessage);
 
     case "error": {
-      const f = frame as { turnId?: string; safeMessage: string; diagnosticId: string };
+      const f = frame as { category?: string; safeMessage: string; diagnosticId: string; safeDetail?: string };
+      const mapped = mapHostChatError({ category: f.category, detail: f.safeDetail });
+      // The host safe copy/id are authoritative; the closed matrix supplies only
+      // the permitted action vocabulary and category (unknown on absent/invalid).
+      const error = {
+        frame: {
+          ...mapped,
+          safeMessage: f.safeMessage,
+          diagnosticId: f.diagnosticId,
+          ...(f.safeDetail === undefined ? {} : { safeDetail: f.safeDetail }),
+        },
+        request: state.lastSubmittedRequest,
+      };
       const banners = [
         ...state.banners,
         {
@@ -616,7 +661,7 @@ function applyFrameBody(
       ];
       const transcript = sealStreaming(state.transcript);
       const turn = state.turn === null ? null : { ...state.turn, closed: true, outcome: "failed" as const };
-      return { ...state, phase: "failed", banners, transcript, turn };
+      return { ...state, phase: "failed", banners, error, transcript, turn };
     }
 
     case "turn_finished": {
@@ -676,6 +721,11 @@ function applyFrameBody(
     case "sessions": {
       const f = frame as { items: readonly { sessionId: string; label: string; detail: string }[] };
       return { ...state, sessions: f.items };
+    }
+
+    case "change_plan": {
+      const f = frame as ChatChangePlan;
+      return { ...state, changePlan: { tool: f.tool, plan: f.plan } };
     }
 
     case "title_updated":
@@ -768,6 +818,20 @@ function applyLocal(state: ChatViewState, action: ChatLocalAction): ChatViewStat
       return { ...state, draft: { ...state.draft, context } };
     }
 
+    case "CONTEXT_REF_RESOLVED": {
+      // The HOST's re-validated status is authoritative — the webview never
+      // invents one. Only that one ref changes; siblings are untouched.
+      let changed = false;
+      const context = state.draft.context.map((ref) => {
+        if (ref.id !== action.refId) return ref;
+        if (ref.status === action.status) return ref;
+        changed = true;
+        return { ...ref, status: action.status, changed: action.status === "changed", missing: action.status === "missing" };
+      });
+      if (!changed) return state;
+      return { ...state, draft: { ...state.draft, context } };
+    }
+
     case "AUTOCOMPLETE_OPENED":
       return {
         ...state,
@@ -827,20 +891,22 @@ function applyLocal(state: ChatViewState, action: ChatLocalAction): ChatViewStat
 
     case "SUBMIT_REQUESTED": {
       if (isBusyPhase(state.phase)) return state;
-      const text = state.draft.text;
+      const draft = action.draft ?? state.draft;
       const userItem: ChatUserItem = {
         id: `user-${action.clientRequestId}`,
         kind: "user",
         clientRequestId: action.clientRequestId,
-        text,
-        context: state.draft.context,
+        text: draft.text,
+        context: draft.context,
       };
       return {
         ...state,
         phase: "validating",
+        error: null,
         transcript: putItem(state.transcript, userItem.id, userItem),
         pendingHostRequests: [],
-        pendingSubmit: { clientRequestId: action.clientRequestId, draft: state.draft },
+        pendingSubmit: { clientRequestId: action.clientRequestId, draft },
+        lastSubmittedRequest: { clientRequestId: action.clientRequestId, draft },
         awaitingAckRequestId: action.clientRequestId,
       };
     }

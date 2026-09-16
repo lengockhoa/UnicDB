@@ -95,13 +95,9 @@ describe("AIX-05 scaffold", () => {
     expect(ext).toMatch(/resolveEngine/);
   });
 
-  it("session_state wire kind is rendered textContent-only in webview", () => {
-    const src = read("webview/aiChatPanelMain.ts");
-    const block = src.match(/function applySessionState[\s\S]*?\n\}/);
-    expect(block).not.toBeNull();
-    expect(block![0]).toMatch(/textContent/);
-    expect(block![0]).not.toMatch(/innerHTML/);
-  });
+  // TASK-CHATV2-017 Lane 3: the V1 session chip (applySessionState in
+  // aiChatPanelMain.ts) is deleted; text-only rendering is pinned by the V2
+  // suites (webview/aiChat/__tests__ sessions + transcript).
 
   it("sessionState host fields present in aiChatPanel", () => {
     const src = read("src/ui/aiChatPanel.ts");

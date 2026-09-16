@@ -41,6 +41,7 @@ adapter on pooled clients.
 
 - Destructive statements (`DELETE` no WHERE, `TRUNCATE`, `DROP`, `UPDATE` no WHERE) MUST pass the red confirm modal before execution (`UnicDB.confirmDestructive` opt-out only).
 - AI-chat `run_sql` tool is SELECT/SHOW/EXPLAIN/clean-CTE only — never receives DML/DDL.
+- AI-chat V2 (TASK-CHATV2-017): the webview boots the `.UnicDB-ai-chat-v2` shell + single `createChatController` (webview/aiChat/) and posts `ready_v2`; the host emits V2-native `text_delta`/`reasoning_delta`/`tool_started`/`tool_finished`/`turn_finished` frames on the ordered V2 seam. V1 is deleted (Lane 3): `aiChatPanelHeader.ts`/`aiChatPanelComposer.ts` and their tests are gone, the dead `.UnicDB-chat` CSS was retired from `webview/styles.css`, and the V2 E2E asserts V1-id absence in the production bundle.
 - Keyset paging may replace OFFSET ONLY when the structural browse gate passes AND no term carries NULLS ordering; every other shape keeps legacy composition byte-identical.
 - A user-visible change is NOT shipped until a GitHub Release exists (merged ≠ shipped); releaseHygiene fails builds when package-lock version drifts.
 

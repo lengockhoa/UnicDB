@@ -44,7 +44,13 @@ export interface SchemaControlOptions {
   readonly container: HTMLElement;
   /** Click → the EXISTING host picker intent. Never transport here. */
   readonly onPickSchema: () => void;
+  /** Stable DOM id (the composer contract's `schemaChipBtnV2`). Defaults to a
+   * constant that exposes the pre-`render` chip node. */
+  readonly id?: string;
 }
+
+/** Default chip id — a stable handle for the active-schema control. */
+export const SCHEMA_CHIP_DEFAULT_ID = "schemaChipBtnV2";
 
 /** The live schema-chip handle. */
 export interface SchemaControl {
@@ -70,6 +76,8 @@ export function createSchemaControl(options: SchemaControlOptions): SchemaContro
   const button = document.createElement("button");
   button.type = "button";
   button.className = `${ROOT_CLASS}-chip ${ROOT_CLASS}-schema-chip`;
+  if (options.id !== undefined && options.id.length > 0) button.id = options.id;
+  else button.id = SCHEMA_CHIP_DEFAULT_ID;
   button.setAttribute(SCHEMA_CHIP_MARKER, "1");
   button.style.setProperty("--UnicDB-schema-chip-h", `${SCHEMA_CHIP_MIN_HEIGHT_PX}px`);
   button.style.setProperty("--UnicDB-schema-chip-icon", `${SCHEMA_CHIP_ICON_PX}px`);

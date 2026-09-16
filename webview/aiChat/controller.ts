@@ -2,8 +2,8 @@
 //
 // The SINGLE owner of composer keyboard precedence, submit/stop dedupe, focus
 // and host transport for the V2 chat webview. Every competing V1 Enter/send
-// path is removed in the same task (see aiChatPanelMain.ts /
-// aiChatPanelComposer.ts).
+// path was removed by TASK-CHATV2-017 (the legacy aiChatPanelMain.ts boot and
+// the V1 composer/header modules are deleted).
 //
 // OWNERSHIP (why this module exists)
 // - It acquires the VS Code API exactly once, owns the `window.message`
@@ -24,6 +24,8 @@
 
 import { AI_CHAT_PROTOCOL_VERSION_V2 } from "../../src/ui/aiChatPanelMessages";
 import type {
+  AiChatContextKindFilterV2,
+  AiChatContextRefV2,
   AiChatHostFrameV2,
   AiChatWebviewIntentV2,
 } from "../../src/ui/aiChatPanelMessages";
@@ -57,6 +59,31 @@ import {
   type ComposerMode,
   type TurnPhase,
 } from "./store";
+import { createTranscriptRenderer, type TranscriptRenderer } from "./transcript";
+import { createScrollController, type ScrollController } from "./scroll";
+import { createActivityTimeline, phaseCopyLabel, type ActivityTimeline } from "./activity";
+import { createLiveAnnouncer, type LiveAnnouncer } from "./a11y";
+import { renderChangePlanCard, type ChangePlanCard } from "./changePlan";
+import { createErrorCard, type ErrorCardHandle } from "./errors";
+import { createAttachMenu, type AttachMenu, type AttachMenuAction } from "./attachMenu";
+import { createAttachmentController, type AttachmentController } from "./attachments";
+import { createAutocompleteView, type AutocompleteView } from "./autocomplete";
+import {
+  createEngineSwitchView,
+  createModelMenu,
+  type EngineMenuEntry,
+  type EngineSwitchView,
+  type ModelMenuView,
+} from "./engineModelMenus";
+import { createChatHeader, type ChatHeaderView } from "./header";
+import { engineDisplayName } from "../../src/ai/capabilities";
+import { createSchemaControl, type SchemaControl } from "./schemaControl";
+import { createContextChipStrip, type ContextChipStrip } from "./contextChips";
+import { buildMentionRows, mentionAcceptEdit, mentionEligibility } from "./mentions";
+import { filterSlashCommands, slashAcceptEdit, slashEligibility } from "./slash";
+import { resolveChatCommands } from "../../src/ui/aiChatPanelCommands";
+import type { ContextRef, ContextResolutionChoice } from "../../src/ui/aiChatContext";
+import { createSessionsController, type SessionsController, type SessionsViewState } from "./sessions";
 
 /** The minimal VS Code API surface the controller needs. */
 export interface VsCodeApiLike {
@@ -89,6 +116,12 @@ function createCounterIdSource(): () => string {
   };
 }
 
+/** Distance reported to the reducer when the viewport is NOT near the bottom. */
+const SCROLL_FAR_PX = 10_000;
+
+/** Terminal-phase announcement copy (never streamed prose). */
+const FAILED_ANNOUNCEMENT = "Response failed";
+
 /** Construction options. Signals are injected; nothing here reads a global. */
 export interface ChatControllerOptions {
   /** Root the V2 shell + composer mount into. */
@@ -105,6 +138,13 @@ export interface ChatControllerOptions {
   readonly clearTimer?: (handle: TimerHandle) => void;
   /** Injectable render scheduler (defaults to `queueMicrotask`). */
   readonly schedule?: (fn: () => void) => void;
+  /**
+   * TASK-CHATV2-017: optional host-provided engine catalog for the header's
+   * engine menu. DATA — never derived by engine name. When omitted, the menu
+   * carries exactly one truthful entry: the ACTIVE engine from the current
+   * `capabilities` snapshot.
+   */
+  readonly engineEntries?: readonly EngineMenuEntry[];
   /** True while a permission sheet holds focus (delegation gate). */
   readonly isPermissionFocused?: () => boolean;
   /** Optional extra renderer (e.g. the transcript) run in the batched pass. */
@@ -132,6 +172,8 @@ export interface ChatController {
   announceReady(): void;
   /** Open the anchored slash/mention popover and request host results. */
   requestAutocomplete(mode: ComposerMode, query: string): void;
+  /** Open the saved-transcript resume picker. */
+  openResumePicker(): void;
   /** The single primary action: send while idle-valid, stop while busy. */
   requestSubmit(): void;
   /** Tear down every listener/timer. Idempotent. */
@@ -198,16 +240,149 @@ function mountController(options: ChatControllerOptions): ChatController {
   // ---- Render batching ---------------------------------------------------
   let renderScheduled = false;
 
+  /** Schema control + context strip: one paint pass from reducer state only. */
+  function renderSchemaAndContext(): void {
+    const schema = state.schema;
+    schemaControl.setState({
+      schema: schema?.schema ?? null,
+      connectionId: schema?.connectionId ?? null,
+    });
+    shell.context.hidden = state.draft.context.length === 0;
+    contextStrip.render(state.draft.context.map(asContextRef));
+  }
+
   function renderState(): void {
     composer.render(state);
+    renderAttachments();
+    renderAutocomplete();
+    renderSchemaAndContext();
+    // TASK-CHATV2-017: the keyed transcript + activity timeline paint from the
+    // SAME reducer state the composer does — one state, one paint pass.
+    transcript.render(state);
+    activity.render(state);
+    announcePhase(state.phase);
     // TASK-CHATV2-014: the policy sheet reflects the HOST's policy + capability.
     permission.setState(
       state.capabilities?.supports.bypassPermissions === true,
       state.permissionPolicy,
     );
     renderPermissionRequest();
+    renderChangePlan();
+    renderErrorCard();
+    renderSessions();
+    // TASK-CHATV2-017 group D: the engine pill + model chip paint from the SAME
+    // reducer state in this coalesced pass (one writer per control).
+    header.setEngineEntries(engineEntriesFor(state));
+    header.render(state);
+    modelMenu.setModels(state.models);
+    modelMenu.renderChip(state);
+    shell.banner.hidden = state.changePlan === null && state.error === null;
     options.renderExtra?.(state, shell);
     options.onState?.(state);
+    // Recompute viewport proximity off the freshly painted DOM.
+    scroll.sync();
+  }
+
+  /** One reviewed plan card; host state remains authoritative until it changes. */
+  let changePlanCard: ChangePlanCard | null = null;
+  let renderedChangePlan: ChatViewState["changePlan"] = null;
+  function renderChangePlan(): void {
+    const plan = state.changePlan;
+    if (plan === renderedChangePlan) return;
+    changePlanCard?.destroy();
+    changePlanCard = null;
+    renderedChangePlan = plan;
+    shell.banner.hidden = plan === null;
+    if (plan === null) return;
+    changePlanCard = renderChangePlanCard({
+      mount: shell.banner,
+      plan: plan.plan,
+      tool: plan.tool,
+      onApprove: () => {
+        postIntent({
+          kind: "plan_approve",
+          protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+          clientRequestId: nextId(),
+        });
+      },
+      onReject: () => {
+        postIntent({
+          kind: "plan_reject",
+          protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+          clientRequestId: nextId(),
+        });
+      },
+    });
+    shell.banner.hidden = false;
+  }
+
+  /** One safe error card per reducer error state; retry never reads the DOM draft. */
+  let errorCard: ErrorCardHandle | null = null;
+  let renderedError: ChatViewState["error"] = null;
+  function renderErrorCard(): void {
+    const error = state.error;
+    if (error === renderedError) return;
+    errorCard?.destroy();
+    errorCard = null;
+    renderedError = error;
+    if (error === null) return;
+    errorCard = createErrorCard({
+      frame: error.frame,
+      ...(error.request === null ? {} : { request: error.request }),
+      callbacks: {
+        onRetry: (request) => requestRetry(request),
+        onChangeEngine: () => {
+          const engine = shell.header.querySelector<HTMLElement>("#UnicDB-ai-chat-v2-engine");
+          try {
+            engine?.focus();
+          } catch {
+            /* older webviews may reject focus on a detached node */
+          }
+        },
+      },
+    });
+    shell.banner.appendChild(errorCard.root);
+    shell.banner.hidden = false;
+  }
+
+  /** Sessions/resume is created once; its dialogs and document listener are owned here. */
+  const sessions: SessionsController = createSessionsController(
+    {
+      root: shell.root,
+      header: shell.header,
+      statusLiveRegion: shell.statusLiveRegion,
+      alertLiveRegion: shell.alertLiveRegion,
+    },
+    {
+      onNewSession: (clientRequestId) =>
+        postIntent({ kind: "create_session", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2, clientRequestId }),
+      onRenameSession: (clientRequestId, _sessionId, title) =>
+        postIntent({ kind: "rename_session", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2, clientRequestId, title }),
+      onClearSession: (clientRequestId) =>
+        postIntent({ kind: "clear_session", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2, clientRequestId }),
+      onExportSession: (clientRequestId, _sessionId, format) =>
+        postIntent({ kind: "export_session", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2, clientRequestId, format }),
+      onResumeSession: (clientRequestId, sessionId) =>
+        postIntent({ kind: "resume_saved_session", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2, clientRequestId, sessionId }),
+      onListSessions: () => postIntent({ kind: "list_sessions", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2 }),
+      onOpenSettings: () => postIntent({ kind: "open_settings", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2 }),
+      onCopyDiagnostics: writeClipboard,
+    },
+  );
+
+  function renderSessions(): void {
+    const sessionState: SessionsViewState = {
+      sessionId: state.sessionId,
+      title: state.sessionTitle,
+      hasHistory: state.hydration.hasHistory || state.transcript.order.length > 0,
+      hasDraft: state.draft.text.trim().length > 0,
+      busy: busyPhase(state.phase),
+      sessions: state.sessions,
+      diagnosticIds: state.error === null ? [] : [state.error.frame.diagnosticId],
+      engine: state.capabilities?.displayName ?? "",
+      model: state.models?.active ?? "",
+    };
+    sessions.render(sessionState);
   }
 
   /** Keep the anchored request sheet in sync with the single pending request. */
@@ -261,6 +436,7 @@ function mountController(options: ChatControllerOptions): ChatController {
           selectionStart: selection.start,
           selectionEnd: selection.end,
         });
+        syncAutocompleteFromDraft();
       },
       onSelectionChange(selection: ComposerSelection): void {
         dispatch({
@@ -268,27 +444,24 @@ function mountController(options: ChatControllerOptions): ChatController {
           selectionStart: selection.start,
           selectionEnd: selection.end,
         });
+        syncAutocompleteFromDraft();
       },
       onAttachOpen(): void {
-        /* Attach picker is wired by a later wave (CHATV2-013). */
+        attachMenu.setAvailability(attachAvailability());
+        attachMenu.open();
       },
       onSlashOpen(): void {
-        /* Slash popover is wired by CHATV2-010. */
+        openSlashAutocomplete();
       },
       onModelOpen(): void {
-        /* Model menu is wired by CHATV2-012. */
+        modelMenu.open();
       },
-      onContextPreview(): void {
-        /* Context preview is wired by CHATV2-011. */
-      },
-      onContextRemove(refId: string): void {
-        dispatch({ type: "CONTEXT_REMOVED", refId });
-        postIntent({
-          kind: "remove_context",
-          protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
-          clientRequestId: nextId(),
-          refId,
-        });
+      onContextActivate(refId: string): void {
+        // The strip owns the chip DOM, so it cannot observe its own hosted
+        // clicks; the controller — which owns the refs — routes the activation
+        // back through the ONE preview path.
+        const target = state.draft.context.find((ref) => ref.id === refId);
+        if (target !== undefined) previewContext(asContextRef(target));
       },
       onSchemaOpen(): void {
         postIntent({ kind: "pick_active_schema", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2 });
@@ -303,6 +476,409 @@ function mountController(options: ChatControllerOptions): ChatController {
   );
 
   const prompt = composer.prompt;
+
+  // ---- Attach menu + ephemeral image draft ---------------------------------
+  // The capability snapshot is the sole proof that an image input may exist.
+  // Workspace/database mention support is the only availability information on
+  // the V2 wire; selection remains unavailable until the host can prove one.
+  let attachmentController: AttachmentController | null = null;
+  let attachmentImageInput: boolean | null = null;
+
+  function attachAvailability(): {
+    readonly hasWorkspaceFolder: boolean;
+    readonly hasSelection: boolean;
+    readonly hasDatabaseConnection: boolean;
+    readonly imageInput: boolean;
+  } {
+    const supports = state.capabilities?.supports;
+    return {
+      hasWorkspaceFolder: supports?.workspaceMentions === true,
+      hasSelection: false,
+      hasDatabaseConnection: supports?.dbMentions === true,
+      imageInput: supports?.imageInput === true,
+    };
+  }
+
+  function renderAttachments(): void {
+    const imageInput = attachAvailability().imageInput;
+    if (attachmentController === null || attachmentImageInput !== imageInput) {
+      attachmentController?.destroy();
+      attachmentController = createAttachmentController({
+        container: shell.composer,
+        imageInput,
+        callbacks: {
+          onAdd: (attachment) => dispatch({ type: "ATTACHMENT_ADDED", attachment }),
+          onRemove: (id) => dispatch({ type: "ATTACHMENT_REMOVED", id }),
+        },
+      });
+      attachmentImageInput = imageInput;
+    }
+    attachmentController.setAttachments(state.draft.attachments);
+  }
+
+  function openAttachContext(action: AttachMenuAction): void {
+    attachMenu.close("activate");
+    if (action === "image") {
+      attachmentController?.openFileInput();
+      return;
+    }
+    const kindFilter = action === "database" ? "database" : action === "selection" ? "selection" : "file";
+    requestAutocomplete("mention", "", kindFilter);
+  }
+
+  const attachMenu: AttachMenu = createAttachMenu({
+    anchor: shell.composer,
+    trigger: composer.attachButton,
+    onAction: openAttachContext,
+  });
+
+  // ---- Active schema chip + context strip (TASK-CHATV2-013 / 011) ----------
+  //
+  // Both are PURE VIEWS of reducer state: the schema chip follows the host
+  // `schema` frame, the strip renders `draft.context`. Neither scrapes the DOM,
+  // and the controller remains the only transport for their intents.
+  const schemaControl: SchemaControl = createSchemaControl({
+    container: shell.context,
+    id: COMPOSER_IDS.schema,
+    onPickSchema: () => {
+      postIntent({ kind: "pick_active_schema", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2 });
+    },
+  });
+  // The composer's center lane positions the chip (the schema slot) and keeps
+  // the composer's footer lane at <=3 buttons.
+  composer.setSchemaControl(schemaControl.element);
+
+  const contextStrip: ContextChipStrip = createContextChipStrip({
+    container: composer.contextList,
+    previewAnchor: shell.composer,
+    callbacks: {
+      onPreview: (toRef) => previewContext(toRef),
+      onRemove: (refId) => removeContextById(refId),
+      onResolve: (toRef, choice) => resolveContext(toRef, choice),
+    },
+  });
+
+  /** The exact wire ref behind a rendered chip (unrenderable refs fall back). */
+  function wireRefFor(toRef: ContextRef): AiChatContextRefV2 {
+    const source = toRef.source;
+    return {
+      id: toRef.id,
+      kind: toRef.kind,
+      label: toRef.label,
+      detail: toRef.detail,
+      displayToken: toRef.displayToken,
+      source: source.type === "uri" ? source.uri : `${source.connectionId}.${source.schema}.${source.name}`,
+      status: toRef.status,
+      revision: toRef.snapshot.revision,
+    };
+  }
+
+  /** Show the model-free metadata preview the strip builds locally. */
+  function previewContext(toRef: ContextRef): void {
+    contextStrip.showPreview(toRef);
+    postIntent({
+      kind: "preview_context",
+      protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+      clientRequestId: nextId(),
+      ref: wireRefFor(toRef),
+    });
+  }
+
+  /** Remove exactly ONE ref id — a duplicate label never removes a sibling. */
+  function removeContextById(refId: string): void {
+    dispatch({ type: "CONTEXT_REMOVED", refId });
+    postIntent({
+      kind: "remove_context",
+      protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+      clientRequestId: nextId(),
+      refId,
+    });
+  }
+
+  /** Ask the host to re-validate ONE ref; the host answer is authoritative. */
+  function resolveContext(toRef: ContextRef, choice: ContextResolutionChoice): void {
+    if (choice === "remove" || choice === "send_without") {
+      removeContextById(toRef.id);
+      return;
+    }
+    postIntent({
+      kind: "resolve_context",
+      protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+      clientRequestId: nextId(),
+      ref: wireRefFor(toRef),
+    });
+  }
+
+  /** A ref the host resolved cleanly no longer blocks the next send. */
+  function applyContextResolution(frame: AiChatHostFrameV2): void {
+    if (frame.kind !== "context_resolved") return;
+    const f = frame as { ref: AiChatContextRefV2; status: AiChatContextRefV2["status"] };
+    dispatch({
+      type: "CONTEXT_REF_RESOLVED",
+      refId: f.ref.id,
+      status: f.status ?? "ready",
+    });
+  }
+
+  // ---- Shared slash / mention autocomplete ---------------------------------
+  const autocomplete: AutocompleteView = createAutocompleteView({
+    anchor: shell.composer,
+    prompt,
+    slashButton: composer.slashButton,
+    emptyMessage: "No matching context",
+    ariaLabel: "Chat suggestions",
+  });
+
+  function asContextRef(ref: AiChatContextRefV2): ContextRef {
+    const isObject = ref.kind === "table" || ref.kind === "view" || ref.kind === "routine" || ref.kind === "schema";
+    const source = ref.source ?? ref.detail ?? ref.id;
+    const sourceParts = source.split(".");
+    return {
+      id: ref.id,
+      kind: ref.kind,
+      label: ref.label,
+      detail: ref.detail ?? ref.label,
+      displayToken: ref.displayToken ?? `@${ref.label}`,
+      source: isObject
+        ? {
+            type: "object",
+            connectionId: sourceParts[0] ?? "default",
+            schema: sourceParts[1] ?? "",
+            name: sourceParts.slice(2).join(".") || ref.label,
+            objectKind: ref.kind,
+          }
+        : { type: "uri", uri: source },
+      snapshot: { revision: ref.revision ?? "", capturedAt: null },
+      status: ref.status ?? (ref.missing === true ? "missing" : ref.changed === true ? "changed" : "ready"),
+      preview: { supported: true, reason: null },
+    };
+  }
+
+  function openSlashAutocomplete(): void {
+    const text = state.draft.text;
+    const caret = state.draft.selectionEnd;
+    let eligibility = slashEligibility(text, caret);
+    if (!eligibility.eligible || eligibility.token === null) {
+      const nextText = `${text.slice(0, caret)}/${text.slice(caret)}`;
+      applyDraftEdit(nextText, caret + 1, caret + 1);
+      eligibility = slashEligibility(nextText, caret + 1);
+    }
+    if (!eligibility.eligible || eligibility.token === null) return;
+    dispatch({
+      type: "AUTOCOMPLETE_OPENED",
+      mode: "slash",
+      requestId: nextId(),
+      draftRevision: state.draft.revision,
+      query: eligibility.token.query,
+    });
+  }
+
+  function renderAutocomplete(): void {
+    const ac = state.autocomplete;
+    if (!ac.open) {
+      autocomplete.close();
+      return;
+    }
+    autocomplete.setOnInvoke((index) => acceptAutocomplete(index));
+    autocomplete.setOnRetry(() => requestAutocomplete("mention", ac.query, undefined, true));
+    if (ac.mode === "slash") {
+      const commands = filterSlashCommands(
+        resolveChatCommands({
+          capabilities: state.capabilities,
+          availableEngines: state.capabilities === null ? [] : [state.capabilities.engine],
+          modelRoles: state.capabilities?.modelRoles.map((role) => role.role) ?? [],
+        }),
+        ac.query,
+      );
+      autocomplete.setRows(
+        commands.map((command) => ({
+          id: command.id,
+          primary: `/${command.name}`,
+          secondary: command.reason ?? command.description,
+          syntax: command.syntax,
+          unavailable: command.reason !== undefined,
+          ...(command.providerLabel === undefined ? {} : { badge: command.providerLabel }),
+        })),
+        ac.activeIndex,
+      );
+      return;
+    }
+    if (ac.loading) {
+      autocomplete.setLoading("Searching context…");
+      return;
+    }
+    const structured = ac.items.filter((item): item is typeof item & { readonly ref: AiChatContextRefV2 } => item.ref !== undefined);
+    if (structured.length === 0) {
+      autocomplete.setStatus({ id: "mention-empty", text: "No matching context" });
+      return;
+    }
+    autocomplete.setRows(
+      buildMentionRows(structured.map((item) => asContextRef(item.ref))).map((row) => ({
+        id: row.id,
+        primary: row.primary,
+        secondary: row.secondary,
+        unavailable: row.unavailable,
+        icon: row.icon,
+        ...(row.groupLabel === undefined ? {} : { groupLabel: row.groupLabel }),
+      })),
+      ac.activeIndex,
+    );
+  }
+
+  // ---- V2 surfaces (transcript · activity · scroll · announcer) -----------
+  //
+  // TASK-CHATV2-017: the V2 components that were built in earlier waves are now
+  // mounted into the shell by their SINGLE owner (this controller) so production
+  // boot is V2-only. Each is created once, rendered from reducer state in the
+  // coalesced pass, and torn down by `dispose()`.
+  const transcript: TranscriptRenderer = createTranscriptRenderer(
+    {
+      transcript: shell.transcript,
+      statusLiveRegion: shell.statusLiveRegion,
+      alertLiveRegion: shell.alertLiveRegion,
+    },
+    {
+      onCopyAssistant(_messageId, raw) {
+        writeClipboard(raw);
+      },
+      onCopyUser(_messageId, text) {
+        writeClipboard(text);
+      },
+      onRegenerateAssistant() {
+        postIntent({
+          kind: "regenerate",
+          protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+          clientRequestId: nextId(),
+        });
+      },
+      onLoadEarlier() {
+        postIntent({ kind: "list_sessions", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2 });
+      },
+    },
+  );
+
+  const activity: ActivityTimeline = createActivityTimeline({
+    activities: shell.transcript,
+    statusLiveRegion: shell.statusLiveRegion,
+    alertLiveRegion: shell.alertLiveRegion,
+    // TASK-CHATV2-017 group D: the header is the SINGLE pill writer — the
+    // timeline no longer writes the engine button/label.
+  });
+
+  const scroll: ScrollController = createScrollController({
+    viewport: shell.transcript,
+    pillHost: shell.main,
+    onProximityChange: (near) => {
+      dispatch({ type: "SCROLL_PROXIMITY_CHANGED", distancePx: near ? 0 : SCROLL_FAR_PX });
+    },
+  });
+
+  const announcer: LiveAnnouncer = createLiveAnnouncer({
+    polite: shell.statusLiveRegion,
+    assertive: shell.alertLiveRegion,
+  });
+
+  // ---- V2 group D: header + engine/model menus (single ownership) ---------
+  //
+  // TASK-CHATV2-017: the 40px header is mounted ONCE by this controller. It
+  // owns NEITHER the overflow menu NOR the session title — the sessions
+  // surface already owns both from the same reducer state — so it mounts with
+  // `ownOverflow: false` / `ownTitle: false` and contributes the engine pill,
+  // its listbox and the ack-correlated switch flow.
+  function engineEntriesFor(s: ChatViewState): readonly EngineMenuEntry[] {
+    if (options.engineEntries !== undefined) return options.engineEntries;
+    const caps = s.capabilities;
+    if (caps === null) return [];
+    // `fallback` IS the active engine working: the pill words it "Ready" and
+    // the fallback reason rides the banner — the entry stays selectable.
+    const status: EngineMenuEntry["status"] = caps.status === "fallback" ? "ready" : caps.status;
+    return [{
+      engine: caps.engine,
+      displayName: caps.displayName,
+      status,
+      resolution: caps.reasonUnavailable ?? "",
+      ...(status === "unavailable" ? { setupAvailable: true } : {}),
+    }];
+  }
+
+  const engineSwitch: EngineSwitchView = createEngineSwitchView({
+    mount: shell.root,
+    getRequestId: nextId,
+    postSetEngine: (clientRequestId, engine) =>
+      postIntent({ kind: "set_engine", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2, clientRequestId, engine }),
+    postSetModel: (clientRequestId, role) =>
+      postIntent({ kind: "set_model", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2, clientRequestId, role }),
+    // The ONE stop path (locks + STOP_REQUESTED dispatch). The view's own id is
+    // not reused: the host correlates the turn, not this stop request.
+    postStop: () => requestStop(),
+    onToast: (message, level) => announcer.announceNow(message, level !== "info"),
+    displayNameFor: (engine) =>
+      state.capabilities !== null && state.capabilities.engine === engine
+        ? state.capabilities.displayName
+        : engineDisplayName(engine),
+    // The pill/chip move via header.render / modelMenu.renderChip from the ACK
+    // frames the reducer already applied — never optimistically.
+    onEngineCommitted: () => {},
+    onModelCommitted: () => {},
+  });
+
+  const header: ChatHeaderView = createChatHeader({
+    header: shell.header,
+    ownTitle: false,
+    ownOverflow: false,
+    engineEntries: engineEntriesFor(state),
+    onEngineOpen: () => header.setEngineEntries(engineEntriesFor(state)),
+    callbacks: {
+      // Owned by the sessions surface; unreachable while ownTitle/ownOverflow
+      // are false — the seams exist so a future caller can flip them safely.
+      onRenameSubmit: () => {},
+      onOverflowAction: () => {},
+      onSelectEngine: (engine) => {
+        header.engineMenu.close();
+        if (busyPhase(state.phase)) engineSwitch.requestBusy(engine);
+        else engineSwitch.requestIdle(engine);
+      },
+      onEngineSetup: () => {
+        header.engineMenu.close();
+        postIntent({ kind: "open_settings", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2 });
+      },
+    },
+  });
+
+  const modelMenu: ModelMenuView = createModelMenu({
+    anchor: shell.composer,
+    trigger: composer.modelButton,
+    onSelectModel: (role) => {
+      modelMenu.close();
+      engineSwitch.requestModel(role);
+    },
+    onOpenSettings: () => postIntent({ kind: "open_settings", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2 }),
+  });
+
+  /** Best-effort clipboard write for transcript Copy actions (never throws). */
+  function writeClipboard(text: string): void {
+    try {
+      const nav = (globalThis as {
+        navigator?: { clipboard?: { writeText(t: string): Promise<void> } };
+      }).navigator;
+      void nav?.clipboard?.writeText(text);
+    } catch {
+      /* clipboard is unavailable in some hosts — the action is advisory */
+    }
+  }
+
+  /** Announce the current phase without letting a stream chunk reach a region. */
+  let lastPhase: TurnPhase | null = null;
+  function announcePhase(phase: TurnPhase): void {
+    if (phase === lastPhase) return;
+    lastPhase = phase;
+    if (phase === "idle") return;
+    if (phase === "failed") {
+      announcer.announceNow(FAILED_ANNOUNCEMENT, true);
+      return;
+    }
+    announcer.announcePhase(phaseCopyLabel(phase), phase === "awaiting_permission");
+  }
 
   // ---- Permission policy + request sheet (TASK-CHATV2-014) ----------------
   //
@@ -383,6 +959,36 @@ function mountController(options: ChatControllerOptions): ChatController {
 
     const pending = state.pendingSubmit;
     if (pending === null || pending.clientRequestId !== clientRequestId) return;
+    attachmentController?.markSubmitted(
+      clientRequestId,
+      pending.draft.attachments.map((attachment) => attachment.id),
+    );
+    postIntent({
+      kind: "submit_turn",
+      protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+      clientRequestId,
+      draft: {
+        text: pending.draft.text,
+        revision: pending.draft.revision,
+        context: pending.draft.context,
+        attachments: pending.draft.attachments,
+      },
+    });
+    dispatch({ type: "SUBMIT_CONSUMED", clientRequestId });
+  }
+
+  /** Re-issue a card-captured structured request with a fresh opaque id. */
+  function requestRetry(request: { readonly draft: ChatViewState["draft"] }): void {
+    if (disposed || busyPhase(state.phase)) return;
+    const clientRequestId = nextId();
+    submitLock = clientRequestId;
+    dispatch({ type: "SUBMIT_REQUESTED", clientRequestId, draft: request.draft });
+    const pending = state.pendingSubmit;
+    if (pending === null || pending.clientRequestId !== clientRequestId) return;
+    attachmentController?.markSubmitted(
+      clientRequestId,
+      pending.draft.attachments.map((attachment) => attachment.id),
+    );
     postIntent({
       kind: "submit_turn",
       protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
@@ -428,8 +1034,23 @@ function mountController(options: ChatControllerOptions): ChatController {
 
   // ---- Autocomplete ------------------------------------------------------
 
-  function requestAutocomplete(mode: ComposerMode, query: string): void {
+  function requestAutocomplete(
+    mode: ComposerMode,
+    query: string,
+    kindFilter?: AiChatContextKindFilterV2,
+    force = false,
+  ): void {
     if (disposed) return;
+    const current = state.autocomplete;
+    if (
+      !force &&
+      current.open &&
+      current.mode === mode &&
+      current.query === query &&
+      current.draftRevision === state.draft.revision
+    ) {
+      return;
+    }
     const requestId = nextId();
     const draftRevision = state.draft.revision;
     dispatch({ type: "AUTOCOMPLETE_OPENED", mode, requestId, draftRevision, query });
@@ -440,20 +1061,84 @@ function mountController(options: ChatControllerOptions): ChatController {
       requestId,
       draftRevision,
       query,
+      ...(kindFilter === undefined ? {} : { kindFilter }),
     });
   }
 
-  /** Accept the active autocomplete row: insert its token over the selection. */
-  function acceptAutocomplete(): void {
+  function syncAutocompleteFromDraft(): void {
+    if (disposed) return;
+    const { text, selectionEnd, revision } = state.draft;
+    const slash = slashEligibility(text, selectionEnd);
+    if (slash.eligible && slash.token !== null) {
+      if (
+        !state.autocomplete.open ||
+        state.autocomplete.mode !== "slash" ||
+        state.autocomplete.query !== slash.token.query ||
+        state.autocomplete.draftRevision !== revision
+      ) {
+        dispatch({
+          type: "AUTOCOMPLETE_OPENED",
+          mode: "slash",
+          requestId: nextId(),
+          draftRevision: revision,
+          query: slash.token.query,
+        });
+      }
+      return;
+    }
+    const mention = mentionEligibility(text, selectionEnd);
+    if (!mention.eligible || mention.token === null) {
+      if (state.autocomplete.open) dispatch({ type: "AUTOCOMPLETE_CLOSED", reason: "selection" });
+      return;
+    }
+    if (
+      state.autocomplete.open &&
+      state.autocomplete.mode === "mention" &&
+      state.autocomplete.query === mention.token.query &&
+      state.autocomplete.draftRevision === revision
+    ) {
+      return;
+    }
+    requestAutocomplete("mention", mention.token.query);
+  }
+
+  /** Accept a visible autocomplete row through its typed slash/mention semantic. */
+  function acceptAutocomplete(index = state.autocomplete.activeIndex): void {
     const ac = state.autocomplete;
-    const item = ac.items[ac.activeIndex];
-    const token = item?.token ?? "";
+    const item = ac.items[index];
     const text = state.draft.text;
-    const start = state.draft.selectionStart;
-    const end = state.draft.selectionEnd;
-    if (token.length > 0) {
-      const edit = replaceSelection(text, start, end, `${token} `);
-      applyDraftEdit(edit.text, edit.selectionStart, edit.selectionEnd);
+    if (ac.mode === "slash") {
+      const commands = filterSlashCommands(
+        resolveChatCommands({
+          capabilities: state.capabilities,
+          availableEngines: state.capabilities === null ? [] : [state.capabilities.engine],
+          modelRoles: state.capabilities?.modelRoles.map((role) => role.role) ?? [],
+        }),
+        ac.query,
+      );
+      const command = commands[index];
+      const edit = command === undefined ? null : slashAcceptEdit(text, state.draft.selectionEnd, command);
+      if (edit !== null) applyDraftEdit(edit.text, edit.selectionStart, edit.selectionEnd);
+    } else if (item !== undefined) {
+      const eligibility = mentionEligibility(text, state.draft.selectionEnd);
+      if (item.ref === undefined) {
+        const token = item.token;
+        if (eligibility.token !== null && token.length > 0) {
+          const edit = replaceSelection(
+            text,
+            eligibility.token.start,
+            eligibility.token.end,
+            `@${token.replace(/^@/, "")} `,
+          );
+          applyDraftEdit(edit.text, edit.selectionStart, edit.selectionEnd);
+        }
+      } else {
+        const edit = eligibility.token === null ? null : mentionAcceptEdit(text, eligibility.token, asContextRef(item.ref));
+        if (edit !== null) {
+          applyDraftEdit(edit.text, edit.selectionStart, edit.selectionEnd);
+          dispatch({ type: "CONTEXT_ADDED", ref: item.ref });
+        }
+      }
     }
     dispatch({ type: "AUTOCOMPLETE_CLOSED", reason: "commit" });
   }
@@ -490,7 +1175,17 @@ function mountController(options: ChatControllerOptions): ChatController {
       permissionFocused:
         (options.isPermissionFocused?.() === true || permissionRequest.isOpen()),
       autocompleteOpen: state.autocomplete.open,
-      autocompleteItemCount: state.autocomplete.items.length,
+      autocompleteItemCount:
+        state.autocomplete.mode === "slash"
+          ? filterSlashCommands(
+              resolveChatCommands({
+                capabilities: state.capabilities,
+                availableEngines: state.capabilities === null ? [] : [state.capabilities.engine],
+                modelRoles: state.capabilities?.modelRoles.map((role) => role.role) ?? [],
+              }),
+              state.autocomplete.query,
+            ).length
+          : state.autocomplete.items.length,
     });
     handleDecision(decision, event);
   }
@@ -569,10 +1264,19 @@ function mountController(options: ChatControllerOptions): ChatController {
 
   function applyHostFrame(frame: AiChatHostFrameV2): void {
     dispatch({ type: "HOST_FRAME", frame });
+    // The host's re-validated ref status is authoritative and settles exactly
+    // the one ref it names (CHATV2-011).
+    applyContextResolution(frame);
+    sessions.applyHostFrame(frame);
+    // TASK-CHATV2-017 group D: the switch flow correlates ack-bearing
+    // capabilities/models frames + turn end; runs before the kind-specific
+    // early returns so it sees every frame.
+    engineSwitch.handleHostFrame(frame);
 
     // Ack/rejection bookkeeping runs against the post-dispatch state.
     if (frame.kind === "turn_started") {
       const f = frame as { clientRequestId: string };
+      attachmentController?.acknowledgeSubmit(f.clientRequestId);
       if (submitLock !== null && f.clientRequestId === submitLock) submitLock = null;
       releaseStopLock();
       return;
@@ -615,6 +1319,7 @@ function mountController(options: ChatControllerOptions): ChatController {
       postIntent({ kind: "ready_v2", protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2 });
     },
     requestAutocomplete,
+    openResumePicker: () => sessions.openResumePicker(),
     requestSubmit,
     dispose: () => {
       if (disposed) return;
@@ -631,6 +1336,29 @@ function mountController(options: ChatControllerOptions): ChatController {
       permissionRequest.destroy();
       bypassWarning.destroy();
       permission.destroy();
+      changePlanCard?.destroy();
+      changePlanCard = null;
+      errorCard?.destroy();
+      errorCard = null;
+      sessions.dispose();
+      // TASK-CHATV2-017 group D: the header + its menus go with it so a remount
+      // leaves no node or listener behind.
+      engineSwitch.destroy();
+      modelMenu.destroy();
+      header.destroy();
+      contextStrip.destroy();
+      schemaControl.destroy();
+      autocomplete.destroy();
+      attachMenu.destroy();
+      attachmentController?.destroy();
+      attachmentController = null;
+      shell.banner.hidden = true;
+      // TASK-CHATV2-017: tear down the V2 surfaces so a remount leaves no node,
+      // timer or listener behind.
+      announcer.destroy();
+      activity.dispose();
+      transcript.dispose();
+      scroll.destroy();
       activeMounts.delete(root);
       composer.destroy();
     },

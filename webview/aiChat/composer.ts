@@ -22,7 +22,6 @@
 
 import { createChatIcon } from "./icons";
 import { PERMISSION_CHIP_ICON_PX, permissionChipLabel } from "./permissions";
-import { schemaChipLabel } from "./schemaControl";
 import type { ChatViewState, TurnPhase } from "./store";
 
 /** The V2 root class every scoped style selector hangs off. */
@@ -118,10 +117,14 @@ export interface ComposerCallbacks {
   onSlashOpen(): void;
   /** Model chip pressed. */
   onModelOpen(): void;
-  /** A context chip body pressed (preview). */
-  onContextPreview(refId: string): void;
-  /** A context chip remove control pressed. */
-  onContextRemove(refId: string): void;
+  /**
+   * A context chip body was activated (preview). TASK-CHATV2-011: the chip DOM
+   * now belongs to `createContextChipStrip`, which the controller mounts into
+   * `contextList` — so this reports the activation the hosted strip could not
+   * observe itself. It is NOT a second preview path: the composer renders no
+   * chip.
+   */
+  onContextActivate(refId: string): void;
   /** Schema chip pressed. */
   onSchemaOpen(): void;
   /** Permission control pressed. */
@@ -157,7 +160,14 @@ export interface ComposerView {
   readonly slashButton: HTMLButtonElement;
   readonly modelButton: HTMLButtonElement;
   readonly contextList: HTMLElement;
+  /** The pre-`render` schema slot. After `setSchemaControl` it detached. */
   readonly schemaButton: HTMLButtonElement;
+  /**
+   * TASK-CHATV2-013: hand the ACTIVE-SCHEMA chip to the composer's center lane,
+   * replacing the placeholder in place. The caller owns the control's lifecycle
+   * (`createSchemaControl`); the composer only positions it.
+   */
+  readonly setSchemaControl: (control: HTMLElement) => void;
   readonly permissionButton: HTMLButtonElement;
   readonly primaryButton: HTMLButtonElement;
   readonly hint: HTMLElement;
@@ -285,12 +295,17 @@ export function renderComposerV2(
   contextList.id = COMPOSER_IDS.contextList;
   contextList.setAttribute("aria-label", "Draft context");
 
+  // TASK-013: the ACTIVE-SCHEMA chip is ordered LAST in the center lane. Its
+  // DOM (and its host picker intent) belongs to `createSchemaControl`, which
+  // the controller mounts into the lane right here — so the placeholder stays
+  // in position and no second schema surface ever exists.
+  const schemaPlaceholder = el("span", cls("schema-slot"));
   const schemaButton = button(joinClasses(cls("chip"), cls("schema-chip")));
   schemaButton.id = COMPOSER_IDS.schema;
   const schemaLabel = el("span", cls("label-optional"));
   schemaButton.appendChild(schemaLabel);
 
-  centerLane.append(modelButton, contextList, schemaButton);
+  centerLane.append(modelButton, contextList, schemaPlaceholder, schemaButton);
 
   const rightLane = el("div", joinClasses(cls("composer-lane"), cls("composer-lane-right")));
 
@@ -308,6 +323,12 @@ export function renderComposerV2(
   rightLane.append(permissionButton, primaryButton);
 
   bottom.append(leftLane, centerLane, rightLane);
+
+  // TASK-013: `schemaChipBtnV2` is the ACTIVE-SCHEMA chip. Its DOM (and its
+  // host picker intent) belongs to `createSchemaControl`, which the controller
+  // mounts into the center lane — so the legacy composer chip node is removed
+  // and the id is re-homed onto the V2 control. No second schema surface.
+  schemaButton.remove();
 
   const hint = el("div", joinClasses(cls("composer-hint")));
   hint.id = COMPOSER_IDS.hint;
@@ -351,42 +372,6 @@ export function renderComposerV2(
     );
     prompt.style.height = `${next}px`;
     prompt.classList.toggle(cls("input-scroll"), measured > COMPOSER_AUTO_GROW_MAX_PX);
-  }
-
-  function renderContext(state: ChatViewState): void {
-    const refs = state.draft.context;
-    if (refs.length === 0) {
-      contextList.replaceChildren();
-      contextList.hidden = true;
-      return;
-    }
-    contextList.hidden = false;
-    contextList.replaceChildren(
-      ...refs.map((ref) => {
-        const chip = el(
-          "span",
-          joinClasses(
-            cls("context-chip"),
-            ref.changed === true && cls("context-chip-changed"),
-            ref.missing === true && cls("context-chip-missing"),
-          ),
-        );
-
-        const preview = button(cls("context-chip-body"));
-        preview.title = `Preview context: ${ref.label}`;
-        preview.setAttribute("aria-label", `Preview context: ${ref.label}`);
-        preview.textContent = ref.label;
-        preview.addEventListener("click", () => callbacks.onContextPreview(ref.id));
-
-        const remove = button(cls("context-chip-remove"));
-        labelIconOnly(remove, `Remove context: ${ref.label}`);
-        remove.appendChild(createChatIcon("x", 16));
-        remove.addEventListener("click", () => callbacks.onContextRemove(ref.id));
-
-        chip.append(preview, remove);
-        return chip;
-      }),
-    );
   }
 
   function renderPrimary(state: ChatViewState): void {
@@ -444,18 +429,6 @@ export function renderComposerV2(
     // Rebuild (never append) so repeated renders cannot stack duplicate glyphs.
     modelButton.replaceChildren(modelLabel, createChatIcon("chevron-down", 16));
 
-    // TASK-CHATV2-013: the chip label is the single `schemaChipLabel` helper —
-    // `Schema: <name>` while a schema is active, or the safe `No active
-    // schema` otherwise. Never a guessed default.
-    const schemaText = schemaChipLabel({
-      schema: state.schema?.schema ?? null,
-      connectionId: state.schema?.connectionId ?? null,
-    });
-    schemaLabel.textContent = schemaText;
-    schemaButton.title = schemaText;
-    schemaButton.setAttribute("aria-label", schemaText);
-    schemaButton.replaceChildren(schemaLabel, createChatIcon("schema", 16));
-
     // TASK-CHATV2-014: the chip renders the HOST's live policy (never a local
     // guess) and is HIDDEN entirely on an engine that does not support
     // permissions — an unsupported engine must not show a dead control.
@@ -473,7 +446,10 @@ export function renderComposerV2(
       );
     }
 
-    renderContext(state);
+    // The context lane is only a HOST: the chip DOM belongs to
+    // `createContextChipStrip` (mounted by the controller). The composer owns
+    // the lane's visibility so an empty draft never leaves a stray gap.
+    contextList.hidden = state.draft.context.length === 0;
     renderPrimary(state);
 
     const busy = isBusyPhase(state.phase);
@@ -502,7 +478,6 @@ export function renderComposerV2(
   attachButton.addEventListener("click", () => callbacks.onAttachOpen());
   slashButton.addEventListener("click", () => callbacks.onSlashOpen());
   modelButton.addEventListener("click", () => callbacks.onModelOpen());
-  schemaButton.addEventListener("click", () => callbacks.onSchemaOpen());
   permissionButton.addEventListener("click", () => callbacks.onPermissionOpen());
   primaryButton.addEventListener("click", () => {
     if (primaryButton.disabled || primaryLocked) return;
@@ -525,6 +500,14 @@ export function renderComposerV2(
     modelButton,
     contextList,
     schemaButton,
+    setSchemaControl: (control: HTMLElement): void => {
+      // Idempotent: a remount of the controller replaces the chip in position
+      // rather than stacking a second one. The placeholder is removed on the
+      // first handoff; the legacy chip node is detached from birth.
+      if (control.parentElement !== centerLane) {
+        schemaPlaceholder.replaceWith(control);
+      }
+    },
     permissionButton,
     primaryButton,
     hint,

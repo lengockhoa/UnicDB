@@ -114,6 +114,7 @@ import {
   type AiChatContextRefV2,
   type AiChatFrameEnvelopeV2,
   type AiChatHostFrameV2Body,
+  type AiChatToolStatusV2,
   type AiChatTurnPhaseV2,
   type AiChatWebviewIntentV2,
 } from "./aiChatPanelMessages";
@@ -3455,7 +3456,9 @@ export class AiChatPanel {
             runningPosted = true;
             this.postSessionState("running");
           }
+          // AIX-07: same wire-hygiene pass as onDelta.
           this.post({ type: "step", label: String(redact(chunk)) });
+          this.sessionNoteReasoning(String(redact(chunk)));
         },
         onToolStart: (toolName) => {
           if (token?.aborted) return;
@@ -4274,6 +4277,7 @@ export class AiChatPanel {
       // wire surface too — same redact() pass as the raw-ACP delta path
       // and the OmpChatEngine funnel's onThought.
       this.post({ type: "thought", text: String(redact(chunk)) });
+      this.sessionNoteReasoning(String(redact(chunk)));
       return;
     }
     // Every other update kind (including the stale cycle-L `agent_end` /
@@ -4859,6 +4863,29 @@ export class AiChatPanel {
     if (this.sessionAssistantMessageId === null) return;
     this.sessionAssistantText += text;
     this.sessionCheckpoint();
+    // TASK-CHATV2-017: the V2 transcript is host-driven, so mirror every live
+    // assistant chunk onto the ordered V2 seam (stable turnId + messageId).
+    this.postV2({
+      kind: "text_delta",
+      turnId: this.v2TurnId ?? `turn-${this.sessionTurnSeq}`,
+      messageId: this.sessionAssistantMessageId,
+      text,
+    });
+  }
+
+  /**
+   * TASK-CHATV2-017: mirror one redacted reasoning chunk onto the V2 seam.
+   * Reasoning never enters `sessionAssistantText` and never reaches a live
+   * region — the V2 store renders it in the collapsed thinking block only.
+   */
+  private sessionNoteReasoning(text: string): void {
+    if (this.sessionAssistantMessageId === null) return;
+    this.postV2({
+      kind: "reasoning_delta",
+      turnId: this.v2TurnId ?? `turn-${this.sessionTurnSeq}`,
+      messageId: this.sessionAssistantMessageId,
+      text,
+    });
   }
 
   /** Replace the live assistant text with the engine's authoritative final. */
@@ -4896,6 +4923,14 @@ export class AiChatPanel {
     if (this.sessionAssistantMessageId === null) return;
     if (this.sessionOutcome === "idle") this.sessionOutcome = "completed";
     const assistantId = this.sessionAssistantMessageId;
+    // TASK-CHATV2-017: close the V2 turn exactly once (the reducer seals every
+    // still-streaming transcript item on this terminal frame).
+    const turnId = this.v2TurnId ?? `turn-${this.sessionTurnSeq}`;
+    this.postV2({
+      kind: "turn_finished",
+      turnId,
+      outcome: this.sessionOutcome,
+    });
     try {
       this.sessionStore().finalizeTurn(this.sessionId ?? this.v2SessionId, {
         terminalState: this.sessionOutcome,
@@ -4943,6 +4978,43 @@ export class AiChatPanel {
       summary: input.summary,
       durationMs: input.durationMs ?? null,
     });
+    // TASK-CHATV2-017: mirror the tool lifecycle onto the V2 seam. A `running`
+    // record opens a `tool_started`; any terminal status closes it with a
+    // `tool_finished`. Summary is shape-only text (never row bytes).
+    const turnId = this.v2TurnId ?? `turn-${this.sessionTurnSeq}`;
+    if (input.status === "running") {
+      this.postV2({
+        kind: "tool_started",
+        turnId,
+        toolId: input.toolId,
+        label: input.label,
+        action: input.action,
+      });
+      return;
+    }
+    this.postV2({
+      kind: "tool_finished",
+      turnId,
+      toolId: input.toolId,
+      label: input.label,
+      status: this.v2ToolStatus(input.status),
+      summary: input.summary,
+      ...(input.durationMs !== undefined ? { durationMs: input.durationMs } : {}),
+    });
+  }
+
+  /** Map a stored activity status onto the closed V2 tool-status set. */
+  private v2ToolStatus(status: AiChatStoredActivity["status"]): AiChatToolStatusV2 {
+    switch (status) {
+      case "ok":
+        return "ok";
+      case "failed":
+        return "failed";
+      case "denied":
+        return "denied";
+      default:
+        return "failed";
+    }
   }
 
   /**

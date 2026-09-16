@@ -190,20 +190,11 @@ describeIfCss("TASK-AGTUI-008 - polish CSS contract (easing + reduced-motion)", 
     expect(css, "webview/styles.css must exist").not.toBe("");
   });
 
-  // Test case #4 — timing tokens.
-  //   toggle = 100ms ease-in-out
+  // Test case #4 — timing token.
   //   tool card body = 150ms ease
   // Accept ms or s decimal forms; case-insensitive.
-  it(".UnicDB-chat-toggle::after uses 100ms ease-in-out for the thumb slide", () => {
-    // The toggle thumb transition fires when the bypass toggle flips. The
-    // animated property is `left`; duration must be 100ms ease-in-out.
-    const re =
-      /\.UnicDB-chat-toggle::after\s*\{[^}]*transition:\s*[^;]*left\s+(?:0?\.1s|100ms)\s+ease-in-out/i;
-    expect(
-      re.test(css),
-      ".UnicDB-chat-toggle::after must declare `transition: left 0.1s ease-in-out` (or 100ms form)",
-    ).toBe(true);
-  });
+  // TASK-CHATV2-017 Lane 3: the V1 bypass toggle (.UnicDB-chat-toggle) is
+  // deleted with the V1 composer; its 100ms pin is retired with it.
 
   it(".UnicDB-chat-tool-collapsible transition timing token is 150ms ease", () => {
     // The collapse/expand affordance on the legacy tool result card
@@ -399,58 +390,9 @@ describeIfBundle(
       },
     );
 
-    // Test case #5 — stop pulse only while busy.
-    itIfBundle(
-      "#5 stop pulse only while busy: setBusy(true) adds class, setBusy(false) (via done / init) removes it",
-      () => {
-        loadBundle();
-        dispatch({ type: "init", hasHistory: false });
-        // Initial state — busy = false, stopBtn has NO .UnicDB-chat-stop-live class.
-        const stopBtn = btn("stopBtn");
-        expect(stopBtn).not.toBeNull();
-        expect(
-          stopBtn.classList.contains("UnicDB-chat-stop-live"),
-          "stop pulse must NOT be on when idle",
-        ).toBe(false);
-
-        // Send a turn → composer swaps send ↔ stop, stop pulse engages.
-        const prompt = document.getElementById("prompt") as HTMLTextAreaElement;
-        prompt.value = "ping";
-        btn("sendBtn").click();
-        expect(
-          stopBtn.classList.contains("UnicDB-chat-stop-live"),
-          "sending must engage the stop pulse (busy state)",
-        ).toBe(true);
-
-        // Terminal `done` event re-enables the composer + drops the pulse.
-        dispatch({ type: "done" });
-        expect(
-          stopBtn.classList.contains("UnicDB-chat-stop-live"),
-          "done must drop the stop pulse (idle)",
-        ).toBe(false);
-
-        // Idempotent: another `done` is a no-op (still no pulse).
-        dispatch({ type: "done" });
-        expect(
-          stopBtn.classList.contains("UnicDB-chat-stop-live"),
-          "subsequent done must keep stop pulse absent",
-        ).toBe(false);
-
-        // Send again → pulse re-engages. An `init{hasHistory:false}` (the
-        // clear reset path) must drop the pulse even mid-busy.
-        prompt.value = "pong";
-        btn("sendBtn").click();
-        expect(
-          stopBtn.classList.contains("UnicDB-chat-stop-live"),
-          "second send must re-engage the stop pulse",
-        ).toBe(true);
-        dispatch({ type: "init", hasHistory: false });
-        expect(
-          stopBtn.classList.contains("UnicDB-chat-stop-live"),
-          "init reset must drop the stop pulse (host-driven clear)",
-        ).toBe(false);
-      },
-    );
+    // Test case #5 retired — TASK-CHATV2-017 Lane 3: the V1 send/stop swap
+    // (#sendBtn/#stopBtn + .UnicDB-chat-stop-live) is deleted; V2 busy state
+    // is pinned by webview/aiChat/__tests__ composer + controller suites.
   },
 );
 

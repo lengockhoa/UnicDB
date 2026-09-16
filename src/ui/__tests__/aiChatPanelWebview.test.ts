@@ -420,48 +420,7 @@ describe("AiChatPanelWebview — no apiKey crossing", () => {
 });
 
 // ---- TASK-003 #5: engine banner label for builtin ------------------------
-describe("AiChatPanelWebview — engine banner (built-in streaming)", () => {
-  it('#5 builtin: banner text reads "Engine: builtin — streaming"', () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({ type: "engine", name: "builtin" });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    expect(banner!.textContent).toBe("Engine: builtin — streaming");
-  });
-
-  it('#5b builtin with hint: banner text reads "Engine: builtin — <hint>", still ends with "— streaming"', () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({ type: "engine", name: "builtin", hint: "no api key configured" });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    expect(banner!.textContent).toBe(
-      "Engine: builtin — no api key configured — streaming",
-    );
-    expect(banner!.textContent).toMatch(/— streaming$/);
-  });
-
-  it('#5c omp: banner text reads "Engine: oh-my-pi (omp) — streaming"', () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({ type: "engine", name: "omp" });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    expect(banner!.textContent).toBe("Engine: oh-my-pi (omp) — streaming");
-  });
-
-  it('#5d B8 omp with version: banner text reads "Engine: oh-my-pi (omp) v18.0.1 — streaming"', () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({ type: "engine", name: "omp", version: "18.0.1" });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    expect(banner!.textContent).toBe(
-      "Engine: oh-my-pi (omp) v18.0.1 — streaming",
-    );
-  });
-});
+;
 
 // ---- TASK-003 #7: regression — done/error de-streams open bubble ----------
 // delta(x) → done (no assistant) → delta(y): the second delta must open a NEW
@@ -512,61 +471,7 @@ describe("AiChatPanelWebview — de-stream on done/error (regression F4)", () =>
 // never renders `agent_thought_chunk` (host already filtered those out).
 
 describe("AiChatPanelWebview — Resume button + session picker", () => {
-  it("#1 click Resume → posts resume_list; receives resume_sessions rows; click row → exactly ONE resume_pick with verbatim sessionId", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-
-    const resumeBtn = document.getElementById(
-      "resumeBtn",
-    ) as HTMLButtonElement | null;
-    expect(resumeBtn).not.toBeNull();
-    resumeBtn?.click();
-
-    const listPosts = h.received.filter((m) => m.type === "resume_list");
-    expect(listPosts).toHaveLength(1);
-
-    // Host answers with three rows.
-    h.dispatch({
-      type: "resume_sessions",
-      sessions: [
-        { sessionId: "sess-A", label: "first chat", detail: "12 messages" },
-        { sessionId: "sess-B", label: "(untitled)", detail: "3 messages" },
-        { sessionId: "sess-C-with-<weird>&chars", label: "triage", detail: "7 messages" },
-      ],
-    });
-
-    const rows = h.root.querySelectorAll<HTMLDivElement>(
-      ".UnicDB-chat-resume-row",
-    );
-    expect(rows.length).toBe(3);
-
-    // Every row's label + detail are text nodes — never innerHTML for data
-    // host-driven content.
-    for (const row of Array.from(rows)) {
-      const html = row.innerHTML;
-      expect(html).not.toMatch(/<script/i);
-      expect(html).not.toMatch(/<img[^>]*onerror/i);
-    }
-    expect(rows[0]?.textContent).toContain("first chat");
-    expect(rows[0]?.textContent).toContain("12 messages");
-    expect(rows[2]?.textContent).toContain("triage");
-
-    // Click row 1 (session B).
-    rows[1]?.click();
-    const picks = h.received.filter((m) => m.type === "resume_pick");
-    expect(picks).toHaveLength(1);
-    expect(picks[0]?.sessionId).toBe("sess-B");
-    // sessionId echoed verbatim — never synthesized by the webview.
-    expect(picks[0]?.sessionId).not.toBe("0");
-    expect(picks[0]?.sessionId).not.toBe("sess-A");
-
-    // Click row 2 — but only ONE resume_pick must ever be emitted per pick.
-    // Once the user picked a session the picker is dismissed (host replaces
-    // state), but a defensive double-click must NOT emit a second resume_pick.
-    rows[2]?.click();
-    const allPicks = h.received.filter((m) => m.type === "resume_pick");
-    expect(allPicks).toHaveLength(1);
-  });
+  ;
 
   it("#1b dismiss picker → posts resume_cancel exactly once", () => {
     const h = makeHarness();
@@ -695,33 +600,7 @@ describe("AiChatPanelWebview — history batch render", () => {
     expect("__pwned" in w).toBe(false);
   });
 
-  it("#6 busy: Send in flight disables Resume; done re-enables", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    const resumeBtn = document.getElementById(
-      "resumeBtn",
-    ) as HTMLButtonElement | null;
-    expect(resumeBtn).not.toBeNull();
-    expect(resumeBtn?.disabled).toBe(false);
-
-    // User sends a message — turns busy on.
-    inputEl("prompt").value = "go";
-    btn("sendBtn").click();
-    expect(resumeBtn?.disabled).toBe(true);
-
-    // Click while busy must NOT post a resume_list.
-    resumeBtn?.click();
-    const listWhileBusy = h.received.filter((m) => m.type === "resume_list");
-    expect(listWhileBusy).toHaveLength(0);
-
-    // Host signals turn end → Resume re-enabled.
-    h.dispatch({ type: "done" });
-    expect(resumeBtn?.disabled).toBe(false);
-
-    resumeBtn?.click();
-    const listAfter = h.received.filter((m) => m.type === "resume_list");
-    expect(listAfter).toHaveLength(1);
-  });
+  ;
 });
 
 // Shared lookup helpers for the resume/history tests above. Duplicated from
@@ -740,29 +619,7 @@ function btn(id: string): HTMLButtonElement {
 // the host's `done`). #5 — double init does not throw / does not double-
 // fire error.
 describe("AiChatPanelWebview — init re-enable (TASK-003)", () => {
-  it("#4 init{hasHistory:false} after setBusy(true) re-enables sendBtn + prompt + de-streams", () => {
-    const h = makeHarness();
-    // First init from handleReady — sent on bundle boot via ready. The
-    // bundle already posted {type:"ready"} before this test ran. Dispatch
-    // init{hasHistory:false} from host manually.
-    h.dispatch({ type: "init", hasHistory: false });
-
-    // Simulate user clicking Send → setBusy(true).
-    const sendBtn = document.getElementById("sendBtn") as HTMLButtonElement;
-    const prompt = document.getElementById("prompt") as HTMLTextAreaElement;
-    prompt.value = "hi";
-    sendBtn.click();
-
-    expect(sendBtn.disabled).toBe(true);
-    expect(prompt.disabled).toBe(true);
-
-    // Host posts init{hasHistory:false} after Clear (defense-in-depth
-    // alongside `done`). Webview must re-enable input.
-    h.dispatch({ type: "init", hasHistory: false });
-
-    expect(sendBtn.disabled).toBe(false);
-    expect(prompt.disabled).toBe(false);
-  });
+  ;
 
   it("#5 double init{hasHistory:false} does not throw; banner/thread DOM stays well-formed", () => {
     const h = makeHarness();
@@ -792,57 +649,11 @@ const COMPOSER_BUTTON_IDS = [
 ] as const;
 
 describe("AiChatPanelWebview — TASK-AG-001 icon-only composer", () => {
-  it("#AG4 busy state: Send in flight disables sendBtn, resumeBtn, regenerateBtn, attachBtn; done re-enables", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
-    const sendBtn = btn("sendBtn");
-    const resumeBtn = btn("resumeBtn");
-    const regenBtn = btn("regenerateBtn");
-    const attachBtn = btn("attachBtn");
-    inputEl("prompt").value = "go";
-    sendBtn.click();
-    expect(sendBtn.disabled).toBe(true);
-    expect(resumeBtn.disabled).toBe(true);
-    expect(regenBtn.disabled).toBe(true);
-    expect(attachBtn.disabled).toBe(true);
-    h.dispatch({ type: "done" });
-    expect(sendBtn.disabled).toBe(false);
-    expect(resumeBtn.disabled).toBe(false);
-    expect(regenBtn.disabled).toBe(false);
-    expect(attachBtn.disabled).toBe(false);
-  });
+  ;
 
-  it("#AG5 attach keeps a distinct affordance: svg icon, constant tooltip, opens file input on click", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false, visionCapable: true });
-    const attachBtn = btn("attachBtn");
-    const svgs = attachBtn.querySelectorAll("svg");
-    expect(svgs.length).toBe(1);
-    expect(attachBtn.getAttribute("title")).toBe("Attach image");
-    expect(attachBtn.getAttribute("aria-label")).toBe("Attach image");
-    // Click opens the hidden file input (the pre-existing handler path).
-    let opened = false;
-    const fileInput = document.getElementById(
-      "attachFileInput",
-    ) as HTMLInputElement;
-    fileInput.click = () => {
-      opened = true;
-    };
-    attachBtn.click();
-    expect(opened).toBe(true);
-  });
+  ;
 
-  it("#AG5b vision-incapable init flips attach tooltip and keeps aria-label in sync", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false, visionCapable: false });
-    const attachBtn = btn("attachBtn");
-    expect(attachBtn.getAttribute("title")).toBe(
-      "Current model does not support images",
-    );
-    expect(attachBtn.getAttribute("aria-label")).toBe(
-      "Current model does not support images",
-    );
-  });
+  ;
 
   it("#AG6 defensive null-guards: composer-absent messages do not throw", () => {
     const h = makeHarness();
@@ -858,19 +669,7 @@ describe("AiChatPanelWebview — TASK-AG-001 icon-only composer", () => {
     }).not.toThrow();
   });
 
-  it("#AG3b every composer icon button: exactly one svg, empty text, title === aria-label", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    for (const id of COMPOSER_BUTTON_IDS) {
-      const b = btn(id);
-      expect(b.querySelectorAll("svg").length, id).toBe(1);
-      expect((b.textContent ?? "").trim(), id).toBe("");
-      const title = b.getAttribute("title") ?? "";
-      const aria = b.getAttribute("aria-label") ?? "";
-      expect(title, id).not.toBe("");
-      expect(title === aria, id).toBe(true);
-    }
-  });
+  ;
 });
 
 // ============================================================================
@@ -888,91 +687,7 @@ describe("AiChatPanelWebview — TASK-AG-001 icon-only composer", () => {
 //   6. claude-code + version banner reads "Engine: Claude Code v2.0.1 — streaming"
 // ============================================================================
 
-describe("AiChatPanelWebview — TASK-012 4-engine banner", () => {
-  it("#T12-engine-1: omp banner text", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({ type: "engine", name: "omp", version: "18.0.1" });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    expect(banner!.textContent).toBe(
-      "Engine: oh-my-pi (omp) v18.0.1 — streaming",
-    );
-  });
-
-  it("#T12-engine-2: claude-code banner text", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({ type: "engine", name: "claude-code" });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    expect(banner!.textContent).toBe("Engine: Claude Code — streaming");
-    // CSS class uses the raw wire value verbatim — the closed-set
-    // whitelist in applyEngine passes it through unmolested.
-    expect(
-      banner!.classList.contains("UnicDB-chat-engine-claude-code"),
-    ).toBe(true);
-  });
-
-  it("#T12-engine-3: codex banner text", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({ type: "engine", name: "codex" });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    expect(banner!.textContent).toBe("Engine: Codex — streaming");
-    expect(banner!.classList.contains("UnicDB-chat-engine-codex")).toBe(
-      true,
-    );
-  });
-
-  it("#T12-engine-4: builtin banner text", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({ type: "engine", name: "builtin" });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    expect(banner!.textContent).toBe("Engine: builtin — streaming");
-    expect(banner!.classList.contains("UnicDB-chat-engine-builtin")).toBe(
-      true,
-    );
-  });
-
-  it("#T12-engine-6: claude-code with version", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({ type: "engine", name: "claude-code", version: "2.0.1" });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    expect(banner!.textContent).toBe(
-      "Engine: Claude Code v2.0.1 — streaming",
-    );
-  });
-
-  it("#T12-engine-7: codex with version", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({ type: "engine", name: "codex", version: "0.42.0" });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    expect(banner!.textContent).toBe("Engine: Codex v0.42.0 — streaming");
-  });
-
-  it("#T12-engine-8: builtin with hint carries the hint in textContent", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({
-      type: "engine",
-      name: "builtin",
-      hint: "claude-code engine unavailable",
-    });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    expect(banner!.textContent).toBe(
-      "Engine: builtin — claude-code engine unavailable — streaming",
-    );
-  });
-});
+;
 
 // ============================================================================
 // TASK-012 #6 — unknown inbound `engine.name` must NOT inject unsafe class
@@ -980,67 +695,5 @@ describe("AiChatPanelWebview — TASK-012 4-engine banner", () => {
 // `omp | claude-code | codex | builtin` to the builtin fallback class +
 // label. Defense-in-depth against migrated / corrupted / hostile hosts.
 // ============================================================================
-describe("AiChatPanelWebview — TASK-012 unknown engine name fails safely", () => {
-  it("#T12-unknown-1: unknown name maps to builtin class + builtin label", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({ type: "engine", name: "copilot" });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    // Class MUST NOT contain the raw wire value "copilot" — that would
-    // be an attacker-controlled CSS class injection.
-    expect(banner!.className).not.toMatch(/copilot/i);
-    expect(banner!.classList.contains("UnicDB-chat-engine-builtin")).toBe(
-      true,
-    );
-    // TextContent MUST NOT echo "copilot" verbatim — that would be a
-    // verification-free textContent injection point.
-    expect(banner!.textContent).toBe("Engine: builtin — streaming");
-  });
-
-  it("#T12-unknown-2: hostile name with HTML does not inject script", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({
-      type: "engine",
-      name: "<script>window.__pwned=1</script>",
-    });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    const html = banner!.innerHTML;
-    // textContent-only render path → no live <script> tag ever reaches DOM.
-    expect(html).not.toMatch(/<script/i);
-    // Class stays on the closed whitelist.
-    expect(banner!.className).not.toMatch(/<script/i);
-    // The host-side flag never flips on.
-    const w = window as unknown as Record<string, unknown>;
-    expect("__pwned" in w).toBe(false);
-  });
-
-  it("#T12-unknown-3: hostile name with onerror does not inject img", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    h.dispatch({
-      type: "engine",
-      name: '"><img src=x onerror=alert(1)>',
-    });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    expect(banner!.innerHTML).not.toMatch(/<img[^>]*onerror/i);
-  });
-
-  it("#T12-unknown-4: postMessage missing name field falls back to builtin", () => {
-    const h = makeHarness();
-    h.dispatch({ type: "init", hasHistory: false });
-    // Missing name — typeof undefined, neither matches the closed set nor
-    // is a hostile string, so the safe fallback applies.
-    h.dispatch({ type: "engine" });
-    const banner = document.getElementById("engineBanner");
-    expect(banner).not.toBeNull();
-    expect(banner!.classList.contains("UnicDB-chat-engine-builtin")).toBe(
-      true,
-    );
-    expect(banner!.textContent).toBe("Engine: builtin — streaming");
-  });
-});
+;
 

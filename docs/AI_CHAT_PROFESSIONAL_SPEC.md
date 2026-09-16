@@ -26,7 +26,6 @@ The target is an evolution of the current implementation. Do not discard the hos
 | `src/ui/aiChatPanel.ts` | Owns webview panel, history, turns, policies, engines, permissions, grounding and host message dispatch. | Keep as host orchestration authority; split only pure state reducers/helpers if necessary. |
 | `src/ui/aiChatPanelMessages.ts` | Typed host↔webview contract. Existing frames include `delta`, `thought`, `tool_result`, `permission_request`, `engine`, `session_state`, `usage`, models and grounding. | Version and extend deliberately; no untyped `unknown` payloads for new behavior. |
 | `webview/aiChatPanelMain.ts` | Current DOM composition, message handling, slash and mention behavior. | Replace fragmented module-level mutable UI state with one controller/store. Preserve security restrictions. |
-| `webview/aiChatPanelComposer.ts` | Current composer DOM, model chip, attachment controls, send/stop behavior. | Refactor into the new composer component; do not retain competing key listeners. |
 | `webview/aiChatPanelThread.ts` | Escaped bubbles, Markdown path, thinking/tool cards. | Reuse safe render primitives. Continue escaping all untrusted values. |
 | `src/ai/omp/*`, `src/ai/claudeCode/*`, `src/ai/codex/*` | Engine adapters declare a shared delta/thought/tool/error/done callback surface, but not every adapter emits every kind today (verified: omp emits delta/thought/tool at `src/ai/omp/ompChatEngine.ts:279,288,299`; claude-code declares `onThought` at `src/ai/claudeCode/claudeCodeProcess.ts:63` with no emit site; codex declares `onToolStart`/`onToolEnd` at `src/ai/codex/codexProcess.ts:87` with no emit site). | Adapt into a common capability and event envelope; advertise only emitted kinds; do not parse provider-specific UI text in webview. |
 | `webview/styles.css` | Theme-aware current styles and VS Code CSS variable fallbacks. | Replace chat selectors incrementally under a new `.UnicDB-ai-chat-v2` root; do not change other webviews. |
@@ -36,6 +35,12 @@ The target is an evolution of the current implementation. Do not discard the hos
 The webview never receives API keys, database credentials, raw permission tokens, unredacted process stderr or raw trace dumps. Host-generated opaque permission IDs are echoed verbatim only. User text, mention labels, paths, tool summaries and model output must be rendered through `textContent` or the existing escape-first Markdown renderer. A model tool action remains subject to the existing policy and SQL/DML safety gates; a visual “Bypass permissions” switch may change a permitted session policy only through host validation and never bypasses destructive SQL confirmation or workspace trust.
 
 No localStorage, sessionStorage or browser persistence API is permitted. Persisted chat records belong to the host-side VS Code storage layer, never the webview.
+
+### 2.1 Cutover status (TASK-CHATV2-017, 2026-09-16)
+
+V2 is the **authoritative boot**: `webview/aiChatPanelMain.ts` acquires the API once, mounts the `.UnicDB-ai-chat-v2` shell + `createChatController` once, posts `ready_v2`, routes typed V2 frames and disposes cleanly. The controller (the single keyboard/transport owner) also mounts the keyed transcript, activity timeline, scroll viewport and live announcer. The host emits the V2-native streaming family (`text_delta` / `reasoning_delta` / `tool_started` / `tool_finished` / `turn_finished`) from its central session choke points.
+
+**Deleted (cutover complete):** `webview/aiChatPanelHeader.ts` and `webview/aiChatPanelComposer.ts` no longer exist; every V2 surface (composer, transcript, header/engine pill, model menu, schema chip, context chips, autocomplete, attach menu, sessions, change plan, errors, permissions) is mounted by the controller, and the dead `.UnicDB-chat` CSS was retired from `webview/styles.css`. Non-V2 host frames are still rendered by the legacy bridge in `aiChatPanelMain.ts` through the controller's single message listener.
 
 ## 3. Technical architecture
 

@@ -181,6 +181,8 @@ export function createSessionsController(
   let activeRowIndex = 0;
   let dialog: HTMLElement | null = null;
   let dialogOpener: HTMLElement | null = null;
+  const toastTimers = new Set<ReturnType<typeof setTimeout>>();
+  const SESSION_TOAST_MARKER = "data-chat-session-toast";
 
   /** Pending rename correlated by clientRequestId AND sessionId. */
   let pendingRename: { clientRequestId: string; sessionId: string; title: string } | null = null;
@@ -219,8 +221,13 @@ export function createSessionsController(
     node.setAttribute("aria-live", level === "error" ? "assertive" : "polite");
     node.dataset["level"] = level;
     node.textContent = message;
+    node.setAttribute(SESSION_TOAST_MARKER, "1");
     refs.root.appendChild(node);
-    setTimeout(() => node.remove(), 4000);
+    const timer = setTimeout(() => {
+      toastTimers.delete(timer);
+      node.remove();
+    }, 4000);
+    toastTimers.add(timer);
   }
 
   // -- keyboard / focus ----------------------------------------------------
@@ -558,23 +565,28 @@ export function createSessionsController(
     renderTitle();
   }
 
+  function onTitleDoubleClick(): void {
+    beginRename();
+  }
+
+  function onTitleKeydown(event: KeyboardEvent): void {
+    if (event.key !== "F2") return;
+    event.preventDefault();
+    beginRename();
+  }
+
   function renderTitle(): void {
     let title = titleNode();
     if (title === null) {
       title = el("span", `${PREFIX}-title-inline`);
+      title.addEventListener("dblclick", onTitleDoubleClick);
+      title.addEventListener("keydown", onTitleKeydown);
       refs.header.appendChild(title);
     }
     title.textContent = state.title !== null && state.title.length > 0 ? state.title : "Untitled chat";
     title.title = title.textContent;
     title.tabIndex = 0;
     title.setAttribute("aria-label", `Chat title: ${title.textContent}. Press F2 to rename.`);
-    title.addEventListener("dblclick", () => beginRename());
-    title.addEventListener("keydown", (event) => {
-      if (event.key === "F2") {
-        event.preventDefault();
-        beginRename();
-      }
-    });
   }
 
   // -- resume picker -------------------------------------------------------
@@ -741,22 +753,34 @@ export function createSessionsController(
     }
   }
 
+  function onOverflowClick(): void {
+    if (menuOpen) closeMenu();
+    else openMenu();
+  }
+
   function dispose(): void {
     if (disposed) return;
     disposed = true;
     document.removeEventListener("keydown", onDocumentKeydown, true);
+    overflowButton.removeEventListener("click", onOverflowClick);
     closeMenu();
     closeDialog();
+    for (const timer of toastTimers) clearTimeout(timer);
+    toastTimers.clear();
+    for (const toast of Array.from(refs.root.querySelectorAll<HTMLElement>(`[${SESSION_TOAST_MARKER}]`))) {
+      toast.remove();
+    }
     layer.remove();
     renameInput?.remove();
     renameInput = null;
+    const title = titleNode();
+    title?.removeEventListener("dblclick", onTitleDoubleClick);
+    title?.removeEventListener("keydown", onTitleKeydown);
+    title?.remove();
   }
 
   // Overflow button opens the menu (the shell only created the node).
-  overflowButton.addEventListener("click", () => {
-    if (menuOpen) closeMenu();
-    else openMenu();
-  });
+  overflowButton.addEventListener("click", onOverflowClick);
 
   return {
     render,

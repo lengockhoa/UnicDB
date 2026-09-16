@@ -6,7 +6,9 @@
 //   1. happy — pinned markdown subset (bold, inline code, h2/h3, fenced code).
 //   2. edge (XSS) — five-metachar escape mapping; hostile input inert.
 //   3. edge (roundtrip) — fenced raw code recoverable through data-raw.
-//   4. regression — aiChatPanelThread.test.ts suite (lives in a sibling file).
+//   4. regression — the V2 transcript suite (webview/aiChat/__tests__/transcript.test.ts)
+//      carries the migrated safe-render coverage (TASK-CHATV2-017 deleted the
+//      legacy aiChatPanelThread module + its test).
 //   5. regression (bundle) — main panel suite + npm run compile (CI lane).
 
 // @vitest-environment jsdom

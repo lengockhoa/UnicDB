@@ -24,6 +24,9 @@ import {
   type ComposerSelection,
   type ComposerView,
 } from "../composer";
+import { createContextChipStrip, CONTEXT_CHIP_MARKER } from "../contextChips";
+import { createSchemaControl } from "../schemaControl";
+import { buildContextRefs } from "../../../src/ui/aiChatContext";
 import { createInitialChatState, type ChatViewState } from "../store";
 
 interface Recorder {
@@ -66,7 +69,7 @@ function recorder(): Recorder & ComposerCallbacks {
     onModelOpen: () => {
       rec.model += 1;
     },
-    onContextPreview: (id) => rec.previews.push(id),
+    onContextActivate: (id) => rec.previews.push(id),
     onContextRemove: (id) => rec.removals.push(id),
     onSchemaOpen: () => {
       rec.schema += 1;
@@ -140,7 +143,6 @@ describe("TASK-CHATV2-008 composer — control inventory (#1)", () => {
       slashCommandBtn: COMPOSER_IDS.slash,
       modelChipBtnV2: COMPOSER_IDS.model,
       contextChipList: COMPOSER_IDS.contextList,
-      schemaChipBtnV2: COMPOSER_IDS.schema,
       permissionBtn: COMPOSER_IDS.permission,
       primaryTurnBtn: COMPOSER_IDS.primary,
       composerHint: COMPOSER_IDS.hint,
@@ -155,13 +157,31 @@ describe("TASK-CHATV2-008 composer — control inventory (#1)", () => {
       view.attachButton,
       view.slashButton,
       view.modelButton,
-      view.schemaButton,
       view.permissionButton,
       view.primaryButton,
     ]) {
       expect(btn.tagName).toBe("BUTTON");
     }
     expect(view.contextList.tagName).toBe("DIV");
+  });
+
+  it("re-homes #schemaChipBtnV2 onto the mounted V2 schema control", () => {
+    // TASK-CHATV2-013: the schema chip belongs to `createSchemaControl`; the
+    // composer only positions it. The composer boots with NO second chip, and
+    // the handoff detaches the placeholder so no duplicate id can exist.
+    expect(document.getElementById(COMPOSER_IDS.schema)).toBeNull();
+    const control = createSchemaControl({
+      container: document.createElement("div"),
+      id: COMPOSER_IDS.schema,
+      onPickSchema: () => cb.schema++,
+    });
+    view.setSchemaControl(control.element);
+    const node = document.getElementById(COMPOSER_IDS.schema);
+    expect(node).toBe(control.element);
+    expect(node!.tagName).toBe("BUTTON");
+    control.element.click();
+    expect(cb.schema).toBe(1);
+    control.destroy();
   });
 
   it("gives every icon-only control identical title and aria-label", () => {
@@ -329,7 +349,28 @@ describe("TASK-CHATV2-008 composer — invalid draft edge (#4)", () => {
     expect(cb.primary).toBe(0);
   });
 
-  it("emits context preview/remove callbacks from real chip controls", () => {
+  it("hosts the V2 chip strip in #contextChipList and reports its activations", () => {
+    // TASK-CHATV2-011: `createContextChipStrip` owns the chip DOM inside the
+    // composer's lane; the composer reports the activation the strip cannot
+    // observe itself, and removal still reaches the controller's callback.
+    const strip = createContextChipStrip({
+      container: view.contextList,
+      callbacks: {
+        onPreview: (ref) => cb.onContextActivate(ref.id),
+        onRemove: (id) => cb.onContextRemove(id),
+        onResolve: () => {},
+      },
+    });
+    strip.render(
+      buildContextRefs([
+        {
+          kind: "table",
+          label: "public.users",
+          detail: "main.public.users",
+          source: { type: "object", connectionId: "main", schema: "public", name: "users", objectKind: "table" },
+        },
+      ]),
+    );
     view.render(
       idleValid({
         draft: {
@@ -339,10 +380,12 @@ describe("TASK-CHATV2-008 composer — invalid draft edge (#4)", () => {
         },
       }),
     );
-    view.contextList.querySelector<HTMLButtonElement>(".UnicDB-ai-chat-v2-context-chip-body")!.click();
+    expect(view.contextList.querySelectorAll(`[${CONTEXT_CHIP_MARKER}]`)).toHaveLength(1);
+    view.contextList.querySelector<HTMLButtonElement>(".UnicDB-ai-chat-v2-context-chip-preview")!.click();
     view.contextList.querySelector<HTMLButtonElement>(".UnicDB-ai-chat-v2-context-chip-remove")!.click();
-    expect(cb.previews).toEqual(["t1"]);
-    expect(cb.removals).toEqual(["t1"]);
+    expect(cb.previews).toHaveLength(1);
+    expect(cb.removals).toEqual(["table:main.public.users"]);
+    strip.destroy();
   });
 });
 
