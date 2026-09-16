@@ -243,6 +243,28 @@ function isAllowKindOptionId(optionId: unknown): optionId is "allow-once" | "all
   return optionId === "allow-once" || optionId === "allow-session";
 }
 
+/**
+ * REVIEW-CHATV2-R1 P1-3: the V2 permission sheet only ever enables its Allow
+ * controls for the canonical option ids `allow-once` / `allow-session`. Raw
+ * ACP servers pick their own option id strings, so an allow-kind option that
+ * does not use the literals would render the sheet with a DISABLED Allow
+ * button — and with the legacy card suppressed (single surface) there would
+ * be NO allow path at all. Options carry the ACP `kind` discriminator
+ * ("allow_once" | "allow_always" | "reject_once" | "reject_always"); map the
+ * allow kinds onto the canonical literals so the sheet can always grant.
+ * Everything else (canonical ids, deny kinds, opaque ids with no kind) maps
+ * to itself — the host-side response path reverses the mapping exactly.
+ */
+function normalizeV2PermissionOptionId(option: {
+  optionId: string;
+  kind?: unknown;
+}): string {
+  if (isAllowKindOptionId(option.optionId)) return option.optionId;
+  if (option.kind === "allow_once") return "allow-once";
+  if (option.kind === "allow_always") return "allow-session";
+  return option.optionId;
+}
+
 // ============================================================================
 // TASK-005 — @-mention references (DB objects + workspace files)
 // ============================================================================
@@ -1298,6 +1320,9 @@ interface PendingPermission {
   serverId: unknown;
   requestId: string;
   optionIds: Set<string>;
+  /** REVIEW-CHATV2-R1 P1-3: V2-normalized optionId → the server's original
+   * id. Only entries whose normalization changed the id are present. */
+  v2OptionIdMap: ReadonlyMap<string, string>;
   settled: boolean;
   timeoutHandle: NodeJS.Timeout;
 }
@@ -3661,18 +3686,24 @@ export class AiChatPanel {
   }
 
   /** TASK-CHATV2-014: post ONE `permission_requested` V2 frame against the
-   * live turn. The opaque requestId is echoed unchanged. */
+   * live turn. The opaque requestId is echoed unchanged. REVIEW-CHATV2-R1
+   * P1-3: option ids are normalized onto the sheet's canonical allow
+   * literals (see `normalizeV2PermissionOptionId`) so Allow is never
+   * spuriously disabled for raw-ACP servers that mint their own ids. */
   private postV2PermissionRequested(
     requestId: string,
     tool: { id: string; name: string; detail: string },
-    options: Array<{ optionId: string; label: string }>,
+    options: Array<{ optionId: string; label: string; kind?: unknown }>,
   ): void {
     this.postV2({
       kind: "permission_requested",
       turnId: this.v2TurnId ?? `turn-${this.sessionTurnSeq}`,
       requestId,
       tool: { id: tool.id, name: tool.name, detail: tool.detail },
-      options: options.map((o) => ({ optionId: o.optionId, label: o.label })),
+      options: options.map((o) => ({
+        optionId: normalizeV2PermissionOptionId(o),
+        label: o.label,
+      })),
     });
   }
 
@@ -4318,7 +4349,7 @@ export class AiChatPanel {
     const p = params as {
       sessionId?: unknown;
       toolCall?: { id?: unknown; name?: unknown; detail?: unknown };
-      options?: Array<{ optionId?: unknown; label?: unknown }>;
+      options?: Array<{ optionId?: unknown; label?: unknown; kind?: unknown }>;
     };
     const options = Array.isArray(p.options) ? p.options : [];
     const toolCall = p.toolCall;
@@ -4326,14 +4357,22 @@ export class AiChatPanel {
     const toolId = toolInfo.id;
     const toolName = toolInfo.name;
     const toolDetail = toolInfo.detail;
-    const optionEntries: Array<{ optionId: string; label: string }> = [];
+    // REVIEW-CHATV2-R1 P1-3: keep the server's RAW option ids for the
+    // legacy frame + the response allow-check, and carry the ACP `kind`
+    // discriminator so the V2 frame can normalize allow kinds onto the
+    // sheet's canonical literals.
+    const optionEntries: Array<{ optionId: string; label: string; kind?: unknown }> = [];
     const optionIdSet = new Set<string>();
+    const v2OptionIdMap = new Map<string, string>();
     for (const opt of options) {
       const id = typeof opt.optionId === "string" ? opt.optionId : "";
       const label = typeof opt.label === "string" ? opt.label : "";
       if (id.length === 0) continue;
-      optionEntries.push({ optionId: id, label });
+      const kind = typeof opt.kind === "string" ? opt.kind : undefined;
+      optionEntries.push({ optionId: id, label, kind });
       optionIdSet.add(id);
+      const normalized = normalizeV2PermissionOptionId({ optionId: id, kind });
+      if (normalized !== id) v2OptionIdMap.set(normalized, id);
     }
 
     // TASK-AGTUI-006: bypass ON — auto-answer without touching the
@@ -4374,6 +4413,7 @@ export class AiChatPanel {
       serverId: call.id,
       requestId,
       optionIds: optionIdSet,
+      v2OptionIdMap,
       settled: false,
       timeoutHandle: setTimeout(() => {
         // Default-deny on timeout — one cancelled ACP result.
@@ -4386,7 +4426,7 @@ export class AiChatPanel {
       type: "permission_request",
       requestId,
       tool: { id: toolId, name: toolName, detail: toolDetail },
-      options: optionEntries,
+      options: optionEntries.map(({ optionId, label }) => ({ optionId, label })),
     });
     // TASK-CHATV2-014: same request on the V2 seam for the anchored sheet.
     this.postV2PermissionRequested(requestId, {
@@ -4418,11 +4458,18 @@ export class AiChatPanel {
 
     // Allow requires a listed optionId; anything else (no optionId, unknown
     // optionId) is treated as deny — both paths write exactly one result.
+    // REVIEW-CHATV2-R1 P1-3: the V2 sheet answers with the NORMALIZED
+    // canonical allow literal; reverse-map it to the server's original id
+    // so the ACP result carries exactly what the server offered.
+    const grantedId =
+      typeof optionId === "string"
+        ? (pending.v2OptionIdMap.get(optionId) ?? optionId)
+        : optionId;
     const isAllow =
-      typeof optionId === "string" && pending.optionIds.has(optionId);
+      typeof grantedId === "string" && pending.optionIds.has(grantedId);
     if (isAllow) {
       session.handle.acp.respond(serverId, {
-        outcome: { outcome: "selected", optionId: optionId as string },
+        outcome: { outcome: "selected", optionId: grantedId as string },
       });
       return;
     }

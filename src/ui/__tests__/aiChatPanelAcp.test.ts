@@ -1838,3 +1838,116 @@ describe("AiChatPanel — TASK-AIX05-103 case 4 (cancellable create() seam)", ()
     panel.dispose();
   });
 });
+
+// ============================================================================
+// REVIEW-CHATV2-R1 P1-3 — raw-ACP allow-kind optionIds normalize onto the V2
+// sheet's canonical literals and map BACK to the server's original id on the
+// response, so Allow is never spuriously disabled and the ACP result carries
+// exactly what the server offered.
+// ============================================================================
+describe("AiChatPanel — raw ACP V2 optionId normalization (R1 P1-3)", () => {
+  it("#7 allow-kind kind field normalizes onto the V2 sheet and maps back on respond", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some((m) => isInit(m)));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await flush();
+
+    // Raw-ACP server mints its own ids; allow kinds ride the ACP `kind`
+    // discriminator.
+    session.transport.feed(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 21,
+        method: "session/request_permission",
+        params: {
+          sessionId: "sess-1",
+          toolCall: { id: "tool-21", name: "workspace_write", detail: "" },
+          options: [
+            { optionId: "ok1", label: "Yes", kind: "allow_once" },
+            { optionId: "no1", label: "No", kind: "reject_once" },
+          ],
+        },
+      }),
+    );
+    await until(() => postedMessages(p).some(isPermissionRequest));
+
+    // Legacy frame keeps the server's raw ids.
+    const legacy = postedMessages(p).find(isPermissionRequest) as PermissionRequestMsg;
+    expect(legacy.options.map((o) => o.optionId)).toEqual(["ok1", "no1"]);
+    // V2 frame normalizes the allow kind onto the canonical literal so the
+    // sheet's Allow control is enabled.
+    const v2 = postedMessages(p).find(
+      (m) => typeof m === "object" && m !== null && (m as { kind?: string }).kind === "permission_requested",
+    ) as { options: Array<{ optionId: string; label: string }> };
+    expect(v2.options.map((o) => o.optionId)).toEqual(["allow-once", "no1"]);
+
+    // The sheet answers with the normalized literal; the ACP result must
+    // carry the SERVER's original optionId, exactly once.
+    handler({ type: "permission_response", requestId: legacy.requestId, optionId: "allow-once" });
+    await until(() =>
+      session.transport
+        .allWritten()
+        .some((f) => f["id"] === 21 && f["result"] !== undefined),
+    );
+    const resultFrames = session.transport.allWritten().filter((f) => f["id"] === 21);
+    expect(resultFrames).toHaveLength(1);
+    const result = resultFrames[0]!["result"] as {
+      outcome: { outcome: string; optionId?: string };
+    };
+    expect(result.outcome.outcome).toBe("selected");
+    expect(result.outcome.optionId).toBe("ok1");
+  });
+
+  it("#8 canonical / kindless ids stay verbatim (omp HostMcp convention)", async () => {
+    agentState.runAgentMock.mockResolvedValue(makeRunResult([], ""));
+    const { start, sessions } = makeFakeAcpDeps();
+    const panel = new AiChatPanel({
+      extensionUri: extUri,
+      deps: makeDeps(),
+      adapterFactory: vi.fn(async () => null),
+      acp: { start },
+    });
+    panel.show();
+    const { panel: p, handler } = panelHarness();
+    handler({ type: "ready" });
+    await until(() => postedMessages(p).some((m) => isInit(m)));
+    handler({ type: "send", text: "go" });
+    await until(() => sessions.length > 0);
+    const session = sessions[0] as FakeAcpSession;
+    await flush();
+
+    feedPermissionRequest(session.transport, 22, [
+      { optionId: "allow-once", label: "Allow once" },
+      { optionId: "deny", label: "Deny" },
+    ]);
+    await until(() => postedMessages(p).some(isPermissionRequest));
+    const v2 = postedMessages(p).find(
+      (m) => typeof m === "object" && m !== null && (m as { kind?: string }).kind === "permission_requested",
+    ) as { options: Array<{ optionId: string }> };
+    expect(v2.options.map((o) => o.optionId)).toEqual(["allow-once", "deny"]);
+
+    handler({ type: "permission_response", requestId: (postedMessages(p).find(isPermissionRequest) as PermissionRequestMsg).requestId, optionId: "allow-once" });
+    await until(() =>
+      session.transport
+        .allWritten()
+        .some((f) => f["id"] === 22 && f["result"] !== undefined),
+    );
+    const result = session.transport.allWritten().find((f) => f["id"] === 22)!["result"] as {
+      outcome: { outcome: string; optionId?: string };
+    };
+    expect(result.outcome.outcome).toBe("selected");
+    expect(result.outcome.optionId).toBe("allow-once");
+  });
+});
