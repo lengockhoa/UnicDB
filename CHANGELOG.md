@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.54.0] — 2026-09-16
+
+- Summary: Ship the full AI Chat V2 webview replacement: two-tier composer (40x40 send arrow, Enter/Shift+Enter/IME rules), slash and mention menus, streaming/reasoning/tool timeline, permission sheet, session persistence/resume/export, and engine capability matrix. V2 is now the sole production chat UI; the V1 adapter, composer, header, and thread modules are deleted.
+- Files: webview/aiChat/*, webview/aiChatPanelMain.ts, src/ui/aiChatPanel.ts
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.54.0.vsix packaged
+
+---
+
 ## [1.53.49] — 2026-09-15
 
 - Summary: Redo the AIChat composer button row so controls no longer overlap: 28px icon tiles scoped to icon-only buttons, text chips truncate with ellipsis, Bypass becomes a readable labeled pill, schema chip uses plain "schema: <name>" text (raw $(...) codicon never rendered in the webview), and mic/slash placeholders styled as ghost tiles.
