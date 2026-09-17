@@ -108,3 +108,24 @@ Verified facts the executor should trust (don't re-derive):
 (no further comments yet)
 
 ---
+
+## Executor Report
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: claude-opus-4-8 (default session model)
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+  src/extension.test.ts > TASK-STOPERR-003 > #1 → expected false to be true // Object.is equality (no "statement 2 of 3" toast)
+  #2 → expected undefined not to be undefined (no setDecorations call)
+  #3 → expected +0 to be 10 (offsets not in document space)
+  #4 → expected 0 to be greater than 0 (silent no-sql-editor return)
+  #5 → expected 0 to be greater than 0 (busy refusal was info, not warning)
+  consolePanel.test.ts > whitespace runSelection → showInformationMessage never called
+  (test #6 passed pre-fix by design — it asserts absence of error toast/mark, which is trivially true before the feature exists; kept as a regression guard)
+Verification Output:
+  npx vitest run src/extension.test.ts → 192 passed (192)
+  npx vitest run src/ui/__tests__ → 141 files, 1968 passed
+  npm run typecheck → clean (tsc --noEmit, no output)
+  npm run compile → esbuild build complete (webview.js 2.3mb, extension.js 6.6mb)
+  npm test → 313 files passed, 4684 passed | 5 skipped (4689)
+Status: PASS
+Note: Worktree lacked node_modules binaries — symlinked esbuild + vsce from main repo node_modules to unblock webview-bundle tests and the vsce-package test (environment fix, not code). Pre-existing test TASK-ARP02-004 Gap #2 updated to accept the upgraded busy warning (info→warning is this task's spec). In-range `stmt.end` excludes the trailing `;` (parser contract), test asserts char 8 accordingly.

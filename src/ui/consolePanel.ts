@@ -666,7 +666,14 @@ export class ConsolePanel {
     tabId: string,
     text: string,
   ): Promise<void> {
-    if (!text || text.trim().length === 0) return;
+    // TASK-STOPERR-003 — whitespace/empty selection used to return silently;
+    // the user pressed Run and got zero feedback. Surface the no-op.
+    if (!text || text.trim().length === 0) {
+      void vscode.window.showInformationMessage(
+        "UnicDB: nothing selected to run — select SQL text first.",
+      );
+      return;
+    }
     await this.runOne(text);
     void tabId;
   }

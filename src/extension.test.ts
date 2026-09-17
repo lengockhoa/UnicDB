@@ -196,6 +196,11 @@ vi.mock("vscode", () => {
         state.createdOutputChannels.push(ch);
         return ch;
       }),
+      // TASK-STOPERR-003 — statementErrorMarks decoration factory.
+      createTextEditorDecorationType: vi.fn((_opts: unknown) => ({
+        key: "unicdb-error-mark",
+        dispose: vi.fn(),
+      })),
       createTreeView: vi.fn().mockImplementation((id: string) => {
         const tv = { id, dispose: vi.fn() };
         state.createdTreeViews.push(tv);
@@ -285,7 +290,24 @@ vi.mock("vscode", () => {
       })),
     },
     CodeLens: vi.fn(),
-    Range: vi.fn(),
+    // TASK-STOPERR-003 — statementErrorMarks builds Range/Diagnostic/ThemeColor
+    // objects. Range captures its endpoints so tests can assert the marked
+    // range equals the failing statement's document offsets.
+    Range: vi.fn().mockImplementation((start: unknown, end: unknown) => ({
+      start,
+      end,
+    })),
+    Diagnostic: vi.fn().mockImplementation(
+      (range: unknown, message: unknown, severity: unknown) => ({
+        range,
+        message,
+        severity,
+        source: undefined as string | undefined,
+      }),
+    ),
+    DiagnosticSeverity: { Error: 0, Warning: 1, Information: 2, Hint: 3 },
+    ThemeColor: vi.fn().mockImplementation((id: string) => ({ id })),
+    OverviewRulerLane: { Left: 1, Center: 2, Right: 4, Full: 7 },
     SnippetString: vi.fn((text: string) => ({ value: text })),
     ViewColumn: { Beside: 2 },
     StatusBarAlignment: { Left: 1, Right: 2 },
@@ -294,6 +316,14 @@ vi.mock("vscode", () => {
         state.registeredCodeLensProviders.push({ language });
         return { dispose: () => {} };
       }),
+      // TASK-STOPERR-003 — Problems-panel diagnostic collection used by
+      // statementErrorMarks.
+      createDiagnosticCollection: vi.fn((_name: string) => ({
+        set: vi.fn(),
+        clear: vi.fn(),
+        delete: vi.fn(),
+        dispose: vi.fn(),
+      })),
     },
     env: {
       clipboard: {
@@ -4268,12 +4298,19 @@ describe("TASK-ARP02-004 — host-integration: runStatements finally + deactivat
 
     // A friendly information message IS shown so the user knows the keystroke
     // was registered and why no result appeared.
+    // TASK-STOPERR-003: the busy refusal was upgraded info → warning (a
+    // dropped run must not look like a success) — accept either channel.
     const friendlyInfoCalls = showInfoSpy.mock.calls.filter((c) =>
       typeof c[0] === "string" && /already running/i.test(c[0]),
     );
+    const friendlyWarnCalls = vi
+      .mocked(vscodeMock.window.showWarningMessage)
+      .mock.calls.filter((c) =>
+        typeof c[0] === "string" && /already running/i.test(c[0]),
+      );
     expect(
-      friendlyInfoCalls.length,
-      "run #2 must show a friendly showInformationMessage about the busy runner",
+      friendlyInfoCalls.length + friendlyWarnCalls.length,
+      "run #2 must show a friendly info/warning message about the busy runner",
     ).toBeGreaterThanOrEqual(1);
 
     // Release run #1; its OWN finally is the live one and must clear busy
@@ -7010,5 +7047,292 @@ describe("TASK-SH-002 — UnicDB.runShellSelection multi-selection", () => {
     expect(term.sendText).toHaveBeenCalledTimes(1);
     expect(term.sendText.mock.calls[0][0]).toBe(scriptText + "\n");
     expect(term.show).toHaveBeenCalledTimes(1);
+  });
+});
+
+// =============================================================================
+// TASK-STOPERR-003 — stop-at-first-error visibility + selection-run doc offsets.
+//   - Failed statement → loud "stopped at statement N of M" toast AND a wavy
+//     underline + Problems diagnostic on the failing statement's DOCUMENT range
+//     (per-piece `splitStatements(piece, dialect, { baseOffset })`).
+//   - Previously-silent no-op paths (no sql editor, busy refusal, whitespace
+//     console selection) now surface a visible message.
+// =============================================================================
+describe("TASK-STOPERR-003 — stop-on-error visibility + doc offsets", () => {
+  let runSpy: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.registeredCommands.clear();
+    state.registeredTreeDataProviders.clear();
+    state.createdStatusBarItems.length = 0;
+    state.createdWebviewPanels.length = 0;
+    state.createdTreeViews.length = 0;
+    state.registeredCodeLensProviders.length = 0;
+    state.onDidChangeConfigSubscribers.length = 0;
+    state.workspaceFolders = undefined;
+    state.activeEditor = undefined;
+    state.createdTerminals.length = 0;
+    state.createdOutputChannels.length = 0;
+    state.confirmDestructive = undefined;
+    vi.resetModules();
+  });
+
+  async function seedConnection(): Promise<ReturnType<typeof makeCtx>> {
+    const ctx = makeCtx();
+    ctx.globalState.get = vi.fn((key: string) => {
+      if (key === "UnicDB.connections") {
+        return [
+          {
+            id: "c1",
+            name: "c",
+            driver: "postgres",
+            host: "h",
+            port: 5432,
+            user: "u",
+            database: "d",
+          },
+        ];
+      }
+      if (key === "UnicDB.activeConnection") return "c1";
+      return undefined;
+    }) as never;
+
+    const connectionMgrMod = await import("./core/connectionManager");
+    const adapter: Partial<DbAdapter> = {
+      listTables: vi.fn().mockResolvedValue([]),
+      testConnection: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    vi.spyOn(
+      connectionMgrMod.ConnectionManager.prototype,
+      "getAdapter",
+    ).mockResolvedValue(adapter as DbAdapter);
+    return ctx;
+  }
+
+  /** Same offsetAt/positionAt semantics as the TASK-MSEL harness. */
+  function makeEditor(sql: string, selections: Array<{
+    startLine: number;
+    startChar: number;
+    endLine: number;
+    endChar: number;
+  }>) {
+    const lines = sql.split("\n");
+    function offsetAt(line: number, character: number): number {
+      let off = 0;
+      for (let i = 0; i < line; i++) off += lines[i]!.length + 1;
+      return off + character;
+    }
+    const selObjs = selections.map((s) => {
+      const startOffset = offsetAt(s.startLine, s.startChar);
+      const endOffset = offsetAt(s.endLine, s.endChar);
+      return {
+        isEmpty: startOffset === endOffset,
+        active: { line: s.endLine, character: s.endChar },
+        start: { line: s.startLine, character: s.startChar },
+        end: { line: s.endLine, character: s.endChar },
+      };
+    });
+    return {
+      document: {
+        languageId: "sql",
+        uri: { toString: () => "file:///test.sql", fsPath: "/test.sql" },
+        getText: () => sql,
+        offsetAt: (p: { line: number; character: number }) =>
+          offsetAt(p.line, p.character),
+        positionAt: (offset: number) => {
+          let remaining = offset;
+          for (let i = 0; i < lines.length; i++) {
+            const lineLen = lines[i]!.length;
+            if (remaining <= lineLen) {
+              return { line: i, character: remaining };
+            }
+            remaining -= lineLen + 1;
+          }
+          return { line: lines.length - 1, character: lines[lines.length - 1]!.length };
+        },
+      },
+      selection: selObjs[0],
+      selections: selObjs,
+      setDecorations: vi.fn(),
+      insertSnippet: vi.fn().mockResolvedValue(undefined),
+    };
+  }
+
+  function fakeResults(n: number, errorIndex: number): unknown[] {
+    const rows: unknown[] = [];
+    for (let i = 0; i < n; i++) {
+      if (i === errorIndex) {
+        rows.push({ sql: `SELECT ${i + 1}`, status: "error", error: `boom ${i + 1}` });
+      } else if (errorIndex >= 0 && i > errorIndex) {
+        rows.push({ sql: `SELECT ${i + 1}`, status: "cancelled" });
+      } else {
+        rows.push({ sql: `SELECT ${i + 1}`, status: "done" });
+      }
+    }
+    return rows;
+  }
+
+  it("#1 stmt 2 of 3 fails → showErrorMessage contains 'statement 2 of 3'", async () => {
+    const ctx = await seedConnection();
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue(fakeResults(3, 1) as never);
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+
+    const sql = "SELECT 1;\nSELECT 2;\nSELECT 3;";
+    state.activeEditor = makeEditor(sql, [
+      { startLine: 0, startChar: 0, endLine: 2, endChar: 9 },
+    ]) as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    const errSpy = vi.mocked(vscodeMock.window.showErrorMessage);
+    const hit = errSpy.mock.calls.some(
+      (c) => typeof c[0] === "string" && c[0].includes("statement 2 of 3"),
+    );
+    expect(hit).toBe(true);
+  });
+
+  it("#2 failing statement gets setDecorations on its DOCUMENT range (stmt 2 = offsets 10..19)", async () => {
+    const ctx = await seedConnection();
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue(fakeResults(3, 1) as never);
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+
+    const sql = "SELECT 1;\nSELECT 2;\nSELECT 3;";
+    const editor = makeEditor(sql, [
+      { startLine: 0, startChar: 0, endLine: 2, endChar: 9 },
+    ]);
+    state.activeEditor = editor as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    const deco = editor.setDecorations as unknown as Mock;
+    const marked = deco.mock.calls.find(
+      (c) => Array.isArray(c[1]) && (c[1] as unknown[]).length === 1,
+    );
+    expect(marked).toBeDefined();
+    const range = marked![1][0] as {
+      start: { line: number; character: number };
+      end: { line: number; character: number };
+    };
+    // stmt 2 occupies doc offsets 10..18 ("SELECT 2", `;` excluded) →
+    // positionAt = line 1, chars 0..8.
+    expect(range.start).toEqual({ line: 1, character: 0 });
+    expect(range.end).toEqual({ line: 1, character: 8 });
+  });
+
+  it("#3 regression: selection of 2 unterminated queries runs BOTH + statements carry doc offsets", async () => {
+    const ctx = await seedConnection();
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue(fakeResults(2, -1) as never);
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+
+    // Prefix so the selection does NOT start at offset 0 — doc offsets must
+    // reflect the piece's position in the document, not the joined string.
+    const sql = "-- header\nSELECT 1\nSELECT 2";
+    // "SELECT 1" starts at offset 10 (line 1), "SELECT 2" at offset 19 (line 2).
+    state.activeEditor = makeEditor(sql, [
+      { startLine: 1, startChar: 0, endLine: 2, endChar: 8 },
+    ]) as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    expect(runSpy).toHaveBeenCalled();
+    const passed = runSpy.mock.calls[0]?.[0] as ParsedStatement[];
+    expect(passed.length).toBe(2);
+    expect(passed.map((p) => p.text.trim())).toEqual(["SELECT 1", "SELECT 2"]);
+    // Document-space offsets: stmt1 starts at doc offset 10, stmt2 at 19.
+    expect(passed[0]!.start).toBe(10);
+    expect(passed[1]!.start).toBe(19);
+  });
+
+  it("#4 no sql editor → info message, runner NOT called", async () => {
+    const ctx = await seedConnection();
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi.spyOn(runnerMod.QueryRunner.prototype, "run");
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+
+    state.activeEditor = undefined;
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    expect(runSpy).not.toHaveBeenCalled();
+    expect(
+      vi.mocked(vscodeMock.window.showInformationMessage).mock.calls.length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("#5 second run while busy → showWarningMessage (not silent/info)", async () => {
+    const ctx = await seedConnection();
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue([] as never);
+    vi.spyOn(runnerMod.QueryRunner.prototype, "isRunning").mockReturnValue(true);
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+
+    const sql = "SELECT 1;";
+    state.activeEditor = makeEditor(sql, [
+      { startLine: 0, startChar: 0, endLine: 0, endChar: 9 },
+    ]) as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    expect(
+      vi.mocked(vscodeMock.window.showWarningMessage).mock.calls.length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("#6 all-success run → no error toast", async () => {
+    const ctx = await seedConnection();
+    const runnerMod = await import("./core/queryRunner");
+    runSpy = vi
+      .spyOn(runnerMod.QueryRunner.prototype, "run")
+      .mockResolvedValue(fakeResults(2, -1) as never);
+
+    const ext = await import("./extension");
+    await ext.activate(ctx as never);
+
+    const sql = "SELECT 1;\nSELECT 2;";
+    const editor = makeEditor(sql, [
+      { startLine: 0, startChar: 0, endLine: 1, endChar: 9 },
+    ]);
+    state.activeEditor = editor as never;
+
+    const runQueryFn = state.registeredCommands.get("UnicDB.runQuery");
+    await runQueryFn!();
+
+    expect(
+      vi.mocked(vscodeMock.window.showErrorMessage).mock.calls.length,
+    ).toBe(0);
+    // No failing statement → nothing marked with a 1-range decoration.
+    const deco = editor.setDecorations as unknown as Mock;
+    expect(
+      deco.mock.calls.filter(
+        (c) => Array.isArray(c[1]) && (c[1] as unknown[]).length === 1,
+      ).length,
+    ).toBe(0);
   });
 });

@@ -69,6 +69,10 @@ import type { AdapterFactory } from "./ai/tools/types";
 import type { AgentDeps } from "./ai/agent";
 import { AiChatPanel, type AcpPanelDeps } from "./ui/aiChatPanel";
 import { ConsolePanel, ensureTrailingSemicolon } from "./ui/consolePanel";
+import {
+  createStatementErrorMarker,
+  type StatementErrorMarker,
+} from "./ui/statementErrorMarks";
 import { HelpGridPanel } from "./ui/helpGridPanel";
 import { AcpProcess, type AcpProcessHandle, type OmpEngineState } from "./ai/omp/acpProcess";
 import { detectOmp, OMP_INSTALL_HINT, OMP_UPDATE_HINT } from "./ai/omp/detect";
@@ -141,6 +145,19 @@ let aiChatPanel: AiChatPanel | null = null;
 let consolePanel: ConsolePanel | null = null;
 /** TASK-OC4O-002 — UnicDB Help Grid singleton. Created on first open. */
 let helpGridPanel: HelpGridPanel | null = null;
+/**
+ * TASK-STOPERR-003 — single statement-error marker (decoration + Problems
+ * diagnostic). Created lazily so minimal vscode mocks in tests that never
+ * touch the marker path don't need the decoration/diagnostic APIs. Disposed
+ * in deactivate().
+ */
+let statementErrorMarker: StatementErrorMarker | null = null;
+function getStatementErrorMarker(): StatementErrorMarker {
+  if (!statementErrorMarker) {
+    statementErrorMarker = createStatementErrorMarker();
+  }
+  return statementErrorMarker;
+}
 /** Cycle AIC TASK-AIC-005 — singletons for the autocomplete wiring. */
 let autocompleteService: SqlAutocompleteService | null = null;
 let autocompleteRegistration: AutocompleteRegistration | null = null;
@@ -1927,6 +1944,9 @@ export async function deactivate(): Promise<void> {
   consolePanel = null;
   helpGridPanel?.dispose();
   helpGridPanel = null;
+  // TASK-STOPERR-003 — dispose the run-error marker (decorations + diagnostics).
+  statementErrorMarker?.dispose();
+  statementErrorMarker = null;
   // Cycle AIC TASK-AIC-005 — drop the autocomplete wiring.
   autocompleteRegistration?.dispose();
   autocompleteRegistration = null;
@@ -3137,6 +3157,11 @@ async function runQueryFromEditor(
 ): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== "sql") {
+    // TASK-STOPERR-003 — was a silent return; the user pressed Cmd+Enter and
+    // got zero feedback. Surface the no-op so a non-sql focus is obvious.
+    void vscode.window.showInformationMessage(
+      "UnicDB: no SQL editor is focused — nothing to run.",
+    );
     return;
   }
   // Nếu không có connection active → QuickPick gợi ý Add.
@@ -3168,12 +3193,28 @@ async function runQueryFromEditor(
     editor.selections && editor.selections.length > 0
       ? editor.selections
       : [editor.selection];
-  const pieces: string[] = [];
+  // TASK-STOPERR-003 — PER-PIECE split with `baseOffset` (STOPERR-001) instead
+  // of the old substring→join("\n")→trim→split path. Joining shifted every
+  // statement's offsets away from document space, so the failing statement
+  // could not be marked in the editor; trimming shifted them further. Now
+  // each selection range is split with `baseOffset` = its document offset,
+  // and cursor pieces (statementAtCursor) already carry doc offsets so they
+  // are pushed verbatim — no re-split.
+  const statements: ParsedStatement[] = [];
   for (const sel of allSelections) {
     if (!sel.isEmpty) {
       const start = editor.document.offsetAt(sel.start);
       const end = editor.document.offsetAt(sel.end);
-      pieces.push(sql.substring(start, end));
+      const piece = sql.substring(start, end);
+      // Line-aware mode per piece (unchanged from the joined-split): a
+      // newline + statement-starter keyword at top-level is a soft boundary
+      // for users who forgot `;`.
+      statements.push(
+        ...splitStatements(piece, dialect, {
+          lineBoundaries: true,
+          baseOffset: start,
+        }),
+      );
     } else {
       const found = statementAtCursor(
         sql,
@@ -3181,35 +3222,12 @@ async function runQueryFromEditor(
         dialect,
       );
       if (found) {
-        // Use the [start, end] range instead of `.text` so the trailing
-        // terminator (`;`, etc.) is included — otherwise multiple cursor
-        // pieces get joined without separators and `splitStatements` sees
-        // a single statement.
-        pieces.push(sql.substring(found.start, found.end));
+        // `found.start`/`found.end` are already document offsets.
+        statements.push(found);
       }
     }
   }
 
-  // Join with newlines so `splitStatements` gets clean boundary whitespace
-  // between concatenated selection snippets. Trim once at the end so the
-  // "no statement" guard below is robust against whitespace-only inputs.
-  const combined = pieces.join("\n").trim();
-  if (combined.length === 0) {
-    void vscode.window.showInformationMessage("UnicDB: không có statement để chạy.");
-    return;
-  }
-
-  // (review fix round C, Finding #3) — pass the active connection's real
-  // dialect through so MSSQL `GO` batch separators / MySQL backslash string
-  // escaping actually apply instead of always splitting as if Postgres.
-  // Line-aware mode (NEW): a newline followed by a statement-starter keyword
-  // (SELECT/INSERT/CREATE/...) at top-level is treated as a soft boundary —
-  // same role as `;` for users who forgot to terminate. Without this, the
-  // common "3 queries on 3 lines, no `;`" paste/highlight still collapses
-  // to one statement and `executeAll` cancels the rest after the first
-  // parses as broken SQL — that's the exact "3 highlighted, only 1 runs"
-  // bug the user reported.
-  const statements = splitStatements(combined, dialect, { lineBoundaries: true });
   if (statements.length === 0) {
     void vscode.window.showInformationMessage("UnicDB: không có statement để chạy.");
     return;
@@ -3222,6 +3240,7 @@ async function runQueryFromEditor(
   // paths don't pass the flag, so they keep history.
   await runStatements(mgr, runner, panel, statusBar, statements, {
     clearOnStart: true,
+    editor,
   });
 }
 
@@ -3237,7 +3256,14 @@ async function runStatement(
     await promptToAddConnectionOrSelect();
     if (!mgr.getActive()) return;
   }
-  await runStatements(mgr, runner, panel, statusBar, [stmt]);
+  // TASK-STOPERR-003 — CodeLens runs carry doc offsets; pass the active
+  // editor when it is a sql doc so a failing statement gets marked.
+  const activeEditor = vscode.window.activeTextEditor;
+  const editor =
+    activeEditor && activeEditor.document.languageId === "sql"
+      ? activeEditor
+      : undefined;
+  await runStatements(mgr, runner, panel, statusBar, [stmt], { editor });
 }
 
 // =====================================================================
@@ -3400,7 +3426,18 @@ export async function runStatements(
   // results + close every panel tab before running. Each Run starts fresh —
   // no leftover tabs from previous Runs. Console / CodeLens callers leave it
   // false to preserve history.
-  opts: { useLegacySql?: boolean; pageSize?: number; clearOnStart?: boolean } = {},
+  opts: {
+    useLegacySql?: boolean;
+    pageSize?: number;
+    clearOnStart?: boolean;
+    /**
+     * TASK-STOPERR-003 — when set, a failed statement is marked in this
+     * editor (wavy underline + Problems diagnostic) using the statement's
+     * document offsets. Callers that run document-backed SQL (editor Run,
+     * CodeLens) pass it; the Console path does not (no TextDocument).
+     */
+    editor?: vscode.TextEditor;
+  } = {},
 ): Promise<void> {
   const active = mgr.getActive();
   // TASK-QBUSY-001 — early guard for the shared QueryRunner. A second
@@ -3418,7 +3455,9 @@ export async function runStatements(
   // wait and return — the user can press Cmd+Enter again to retry
   // once the first run settles.)
   if (runner.isRunning()) {
-    void vscode.window.showInformationMessage(
+    // TASK-STOPERR-003 — upgraded info → warning: a dropped run must not be
+    // mistaken for a success at a glance.
+    void vscode.window.showWarningMessage(
       "UnicDB: a query is already running. Please wait for it to finish, then press Run again.",
     );
     return;
@@ -3472,6 +3511,12 @@ export async function runStatements(
   //      into / restyle the panel VS Code is disposing (a late render would
   //      even resurrect a webview via ResultsPanel.show()).
   const ownsRun = !runner.isRunning();
+  // TASK-STOPERR-003 — strip `editor` before forwarding opts into
+  // runner.run → adapter.runQuery (host-only field).
+  const { editor: runEditor, ...runnerOpts } = opts;
+  // TASK-STOPERR-003 — clear any stale error mark at run start; a new run
+  // supersedes the previous failure underline/diagnostic.
+  statementErrorMarker?.clear();
   panel.setBusy(true);
   try {
     const results = await runner.run(rewritten, () => {
@@ -3479,7 +3524,7 @@ export async function runStatements(
       if (!deactivating) {
         panel.render(runner.getResults(), header, { appendBase });
       }
-    }, { append: true, ...opts });
+    }, { append: true, ...runnerOpts });
     if (!deactivating) {
       // TASK-BQ03-005 R4.5 — `runner.run(..., { append: true })` returns the
       // FULL accumulated array (queryRunner.ts:281 — `return this.results.slice()`),
@@ -3527,6 +3572,33 @@ export async function runStatements(
         statusBar.setErrorBadge(erroredRow.error);
       } else {
         statusBar.setErrorBadge(null);
+      }
+      // TASK-STOPERR-003 — loud stop notice: the first error ends the run
+      // (executeAll cancels the rest), so name exactly which statement died
+      // and that the remaining ones were NOT run. `statements` is this run's
+      // input array — its indices align 1:1 with runSlice — and when the run
+      // is document-backed (`opts.editor`) we also mark the failing
+      // statement's range in the editor + Problems panel.
+      const failedIndex = runSlice.findIndex((r) => r.status === "error");
+      if (failedIndex >= 0) {
+        const failedRow = runSlice[failedIndex]!;
+        const reason = failedRow.error ?? "unknown error";
+        void vscode.window.showErrorMessage(
+          `UnicDB: stopped at statement ${failedIndex + 1} of ${runSlice.length} — ${reason}. Remaining statements were not run.`,
+        );
+        if (runEditor) {
+          try {
+            getStatementErrorMarker().mark(
+              runEditor,
+              statements,
+              failedIndex,
+              reason,
+            );
+          } catch {
+            // Marking is best-effort — never let a decoration/diagnostic
+            // failure mask the error toast above.
+          }
+        }
       }
       // TASK-ARP07-004 — feed ONLY the statements that actually completed
       // (`status === "done"`, original text on `.sql` per queryRunner.ts:49-52)

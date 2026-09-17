@@ -958,3 +958,23 @@ describe("ConsolePanel — ViewColumn choice without active editor (TASK-UX1-001
     expect(column).not.toBe(vscode.ViewColumn.Active);
   });
 });
+
+// ============================================================================
+// TASK-STOPERR-003 — whitespace-only runSelection must not be a silent no-op:
+// the host surfaces an info message and never invokes onRun.
+// ============================================================================
+describe("ConsolePanel — whitespace runSelection (TASK-STOPERR-003)", () => {
+  it("whitespace text → showInformationMessage, onRun NOT called", async () => {
+    const onRun = vi.fn().mockResolvedValue(undefined);
+    const panel = new ConsolePanel({ extensionUri: extUri, onRun });
+    panel.show();
+    const { handler } = panelHarness();
+    handler({ type: "runSelection", text: "   " });
+    await until(
+      () =>
+        vi.mocked(vscode.window.showInformationMessage).mock.calls.length > 0,
+    );
+    expect(vscode.window.showInformationMessage).toHaveBeenCalled();
+    expect(onRun).not.toHaveBeenCalled();
+  });
+});
