@@ -1,0 +1,110 @@
+# TASK-STOPERR-003 — Wire stop/marking + fix silent selection-run paths
+
+- Status: `ready`
+- Owner: `-`
+- Reviewer: `-`
+- Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 items 1, 3, 4
+
+## Goal
+
+Make selection-run execute exactly the highlighted statements with document-space offsets,
+surface a loud "stopped at statement N" notification on first error, mark the failing
+statement in the editor via STOPERR-002, and give every previously silent no-op path
+visible feedback.
+
+## Target Files
+
+- `src/extension.ts`:
+  - `runQueryFromEditor` (~3132-3226): replace join+trim+re-split with PER-PIECE
+    `splitStatements(piece, dialect, { lineBoundaries: true, baseOffset: pieceDocOffset })`
+    (STOPERR-001). Cursor pieces from `statementAtCursor` already carry doc offsets —
+    do NOT re-split them. Keep `lineBoundaries` per piece. Preserve the empty/no-statement
+    info messages.
+  - Silent early return at ~3139 (`!editor || languageId !== "sql"`) → `showInformationMessage`
+    ("UnicDB: no SQL editor is focused — nothing to run." or equivalent).
+  - Busy refusal at ~3420 → upgrade `showInformationMessage` → `showWarningMessage` so a
+    dropped run is not mistaken for success.
+  - `runStatements` (~3391-3575): accept optional `opts.editor?: vscode.TextEditor`
+    (new field on the existing opts param). Clear marker at run start (before
+    `runner.run`). After `runner.run` settles: if `runSlice` contains `status === "error"`,
+    `showErrorMessage("UnicDB: stopped at statement N of M — <error>. Remaining statements were not run.")`
+    (N = position within this run, M = runSlice.length), and when `opts.editor` is set,
+    `marker.mark(editor, statements, failedStmtIndexInStatements, error)`.
+  - Instantiate the marker once (module scope, disposed in `deactivate`).
+  - Callers pass `editor` where a document exists: `runQueryFromEditor` → active editor;
+    `runStatement` (CodeLens ~3229) → `vscode.window.activeTextEditor` when it matches a
+    sql doc; console `onRun` (~2813) → no editor (index-only notification).
+- `src/ui/consolePanel.ts` ~665-672: whitespace `runSelection` → `showInformationMessage`
+  instead of silent return (panel has no vscode import? check — if absent, surface via
+  `onRun` host callback or add minimal import consistent with file's existing imports).
+- `src/extension.test.ts`: extend the `vi.mock("vscode")` with
+  `window.createTextEditorDecorationType` (returns `{ dispose: vi.fn(), key }`),
+  `editor.setDecorations` spy on the fake editor, `languages.createDiagnosticCollection`
+  (returns `{ set: vi.fn(), clear: vi.fn(), delete: vi.fn(), dispose: vi.fn() }`),
+  `Diagnostic`/`DiagnosticSeverity` stubs as needed.
+
+## Test Cases (REQUIRED — TDD)
+
+| # | Type | Test name | Expected | Pre-state / Fixture |
+|---|------|----------|----------|---------------------|
+| 1 | unit | 3-stmt selection run, stmt 2 fails → `showErrorMessage` contains "statement 2 of 3" | toast fired | mock runner erroring stmt 2 |
+| 2 | unit | same run → `setDecorations` called with range matching stmt 2's document offsets | decoration on failing stmt | selection over 3 `;`-terminated queries |
+| 3 | regression | selection of 2 unterminated queries → executes BOTH as separate statements (no merge) | runner got 2 statements | `"SELECT 1\nSELECT 2"` selection |
+| 4 | edge | non-sql / no editor run → info message, runner NOT called | audible no-op | `activeTextEditor` null or non-sql |
+| 5 | edge | second run while busy → warning message (not silent success) | `showWarningMessage` called | runner.isRunning()=true |
+| 6 | edge | all-success run → no error toast, marker cleared at start | mark absent | 2 good stmts |
+| 7 | edge | console whitespace runSelection → info message, onRun NOT called | audible | `"   "` text |
+
+## Test Files
+
+- `src/extension.test.ts` — editor-path tests (follow TASK-MSEL harness at ~2676).
+- `src/ui/__tests__/consolePanel*.test.ts` — whitespace selection test (find existing file).
+
+## Verification Commands
+
+```bash
+npx vitest run src/extension.test.ts
+npx vitest run src/ui/__tests__
+npm run typecheck
+npm run compile
+npm test
+```
+
+## Acceptance Criteria
+
+- [ ] Error toast names the failed statement index/count; failing statement gets an editor
+      decoration + Problems diagnostic when a document context exists.
+- [ ] Selection-run runs exactly the highlighted statements with correct doc offsets.
+- [ ] All silent no-op paths produce a visible message.
+- [ ] Full `npm test` green; typecheck + compile clean.
+- [ ] Reviewer verdict APPROVED or APPROVED-WITH-MINOR.
+
+## Dependencies
+
+- TASK-STOPERR-001 (`baseOffset`) and TASK-STOPERR-002 (marker module) must be done first.
+
+## Interfaces
+
+- Consumes:
+  - `splitStatements(sql, dialect?, { lineBoundaries?: boolean; baseOffset?: number })` (001)
+  - `createStatementErrorMarker(): { mark(editor, statements, failedIndex, message); clear(); dispose(); }` (002)
+- Produces: `runStatements(..., opts: { useLegacySql?; pageSize?; clearOnStart?; editor?: vscode.TextEditor })`
+
+---
+
+## Discussion
+
+### 2026-09-18 · planner · claude-opus-4-8
+Verified facts the executor should trust (don't re-derive):
+- `executeAll` stops on first error already — do NOT change the loop; this task is
+  UX/visibility only.
+- Selection path today loses doc offsets via substring→join("\n")→trim (extension.ts
+  :3171-3212). Per-piece split with `baseOffset` fixes both the offset loss AND makes the
+  executed set exactly match the highlight.
+- `trim()` on `combined` shifts every offset — another reason to split per piece.
+- If `consolePanel.ts` has no vscode import, prefer surfacing the whitespace no-op through
+  the existing host callback or a pre-run trim check that posts a message — keep it minimal.
+
+(no further comments yet)
+
+---

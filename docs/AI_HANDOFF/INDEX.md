@@ -1,20 +1,22 @@
 # Handoff INDEX
 
-## Cycle CHATFIX — V2 chat layout, scroll, activity timeline and message actions
+## Cycle STOPERR — stop multi-query run at first error + mark failing statement
 
-Bugfix/polish cycle on the completed CHATV2 base: shell grid placement, scroll driving, tool
-timeline + live indicator, and message action wiring. Plan: `docs/AI_HANDOFF/PLAN.md`.
-(Previous cycle CHATV2 — 17 tasks TASK-CHATV2-001..017 — is complete; its rows were dropped from
-this live queue and the cycle is summarized in `RUN.md` + `REVIEW-CHATV2-R1.md`.)
+Bugfix/UX cycle: a multi-statement run must halt visibly at the first failing statement
+(editor decoration + Problems diagnostic + "stopped at statement N of M" toast), and
+selection-run ("bôi đen và chạy") must surface errors instead of silently no-oping or
+running a different statement set. Plan: `docs/AI_HANDOFF/PLAN.md`.
+(Previous cycle CHATFIX — 4 tasks — is complete; summarized in `RUN.md`.)
 
 | Task | Title | Status | Dependencies | Wave |
 |---|---|---|---|---:|
-| TASK-CHATFIX-001 | Explicit shell grid placement (composer size/pinning/crush + scroll region) | done | none | 1 |
-| TASK-CHATFIX-002 | Drive the scroll controller (auto-scroll to newest + unread pill) | done | 001 | 2 |
-| TASK-CHATFIX-003 | Tool activity timeline (Claude Code-style) + live-turn indicator | done | 001 | 2 |
-| TASK-CHATFIX-004 | Wire the dead message action icons (copy/edit/retry/3-dot) | done | 002 | 3 |
+| TASK-STOPERR-001 | splitStatements `baseOffset` (doc-space offsets) + stop-on-error regression pin | ready | none | 1 |
+| TASK-STOPERR-002 | `statementErrorMarks.ts` — decoration + DiagnosticCollection marker | ready | none | 1 |
+| TASK-STOPERR-003 | Wire marking + "stopped at statement N" toast + fix silent selection-run paths | ready | 001, 002 | 2 |
 
-Execution: lowest ready ID first; tasks in a wave may run in parallel only when they do not edit
-the same file (wave 2 = 002+003, disjoint file sets). Each task is TDD RED→GREEN, focused tests +
-`npm run typecheck` + `npm run compile`. Every wave boundary runs full `npm test`. Reviewer must
-use a different model from executor. No version bump, package or publish.
+Execution: lowest ready ID first; wave 1 tasks (001+002) may run in parallel — disjoint
+file sets (core parser/runner vs new UI module). Task 003 touches `extension.ts` +
+`consolePanel.ts` + `extension.test.ts` and must wait for both wave-1 interfaces. Each task
+is TDD RED→GREEN, focused tests + `npm run typecheck` + `npm run compile`; full `npm test`
+at each wave boundary. Reviewer must use a different model from executor. No version bump,
+package or publish.

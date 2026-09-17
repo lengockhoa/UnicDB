@@ -1,211 +1,157 @@
-# PLAN — CHATFIX: V2 chat layout, scroll, activity timeline and message actions
+# PLAN — Cycle STOPERR: stop multi-query run at first error + mark failing statement
+
+Cycle: STOPERR | Date: 2026-09-18 | Base: main
 
 ## §1 Intent
 
-Four user-reported defects in the V2 AI Chat webview (real usage, screenshots), plus two scope
-updates recorded verbatim during planning:
-
-1. **Composer huge on fresh open** — must always sit compact at the panel bottom, never up high.
-2. **Composer crushed after a few turns** — "sau khi chat 1 vài câu thì nó tụt xuống dưới cùng
-   luôn": the composer sinks to the bottom edge and is squeezed to a cut-off sliver. Same root
-   cause as (1), opposite manifestation.
-3. **Transcript dead** — no scrollbar, no auto-scroll to the newest message; no thinking/loading
-   indication while a turn runs (bare unstyled "Bash running" text rows that never resolve
-   visually); message action icons (copy / edit / reload / 3-dot) do nothing when clicked.
-4. **Design target for the activity area** (user re-sent reference screenshot, "clear, tidy, and
-   beautiful"): a Claude Code-style tool timeline — per-step tool label + one-line summary +
-   status dot (running=pulsing, success=green, error=red) joined by a subtle vertical connector;
-   Bash steps show an expandable monospace IN/OUT block (command in, result out, capped height
-   with internal scroll and fade); a trailing "Working…" pulsing indicator while the turn is live.
-
-Success: fresh open shows a compact composer pinned above the hint row; after any number of turns
-the composer stays compact and fully visible; the transcript scrolls and follows the newest
-message; a live turn renders the polished timeline; every message action button works.
-
-Investigation (verified, line numbers confirmed 2026-09-16) is folded into §3 — executors must
-not re-derive it, but must Read the named regions before editing.
+User report (verbatim, translated): in a `.sql` file with 3 queries, a long run then a
+highlight-and-run produced no error; and when a multi-statement run does error it does not
+visibly stop — everything appears to "run to the end", so the user believed it succeeded.
+Desired: (a) selection-run surfaces errors exactly like a normal run, (b) a sequential run
+halts at the FIRST failing statement, (c) the failing statement is clearly marked
+(editor-level highlight + which statement/line failed), (d) the user is explicitly notified
+that the run stopped.
 
 ## §2 Scope
 
-In-scope (this cycle, 4 tasks):
+In scope:
+- `src/core/statementParser.ts` — carry real document offsets for selection pieces.
+- `src/core/queryRunner.ts` — pin (regression-test) stop-on-first-error semantics.
+- `src/extension.ts` — `runQueryFromEditor` per-piece splitting + doc-offset preservation;
+  audible feedback on silent no-op paths; post-run "stopped at statement N" notification;
+  call the new marker.
+- `src/ui/consolePanel.ts` — silent `runSelection` whitespace no-op.
+- NEW `src/ui/statementErrorMarks.ts` — decoration/diagnostic marking of failing statements.
+- `src/extension.test.ts` — mock additions (`createTextEditorDecorationType`,
+  `createDiagnosticCollection`, `setDecorations`) + new tests.
 
-- Explicit shell grid placement fix (`styles.css`) — resolves (1), (2), creates the scroll region.
-- Driving the existing scroll controller in the render pass — resolves auto-scroll + unread pill.
-- Tool activity timeline + live indicator in the transcript — resolves (3) thinking/loading and (4).
-- Wiring the dead message action callbacks — resolves (3) dead icons.
+Out of scope: results-panel webview redesign, AI chat paths, `.sh` runScript path,
+version bump/package/publish.
 
-Out of scope:
+## §3 Approach (root cause already diagnosed — do NOT re-derive)
 
-- Composer auto-grow bounds — verified CORRECT (`webview/aiChat/composer.ts:64-65`
-  `COMPOSER_AUTO_GROW_MIN_PX=64` / `MAX_PX=160`, `applyAutoGrow` ~line 367). Do not touch.
-- New host protocol MESSAGE kinds; the only wire change allowed is the one additive optional
-  field spec'd in TASK-CHATFIX-003.
-- Engine/agent loop behavior, permission policy, sessions, CHATV2 R2 P2 review advisories.
-- Version bump / package / publish.
+Defect A (selection-run "không error") — silent no-op / divergent paths, verified in source:
+1. `runQueryFromEditor` (`extension.ts:3138-3140`) returns SILENTLY when there is no active
+   SQL editor (`!editor || languageId !== "sql"`) — e.g. focus is on the Console webview or
+   a file bound to `pgsql`/`mssql` language ids. The run never happens and nothing says so.
+2. Busy guard (`extension.ts:3420-3425`): while a previous run is in-flight, a second
+   run is dropped with only an info toast ("a query is already running…"). Matches the
+   report: "chạy 1 lúc" → re-run "không error" — it never executed.
+3. `ConsolePanel.handleRunSelection` (`consolePanel.ts:665-672`) returns silently on
+   whitespace-only selection text.
+4. Split inconsistency: editor selection path uses `splitStatements(combined, dialect,
+   { lineBoundaries: true })` on a re-joined string (`extension.ts:3196-3212`), while
+   console `onRun` uses `sqlToRun(...)` → `splitStatements` WITHOUT `lineBoundaries`
+   (`extension.ts:2801`, `statementParser.ts:1019-1035`). Unterminated multi-statement
+   selections merge into one statement, so a different statement set runs than the user
+   highlighted, and the error lands on merged text that doesn't match any one statement.
+   Probe confirmed: `SELEC * FROM bad_table` un-terminated merges with neighbours.
+5. Selection path loses document positions: pieces are `substring`ed, joined with `"\n"`,
+   `trim()`ed (`extension.ts:3171-3196`) — `ParsedStatement.start/end` become offsets in
+   `combined`, not in the document, so editor marking is impossible today.
 
-CONSTRAINT: tasks in the same wave must not modify the same file — see Dependencies in each task.
+Defect B (no visible stop / no mark):
+- `QueryRunner.executeAll` ALREADY stops at first error (`queryRunner.ts:537-565`): catch
+  marks the statement `error`, marks all remaining `cancelled`, emits `onUpdate`, returns.
+  The "runs to the end" report is a VISIBILITY failure, not an execution-order failure:
+  - cancelled statements still get tabs + Messages cards, looking like executed statements;
+  - NO toast tells the user the run stopped at statement N;
+  - NO editor marking exists anywhere — grep finds no `TextEditorDecorationType` /
+    `DiagnosticCollection` in the codebase; errors only surface in the results panel.
 
-## §3 Approach
+Design:
+1. `splitStatements` gains `opts.baseOffset` (default 0): emitted `start`/`end` =
+   `baseOffset +` relative offsets. `runQueryFromEditor` splits EACH selection piece in
+   place (baseOffset = document offset of the piece) instead of join+trim+re-split; cursor
+   pieces already carry document offsets via `statementAtCursor`. Result: every executed
+   statement has document-space `start/end` for marking, and the executed set is exactly
+   what the user highlighted (per-piece parse, still `lineBoundaries` per piece).
+2. New `src/ui/statementErrorMarks.ts`: owns a `TextEditorDecorationType` (red wavy
+   underline + optional gutter/background tint) and a `DiagnosticCollection`
+   (`"unicdb-run"`, severity Error) so the failure shows in the editor AND Problems.
+   API: `createStatementErrorMarker()` → `{ mark(editor, statements, failedIndex, message),
+   clear(), dispose() }`. Marker cleared at the start of each new run.
+3. `runStatements` post-run (extension.ts success branch, after `runner.run` settles): if
+   any statement `status === "error"`, fire `showErrorMessage("UnicDB: stopped at
+   statement N of M — <error> (remaining statements not run)")` and, when the run came from
+   an editor document, call `mark(...)` on the failing statement's document range.
+   `runStatements` gains an optional `opts.editorContext?: { document, mapToDocument? }`
+   — actually simplest: caller passes the already-parsed statements whose `start/end` are
+   document-space plus the `TextEditor`; console/CodeLens paths pass nothing (console has
+   no document; CodeLens statements already carry doc offsets, so pass editor when the
+   active editor matches).
+4. Audible no-ops: non-SQL/no-editor early return and whitespace console selection get
+   `showInformationMessage` (or Warning) stating nothing ran; busy refusal is upgraded to
+   `showWarningMessage` so it is not mistaken for success.
+5. Regression-pin `executeAll` stop semantics in queryRunner tests (already implemented —
+   tests assert remaining statements never hit the adapter and are `cancelled`).
 
-**Root cause of (1)+(2)+scroll region (verified).** `webview/aiChat/styles.css` lines 52-67: the
-V2 root declares `grid-template-rows: 40px auto minmax(0, 1fr) auto auto 20px` and relies on
-AUTO-PLACEMENT of 5 visible children (header, banner, main, composer, hint; the two aria-live
-regions are visually-hidden/out-of-flow). When the banner is hidden at fresh open it gets
-`display:none` (line ~208) — display:none grid items do not occupy their auto-placed row, so
-every later child shifts up one row: `main` lands in the row-2 `auto` track (content-sized,
-grows forever, clipped by root `overflow:hidden` line ~61 → no scrollbar) and `composer` lands
-in the row-3 `minmax(0,1fr)` track — stretched on fresh open; after several turns the growing
-auto track squeezes that same 1fr track toward 0 → crushed composer. Banner visible ⇒ correct —
-why it only bites sometimes. Fix: explicit `grid-row: 1..5` on the five shell children (+
-`.UnicDB-ai-chat-v2-main { display:flex; flex-direction:column; min-width:0; min-height:0 }`).
-One change resolves composer size, bottom pinning, crush, and enables the scroll region.
+## §4 Test Plan (TDD — RED first)
 
-**Auto-scroll (verified).** `webview/aiChat/scroll.ts` implements a full stick-to-bottom
-controller (48px threshold, unread pill, prepend re-anchor, input-focus suppression). It is
-instantiated at `webview/aiChat/controller.ts:777` but NEVER driven — zero call sites for
-`beginFrame`/`notifyNewResponse`/`notifyReasoningActivity` in the repo. Wire it into the single
-coalesced render pass (`controller.ts` ~264-285, where `transcript.render(state)` /
-`activity.render(state)` already run): `beginFrame()` before paints; a user-visible-signature
-diff after paints decides `notifyNewResponse()` vs `notifyReasoningActivity()`.
-
-**Timeline (per user scope updates).** The transcript already renders in-flow tool rows
-(`transcript.ts` `updateTool` lines 445-459: label + raw status text + summary). Upgrade those
-rows into the timeline (no second surface): status dot classes from the existing `data-status`
-attribute, bold label + muted summary, expandable monospace IN/OUT block, trailing live
-indicator while `state.turn` is open. Data: `tool_started` (`src/ui/aiChatPanelMessages.ts:638`)
-carries no payload — add ONE optional `detail?: string` filled by the host at the existing
-`onToolCall` site (`src/ui/aiChatPanel.ts:3034-3048`, `ToolCall` from `src/ai/agent.ts:149`),
-shape-only/sanitized/capped like all host copy; `tool_finished.summary` stays the OUT line.
-Legacy frames without `detail` render without the IN block. Reducer (`store.ts:581/597`) plumbs
-`ChatToolItem.detail`. Alternative rejected: rendering the collapsed `activity.ts` header as the
-indicator — it is invisible when collapsed and duplicates the timeline rows.
-
-**Dead icons (verified).** Buttons exist and fire `TranscriptCallbacks` (`transcript.ts:67`,
-dispatch at 248-288; copy even self-services the clipboard + toast). `controller.ts:743-767`
-wires only `onCopyUser`/`onCopyAssistant`/`onRegenerateAssistant`/`onLoadEarlier`;
-`onEditUser`/`onRetryUser`/`onMoreAssistant` are undefined → no-ops. Wire: edit → `DRAFT_CHANGED`
-(`store.ts:284`) + focus the composer textarea; retry → existing `requestRetry()`
-(`controller.ts:990`); 3-dot → existing `createOverlayMenu` (`overlays.ts:92,151`) anchored at
-the clicked button with Copy/Regenerate rows. No new subsystems.
-
-## §4 Test Plan
-
-| Task | Type | Test | Expected |
-|---|---|---|---|
-| 001 | regression | explicit grid-row on all five shell children | styles.css has `grid-row: 1..5` on header/banner/main/composer/hint — RED before fix; single assertion covers fresh-open, crush and scroll-region manifestations |
-| 001 | happy | transcript is the scroll region | `.UnicDB-ai-chat-v2-main` = flex column + min-width/min-height 0; `.UnicDB-ai-chat-v2-transcript` keeps `overflow-y:auto` |
-| 001 | edge (clipping) | root keeps `overflow:hidden`; main has none | root block matches `overflow:hidden`, main block does not |
-| 001 | edge (scoping) | new selectors stay V2-scoped | every added selector/keyframe contains `.UnicDB-ai-chat-v2`, braces balanced |
-| 002 | happy | new response auto-scrolls to bottom | mocked scrollHeight 2000 / clientHeight 400 → `scrollTop === 2000` after flushRender |
-| 002 | edge (reasoning-only) | reasoning delta never scrolls | scrollTop unchanged, pill hidden |
-| 002 | edge (user scrolled up) | position preserved + unread pill | scrollTop stays 0; `[data-chat-scroll-pill]` visible, label "↓ 1 new response" |
-| 002 | regression | controller is never driven today | all above RED before the wiring lands |
-| 003 | happy | Bash step with IN/OUT | `tool_started{label:"Bash",detail:"git status"}` + `tool_finished{status:"ok",summary:"3 files changed"}` → bold label, IN text "git status", OUT text "3 files changed", green status |
-| 003 | happy | live indicator lifecycle | `.UnicDB-ai-chat-v2-live` node exists while turn open, removed after `turn_finished` |
-| 003 | edge (absent field) | legacy frame without `detail` | no IN block node, row renders label + dot, no crash |
-| 003 | edge (hostile input) | HTML/control chars in detail/summary | textContent only; no injected element in `innerHTML` |
-| 003 | edge (boundary) | output longer than cap | capped max-height + `overflow-y:auto` rules asserted in CSS |
-| 003 | regression | running pulse absent today | pulse rule + namespaced keyframes for `[data-status="running"]` — RED before fix (only failed/denied colored, styles.css:641) |
-| 004 | happy | copy user message | `navigator.clipboard.writeText` called with message text; "Copied" toast |
-| 004 | happy | edit user message | composer textarea value = message text and focused |
-| 004 | happy | retry user message | postMessage body `{kind:"submit_turn", draft.text === message text}` |
-| 004 | happy | assistant 3-dot | `[data-chat-overlay-menu]` opens with Copy + Regenerate rows; Escape closes |
-| 004 | edge (clipboard failure) | writeText rejects | "Could not copy" alert, no throw |
-| 004 | edge (empty text) | retry/edit on empty message | no `submit_turn` posted |
-| 004 | regression | edit/retry/3-dot dead today | callbacks undefined → happy cases RED before fix |
-
-Edge kinds are deliberately mixed: clipping/scoping (CSS-structural), absent-field, hostile
-input, boundary-cap, user-scrolled-up, input-focus, clipboard-permission, empty-text.
+- statementParser.test.ts: `baseOffset` shifts start/end; default 0 unchanged; per-piece
+  split with baseOffset yields doc-space offsets.
+- queryRunner.test.ts: 3 statements, 2nd rejects → statuses `[done, error, cancelled]`,
+  adapter called exactly twice (regression pin).
+- extension.test.ts: selection-run with middle statement failing → `showErrorMessage`
+  called with "stopped at statement 2 of 3"; `setDecorations`/`createDiagnosticCollection`
+  invoked with the failing statement's document range; busy-second-run surfaces warning;
+  non-sql editor run surfaces info message; per-piece split executes exactly the
+  highlighted statements (regression for merged-split).
+- consolePanel tests: whitespace runSelection → info message, no run.
 
 ## §5 Verification Commands
 
-Per task (exact, from `package.json` scripts — verified):
-
 ```bash
-npx vitest run <task's named test files>
-npm run typecheck        # tsc --noEmit — the project's static gate
-npm run compile          # node esbuild.js — bundle must stay green
+npm run typecheck
+npm run compile
+npx vitest run src/core/__tests__/statementParser.test.ts
+npx vitest run src/core/__tests__/queryRunner.test.ts   # or wherever runner tests live
+npx vitest run src/extension.test.ts
+npm test        # full suite at each wave boundary
 ```
 
-- This project has **no lint script** (checked `package.json` scripts) — `npm run typecheck` is
-  the static-analysis gate and is MANDATORY in every task.
-- Full `npm test` at every wave boundary is the regression net for the per-task narrowed
-  selections below.
-- Task-budget validator note: `.claude/ukit/index/task-budget-validator.mjs` does not exist in
-  this repo's installed UKit version (verified by directory listing + find) — the right-sizing
-  gate could not be executed; each task file instead follows `_TEMPLATE.md` exactly and keeps to
-  one file-boundary of work per the PLAN §2 constraint.
-- Test-selection note (RULES resolution order): none of this cycle's targets resolve via
-  `.cache/index/tests-map.json` (verified — not mapped), and the RULES step-3 floor names
-  `yarn test:release-core`, which does not exist in this npm project. The binding convention here
-  is colocated tests matched by the vitest `include` glob `webview/**/*.test.ts`
-  (`vitest.config.ts`), so each task names its exact colocated files — never the full suite by
-  default, never an empty selection.
+## §6 Acceptance
 
-## §6 Acceptance Criteria
-
-- [ ] Fresh open: composer compact, pinned above the hint row at the bottom — not giant (TASK-001).
-- [ ] After many turns: composer still compact and fully visible, transcript row absorbs the
-      growth (TASK-001).
-- [ ] Banner hidden or visible: identical placement (explicit grid-row, no auto-placement shift)
-      (TASK-001).
-- [ ] Transcript scrolls; newest message auto-follows when near bottom; scrolled-up preserves
-      position and shows the unread pill (TASK-001 + TASK-002).
-- [ ] Live turn shows the tool timeline: bold labels, muted summaries, pulsing/green/red status
-      dots with connector line, Bash IN/OUT monospace cards (capped, internally scrollable), and
-      a trailing pulsing "Working…" indicator that resolves when the turn closes (TASK-003).
-- [ ] Copy, edit, retry and 3-dot on message actions all perform their action (TASK-004).
-- [ ] `npm run typecheck` and `npm run compile` pass; full `npm test` passes at each wave
-      boundary; all four tasks reviewed APPROVED/APPROVED-WITH-MINOR.
-
-## §7 Global Constraints
-
-- Native DOM TypeScript only; no UI framework, no new dependency, no CDN, no browser storage.
-- All CSS scoped under `.UnicDB-ai-chat-v2` — `webview/aiChat/__tests__/shell.test.ts` enforces
-  this globally: every NEW selector and keyframe name must carry the prefix.
-- Wire-derived strings go through `textContent` only; wire values never become class names.
-- esbuild bundle via `npm run compile`; no version bump, package or publish.
-- Do not modify composer auto-grow bounds (`webview/aiChat/composer.ts` constants 64/160).
-- npm only; Node v22; VS Code webview target (no Node APIs in `webview/**`).
+- Sequential multi-statement run stops at first error; remaining statements are `cancelled`,
+  never executed; user gets an explicit error toast naming statement N of M.
+- The failing statement is highlighted in the editor (decoration) and listed in Problems
+  when a document context exists; mark clears on next run.
+- Selection-run executes exactly the highlighted statements, errors surface identically to
+  file runs; previously silent no-op paths (non-sql editor, whitespace selection, busy run)
+  all produce visible feedback.
+- No regressions: full `npm test` green, typecheck + compile clean.
 
 ## Planner Report
-PLANNER_MODEL: bao-opus
-PLAN_REVIEW: Approved by bao-opus (Round 1 — 0 critical / 0 important / 3 minor, logged in Plan Review Log)
 
-## Planner Self-Audit
-Checklist: 12/12 pass
-Fixed during audit: merged the "crushed composer" second manifestation into TASK-001's
-regression assertions (same grid-row contract); verified no existing test pins the broken
-`grid-template-rows` string (checked shell/controllerSurfaces/composer/sessions/transcript/
-errorsScrollA11y CSS assertions) so 001 cannot silently break neighbors; corrected §5 after
-finding the RULES `yarn test:release-core` floor does not exist in this npm repo.
-Known gaps: TASK-004 `onInsertSql` is wired only if an existing intent kind supports it —
-otherwise the button stays hidden as today and the executor records the finding in Discussion;
-Bash IN/OUT fidelity depends on what `ToolCall` (src/ai/agent.ts) exposes at the onToolCall
-site — if arguments are not shape-safe the host sends a name-only detail and the IN block
-degrades gracefully (covered by 003's absent-field edge test).
+PLANNER_MODEL: claude-opus-4-8
+PLAN_REVIEW: Approved by swe-2-high (Round 1)
 
 ## Plan Review Log
 
-### Round 1 — 2026-09-16 · bao-opus
-STATUS: Approved
-FINDINGS:
-  - none (no critical or important findings; three minor advisories below are non-blocking)
+### Round 1
 
-NOTES (minor, advisory — record only, no re-round required):
-  1. minor — §1 success line "every message action button works" (PLAN.md:23) overstates
-     TASK-004 relative to the declared known gap that onInsertSql may stay hidden when no
-     existing intent kind supports it (Planner Self-Audit, PLAN.md:181-183); §6 correctly
-     enumerates only copy/edit/retry/3-dot. Suggested fix: scope the §1 line to those four
-     actions or explicitly exclude onInsertSql, so no executor reads §1 as license to invent a
-     new intent kind (which §2 out-of-scope forbids).
-  2. minor — §4 edge-kind list names "input-focus" (PLAN.md:118) but no 002 table row exercises
-     the input-focus scroll suppression that §3 attributes to scroll.ts (002 rows are
-     PLAN.md:99-102). Suggested fix: add a 002 edge row (focus composer textarea mid-turn ->
-     scrollTop unchanged, no pill) or drop the item from the list.
-  3. minor — §2 states the same-wave no-shared-file CONSTRAINT (PLAN.md:46) but the plan never
-     states the wave split, and the conflicts are non-obvious from the plan alone: 001 and 003
-     both touch styles.css, 002 and 004 both touch controller.ts, 003 and 004 both touch
-     transcript.ts. Suggested fix: state the intended wave grouping (e.g. wave 1 = 001+002,
-     wave 2 = 003, wave 3 = 004, or any split honoring the constraint) so conflicting tasks are
-     never co-scheduled.
+- Reviewer: independent plan reviewer (REVIEW_TARGET_TYPE=plan)
+- Verdict: **Approved**
+
+Checklist findings:
+
+- Completeness: covers both diagnosed roots — (A) silent no-op paths (non-SQL editor early
+  return, busy guard drop, whitespace console selection) and the editor-vs-console split
+  divergence; (B) invisibility of the already-correct stop-on-first-error in
+  `queryRunner.ts:537-565` via toast + decoration + diagnostics. Test plan pins each defect
+  (regression test for merged split, stop semantics, per-statement marking). No gap found.
+- Consistency: §2 scope, §3 design, §4 tests, and §6 acceptance all line up; per-piece
+  `baseOffset` split consistently resolves both the offset-loss and the join+trim
+  divergence in one move.
+- Clarity: minor — §3 point 3 self-revises mid-paragraph (`opts.editorContext?` vs "pass
+  editor + doc-space statements"); executor should implement the second variant. §5 runner
+  test path is left as "or wherever runner tests live" — executor must locate it. Neither
+  is blocking.
+- Scope: tight — parser option, one new UI module, extension wiring, mocks/tests.
+  `.sh`/webview/AI lanes explicitly excluded.
+- YAGNI: `DiagnosticCollection` goes slightly beyond the literal "highlight the failing
+  statement" ask, but Problems-panel surfacing is a small, standard complement to the
+  decoration and directly serves "mark which statement failed". Acceptable. Note: the plan
+  names cancelled-statement cards rendering like executed ones as part of the visibility
+  defect but does not change that rendering — the explicit "stopped at statement N of M"
+  toast makes this cosmetic rather than blocking.
