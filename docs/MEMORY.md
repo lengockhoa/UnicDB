@@ -146,6 +146,8 @@
 - [2026-09-09] Decision: Keep the SQL Console editor dependency-free by layering `webview/sqlHighlight.ts` spans under a transparent native textarea. Reason: preserves native selection, clipboard, autocomplete, draft persistence, and keyboard behavior while adding file-like syntax coloring without introducing a heavyweight editor runtime.
 - [2026-09-09] Constraint: The active namespace picker is shared across status bar, Console toolbar, and SQL file editor title menu. `ConnectionManager` reads the per-connection `ActiveSchemaStore` dynamically at execution time and prepends PostgreSQL `SET search_path`; do not duplicate namespace state in webviews or rewrite user SQL.
 
+- [2026-09-17] Standing rule (user directive): every completed cycle/handoff MUST end with a VS Marketplace publish via `npm run bump`. Client machines only sync the Marketplace latest; the Marketplace version is always the source of truth for "latest" — code merged without publishing is NOT finished. Also stored in `.ukit/storage/memory/user.json` (rules.
+
 ## Completed Milestones
 
 <!-- Significant shipped work. For historical context. One line per milestone. -->

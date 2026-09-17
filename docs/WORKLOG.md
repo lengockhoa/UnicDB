@@ -2,6 +2,19 @@
 
 Track session-level execution details.
 
+## 2026-09-17 — Release 1.54.1 (CHATFIX delivered)
+
+- `npm run bump` atomic publish: 1.54.0 → 1.54.1 (typecheck + full suite green, VSIX packaged,
+  commit afb40b4 + tag v1.54.1 pushed, GitHub release created, **published to VS Marketplace**).
+- Why: client machines sync Marketplace only — Marketplace is always the source of truth for
+  "latest"; the fixed chat UI (grid placement, auto-scroll, tool timeline, action icons) ships in
+  1.54.1. Verified fix artifacts inside VSIX: aiChatPanel.css (tool-io ×7, grid-row ×7,
+  scroll-pill ×7, v2-live ×2) + aiChatPanel.js timeline/scroll literals.
+- New standing rule recorded (user directive, also in .ukit/storage/memory/user.json): every
+  completed cycle MUST end with a Marketplace publish.
+
+---
+
 ## Budget Rules
 
 Keep this file compact to save AI context tokens:
