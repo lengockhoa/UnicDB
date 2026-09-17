@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.54.1] — 2026-09-17
+
+- Summary: AI Chat V2 UX fixes: compact composer always pinned at the bottom (explicit grid placement fixes giant-on-open and crushed-after-turns), transcript scrollbar with auto-follow to newest message and unread pill, Claude Code-style tool activity timeline (status dots, Bash IN/OUT cards, live working indicator), and fully wired message actions (copy/edit/retry/3-dot menu).
+- Files: webview/aiChat/{styles.css,shell.ts,controller.ts,transcript.ts,store.ts,scroll.ts}, src/ui/aiChatPanel.ts, src/ui/aiChatPanelMessages.ts, colocated tests in webview/aiChat/__tests__/, docs/AI_HANDOFF CHATFIX cycle
+- Verification: npm run typecheck ✅ · npm test ✅ · UnicDB-1.54.1.vsix packaged
+
+---
+
 ## [1.54.0] — 2026-09-16
 
 - Summary: Ship the full AI Chat V2 webview replacement: two-tier composer (40x40 send arrow, Enter/Shift+Enter/IME rules), slash and mention menus, streaming/reasoning/tool timeline, permission sheet, session persistence/resume/export, and engine capability matrix. V2 is now the sole production chat UI; the V1 adapter, composer, header, and thread modules are deleted.
