@@ -26,6 +26,11 @@
 ## Active Constraints
 
 <!-- Rules AI must respect during implementation. Non-obvious limits not visible in the code. -->
+- **OWNER MANDATE — HIGH PRIORITY, luôn áp dụng (2026-09-17): mọi thay đổi source code (không tính update docs) đều bắt buộc version bump + VS Marketplace publish.**
+  1. Bất kỳ thay đổi nào bên source code — kể cả nhỏ nhất — phải lên số patch hoặc version release mới. Patch number KHÔNG giới hạn, cứ tăng thoải mái; owner theo dõi dự án theo số patch này.
+  2. Bất cứ version/patch nào đã lên git đều BẮT BUỘC được publish lên VS Marketplace. Ngoại lệ DUY NHẤT: update docs (docs-only).
+  3. Docs-only changes (README, CLAUDE.md, `docs/**`, comments) không cần bump/publish.
+  Cơ chế thực thi: dùng `npm run bump` (atomic — bump → CHANGELOG → test → .vsix → commit → tag → push → GitHub Release → Marketplace). Chi tiết trong 2 entry bên dưới: "Versioning policy" (2026-09-06) và "1 git release = 1 Marketplace release" (2026-09-15). Quy tắc này được lặp lại trong `.ukit/storage/memory/user.json`.
 - **Ship constraint — user installs ONLY via the one-liner**:
   `curl -fsSL https://raw.githubusercontent.com/lengockhoa/UnicDB/main/scripts/install-UnicDB.sh | bash`
   User machines are non-dev machines (no repo, no Node, no build). The script pulls the `.vsix`

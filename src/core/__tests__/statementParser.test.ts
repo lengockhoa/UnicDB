@@ -1078,3 +1078,65 @@ describe("splitStatements — lineBoundaries: CREATE ... AS body regression (cyc
     expect(out[1].text).toBe("SELECT 2");
   });
 });
+
+// ---- TASK-STOPERR-001 — baseOffset (document-space start/end) ---------------
+describe("statementParser — splitStatements baseOffset (TASK-STOPERR-001)", () => {
+  it("#1 — baseOffset: 20 shifts every start/end by 20, text unchanged", () => {
+    const sql = "SELECT 1; SELECT 2";
+    const base = splitStatements(sql);
+    const out = splitStatements(sql, undefined, { baseOffset: 20 });
+    expect(out).toHaveLength(base.length);
+    for (let k = 0; k < out.length; k++) {
+      expect(out[k].start).toBe(base[k].start + 20);
+      expect(out[k].end).toBe(base[k].end + 20);
+      // text vẫn là relative slice của piece, KHÔNG shift.
+      expect(out[k].text).toBe(base[k].text);
+      expect(out[k].text).toBe(sql.substring(base[k].start, base[k].end));
+    }
+    // Concrete pin: "SELECT 1" [0,8), "SELECT 2" [10,18) → +20.
+    expect(out[0]).toMatchObject({ start: 20, end: 28 });
+    expect(out[1]).toMatchObject({ start: 30, end: 38 });
+  });
+
+  it("#2 — baseOffset omitted and baseOffset: 0 are byte-identical to default", () => {
+    const sql = "SELECT 1; SELECT 2";
+    const def = splitStatements(sql);
+    const zero = splitStatements(sql, undefined, { baseOffset: 0 });
+    const omit = splitStatements(sql, undefined, {});
+    expect(zero).toEqual(def);
+    expect(omit).toEqual(def);
+  });
+
+  it("#3 — baseOffset + EOF-tail statement (no `;`): tail end = baseOffset + len", () => {
+    const sql = "SELECT 1";
+    const out = splitStatements(sql, undefined, { baseOffset: 42 });
+    expect(out).toHaveLength(1);
+    expect(out[0].start).toBe(42);
+    expect(out[0].end).toBe(42 + sql.length);
+    expect(out[0].text).toBe("SELECT 1");
+  });
+
+  it("#4 — baseOffset applies at every push site (`;`, line-boundary, GO, EOF tail)", () => {
+    const OFF = 100;
+    // `;` boundary + EOF tail.
+    const semi = splitStatements("A;B", undefined, { baseOffset: OFF });
+    expect(semi[0]).toMatchObject({ start: OFF + 0, end: OFF + 1 });
+    expect(semi[1]).toMatchObject({ start: OFF + 2, end: OFF + 3 });
+    // Line-boundary push site.
+    const lb = splitStatements("SELECT 1\nSELECT 2", undefined, {
+      lineBoundaries: true,
+      baseOffset: OFF,
+    });
+    expect(lb).toHaveLength(2);
+    expect(lb[0]).toMatchObject({ start: OFF + 0, end: OFF + 8 });
+    expect(lb[1]).toMatchObject({ start: OFF + 9, end: OFF + 17 });
+    // GO batch separator (mssql) — GO mid-buffer push site + tail after GO.
+    // candidateEnd = kwStart → the "\n" before GO belongs to stmt 1's range.
+    const go = splitStatements("SELECT 1\nGO\nSELECT 2", "mssql", {
+      baseOffset: OFF,
+    });
+    expect(go).toHaveLength(2);
+    expect(go[0]).toMatchObject({ start: OFF + 0, end: OFF + 9 });
+    expect(go[1]).toMatchObject({ start: OFF + 12, end: OFF + 20 });
+  });
+});

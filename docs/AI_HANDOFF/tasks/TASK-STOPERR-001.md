@@ -78,3 +78,41 @@ Do NOT change `text` slicing — only `start`/`end` shift by `baseOffset`.
 (no further comments yet)
 
 ---
+
+## Executor Report
+EXECUTOR_TOOL: Claude Code
+EXECUTOR_MODEL: claude-opus-4-8
+EXECUTOR_SUBAGENT: feature-implementer
+RED_OUTPUT:
+```
+ FAIL  src/core/__tests__/statementParser.test.ts > statementParser — splitStatements baseOffset (TASK-STOPERR-001) > #1 — baseOffset: 20 shifts every start/end by 20, text unchanged
+AssertionError: expected { Object (text, start, ...) } to match object { start: 20, end: 28 }
+- Expected  + Received
+  Object { - "end": 28, - "start": 20, + "end": 8, + "start": 0 }
+ FAIL  ... > #3 — baseOffset + EOF-tail statement (no `;`): tail end = baseOffset + len
+ FAIL  ... > #4 — baseOffset applies at every push site (`;`, line-boundary, GO, EOF tail)
+AssertionError: expected { Object (text, start, ...) } to match object { start: 100, end: 101 }
+- Expected  + Received
+  Object { - "end": 101, - "start": 100, + "end": 1, + "start": 0 }
+ Test Files  1 failed (1)
+      Tests  3 failed | 95 passed (98)
+```
+(Runner regression pins #4/#5 passed immediately — expected: task states "RED only if regression exists"; they pin already-correct behavior.)
+
+Verification Output:
+```
+$ npx vitest run src/core/__tests__/statementParser.test.ts
+ Test Files  1 passed (1)
+      Tests  98 passed (98)
+
+$ npx vitest run src/core/__tests__
+ Test Files  23 passed (23)
+      Tests  524 passed (524)
+
+$ npm run typecheck
+> UnicDB@1.54.1 typecheck
+> tsc --noEmit
+(exit 0, no errors)
+```
+Status: PASS
+Note: Two of my initial test expectations were arithmetic slips (GO push site `candidateEnd` = kwStart includes the "\n" before GO; SELECT 2 after "GO\n" starts at 12 not 11). Fixed expectations to match parser's documented range semantics; no source change needed. `queryRunner.ts` untouched — no drift found; `executeAll` already stops at first error.

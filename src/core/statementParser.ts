@@ -473,8 +473,13 @@ interface SplitResult {
  * - Statement có thể KHÔNG có terminating `;` (vd file thiếu `;` cuối).
  * - Statement rỗng (chỉ whitespace + comment) bị BỎ QUA — không trả về.
  *
- * `start` / `end` là character offset trong SQL gốc, sao cho
- * `sql.substring(start, end) === text`. Text KHÔNG trim — giữ nguyên vị trí.
+ * `start` / `end` là character offset; mặc định là offset trong `sql` gốc.
+ * Khi `opts.baseOffset` được truyền (TASK-STOPERR-001 — `sql` là 1 piece được
+ * trích từ document lớn hơn), `start`/`end` = `baseOffset +` offset tương đối,
+ * tức là DOCUMENT-space offset. Invariant mới:
+ * `text === sql.substring(start - baseOffset, end - baseOffset)` — `text`
+ * luôn là slice TƯƠNG ĐỐI của `sql` (piece), KHÔNG trim, KHÔNG shift.
+ * `baseOffset` mặc định 0 ⇒ byte-identical với hành vi cũ.
  *
  * `dialect` là optional (TASK-004) — bỏ qua ⇒ hành vi postgres-ish như trước.
  *
@@ -486,7 +491,7 @@ interface SplitResult {
 export function splitStatements(
   sql: string,
   dialect?: SqlDialect,
-  opts?: { lineBoundaries?: boolean },
+  opts?: { lineBoundaries?: boolean; baseOffset?: number },
 ): ParsedStatement[] {
   return splitStatementsInternal(sql, dialect, opts).statements;
 }
@@ -507,11 +512,14 @@ export function debugFinalConstructStackSizeForTest(
 function splitStatementsInternal(
   sql: string,
   dialect?: SqlDialect,
-  opts?: { lineBoundaries?: boolean },
+  opts?: { lineBoundaries?: boolean; baseOffset?: number },
 ): SplitResult {
   const useBackslashEscape = dialect === "mysql";
   const goEnabled = dialect === "mssql";
   const lineBoundaries = opts?.lineBoundaries === true;
+  // TASK-STOPERR-001: document-space offset cho statements parse từ 1 piece.
+  // Chỉ shift `start`/`end` ở push site; `text` vẫn là relative substring.
+  const baseOffset = opts?.baseOffset ?? 0;
   // Line-aware mode: at top-level (no open BEGIN/IF/CASE/...), a newline
   // followed by one of these keywords on the next line is treated as a
   // statement boundary — same role as `;`, but for newline-separated
@@ -596,8 +604,8 @@ function splitStatementsInternal(
             ) {
               out.push({
                 text: sql.substring(candidateStart, candidateEnd),
-                start: candidateStart,
-                end: candidateEnd,
+                start: baseOffset + candidateStart,
+                end: baseOffset + candidateEnd,
               });
             }
             stmtStart = -1;
@@ -665,8 +673,8 @@ function splitStatementsInternal(
       ) {
         out.push({
           text: sql.substring(candidateStart, candidateEnd),
-          start: candidateStart,
-          end: candidateEnd,
+          start: baseOffset + candidateStart,
+          end: baseOffset + candidateEnd,
         });
       }
       // Cycle S bugfix — pop `AS_BODY` (nếu đang ở top) vì body vừa kết thúc tại
@@ -717,8 +725,8 @@ function splitStatementsInternal(
         ) {
           out.push({
             text: sql.substring(candidateStart, candidateEnd),
-            start: candidateStart,
-            end: candidateEnd,
+            start: baseOffset + candidateStart,
+            end: baseOffset + candidateEnd,
           });
         }
         stmtStart = -1;
@@ -758,8 +766,8 @@ function splitStatementsInternal(
     if (isMeaningful(tail)) {
       out.push({
         text: tail,
-        start: stmtStart,
-        end: tailEnd,
+        start: baseOffset + stmtStart,
+        end: baseOffset + tailEnd,
       });
     }
   }

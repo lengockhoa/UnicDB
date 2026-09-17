@@ -2341,3 +2341,38 @@ describe("QueryRunner — clear() (TASK-TABCLEAR-001)", () => {
     await runPromise;
   });
 });
+
+// ---- TASK-STOPERR-001 — stop-on-first-error regression pins ------------------
+describe("QueryRunner — stop-on-first-error pins (TASK-STOPERR-001)", () => {
+  it("#4 — 3-stmt run, stmt 2 adapter rejects → [done, error, cancelled], runQuery 2x", async () => {
+    const adapter = makeAdapter(async (sql) => {
+      if (sql === "SELECT 1") return okResult(["n"], [[1]]);
+      if (sql === "BAD") throw new Error("boom");
+      throw new Error("must not run: " + sql);
+    });
+    const runner = new QueryRunner(async () => adapter);
+    const result = await runner.run(
+      [stmt("SELECT 1", 0, 8), stmt("BAD", 9, 12), stmt("SELECT 3", 13, 21)],
+      () => {},
+    );
+    expect(result.map((r) => r.status)).toEqual(["done", "error", "cancelled"]);
+    expect(adapter.runQuerySpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("#5 — stmt 1 of 3 errors → stmts 2,3 cancelled, runQuery called 1x", async () => {
+    const adapter = makeAdapter(async (sql) => {
+      throw new Error("first fails: " + sql);
+    });
+    const runner = new QueryRunner(async () => adapter);
+    const result = await runner.run(
+      [stmt("BAD", 0, 3), stmt("SELECT 2", 4, 12), stmt("SELECT 3", 13, 21)],
+      () => {},
+    );
+    expect(result.map((r) => r.status)).toEqual([
+      "error",
+      "cancelled",
+      "cancelled",
+    ]);
+    expect(adapter.runQuerySpy).toHaveBeenCalledTimes(1);
+  });
+});
