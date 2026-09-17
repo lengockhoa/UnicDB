@@ -116,3 +116,16 @@ $ npm run typecheck
 ```
 Status: PASS
 Note: Two of my initial test expectations were arithmetic slips (GO push site `candidateEnd` = kwStart includes the "\n" before GO; SELECT 2 after "GO\n" starts at 12 not 11). Fixed expectations to match parser's documented range semantics; no source change needed. `queryRunner.ts` untouched — no drift found; `executeAll` already stops at first error.
+
+---
+
+## Reviewer Verdict
+VERDICT: approved
+REVIEWER_MODEL: claude-sonnet-4-5
+EXECUTOR_MODEL: claude-opus-4-8
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important: none
+  minor: src/core/statementParser.ts:524 — `baseOffset` không được validate (âm / không nguyên sẽ tạo offset ngoài document-space); chỉ là phòng vệ, không chặn.
+NEXT_STATUS_FOR_INDEX: done

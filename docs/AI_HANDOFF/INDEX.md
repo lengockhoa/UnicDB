@@ -10,9 +10,9 @@ running a different statement set. Plan: `docs/AI_HANDOFF/PLAN.md`.
 
 | Task | Title | Status | Dependencies | Wave |
 |---|---|---|---|---:|
-| TASK-STOPERR-001 | splitStatements `baseOffset` (doc-space offsets) + stop-on-error regression pin | ready | none | 1 |
-| TASK-STOPERR-002 | `statementErrorMarks.ts` — decoration + DiagnosticCollection marker | ready | none | 1 |
-| TASK-STOPERR-003 | Wire marking + "stopped at statement N" toast + fix silent selection-run paths | ready | 001, 002 | 2 |
+| TASK-STOPERR-001 | splitStatements `baseOffset` (doc-space offsets) + stop-on-error regression pin | done | none | 1 |
+| TASK-STOPERR-002 | `statementErrorMarks.ts` — decoration + DiagnosticCollection marker | done | none | 1 |
+| TASK-STOPERR-003 | Wire marking + "stopped at statement N" toast + fix silent selection-run paths | done | 001, 002 | 2 |
 
 Execution: lowest ready ID first; wave 1 tasks (001+002) may run in parallel — disjoint
 file sets (core parser/runner vs new UI module). Task 003 touches `extension.ts` +

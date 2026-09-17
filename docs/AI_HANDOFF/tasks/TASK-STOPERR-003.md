@@ -1,8 +1,8 @@
 # TASK-STOPERR-003 — Wire stop/marking + fix silent selection-run paths
 
-- Status: `ready`
+- Status: `done`
 - Owner: `-`
-- Reviewer: `-`
+- Reviewer: `unic-smart (code-reviewer)`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3 items 1, 3, 4
 
 ## Goal
@@ -129,3 +129,44 @@ Verification Output:
   npm test → 313 files passed, 4684 passed | 5 skipped (4689)
 Status: PASS
 Note: Worktree lacked node_modules binaries — symlinked esbuild + vsce from main repo node_modules to unblock webview-bundle tests and the vsce-package test (environment fix, not code). Pre-existing test TASK-ARP02-004 Gap #2 updated to accept the upgraded busy warning (info→warning is this task's spec). In-range `stmt.end` excludes the trailing `;` (parser contract), test asserts char 8 accordingly.
+
+---
+
+## Reviewer Verdict
+VERDICT: approved_minor
+REVIEWER_MODEL: unic-smart (handoff.reviewer.model lane; ≠ claude-opus-4-8 executor)
+EXECUTOR_MODEL: claude-opus-4-8
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/extension.ts:3226 — cursor-only run (no selection) on unterminated multi-statement
+      text now pushes `found` verbatim (statementAtCursor splits WITHOUT `lineBoundaries`),
+      so "SELECT 1\nSELECT 2" is sent as ONE merged statement (probe: default split = 1,
+      old re-split with lineBoundaries = 2) and fails with a syntax error instead of running
+      both lines. This is spec-directed ("do NOT re-split") and does fix a real pre-existing
+      over-split (a `SELECT`-starting continuation line inside a `;`-terminated statement used
+      to be broken apart), so it is recorded as a behavior note, not a defect. If line-boundary
+      parity with the selection path is wanted, re-split with
+      `splitStatements(piece, dialect, { lineBoundaries: true, baseOffset: found.start })` —
+      baseOffset (STOPERR-001) preserves the doc offsets the spec wanted to protect.
+    - src/extension.ts:3519 — run-start `statementErrorMarker?.clear()` is NOT wrapped in
+      try/catch while `mark()` is; a `setDecorations` throw on a disposed/closed editor would
+      escape before `panel.setBusy(true)`. Low risk (VS Code treats it as a no-op), cheap to guard.
+    - src/extension.ts:3587 — the toast always appends "Remaining statements were not run.",
+      which is wrong when the failing statement is the last one (N === M).
+    - src/extension.test.ts:4298 — TASK-ARP02-004 Gap #2 assertion relaxed to accept info OR
+      warning; justified by this task's info→warning upgrade, but it no longer pins the channel.
+NOTES:
+  - Verified `runSlice`/`statements` index alignment: `applyKeywordQualify` preserves length +
+    order (spread keeps start/end) and `executeAll` pre-populates one result row per statement
+    (remaining rows = "cancelled"), so `failedIndex` → `statements[failedIndex]` is correct and
+    M = runSlice.length == statements.length. Cancelled-after-error rows are not marked (only
+    `status === "error"`), and `runFailed`'s synthetic row goes through the catch path — both correct.
+  - Selection path: per-piece `splitStatements(piece, dialect, { lineBoundaries, baseOffset: start })`
+    restores document-space offsets and drops the join/trim offset shift; CodeLens + editor callers
+    pass `editor`, console `onRun` does not (no TextDocument) — matches spec.
+  - `opts.editor` is stripped via rest-destructure before `runner.run`, so the host-only field
+    never reaches the adapter.
+NEXT_STATUS_FOR_INDEX: done

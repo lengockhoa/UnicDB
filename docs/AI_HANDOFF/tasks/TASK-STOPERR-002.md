@@ -115,3 +115,19 @@ esbuild: build complete
 ```
 Status: PASS
 Note: none
+
+---
+
+## Reviewer Verdict
+VERDICT: approved_minor
+REVIEWER_MODEL: claude-sonnet-4-5
+EXECUTOR_MODEL: claude-opus-4-8
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important: none
+  minor: src/ui/__tests__/statementErrorMarks.test.ts:104-108 — `clear()` SAU một `mark()` (đường xóa decoration + `diagnostics.delete(uri)`) không được assert; `collectionDelete` được mock nhưng không có test nào kiểm tra nó được gọi. Acceptance criterion 3 ("clear() removes decorations + diagnostics") chỉ được phủ ở nhánh no-op. Không chặn merge.
+  minor: src/ui/statementErrorMarks.ts:25-30 — spec Target Files mô tả "overviewRulerColor/gutter tint"; chỉ có `color` (text) + `overviewRulerColor`, không có gutter/border tint. Không nằm trong Acceptance Criteria nên chỉ là lệch mô tả.
+  minor: src/ui/statementErrorMarks.ts:74-78 — `dispose()` không idempotent (gọi 2 lần sẽ dispose decorationType/collection 2 lần). An toàn trong thực tế vì VS Code Disposable.dispose() vốn idempotent.
+  minor: src/ui/statementErrorMarks.ts:57-58 — `mark()` gọi `clear()` trước khi kiểm tra `stmt`; nếu `stmt` không hợp lệ (ngoài range) thì trạng thái mark trước đó vẫn bị xóa. Hành vi này hợp lý ("không có statement lỗi thì không đánh dấu") và đã được test #4 gián tiếp xác nhận.
+NEXT_STATUS_FOR_INDEX: done
