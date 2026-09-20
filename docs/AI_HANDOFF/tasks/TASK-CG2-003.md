@@ -181,3 +181,19 @@ Note: |
 ## Progress
 
 - 2026-09-21T00:28:29+0700 · milestone: guard-wired-green · last-green: typecheck + commitGenCommand(20) + userGuideContent(26) + guard/message(41) + compile · files: src/ai/commitGenCommand.ts, src/ai/__tests__/commitGenCommand.test.ts, src/ui/__tests__/commitGenIntegration.test.ts, docs/UNICDB_USER_GUIDE.md, docs/AI_HANDOFF/tasks/TASK-CG2-003.md · drift: src/ui/__tests__/commitGenIntegration.test.ts (EN->VN fakes required by guard rewiring; same pattern as Tests #1/#2/#10)
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: bao-opus (config handoff.reviewer.model = unic-smart → opus tier)
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: npm run typecheck; npx vitest run src/ai/__tests__/commitGenCommand.test.ts; npx vitest run src/ui/__tests__/userGuideContent.test.ts; npx vitest run src/ai/__tests__/commitMessageGuard.test.ts src/ai/__tests__/commitMessage.test.ts; npm run compile; npm test
+  result: typecheck 0 errors; 20/20 + 26/26 + 41/41 pass; compile OK; full suite 4718 pass / 0 fail / 5 skipped (main tree — executor's 6 failing files were worktree env issues, confirmed absent here); commitGenIntegration 7/7 pass
+TEST_PLAN_COVERAGE: all-followed — rows 1-8 implemented (happy fakes EN→VN with structural asserts kept; retry builtin/omp/claude-code; terminal garbage×2; >100 words multiline fixture; empty attempt-1 + garbage→empty attempt-2 no-third-call; attempt-2 throw; guide keywords); attempt-1 transport no-retry still pinned by unchanged Tests #6/#8/#9. RED_OUTPUT contains real assertion failures (7 tests, "called 2 times, got 1").
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Diff matches SPEC §8.4/§8.5 exactly — frozen strings verbatim, terminal toast format verbatim (reasons join ", " + 240-char preview + optional commit-gen-guard-rejected dump), empty family never retried and keeps commit-gen-empty dump with the last raw, retry goes through the same port (buildOmpEngine once / same cfg+modelId+300+0.2), hint toast fires exactly once via hintShown, CommitGenDeps/provider.ts/sanitizeCommitMessage untouched, no vscode import. The extra-file change (commitGenIntegration.test.ts) is a legitimate minimal EN→VN fake swap forced by the new not-vietnamese contract; all structural asserts preserved, no regression masked.

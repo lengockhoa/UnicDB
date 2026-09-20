@@ -2,7 +2,7 @@
 
 **Status:** ready
 **Owner:** (unassigned — dispatch theo INDEX.md)
-**Reviewer:** (gán lúc dispatch — PHẢI khác model executor)
+**Reviewer:** bao-opus (verdict: approved_minor)
 **Parent plan:** docs/AI_HANDOFF/PLAN.md
 
 ## Goal
@@ -135,3 +135,21 @@ $ npm run compile
 ```
 Status: PASS
 Note: none. Milestone commits on worktree branch: 22e97ea (red-tests), d1c9afe (green-guard). Only the 2 Target Files added; no other file touched.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: bao-opus
+EXECUTOR_MODEL: bao-sonnet
+VERIFICATION_RERUN:
+  command: npm run typecheck && npx vitest run src/ai/__tests__/commitMessageGuard.test.ts && npm run compile && grep -c vscode src/ai/commitMessageGuard.ts
+  result: typecheck 0 errors (exit 0); 18/18 tests pass; esbuild compile OK (exit 0); grep -c vscode = 0 — all re-run fresh by reviewer this turn
+TEST_PLAN_COVERAGE: all-followed — 8/8 Test Cases implemented as 18 vitest tests; RED_OUTPUT holds real pre-implementation failure (module-missing load error + stack trace, non-zero exit); test #8 pins exact array ["unbroken-blob","hash-like","not-vietnamese"] via toEqual
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/ai/commitMessageGuard.ts:100-108 — isSymbolHeavy iterates code points but divides by UTF-16 .length; astral-plane (surrogate-pair) symbols under-count the ratio (pure-emoji text measures 0.5, not 1.0). Unreachable for reasoning-leak output (BMP symbols), conservative direction, no frozen test affected — record for a future spec revision only; do NOT change frozen behavior in this cycle.
+    - src/ai/commitMessageGuard.ts:116 — style nit: stray space in `start === "" )`.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Implementation matches SPEC §7/§7.1/§8.3 exactly — emission order empty→blob→hash→symbol→reasoning→not-vietnamese→subject→message with no post-empty short-circuit; `>=`40 / `/^[0-9a-f]{32,}$/i` / `>`0.5 non-ws / `>`12 / `>`100 boundaries; all 20 frozen §7.1 markers with "them"/"bang" correctly absent; frozen countWords/tokens/subject helpers replicated verbatim; zero imports, zero vscode refs. Model isolation OK: executor bao-sonnet ≠ reviewer bao-opus (config binds handoff.reviewer.model=unic-smart → claude-opus tier).
