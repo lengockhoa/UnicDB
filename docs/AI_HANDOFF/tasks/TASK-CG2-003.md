@@ -115,3 +115,69 @@ debug dump + return KHÔNG `setInputBox`. `call` throw (attempt nào) → catch 
 - Cập nhật JSDoc "Frozen flow" của `runGenerateCommitMessage` cho khớp flow mới (bước 4
   thành guard/retry/inject) — reviewer sẽ đối chiếu với SPEC §8.4.
 - `writeDebugArtifact` là optional port — gọi với `?.`, thiếu port không được crash.
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT: |
+  FAIL src/ai/__tests__/commitGenCommand.test.ts > guard flow (SPEC §8.4/§8.5) > builtin: retries once with the corrective prompt and injects attempt 2
+  AssertionError: expected "spy" to be called 2 times, but got 1 times
+  FAIL ... > omp: retries once through the same engine and injects attempt 2
+  AssertionError: expected "generate" to be called 2 times, but got 1 times
+  FAIL ... > claude-code fallback: retries once and emits the hint toast only once
+  AssertionError: expected "spy" to be called 2 times, but got 1 times
+  FAIL ... > builtin: garbage twice blocks with the frozen toast and never injects
+  AssertionError: expected "spy" to be called 2 times, but got 1 times
+  FAIL ... > builtin: an over-100-word message fails twice with message-too-long
+  AssertionError: expected "spy" to be called 2 times, but got 1 times
+  FAIL ... > builtin: garbage then empty on attempt 2 falls into the empty diagnostic (no third call)
+  AssertionError: expected "spy" to be called 2 times, but got 1 times
+  FAIL ... > builtin: a throw on attempt 2 is mapped by the existing provider-error catch
+  AssertionError: expected "spy" to be called 2 times, but got 1 times
+  Test Files  1 failed (1)
+       Tests  7 failed | 13 passed (20)
+
+Verification Output: |
+  ### npm run typecheck
+  > tsc --noEmit                (0 errors)
+  ### npx vitest run src/ai/__tests__/commitGenCommand.test.ts
+  ✓ src/ai/__tests__/commitGenCommand.test.ts  (20 tests) 10ms
+  Test Files  1 passed (1) — Tests 20 passed (20)
+  ### npx vitest run src/ui/__tests__/userGuideContent.test.ts
+  ✓ src/ui/__tests__/userGuideContent.test.ts  (26 tests) 3ms
+  Test Files  1 passed (1) — Tests 26 passed (26)
+  ### npx vitest run src/ai/__tests__/commitMessageGuard.test.ts src/ai/__tests__/commitMessage.test.ts
+  ✓ commitMessage.test.ts (23 tests) ✓ commitMessageGuard.test.ts (18 tests)
+  Test Files  2 passed (2) — Tests 41 passed (41)
+  ### npm run compile
+  esbuild: build complete
+  ### npm test
+  Test Files  6 failed | 308 passed | 2 skipped (316)
+  Tests  1 failed | 4669 passed | 5 skipped (4675)
+  NOTE: the 6 failing files / 1 failing test are PRE-EXISTING at the wave-1 base commit
+  (verified by stashing my changes and re-running: identical result set, empty diff of
+  `FAIL` lines). Root cause is worktree environment only — `node_modules/.bin/esbuild`
+  and `node_modules/.bin/vsce` are absent in `.worktrees/task-cg2-003` (spawnSync ENOENT
+  in the aiChatPanel*Webview / webviewServerFilter bundle tests and the vsix round-trip).
+  Unrelated to this task; no delta introduced.
+
+Status: PASS
+Note: |
+  Deviation from Target Files (1 extra file): `src/ui/__tests__/commitGenIntegration.test.ts`
+  was also updated. Its Test #2 / #5 fakes were clean-English commit strings
+  ("feat(db): add index", "feat(api): route through omp|builtin"). The guard correctly
+  rejects clean English (`not-vietnamese`), so after wiring those integration tests failed
+  `builtinComplete called 1 time, got 2` — the intended new contract. Fix was the same
+  EN→VN fake swap the task prescribes for #1/#2/#10; every structural assertion was kept.
+  Kept out of scope otherwise (no shape/port/provider.ts/sanitize changes).
+  Test row #5 fixture note: a single-line 150-word string cannot reach >100 words because
+  `sanitizeCommitMessage` clamps the subject to 72 chars first; used a multiline fixture
+  (short VN subject + 120-word body) so `message-too-long` genuinely fires.
+  row #8 (userGuideContent) required no test edit — passed unmodified.
+
+
+## Progress
+
+- 2026-09-21T00:28:29+0700 · milestone: guard-wired-green · last-green: typecheck + commitGenCommand(20) + userGuideContent(26) + guard/message(41) + compile · files: src/ai/commitGenCommand.ts, src/ai/__tests__/commitGenCommand.test.ts, src/ui/__tests__/commitGenIntegration.test.ts, docs/UNICDB_USER_GUIDE.md, docs/AI_HANDOFF/tasks/TASK-CG2-003.md · drift: src/ui/__tests__/commitGenIntegration.test.ts (EN->VN fakes required by guard rewiring; same pattern as Tests #1/#2/#10)

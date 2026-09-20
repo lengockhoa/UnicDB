@@ -150,7 +150,7 @@ describe("TASK-GC-008 #2 end-to-end builtin via the real handler", () => {
     const cfg = fakeConfig(settings);
     // Provider reply is fenced + has a trailing space — the sanitizer
     // (commitMessage.ts) must strip the fence and trim.
-    const providerReply = "```\nfeat(db): add index\n```";
+    const providerReply = "```\nfeat(db): thêm chỉ mục cho bảng users\n```";
 
     const builtinComplete = vi.fn(
       async (_cfg: AiConfig, _req: ProviderRequest) => providerOk(providerReply),
@@ -188,7 +188,7 @@ describe("TASK-GC-008 #2 end-to-end builtin via the real handler", () => {
 
     // setInputBox received the SANITIZED message (fence stripped).
     expect(setInputBox).toHaveBeenCalledTimes(1);
-    expect(setInputBox).toHaveBeenCalledWith("feat(db): add index");
+    expect(setInputBox).toHaveBeenCalledWith("feat(db): thêm chỉ mục cho bảng users");
   });
 });
 
@@ -316,7 +316,7 @@ describe("TASK-GC-008 #5 engine routing switches with config", () => {
     const resolveEngine = vi.fn(
       (_i: { detection: OmpDetection; config: unknown }) => choice,
     );
-    const oneShot = fakeOmpOneShot("feat(api): route through omp");
+    const oneShot = fakeOmpOneShot("feat(api): định tuyến qua omp");
     const buildOmpEngine = vi.fn(async (_c: EngineChoice) => oneShot);
     const builtinComplete = vi.fn(async () => providerOk("never-used"));
     const setInputBox = vi.fn();
@@ -342,7 +342,7 @@ describe("TASK-GC-008 #5 engine routing switches with config", () => {
     expect(buildOmpEngine).toHaveBeenCalledWith(choice, "lite-1");
     expect(builtinComplete).not.toHaveBeenCalled();
     expect(setInputBox).toHaveBeenCalledTimes(1);
-    expect(setInputBox).toHaveBeenCalledWith("feat(api): route through omp");
+    expect(setInputBox).toHaveBeenCalledWith("feat(api): định tuyến qua omp");
   });
 
   it("builtin-engine lite routes through builtinComplete and never touches buildOmpEngine", async () => {
@@ -351,7 +351,7 @@ describe("TASK-GC-008 #5 engine routing switches with config", () => {
 
     const builtinComplete = vi.fn(
       async (_cfg: AiConfig, _req: ProviderRequest) =>
-        providerOk("feat(api): route through builtin"),
+        providerOk("feat(api): định tuyến qua builtin"),
     );
     const buildOmpEngine = vi.fn(async () => fakeOmpOneShot("never-used"));
     const setInputBox = vi.fn();
@@ -380,7 +380,7 @@ describe("TASK-GC-008 #5 engine routing switches with config", () => {
     expect(buildOmpEngine).not.toHaveBeenCalled();
     expect(setInputBox).toHaveBeenCalledTimes(1);
     expect(setInputBox).toHaveBeenCalledWith(
-      "feat(api): route through builtin",
+      "feat(api): định tuyến qua builtin",
     );
   });
 });

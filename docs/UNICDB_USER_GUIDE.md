@@ -145,6 +145,13 @@ commit của SCM. Bạn chỉ cần review lại rồi bấm Commit.
   unstaged, có giới hạn kích thước — repo cực lớn sẽ được truncate.
 - Nếu chưa cấu hình Lite Model, nút sparkle sẽ hiện toast hướng dẫn mở AI
   Settings (action `Open AI Settings`).
+- Message theo chuẩn Conventional Commits với **type prefix tiếng Anh** và
+  **subject/body tiếng Việt**, ví dụ: `feat(db): thêm chỉ mục cho bảng users`.
+- Giới hạn độ dài để message gọn: subject tối đa **12 từ** (72 ký tự), toàn
+  bộ message tối đa **100 từ** (600 ký tự).
+- Nếu model trả về chuỗi rác (blob hash, câu suy luận, message tiếng Anh…),
+  UnicDB **tự động thử lại đúng 1 lần**; vẫn không hợp lệ thì hiện toast lỗi
+  và **KHÔNG điền** vào ô commit để bạn không commit nhầm.
 
 Trong panel **UnicDB AI Settings** có một subsection riêng tên là
 "Lite model" — đây là model thứ tư trong taxonomy

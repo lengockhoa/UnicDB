@@ -12,12 +12,17 @@
 import type { AiSettings, AiConfig, AiEngine } from "./settings";
 import type { AgentDetections, EngineChoice } from "./engineChoice";
 import type { OmpDetection } from "./omp/detect";
-import type { ProviderRequest, ProviderResult } from "./provider";
+import type { ChatMessage, ProviderRequest, ProviderResult } from "./provider";
 import {
   buildCommitPrompt,
+  buildRetryCommitPrompt,
   sanitizeCommitMessage,
   serializeCommitPrompt,
 } from "./commitMessage";
+import {
+  checkCommitMessage,
+  type CommitMessageIssue,
+} from "./commitMessageGuard";
 
 // ---- frozen strings ---------------------------------------------------------
 export const TOAST_NO_LITE =
@@ -34,6 +39,79 @@ export const ERROR_NON_STRING_TEXT_BUILTIN =
   "commit-gen: builtin provider returned non-string text";
 export const ERROR_NON_STRING_TEXT_OMP =
   "commit-gen: omp one-shot returned non-string";
+
+// Guard-flow frozen strings (SPEC §8.5). The terminal toast is assembled from
+// these two constants plus the last raw preview and an optional debug-dump path.
+export const ERROR_COMMIT_GUARD_FAILED_PREFIX =
+  "UnicDB: generated commit message failed validation";
+export const ERROR_COMMIT_GUARD_RETRY_NOTE =
+  "Retried once and still invalid — nothing was injected into the commit box.";
+
+// ---- guard + retry-1 orchestration (SPEC §8.4) ------------------------------
+/**
+ * Outcome of the sanitize → guard → (retry once) pipeline.
+ *
+ * - `ok`               — a sanitized, guard-approved message is ready to inject.
+ * - `kind: "empty"`    — the model produced no usable text (after sanitize).
+ *                        NEVER retried: the caller keeps the existing empty
+ *                        diagnostic and dump. `raw` is the offending raw text.
+ * - `kind: "invalid"`  — non-empty but guard-rejected twice. The caller shows
+ *                        the frozen §8.5 toast and does NOT inject.
+ */
+export type GuardOutcome =
+  | { ok: true; message: string }
+  | { ok: false; kind: "empty"; raw: string }
+  | {
+      ok: false;
+      kind: "invalid";
+      raw: string;
+      message: string;
+      reasons: readonly CommitMessageIssue[];
+    };
+
+/**
+ * Run the sanitize → guard pipeline with at most one corrective retry.
+ *
+ * Pure: touches no ports and never imports `vscode`. `call` is a per-branch
+ * closure that performs one engine request for the given messages — any throw
+ * (transport, non-string payload) propagates to the caller's existing catch so
+ * the branch-specific error mapping is preserved. An empty sanitized message is
+ * never retried (SPEC FR-007); a non-empty guard failure triggers exactly one
+ * retry through `buildRetryCommitPrompt(prompt, message, reasons)`.
+ */
+export async function generateWithGuard(
+  call: (messages: readonly ChatMessage[]) => Promise<string>,
+  prompt: readonly ChatMessage[],
+): Promise<GuardOutcome> {
+  const raw = await call(prompt);
+  const message = sanitizeCommitMessage(raw);
+  const first = checkCommitMessage(message);
+  if (first.ok) {
+    return { ok: true, message };
+  }
+  if (message.length === 0) {
+    // Empty (whitespace-only / stripped) — no retry.
+    return { ok: false, kind: "empty", raw };
+  }
+
+  const retryPrompt = buildRetryCommitPrompt(prompt, message, first.reasons);
+  const raw2 = await call(retryPrompt);
+  const message2 = sanitizeCommitMessage(raw2);
+  const second = checkCommitMessage(message2);
+  if (second.ok) {
+    return { ok: true, message: message2 };
+  }
+  if (message2.length === 0) {
+    return { ok: false, kind: "empty", raw: raw2 };
+  }
+  return {
+    ok: false,
+    kind: "invalid",
+    raw: raw2,
+    message: message2,
+    reasons: second.reasons,
+  };
+}
 
 // ---- structural types -------------------------------------------------------
 
@@ -115,9 +193,18 @@ export interface CommitGenDeps {
  *        - resolves to "builtin" → loadConfig + builtinComplete
  *        - selected engine unavailable → showError with the engine-specific
  *          install/update hint from resolveEngine (no silent fallback).
- *   4. Defend the typed contract: both builtinComplete and oneShot.generate
+ *      Defend the typed contract: both builtinComplete and oneShot.generate
  *      MUST return a string. If a port ever violates it, surface a structured
  *      Error rather than letting the object reach the sanitizer / input box.
+ *   4. Guard + retry + inject (SPEC §8.4): run the engine string through
+ *      `generateWithGuard` (sanitize → `checkCommitMessage`). A guard pass
+ *      injects; an empty sanitized message (either attempt) keeps the existing
+ *      empty-diagnostic path with the `commit-gen-empty` dump and is NEVER
+ *      retried; a non-empty guard failure retries exactly once through
+ *      `buildRetryCommitPrompt` on the SAME port/model. A second failure shows
+ *      the frozen §8.5 toast, optionally dumps `commit-gen-guard-rejected`, and
+ *      leaves the input box untouched. Any engine throw (either attempt)
+ *      propagates to the branch's existing catch — no retry on throw.
  */
 export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<void> {
   // 1. Lite model must be configured.
@@ -154,8 +241,7 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
     files: diff.files,
     diffText: diff.diffText,
   });
-  let message = "";
-  let rawProviderText = "";
+  let outcome: GuardOutcome | null = null;
   let cfg: AiConfig | null = null;
   // Engine routing — closed three-way classification so the validator
   // (`aiSettingsErrors`) gates unknown values upstream. If a future cycle
@@ -175,12 +261,13 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
     }
     try {
       const oneShot = await deps.buildOmpEngine(choice, lite.modelId);
-      const raw = await oneShot.generate(serializeCommitPrompt(prompt));
-      if (typeof raw !== "string") {
-        throw new Error(ERROR_NON_STRING_TEXT_OMP);
-      }
-      rawProviderText = raw;
-      message = sanitizeCommitMessage(raw);
+      outcome = await generateWithGuard(async (messages) => {
+        const raw = await oneShot.generate(serializeCommitPrompt(messages));
+        if (typeof raw !== "string") {
+          throw new Error(ERROR_NON_STRING_TEXT_OMP);
+        }
+        return raw;
+      }, prompt);
     } catch (e) {
       deps.showError(`UnicDB: omp error — ${(e as Error).message ?? String(e)}`);
       return;
@@ -201,17 +288,18 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
       return;
     }
     try {
-      const result = await deps.builtinComplete(cfg, {
-        modelId: lite.modelId,
-        messages: prompt,
-        maxOutputTokens: 300,
-        temperature: 0.2,
-      });
-      if (typeof result.text !== "string") {
-        throw new Error(ERROR_NON_STRING_TEXT_BUILTIN);
-      }
-      rawProviderText = result.text;
-      message = sanitizeCommitMessage(result.text);
+      outcome = await generateWithGuard(async (messages) => {
+        const result = await deps.builtinComplete(cfg as AiConfig, {
+          modelId: lite.modelId,
+          messages: [...messages],
+          maxOutputTokens: 300,
+          temperature: 0.2,
+        });
+        if (typeof result.text !== "string") {
+          throw new Error(ERROR_NON_STRING_TEXT_BUILTIN);
+        }
+        return result.text;
+      }, prompt);
     } catch (e) {
       const err = e as Error & { bodySnippet?: string };
       const detail = err.bodySnippet ? `: ${err.bodySnippet}` : "";
@@ -243,26 +331,34 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
     });
     const hint = choice.hint;
     const hintSuffix = hint ? ` (${hint})` : "";
+    // The hint toast is informational: it explains why the user's engine
+    // selection wasn't honored. Fire it exactly ONCE — after the first
+    // successful engine string, before inject — and never again on the guard
+    // retry (the retry reuses the same fallback provider, so a second toast
+    // would be noise and would break the observed count === 1 contract).
+    let hintShown = false;
     try {
-      const result = await deps.builtinComplete(cfg, {
-        modelId: lite.modelId,
-        messages: prompt,
-        maxOutputTokens: 300,
-        temperature: 0.2,
-      });
-      if (typeof result.text !== "string") {
-        throw new Error(ERROR_NON_STRING_TEXT_BUILTIN);
-      }
-      rawProviderText = result.text;
-      message = sanitizeCommitMessage(result.text);
-      if (hint) {
-        deps.showError(
-          `${ERROR_ENGINE_UNAVAILABLE_PREFIX}${selectedEngine}${ERROR_ENGINE_UNAVAILABLE_SUFFIX}${hint}`,
-        );
-        // We still inject the sanitized message — the user explicitly asked
-        // for a generated git message and we can produce one. The toast is
-        // informational so they know their engine selection didn't take.
-      }
+      outcome = await generateWithGuard(async (messages) => {
+        const result = await deps.builtinComplete(cfg as AiConfig, {
+          modelId: lite.modelId,
+          messages: [...messages],
+          maxOutputTokens: 300,
+          temperature: 0.2,
+        });
+        if (typeof result.text !== "string") {
+          throw new Error(ERROR_NON_STRING_TEXT_BUILTIN);
+        }
+        if (hint && !hintShown) {
+          hintShown = true;
+          deps.showError(
+            `${ERROR_ENGINE_UNAVAILABLE_PREFIX}${selectedEngine}${ERROR_ENGINE_UNAVAILABLE_SUFFIX}${hint}`,
+          );
+          // We still inject the sanitized message — the user explicitly asked
+          // for a generated git message and we can produce one. The toast is
+          // informational so they know their engine selection didn't take.
+        }
+        return result.text;
+      }, prompt);
     } catch (e) {
       const err = e as Error & { bodySnippet?: string };
       const detail = err.bodySnippet ? `: ${err.bodySnippet}` : "";
@@ -273,17 +369,33 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
     }
   }
 
-  // 4. Inject only on success.
-  if (message.length > 0) {
-    deps.setInputBox(message);
+  // 4. Guard verdict. `outcome` is always set: every branch either returns
+  // early on error or assigns it above.
+  if (outcome !== null && outcome.ok) {
+    deps.setInputBox(outcome.message);
     return;
   }
-  // Provider returned but produced no usable text (sanitize stripped
-  // everything, or upstream returned an empty payload). Surface a clear
-  // diagnostic with the raw text length so the user can tell whether the
-  // model emitted whitespace-only output, an empty SSE stream, or got
-  // stuck mid-generation. Also dump the raw payload to a debug file so
-  // the user can paste it back for diagnosis without DevTools.
+  if (outcome !== null && outcome.kind === "invalid") {
+    // Non-empty, guard-rejected twice. Surface the frozen §8.5 toast and,
+    // when available, dump the last raw payload for diagnosis. We do NOT call
+    // setInputBox — the commit box must not be overwritten with garbage.
+    const preview = outcome.raw.slice(0, 240).replace(/\s+/g, " ");
+    const debugFile = deps.writeDebugArtifact?.({
+      label: "commit-gen-guard-rejected",
+      body: outcome.raw,
+      context: { engine: selectedEngine, reasons: outcome.reasons },
+    });
+    const fileNote = debugFile ? ` Debug dump: ${debugFile}` : "";
+    deps.showError(
+      `${ERROR_COMMIT_GUARD_FAILED_PREFIX} (reasons: ${outcome.reasons.join(", ")}). ` +
+        `${ERROR_COMMIT_GUARD_RETRY_NOTE} Raw preview: "${preview}".${fileNote}`,
+    );
+    return;
+  }
+
+  // Empty (either attempt): keep the existing empty-diagnostic path verbatim —
+  // same toast text, same `commit-gen-empty` dump using the last raw text.
+  const rawProviderText = outcome !== null ? outcome.raw : "";
   const rawLen = rawProviderText.length;
   const rawPreview = rawProviderText.slice(0, 240).replace(/\s+/g, " ");
   const debugFile = deps.writeDebugArtifact?.({

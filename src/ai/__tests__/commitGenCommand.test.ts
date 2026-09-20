@@ -61,6 +61,74 @@ function fakeOmpOneShot(text: string): OmpOneShot {
   return { generate: async () => text };
 }
 
+/** Provider-port fake with no canned value (returns empty text). */
+function providerResult(text: string): ProviderResult {
+  return {
+    text,
+    toolCalls: [],
+    finishReason: "stop",
+    usage: { inputTokens: 0, outputTokens: 0 },
+  };
+}
+
+/**
+ * Provider-port fake returning results by call index (last one repeats).
+ * An `Error` entry is thrown so the branch's existing catch path runs.
+ */
+function fakeBuiltinSequence(
+  results: readonly (ProviderResult | Error)[],
+): CommitGenDeps["builtinComplete"] {
+  let index = 0;
+  return (async () => {
+    const result = results[Math.min(index, results.length - 1)];
+    index += 1;
+    if (result instanceof Error) throw result;
+    return result;
+  }) as unknown as CommitGenDeps["builtinComplete"];
+}
+
+/** Omp one-shot fake returning strings by call index (last one repeats). */
+function fakeOmpSequence(texts: readonly string[]): OmpOneShot {
+  let index = 0;
+  return {
+    generate: async () => {
+      const text = texts[Math.min(index, texts.length - 1)];
+      index += 1;
+      return text;
+    },
+  };
+}
+
+/** A 72-char lowercase-hex blob — the "carried bug" fixture (SPEC §10). */
+const HEX_BLOB_72 = "deadbeef".repeat(9);
+
+/**
+ * Build a builtin-engine deps skeleton; individual ports can be overridden.
+ * Keeps every guard-flow test focused on the port under assertion.
+ */
+function makeDeps(over: Partial<CommitGenDeps> = {}): CommitGenDeps {
+  const settings = fakeSettings({ engine: "builtin", lite: { modelId: "lite" } });
+  const cfg = fakeConfig(settings);
+  return {
+    loadSettings: (async () => settings) as never,
+    loadConfig: (async () => cfg) as never,
+    detectOmp: (async () => ({ ok: false } as OmpDetection)) as never,
+    resolveEngine: ((_i: unknown) => ({
+      engine: "builtin",
+      requiresConfig: true,
+    })) as never,
+    buildOmpEngine: (async () => fakeOmpOneShot("")) as never,
+    builtinComplete: (async () => providerResult("")) as never,
+    collectDiff: (async () => fakeDiff()) as never,
+    setInputBox: vi.fn(),
+    showInfo: vi.fn(),
+    showError: vi.fn(),
+    showSettingsToast: vi.fn().mockResolvedValue(undefined),
+    openSettings: vi.fn(),
+    ...over,
+  };
+}
+
 // ============================================================================
 // Test #1 — happy path: builtin
 // ============================================================================
@@ -68,7 +136,7 @@ describe("ai/commitGenCommand — Test #1 builtin happy path", () => {
   it("injects sanitized message into the input box via the builtin provider", async () => {
     const settings = fakeSettings({ engine: "builtin", lite: { modelId: "gpt-mini" } });
     const cfg = fakeConfig(settings);
-    const rawText = "```\nfeat(db): add index\n```";
+    const rawText = "```\nfeat(db): thêm chỉ mục cho bảng users\n```";
     const built: ProviderResult = {
       text: rawText,
       toolCalls: [],
@@ -113,7 +181,7 @@ describe("ai/commitGenCommand — Test #1 builtin happy path", () => {
     expect(reqArg.messages[1].role).toBe("user");
 
     expect(setInputBox).toHaveBeenCalledTimes(1);
-    expect(setInputBox).toHaveBeenCalledWith("feat(db): add index");
+    expect(setInputBox).toHaveBeenCalledWith("feat(db): thêm chỉ mục cho bảng users");
     expect(showInfo).not.toHaveBeenCalled();
     expect(showError).not.toHaveBeenCalled();
     expect(showSettingsToast).not.toHaveBeenCalled();
@@ -139,7 +207,7 @@ describe("ai/commitGenCommand — Test #2 omp happy path", () => {
       path: "/usr/bin/omp",
       version: "18.0.1",
     };
-    const oneShot = fakeOmpOneShot("feat(api): wire commit gen");
+    const oneShot = fakeOmpOneShot("feat(api): nối commit gen vào omp");
     const generate = vi.spyOn(oneShot, "generate");
 
     const resolveEngine = vi.fn(
@@ -178,6 +246,7 @@ describe("ai/commitGenCommand — Test #2 omp happy path", () => {
     expect(typeof promptArg).toBe("string");
     expect(promptArg).toContain("You generate git commit messages");
     expect(promptArg).toContain("Conventional Commits");
+    expect(promptArg).toContain("tiếng Việt");
     expect(promptArg).toContain("Repo: UnicDB");
     expect(promptArg).toContain("src/a.ts");
     expect(promptArg).toContain("+// new");
@@ -185,7 +254,7 @@ describe("ai/commitGenCommand — Test #2 omp happy path", () => {
 
     const setInputBox = deps.setInputBox as unknown as ReturnType<typeof vi.fn>;
     expect(setInputBox).toHaveBeenCalledTimes(1);
-    expect(setInputBox).toHaveBeenCalledWith("feat(api): wire commit gen");
+    expect(setInputBox).toHaveBeenCalledWith("feat(api): nối commit gen vào omp");
   });
 });
 
@@ -556,7 +625,7 @@ describe("ai/commitGenCommand — Test #10 settings.engine = claude-code / codex
       hint: "npm i -g @anthropic-ai/claude-code",
     }));
     const builtinComplete = vi.fn(fakeBuiltinComplete({
-      text: "feat(api): via builtin fallback",
+      text: "feat(api): dự phòng qua builtin",
       toolCalls: [],
       finishReason: "stop",
       usage: { inputTokens: 0, outputTokens: 0 },
@@ -588,7 +657,7 @@ describe("ai/commitGenCommand — Test #10 settings.engine = claude-code / codex
     // was the input to resolveEngine — but the runtime routed through the
     // builtin provider and surfaced a diagnostic toast with the install hint.
     expect(setInputBox).toHaveBeenCalledTimes(1);
-    expect(setInputBox).toHaveBeenCalledWith("feat(api): via builtin fallback");
+    expect(setInputBox).toHaveBeenCalledWith("feat(api): dự phòng qua builtin");
     expect(showError).toHaveBeenCalledTimes(1);
     expect(showError.mock.calls[0][0]).toContain("claude-code engine unavailable");
     expect(showError.mock.calls[0][0]).toContain(
@@ -606,7 +675,7 @@ describe("ai/commitGenCommand — Test #10 settings.engine = claude-code / codex
       hint: "npm i -g @openai/codex",
     }));
     const builtinComplete = vi.fn(fakeBuiltinComplete({
-      text: "feat(api): via codex fallback",
+      text: "feat(api): dự phòng qua codex",
       toolCalls: [],
       finishReason: "stop",
       usage: { inputTokens: 0, outputTokens: 0 },
@@ -632,8 +701,268 @@ describe("ai/commitGenCommand — Test #10 settings.engine = claude-code / codex
     await runGenerateCommitMessage(deps);
 
     expect(builtinComplete).toHaveBeenCalledTimes(1);
-    expect(setInputBox).toHaveBeenCalledWith("feat(api): via codex fallback");
+    expect(setInputBox).toHaveBeenCalledWith("feat(api): dự phòng qua codex");
     expect(showError.mock.calls[0][0]).toContain("codex engine unavailable");
     expect(showError.mock.calls[0][0]).toContain("npm i -g @openai/codex");
+  });
+});
+
+// ============================================================================
+// Guard flow — SPEC §8.4 / §8.5. The guard runs AFTER sanitize in every
+// engine branch; invalid non-empty retries exactly once; terminal invalid
+// surfaces the frozen toast and never touches the input box.
+// ============================================================================
+describe("ai/commitGenCommand — guard flow (SPEC §8.4/§8.5)", () => {
+  // Row 2 — happy retry (builtin): garbage attempt 1 → VN attempt 2.
+  it("builtin: retries once with the corrective prompt and injects attempt 2", async () => {
+    const builtinComplete = vi.fn(
+      fakeBuiltinSequence([
+        providerResult(HEX_BLOB_72),
+        providerResult("fix(db): sửa lỗi truy vấn chậm"),
+      ]),
+    );
+    const setInputBox = vi.fn();
+    const showError = vi.fn();
+    const deps = makeDeps({
+      builtinComplete: builtinComplete as never,
+      setInputBox,
+      showError,
+    });
+
+    await runGenerateCommitMessage(deps);
+
+    expect(builtinComplete).toHaveBeenCalledTimes(2);
+    const req2 = builtinComplete.mock.calls[1][1] as ProviderRequest;
+    expect(req2.modelId).toBe("lite");
+    expect(req2.maxOutputTokens).toBe(300);
+    expect(req2.temperature).toBe(0.2);
+    const userContent = req2.messages[1].content as string;
+    expect(userContent).toContain("was rejected for these reasons");
+    expect(userContent).toContain("unbroken-blob");
+    expect(userContent).toContain("Vietnamese");
+    expect(setInputBox).toHaveBeenCalledTimes(1);
+    expect(setInputBox).toHaveBeenCalledWith("fix(db): sửa lỗi truy vấn chậm");
+    expect(showError).not.toHaveBeenCalled();
+  });
+
+  // Row 3a — happy retry (omp): reasoning-leak attempt 1 → VN attempt 2.
+  it("omp: retries once through the same engine and injects attempt 2", async () => {
+    const settings = fakeSettings({ engine: "omp", lite: { modelId: "lite-1" } });
+    const detection: OmpDetection = {
+      available: true,
+      ok: true,
+      path: "/usr/bin/omp",
+      version: "18.0.1",
+    };
+    const choice: EngineChoice = {
+      engine: "omp",
+      requiresConfig: false,
+      path: "/usr/bin/omp",
+      version: "18.0.1",
+    };
+    const oneShot = fakeOmpSequence([
+      "We need to examine the staged diff carefully",
+      "feat(db): bổ sung chỉ mục cho bảng users",
+    ]);
+    const generate = vi.spyOn(oneShot, "generate");
+    const buildOmpEngine = vi.fn(async () => oneShot);
+    const setInputBox = vi.fn();
+    const showError = vi.fn();
+    const deps = makeDeps({
+      loadSettings: (async () => settings) as never,
+      loadConfig: (async () => fakeConfig(settings)) as never,
+      detectOmp: (async () => detection) as never,
+      resolveEngine: ((_i: unknown) => choice) as never,
+      buildOmpEngine: buildOmpEngine as never,
+      setInputBox,
+      showError,
+    });
+
+    await runGenerateCommitMessage(deps);
+
+    expect(buildOmpEngine).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(2);
+    // Attempt 2 must carry the corrective retry prompt (serialized).
+    const prompt2 = generate.mock.calls[1][0];
+    expect(typeof prompt2).toBe("string");
+    expect(prompt2).toContain("was rejected for these reasons");
+    expect(prompt2).toContain("reasoning-marker");
+    expect(setInputBox).toHaveBeenCalledTimes(1);
+    expect(setInputBox).toHaveBeenCalledWith("feat(db): bổ sung chỉ mục cho bảng users");
+    expect(showError).not.toHaveBeenCalled();
+  });
+
+  // Row 3b — happy retry (claude-code fallback): hint toast fires exactly
+  // once even though the engine is called twice.
+  it("claude-code fallback: retries once and emits the hint toast only once", async () => {
+    const settings = fakeSettings({ engine: "claude-code", lite: { modelId: "lite" } });
+    const cfg = fakeConfig(settings);
+    const builtinComplete = vi.fn(
+      fakeBuiltinSequence([
+        providerResult(HEX_BLOB_72),
+        providerResult("fix(ui): sửa nhãn nút sparkle"),
+      ]),
+    );
+    const setInputBox = vi.fn();
+    const showError = vi.fn();
+    const deps = makeDeps({
+      loadSettings: (async () => settings) as never,
+      loadConfig: (async () => cfg) as never,
+      resolveEngine: (() => ({
+        engine: "builtin",
+        requiresConfig: false,
+        hint: "npm i -g @anthropic-ai/claude-code",
+      })) as never,
+      builtinComplete: builtinComplete as never,
+      setInputBox,
+      showError,
+    });
+
+    await runGenerateCommitMessage(deps);
+
+    expect(builtinComplete).toHaveBeenCalledTimes(2);
+    expect(setInputBox).toHaveBeenCalledTimes(1);
+    expect(setInputBox).toHaveBeenCalledWith("fix(ui): sửa nhãn nút sparkle");
+    // Hint fires once (attempt 1), NOT again on the retry attempt.
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(showError.mock.calls[0][0]).toContain("claude-code engine unavailable");
+    expect(showError.mock.calls[0][0]).toContain("npm i -g @anthropic-ai/claude-code");
+  });
+
+  // Row 4 — terminal invalid (72-hex blob ×2): block, frozen toast, no inject.
+  it("builtin: garbage twice blocks with the frozen toast and never injects", async () => {
+    const builtinComplete = vi.fn(
+      fakeBuiltinSequence([providerResult(HEX_BLOB_72), providerResult(HEX_BLOB_72)]),
+    );
+    const setInputBox = vi.fn();
+    const showError = vi.fn();
+    const writeDebugArtifact = vi.fn(() => "/tmp/guard-rejected.txt");
+    const deps = makeDeps({
+      builtinComplete: builtinComplete as never,
+      setInputBox,
+      showError,
+      writeDebugArtifact: writeDebugArtifact as never,
+    });
+
+    await runGenerateCommitMessage(deps);
+
+    expect(builtinComplete).toHaveBeenCalledTimes(2);
+    expect(setInputBox).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledTimes(1);
+    const errMsg = showError.mock.calls[0][0] as string;
+    expect(errMsg).toContain("failed validation");
+    expect(errMsg).toContain("Retried once");
+    expect(errMsg).toContain("unbroken-blob");
+    expect(errMsg).toContain(HEX_BLOB_72);
+    expect(writeDebugArtifact).toHaveBeenCalledTimes(1);
+    const dump = writeDebugArtifact.mock.calls[0][0] as {
+      label: string;
+      body: string;
+      context?: Record<string, unknown>;
+    };
+    expect(dump.label).toBe("commit-gen-guard-rejected");
+    expect(dump.body).toBe(HEX_BLOB_72);
+    expect(dump.context?.engine).toBe("builtin");
+  });
+
+  // Row 5 — length edge: an over-100-word message fails the cap on both
+  // attempts. Multiline so the body survives sanitize's 72-char subject clamp
+  // (a single line can never reach 100 words after that clamp).
+  it("builtin: an over-100-word message fails twice with message-too-long", async () => {
+    const longMessage =
+      "feat(db): sửa truy vấn chậm\n\n" + new Array(120).fill("từ").join(" ");
+    const builtinComplete = vi.fn(
+      fakeBuiltinSequence([providerResult(longMessage), providerResult(longMessage)]),
+    );
+    const setInputBox = vi.fn();
+    const showError = vi.fn();
+    const deps = makeDeps({
+      builtinComplete: builtinComplete as never,
+      setInputBox,
+      showError,
+    });
+
+    await runGenerateCommitMessage(deps);
+
+    expect(builtinComplete).toHaveBeenCalledTimes(2);
+    expect(setInputBox).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(showError.mock.calls[0][0]).toContain("message-too-long");
+  });
+
+  // Row 6a — empty on attempt 1: no retry, existing empty diagnostic.
+  it("builtin: an empty attempt 1 shows the existing empty diagnostic and does NOT retry", async () => {
+    const builtinComplete = vi.fn(fakeBuiltinSequence([providerResult("")]));
+    const setInputBox = vi.fn();
+    const showError = vi.fn();
+    const deps = makeDeps({
+      builtinComplete: builtinComplete as never,
+      setInputBox,
+      showError,
+    });
+
+    await runGenerateCommitMessage(deps);
+
+    expect(builtinComplete).toHaveBeenCalledTimes(1);
+    expect(setInputBox).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledTimes(1);
+    const errMsg = showError.mock.calls[0][0] as string;
+    expect(errMsg).toContain("provider returned no commit message text");
+    expect(errMsg).not.toContain("failed validation");
+  });
+
+  // Row 6b — garbage then empty on attempt 2: same empty diagnostic with the
+  // last raw, no guard toast, no third engine call.
+  it("builtin: garbage then empty on attempt 2 falls into the empty diagnostic (no third call)", async () => {
+    const builtinComplete = vi.fn(
+      fakeBuiltinSequence([providerResult(HEX_BLOB_72), providerResult("")]),
+    );
+    const setInputBox = vi.fn();
+    const showError = vi.fn();
+    const writeDebugArtifact = vi.fn(() => "/tmp/empty.txt");
+    const deps = makeDeps({
+      builtinComplete: builtinComplete as never,
+      setInputBox,
+      showError,
+      writeDebugArtifact: writeDebugArtifact as never,
+    });
+
+    await runGenerateCommitMessage(deps);
+
+    expect(builtinComplete).toHaveBeenCalledTimes(2);
+    expect(setInputBox).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledTimes(1);
+    const errMsg = showError.mock.calls[0][0] as string;
+    expect(errMsg).toContain("provider returned no commit message text");
+    expect(errMsg).not.toContain("failed validation");
+    expect(writeDebugArtifact).toHaveBeenCalledTimes(1);
+    const dump = writeDebugArtifact.mock.calls[0][0] as { label: string; body: string };
+    expect(dump.label).toBe("commit-gen-empty");
+    expect(dump.body).toBe("");
+  });
+
+  // Row 7 — transport: attempt 2 throws; the branch's existing catch wins.
+  it("builtin: a throw on attempt 2 is mapped by the existing provider-error catch", async () => {
+    const builtinComplete = vi.fn(
+      fakeBuiltinSequence([
+        providerResult(HEX_BLOB_72),
+        new Error("network exploded"),
+      ]),
+    );
+    const setInputBox = vi.fn();
+    const showError = vi.fn();
+    const deps = makeDeps({
+      builtinComplete: builtinComplete as never,
+      setInputBox,
+      showError,
+    });
+
+    await runGenerateCommitMessage(deps);
+
+    expect(builtinComplete).toHaveBeenCalledTimes(2);
+    expect(setInputBox).not.toHaveBeenCalled();
+    expect(showError).toHaveBeenCalledTimes(1);
+    expect(showError.mock.calls[0][0]).toContain("network exploded");
+    expect(showError.mock.calls[0][0]).not.toContain("failed validation");
   });
 });
