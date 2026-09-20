@@ -90,3 +90,55 @@ SYSTEM_PROMPT text frozen: SPEC §8.1.
 - CG2-003 sẽ assert ở req#2 của retry (`messages[1].content` contains reason code +
   "rejected") — executor giữ đúng các cụm từ "was rejected for these reasons" và
   "Rejected text" trong shape.
+
+## Executor Report
+
+EXECUTOR_TOOL: claude-code
+EXECUTOR_MODEL: bao-sonnet
+EXECUTOR_SUBAGENT: Claude:executor
+
+RED_OUTPUT: |
+```
+ FAIL  src/ai/__tests__/commitMessage.test.ts > ai/commitMessage — buildRetryCommitPrompt (SPEC §8.2) > Test #4 — multiple reasons joined with ', '
+TypeError: buildRetryCommitPrompt is not a function
+ ❯ src/ai/__tests__/commitMessage.test.ts:210:22
+ FAIL  src/ai/__tests__/commitMessage.test.ts > ai/commitMessage — buildRetryCommitPrompt (SPEC §8.2) > Test #5 — rejected text truncated to 240 chars and whitespace collapsed
+TypeError: buildRetryCommitPrompt is not a function
+ ❯ src/ai/__tests__/commitMessage.test.ts:219:23
+ FAIL  src/ai/__tests__/commitMessage.test.ts > ai/commitMessage — buildRetryCommitPrompt (SPEC §8.2) > Test #6 — throws a structured Error when no user message is present
+AssertionError: expected [Function] to not throw an error but 'TypeError: __vite_ssr_import_1__.buildRetryCommitPrompt is not a function' was thrown
+ ❯ src/ai/__tests__/commitMessage.test.ts:232:11
+ FAIL  src/ai/__tests__/commitMessage.test.ts > ai/commitMessage — buildRetryCommitPrompt (SPEC §8.2) > Test #7 — does not mutate the original messages array
+TypeError: buildRetryCommitPrompt is not a function
+ ❯ src/ai/__tests__/commitMessage.test.ts:240:5
+ Test Files  1 failed (1)
+      Tests  6 failed | 17 passed (23)
+```
+(RED reason: new import `buildRetryCommitPrompt` was not yet exported — 6 new tests fail,
+all 17 pre-existing tests still pass. System-prompt Test #2 also failed pre-implementation,
+counted among the 6.)
+
+Verification Output: |
+```
+===== npm run typecheck =====
+> UnicDB@1.54.1 typecheck
+> tsc --noEmit
+(exit 0, 0 errors)
+
+===== npx vitest run src/ai/__tests__/commitMessage.test.ts =====
+ RUN  v1.6.1
+ ✓ src/ai/__tests__/commitMessage.test.ts  (23 tests) 4ms
+ Test Files  1 passed (1)
+      Tests  23 passed (23)
+
+===== npm run compile =====
+esbuild: build complete (dist/aiChatPanel.js, dist/webview.js, dist/extension.js)
+(exit 0)
+```
+Acceptance checks: `grep -c "Conventional Commits" src/ai/commitMessage.ts` = 2;
+prompt contains "tiếng Việt" (grep count 2). Only the 2 Target Files modified
+(`git status --short`: M src/ai/commitMessage.ts, M src/ai/__tests__/commitMessage.test.ts).
+Milestone commit: 09e9777 on branch handoff/task-cg2-002.
+
+Status: PASS
+Note: none

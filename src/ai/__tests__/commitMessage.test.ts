@@ -4,10 +4,12 @@
 import { describe, it, expect } from "vitest";
 import {
   buildCommitPrompt,
+  buildRetryCommitPrompt,
   sanitizeCommitMessage,
   COMMIT_SUBJECT_MAX_CHARS,
   COMMIT_MESSAGE_MAX_CHARS,
 } from "../commitMessage";
+import type { ChatMessage } from "../provider";
 
 describe("ai/commitMessage — buildCommitPrompt", () => {
   it("Test #1 — prompt carries repo, files, diff", () => {
@@ -165,5 +167,78 @@ describe("ai/commitMessage — serializeCommitPrompt", () => {
         { role: "user", content: 42 as unknown as string },
       ]),
     ).toThrow(/must be string or string-part array/);
+  });
+});
+
+// TASK-CG2-002 — Vietnamese SYSTEM_PROMPT (SPEC §8.1) + buildRetryCommitPrompt (§8.2)
+describe("ai/commitMessage — SYSTEM_PROMPT (Vietnamese contract, SPEC §8.1)", () => {
+  it("Test #2 — teaches Vietnamese output + word/char limits + example", () => {
+    const messages = buildCommitPrompt({
+      repoName: "UnicDB",
+      files: ["src/a.ts"],
+      diffText: "+a",
+    });
+    const system = messages[0].content as string;
+    expect(system).toContain("You generate git commit messages");
+    expect(system).toContain("Conventional Commits");
+    expect(system).toContain("VIETNAMESE (tiếng Việt)");
+    expect(system).toContain("12 words");
+    expect(system).toContain("100 words");
+    expect(system).toContain("feat(db): thêm chỉ mục cho bảng users");
+  });
+});
+
+describe("ai/commitMessage — buildRetryCommitPrompt (SPEC §8.2)", () => {
+  const original: ChatMessage[] = [
+    { role: "system", content: "SYSTEM TEXT" },
+    { role: "user", content: "Repo: X\nDiff: +a" },
+  ];
+
+  it("Test #3 — carries original system, user context, reasons and rejected text", () => {
+    const messages = buildRetryCommitPrompt(original, "garbage text", ["hash-like"]);
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toEqual(original[0]);
+    const content = messages[1].content as string;
+    expect(content).toContain("Repo: X");
+    expect(content).toContain("+a");
+    expect(content).toContain("hash-like");
+    expect(content).toContain("garbage text");
+    expect(content).toContain("Vietnamese");
+  });
+
+  it("Test #4 — multiple reasons joined with ', '", () => {
+    const messages = buildRetryCommitPrompt(original, "bad", [
+      "hash-like",
+      "message-too-long",
+    ]);
+    const content = messages[1].content as string;
+    expect(content).toContain("hash-like, message-too-long");
+  });
+
+  it("Test #5 — rejected text truncated to 240 chars and whitespace collapsed", () => {
+    const truncated = buildRetryCommitPrompt(original, "x".repeat(300), ["empty"]);
+    const content = truncated[1].content as string;
+    expect(content).toContain("x".repeat(240));
+    expect(content).not.toContain("x".repeat(300));
+
+    const spaced = buildRetryCommitPrompt(original, "a\n\n  b\t c", ["empty"]);
+    const spacedContent = spaced[1].content as string;
+    expect(spacedContent).toContain('"a b c"');
+  });
+
+  it("Test #6 — throws a structured Error when no user message is present", () => {
+    expect(() =>
+      buildRetryCommitPrompt([{ role: "user", content: "only" }], "x", ["empty"]),
+    ).not.toThrow();
+    expect(() =>
+      buildRetryCommitPrompt([{ role: "system", content: "s" }], "x", ["empty"]),
+    ).toThrow(/retry prompt requires a user message/);
+  });
+
+  it("Test #7 — does not mutate the original messages array", () => {
+    const snapshot = JSON.parse(JSON.stringify(original));
+    buildRetryCommitPrompt(original, "garbage text", ["hash-like"]);
+    expect(original).toEqual(snapshot);
+    expect(original).toHaveLength(2);
   });
 });
