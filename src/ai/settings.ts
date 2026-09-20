@@ -36,6 +36,8 @@ export interface AiSettings {
   models: Record<AiModelRole, AiModelConfig>;
   /** Cycle AE — chat engine selection. Default "omp". */
   engine: AiEngine;
+  /** Optional absolute path to the Claude Code executable; empty means auto-detect. */
+  claudeCodePath?: string;
 }
 
 export interface AiConfig extends AiSettings {
@@ -56,6 +58,7 @@ export function defaultAiSettings(): AiSettings {
       lite: { modelId: "", vision: false },
     },
     engine: "omp",
+    claudeCodePath: "",
   };
 }
 
@@ -136,6 +139,10 @@ export function aiSettingsErrors(s: AiSettings): string[] {
     errors.push("Engine must be builtin, omp, claude-code, or codex");
   }
 
+  if (s.claudeCodePath !== undefined && typeof s.claudeCodePath !== "string") {
+    errors.push("Claude Code path must be a string");
+  }
+
   return errors;
 }
 
@@ -176,5 +183,6 @@ export function redactAiConfig(cfg: AiConfig): AiSettings {
     maxSteps: cfg.maxSteps,
     models: redactedModels,
     engine,
+    claudeCodePath: cfg.claudeCodePath?.trim() ?? "",
   };
 }

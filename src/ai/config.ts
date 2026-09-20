@@ -50,7 +50,10 @@ export class AiConfigStore {
       obj.engine = "omp";
       parsed = obj;
     }
-
+    if (obj.claudeCodePath === undefined) {
+      obj.claudeCodePath = "";
+      parsed = obj;
+    }
 
     const modelsObj = obj.models as Record<string, unknown> | undefined;
     if (modelsObj && typeof modelsObj === "object" && modelsObj.autocomplete === undefined) {
@@ -154,6 +157,7 @@ export class AiConfigStore {
         },
       },
       engine: settings.engine,
+      claudeCodePath: settings.claudeCodePath?.trim() ?? "",
     };
 
     await this.ctx.globalState.update(KEY_AI_SETTINGS, toPersist);

@@ -36,6 +36,7 @@ interface InitMsg {
     maxSteps: number;
     models: Record<Role, ModelConfig>;
     engine: Engine;
+    claudeCodePath?: string;
   };
   hasApiKey: boolean;
 }
@@ -69,6 +70,7 @@ interface State {
     maxSteps: number;
     models: Record<Role, ModelConfig>;
     engine: Engine;
+    claudeCodePath?: string;
   };
   hasApiKey: boolean;
   testing: boolean;
@@ -88,6 +90,7 @@ const state: State = {
       lite: { modelId: "", vision: false },
     },
     engine: "omp",
+    claudeCodePath: "",
   },
   testing: false,
 };
@@ -110,6 +113,7 @@ function readSettings(): {
   maxSteps: number;
   models: Record<Role, ModelConfig>;
   engine: Engine;
+  claudeCodePath?: string;
 } {
   return {
     baseUrl: input("baseUrl").value.trim(),
@@ -117,6 +121,7 @@ function readSettings(): {
     timeoutMs: Number(input("timeoutMs").value),
     maxSteps: Number(input("maxSteps").value),
     engine: select("engine").value as Engine,
+    claudeCodePath: input("claudeCodePath").value.trim(),
     models: {
       work: {
         modelId: input("modelWork").value.trim(),
@@ -320,6 +325,15 @@ function render(): void {
       </div>
     </div>
     <div class="UnicDB-row">
+      <div class="UnicDB-field grow">
+        <label for="claudeCodePath">Claude Code executable path <button id="claudeCodePathHelpBtn" class="UnicDB-help-button" type="button" aria-label="How to find the Claude Code executable path" aria-expanded="false">?</button></label>
+        <input id="claudeCodePath" type="text" placeholder="Leave empty to auto-detect" />
+        <div id="claudeCodePathHelp" class="UnicDB-form-help" hidden>
+          Leave this empty for automatic detection. To find the path, run <code>which claude</code> on macOS/Linux or <code>where claude</code> on Windows, then paste the full path returned here.
+        </div>
+      </div>
+    </div>
+    <div class="UnicDB-row">
       <div class="UnicDB-field">
         <label for="timeoutMs">Timeout (ms) <span class="req">*</span></label>
         <input id="timeoutMs" type="number" min="1000" max="600000" step="1000" value="60000" />
@@ -351,7 +365,7 @@ function render(): void {
   </div>`;
 
   // Wire change handlers — live-validate on every edit.
-  for (const id of ["baseUrl", "timeoutMs", "maxSteps", "modelWork", "modelSmart", "modelAutocomplete", "modelLite", "apiKey"]) {
+  for (const id of ["baseUrl", "timeoutMs", "maxSteps", "claudeCodePath", "modelWork", "modelSmart", "modelAutocomplete", "modelLite", "apiKey"]) {
     const el = document.getElementById(id) as HTMLInputElement | null;
     el?.addEventListener("input", () => refreshOkButton(validateSettings(readSettings())));
     el?.addEventListener("change", () => refreshOkButton(validateSettings(readSettings())));
@@ -360,6 +374,13 @@ function render(): void {
     const el = document.getElementById(id) as HTMLInputElement | null;
     el?.addEventListener("change", () => refreshOkButton(validateSettings(readSettings())));
   }
+  document.getElementById("claudeCodePathHelpBtn")?.addEventListener("click", () => {
+    const help = document.getElementById("claudeCodePathHelp");
+    const button = document.getElementById("claudeCodePathHelpBtn");
+    if (!help || !button) return;
+    help.hidden = !help.hidden;
+    button.setAttribute("aria-expanded", String(!help.hidden));
+  });
   document.getElementById("cancelBtn")?.addEventListener("click", () => {
     post({ type: "cancel" });
   });
@@ -389,6 +410,7 @@ function applyInit(msg: InitMsg): void {
   input("baseUrl").value = msg.settings.baseUrl;
   select("method").value = msg.settings.method;
   select("engine").value = msg.settings.engine ?? "omp";
+  input("claudeCodePath").value = msg.settings.claudeCodePath ?? "";
   input("timeoutMs").value = String(msg.settings.timeoutMs);
   input("modelWork").value = msg.settings.models.work.modelId;
   input("modelSmart").value = msg.settings.models.smart.modelId;

@@ -79,6 +79,7 @@ import { detectOmp, OMP_INSTALL_HINT, OMP_UPDATE_HINT } from "./ai/omp/detect";
 import {
   detectClaudeCode,
   CLAUDE_CODE_INSTALL_HINT,
+  CLAUDE_CODE_PATH_HINT,
   type ClaudeCodeDetection,
 } from "./ai/claudeCode/detect";
 import {
@@ -2121,7 +2122,7 @@ async function commandOpenAiChat(
   const engine = normalizeEngineChoice(configuredRaw);
   // `detections` dictionary carries exactly one entry, the selected one.
   const [detections, cfg] = await Promise.all([
-    probeSelectedEngine(engine),
+    probeSelectedEngine(engine, storedSettings?.claudeCodePath),
     aiStore.loadConfig(),
   ]);
   // Mirror the activation-gate hint for the user's selected engine when
@@ -2287,6 +2288,7 @@ function normalizeEngineChoice(
  * `builtin` produces an empty dictionary (no detection is required). */
 async function probeSelectedEngine(
   engine: "builtin" | "omp" | "claude-code" | "codex",
+  claudeCodePath?: string,
 ): Promise<AgentDetections> {
   if (engine === "builtin") return {};
   if (engine === "omp") {
@@ -2294,7 +2296,7 @@ async function probeSelectedEngine(
     return { omp: projectAgent(d) };
   }
   if (engine === "claude-code") {
-    const d = await detectClaudeCode();
+    const d = await detectClaudeCode(claudeCodePath);
     return { "claude-code": projectAgent(d) };
   }
   const d = await detectCodex();
@@ -2335,7 +2337,7 @@ function engineHint(
       ? OMP_UPDATE_HINT
       : OMP_INSTALL_HINT;
   }
-  if (engine === "claude-code") return CLAUDE_CODE_INSTALL_HINT;
+  if (engine === "claude-code") return CLAUDE_CODE_PATH_HINT;
   return CODEX_INSTALL_HINT;
 }
 

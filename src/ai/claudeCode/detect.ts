@@ -6,6 +6,8 @@ import { compareVersions } from "../omp/detect";
 
 export const MIN_CLAUDE_CODE_VERSION = "1.0.0";
 export const CLAUDE_CODE_INSTALL_HINT = "npm install -g @anthropic-ai/claude-code";
+export const CLAUDE_CODE_PATH_HINT =
+  "Open AI Settings and set the Claude Code path, or leave it empty for automatic detection (which claude on macOS/Linux; where claude on Windows).";
 
 export interface ClaudeCodeDetection {
   available: boolean; // binary runs and returns a version string we could read
@@ -63,16 +65,23 @@ function quoteForShell(path: string): string {
  * - Version output is garbage → ok=false, reason "version-unknown".
  */
 export async function detectClaudeCode(
+  configuredPathOrExec?: string | ExecFn,
   execFn: ExecFn = defaultExecFn,
 ): Promise<ClaudeCodeDetection> {
-  let path: string | undefined;
-  try {
-    const out = await execFn(locateCommand());
-    // `where` can print multiple matches, one per line; take the first.
-    const first = out.split(/\r?\n/).find((line) => line.trim().length > 0);
-    path = first?.trim() || undefined;
-  } catch {
-    return { available: false, ok: false, reason: "not-installed" };
+  const configuredPath =
+    typeof configuredPathOrExec === "string" ? configuredPathOrExec.trim() : "";
+  if (typeof configuredPathOrExec === "function") execFn = configuredPathOrExec;
+
+  let path: string | undefined = configuredPath || undefined;
+  if (!path) {
+    try {
+      const out = await execFn(locateCommand());
+      // `where` can print multiple matches, one per line; take the first.
+      const first = out.split(/\r?\n/).find((line) => line.trim().length > 0);
+      path = first?.trim() || undefined;
+    } catch {
+      return { available: false, ok: false, reason: "not-installed" };
+    }
   }
 
   let version: string | undefined;

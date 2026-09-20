@@ -147,6 +147,25 @@ describe("detectClaudeCode — platform + quoting (TASK-006 B12)", () => {
     expect(result.ok).toBe(true);
     expect(result.version).toBe("2.0.1");
   });
+
+  it("explicit path skips locator and probes the configured executable", async () => {
+    const calls: string[] = [];
+    const execFn = async (cmd: string) => {
+      calls.push(cmd);
+      if (cmd === "/Users/me/.local/bin/claude --version") {
+        return "2.1.261 (Claude Code)";
+      }
+      throw new Error("unexpected locator/probe: " + cmd);
+    };
+    const result = await detectClaudeCode("/Users/me/.local/bin/claude", execFn);
+    expect(calls).toEqual(["/Users/me/.local/bin/claude --version"]);
+    expect(result).toMatchObject({
+      available: true,
+      ok: true,
+      path: "/Users/me/.local/bin/claude",
+      version: "2.1.261",
+    });
+  });
 });
 
 describe("constants — frozen values", () => {

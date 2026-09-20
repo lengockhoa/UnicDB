@@ -24,6 +24,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
         lite: { modelId: "", vision: false },
       },
       engine: "omp",
+      claudeCodePath: "",
     });
   });
 
@@ -170,7 +171,7 @@ describe("ai/settings — defaults + validation + helpers", () => {
     cfg.models.autocomplete = { modelId: "vendor/free-fast-sql", vision: false };
     const red = redactAiConfig(cfg);
     expect(Object.keys(red).sort()).toEqual(
-      ["baseUrl", "engine", "maxSteps", "method", "models", "timeoutMs"].sort(),
+      ["baseUrl", "claudeCodePath", "engine", "maxSteps", "method", "models", "timeoutMs"].sort(),
     );
     expect((red as unknown as Record<string, unknown>).apiKey).toBeUndefined();
     expect(red.baseUrl).toBe(cfg.baseUrl);

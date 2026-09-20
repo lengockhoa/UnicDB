@@ -618,6 +618,31 @@
   color: var(--vscode-errorForeground, #f48771);
 }
 
+.UnicDB-help-button {
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 1px solid var(--vscode-descriptionForeground, #888);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--vscode-descriptionForeground, #888);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 15px;
+  text-align: center;
+}
+.UnicDB-help-button:hover,
+.UnicDB-help-button:focus-visible {
+  color: var(--vscode-foreground);
+  border-color: var(--vscode-focusBorder);
+}
+
+.UnicDB-form-help {
+  color: var(--vscode-descriptionForeground, #888);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .UnicDB-row {
   display: flex;
   gap: 12px;

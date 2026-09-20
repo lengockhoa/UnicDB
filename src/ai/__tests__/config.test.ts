@@ -124,6 +124,7 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
     expect(obj.timeoutMs).toBe(s.timeoutMs);
     expect(obj.maxSteps).toBe(s.maxSteps);
     expect(obj.models).toEqual(s.models);
+    expect(obj.claudeCodePath).toBe("");
   });
 
   it("Test #9 — invalid save persists NOTHING to either store", async () => {
@@ -220,6 +221,7 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
     const loaded = await store.loadSettings();
     expect(loaded).not.toBeNull();
     expect(loaded!.engine).toBe("omp");
+    expect(loaded!.claudeCodePath).toBe("");
   });
 
   // ---- TASK-GC-001: legacy migration injects `lite` role ------------
@@ -304,16 +306,30 @@ describe("ai/config — AiConfigStore (SecretStorage + globalState)", () => {
 
   // ---- TASK-001: AiEngine widens to 4 values (builtin/omp/claude-code/codex)
 
-  it("T1#1 — save → load round-trip preserves engine 'claude-code'", async () => {
+  it("T1#1 — save → load round-trip preserves engine 'claude-code' and configured path", async () => {
     const { store } = makeStore();
     const s: AiSettings = {
       ...validSettings(),
       engine: "claude-code",
+      claudeCodePath: "  /Users/me/.local/bin/claude  ",
     };
     await store.save(s, "sk-1");
     const loaded = await store.loadSettings();
     expect(loaded).not.toBeNull();
     expect(loaded!.engine).toBe("claude-code");
+    expect(loaded!.claudeCodePath).toBe("/Users/me/.local/bin/claude");
+  });
+
+  it("invalid Claude Code path type is rejected before persistence", async () => {
+    const { store, global } = makeStore();
+    const settings = {
+      ...validSettings(),
+      claudeCodePath: 42,
+    } as unknown as AiSettings;
+    await expect(store.save(settings, "sk-1")).rejects.toThrow(
+      /Claude Code path must be a string/,
+    );
+    expect(global._raw().size).toBe(0);
   });
 
   it("T1#1 — save → load round-trip preserves engine 'codex'", async () => {
