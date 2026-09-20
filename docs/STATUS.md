@@ -1,3 +1,16 @@
+# STATUS — 2026-09-21 (COMMITGUARD cycle shipped to main — commit-message guard + retry + Vietnamese, 3/3 done)
+
+## LATEST — Cycle COMMITGUARD (2026-09-21)
+- **All 3 tasks done** in `docs/AI_HANDOFF/INDEX.md`; 0 fix rounds (reviewer bao-opus approved all; CG2-001 = approved_minor, both findings advisory-only).
+- Fixes the "chatgpt luna produces a long hash-like string" bug: a reasoning/hash blob was clamped to 72 chars by `sanitizeCommitMessage` and injected with no validation.
+- New pure `src/ai/commitMessageGuard.ts` (8 reason codes, frozen order; zero imports) wired into all 3 engine branches via `generateWithGuard` — garbage → retry exactly once with `buildRetryCommitPrompt` on the same engine, else frozen error toast + no inject.
+- `SYSTEM_PROMPT` now forces English type prefix + Vietnamese subject/body, subject ≤12 words / total ≤100 words.
+- **Not yet done:** no version bump / package / publish (cycle constraint overrode the standing Marketplace-publish rule — pending user decision).
+- Verification: typecheck + compile clean · full suite 4718 pass / 5 skip / 0 fail (baseline 4686, +32).
+- Commits: plan `c76f77b` → waves `23be837`/`df39d77` → wrap `66f3b40`. Pushed to `origin/main`.
+
+---
+
 # STATUS — 2026-09-17 (CHATFIX cycle shipped to main — chat grid/scroll/timeline/actions fixed, 4/4 done)
 
 ## LATEST — Cycle CHATFIX (2026-09-17)

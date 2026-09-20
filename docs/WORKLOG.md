@@ -2,6 +2,32 @@
 
 Track session-level execution details.
 
+## 2026-09-21 — Cycle COMMITGUARD (commit-message guard + retry + Vietnamese)
+
+- Fixes the "Generate Commit Message" bug where a reasoning model (e.g. "chatgpt luna")
+  injected a long hash-like blob instead of a commit message. Root cause: `sanitizeCommitMessage`
+  normalizes but never validates, so its 72-char subject clamp turned an unbroken reasoning/hash
+  blob into a plausible-looking "hash".
+- Added a pure output guard `src/ai/commitMessageGuard.ts` (zero imports, no `vscode`) with 8
+  reason codes emitted in frozen order: `empty` → `unbroken-blob` → `hash-like` → `symbol-heavy`
+  → `reasoning-marker` → `not-vietnamese` → `subject-too-long` → `message-too-long`. Thresholds:
+  blob token ≥40 chars, hex ≥32, symbol ratio >0.5, subject >12 words, total >100 words.
+- `SYSTEM_PROMPT` now forces English Conventional-Commits type prefix + Vietnamese subject/body
+  and the word limits; new `buildRetryCommitPrompt` builds the corrective one-shot retry.
+- `runGenerateCommitMessage` routes all 3 engine branches (omp / builtin / claude-code-codex
+  fallback) through `generateWithGuard`: PASS → inject; invalid+empty → existing empty-diagnostic
+  (no retry); garbage (non-empty) → retry exactly ONCE with the corrective prompt on the SAME
+  engine/model; still invalid → frozen error toast + `commit-gen-guard-rejected` debug dump, no
+  injection; engine throw propagates to the existing error-mapping branch (no retry).
+- Verification: full suite 4718 pass / 5 skip (baseline 4686 → +32); typecheck + compile clean.
+  Executor bao-sonnet; reviewer bao-opus (3/3 tasks approved). Commit `66f3b40` pushed to main.
+- Rollback: revert the cycle commits (`c76f77b..66f3b40`); behavior returns to inject-after-sanitize.
+- **Publish deferred:** the standing "every cycle ends with a Marketplace publish" rule was
+  overridden by this cycle's explicit no-version-bump/no-package/no-publish constraint — flagged
+  to the user for a follow-up release decision.
+
+---
+
 ## 2026-09-17 — Release 1.54.1 (CHATFIX delivered)
 
 - `npm run bump` atomic publish: 1.54.0 → 1.54.1 (typecheck + full suite green, VSIX packaged,
