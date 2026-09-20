@@ -1,6 +1,7 @@
 Command: handoff-fullstack
-Goal: Multi-query run must stop at first error and visually mark the failing statement — currently it runs all queries and the user can't tell it failed.
+Goal: Generate Commit Message phải chặn chuỗi rác (hash/reasoning leak) bằng lớp kiểm tra hợp lệ, thử lại 1 lần, báo lỗi rõ; message tiếng Việt ≤100 từ (subject ≤12 từ).
 Base: main
-Phase: done
-Cursor: Cycle COMPLETE. 3/3 tasks done (001 approved, 002+003 approved_minor). Plan 7932cbe, waves 74d51f4/fd9c6c3, wrap e8f78ee pushed. Full suite 4684 pass / 5 skip / 0 fail.
-Next: none — minor advisories in task files (clear()-after-mark unasserted, gutter tint, dispose idempotency, line-boundary parity for cursor-only runs) — follow-ups only.
+Phase: P3
+Cursor: P2.5 complete — Round 3 findings applied without re-review (PLAN §4 + SPEC §11 transport row; FR-007 ref §8.3→§8.5); PLAN_REVIEW: Approved
+Next: P3 — lite agent: git add docs/AI_HANDOFF/ && git commit -m "handoff: plan — <goal>"; then I1 setup
+QuietScans: 0/2
