@@ -1,7 +1,7 @@
 Command: handoff-fullstack
-Goal: Claude Code–first UX redesign of UnicDB AIChat webview per advisor spec (layout stabilization, scroll state machine, message system, compact composer, a11y).
+Goal: Process the entire queued backlog — GITMSG-001 (generate-commit-message UX), CHATUX-W5 (a11y/perf), and stale AIX leftovers.
 Base: main
-Phase: done
-Cursor: cycle complete — 4/4 approved, pushed 55e946c; archived to archive/cycle-CHATUX-2026-09-21/
-Next: none — run closed
-QuietScans: 2/2
+Phase: P0
+Cursor: run started — sweeping inventory
+Next: Phase 0 sweep → P1 lite context read
+QuietScans: 0/2
