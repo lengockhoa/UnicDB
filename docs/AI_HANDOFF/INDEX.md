@@ -6,9 +6,9 @@
 
 | Task | Name | Status | Dependencies | Owner |
 |------|------|--------|--------------|-------|
-| TASK-CHATUX-001 | W1 layout stabilization (grid/scroll-owner/normal flow/spacing) | ready | none | - |
-| TASK-CHATUX-002 | W2 scroll state machine (hysteresis, rAF, Jump-to-latest) | ready | none | - |
-| TASK-CHATUX-003 | W3 message visuals (code-block header+Copy, collapsed rows, visible actions) | ready | TASK-CHATUX-001 | - |
+| TASK-CHATUX-001 | W1 layout stabilization (grid/scroll-owner/normal flow/spacing) | pending_review | none | - |
+| TASK-CHATUX-002 | W2 scroll state machine (hysteresis, rAF, Jump-to-latest) | pending_review | none | - |
+| TASK-CHATUX-003 | W3 message visuals (code-block header+Copy, collapsed rows, visible actions) | pending_review | TASK-CHATUX-001 | - |
 | TASK-CHATUX-004 | W4 compact composer (≤104px, 36–88 clamp, IME/Enter pinned) | pending_review | TASK-CHATUX-003 | ExecT004 |
 
 ## Queued — future cycles
