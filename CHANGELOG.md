@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+- Summary: Multi-query SQL execution now auto-stops on error: statement-timeout watchdog +
+  `abortActiveQuery` seam (pg PID cancel + destroy-release, mysql destroy via cancel closures,
+  mssql queue generation + lazy reconnect), bounded cleanup, and new `UnicDB.queryTimeoutSeconds`
+  setting (default 300s). Connection is released and the error reported instead of hanging.
+  Cycle SQLHANG-2026-09-21, pushed `33b7263`.
+
 ## [1.54.1] — 2026-09-17
 
 - Summary: AI Chat V2 UX fixes: compact composer always pinned at the bottom (explicit grid placement fixes giant-on-open and crushed-after-turns), transcript scrollbar with auto-follow to newest message and unread pill, Claude Code-style tool activity timeline (status dots, Bash IN/OUT cards, live working indicator), and fully wired message actions (copy/edit/retry/3-dot menu).

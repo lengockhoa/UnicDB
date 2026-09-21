@@ -2,6 +2,19 @@
 
 Track session-level execution details.
 
+## 2026-09-21 — Cycle SQLHANG (multi-query auto-stop on error)
+
+- Implemented statement-timeout watchdog + `abortActiveQuery` seam in `src/core/queryRunner.ts` so a
+  multi-query execution exits immediately on the first error instead of hanging the connection.
+- Per-adapter hard abort: postgres (PID cancel + destroy-release), mysql (destroy via cancel
+  closures), mssql (queue generation + lazy reconnect); bounded cleanup throughout.
+- New `UnicDB.queryTimeoutSeconds` setting (default 300s) surfaced in `src/extension.ts` +
+  `package.json`.
+- Files: `src/core/queryRunner.ts`, `src/adapters/{types,postgres,mysql,mssql}.ts`, `src/extension.ts`,
+  `package.json` + 4 new test files (`mysqlAbort`, `postgresAbort`, `mssqlAbort`,
+  `queryRunnerWatchdog`).
+- Verification: `npm run typecheck` 0 errors · full vitest suite green · pushed `33b7263`.
+
 ## 2026-09-21 — Cycle COMMITGUARD (commit-message guard + retry + Vietnamese)
 
 - Fixes the "Generate Commit Message" bug where a reasoning model (e.g. "chatgpt luna")

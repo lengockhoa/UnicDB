@@ -1,7 +1,7 @@
 Command: handoff-fullstack
 Goal: Multi-query SQL execution must auto-stop on error — exit immediately and report the error instead of hanging the connection requiring manual stop.
 Base: main
-Phase: R1
-Cursor: all 3 tasks PASS, copied back, committed; INDEX → pending_review
-Next: R2-R4 — code-reviewer per task (parallel), re-run verification, verdicts
-QuietScans: 0/2
+Phase: done
+Cursor: cycle SQLHANG complete — 3/3 tasks done, reviewed, pushed 33b7263; docs synced; archived to archive/cycle-SQLHANG-2026-09-21/
+Next: — (run complete)
+QuietScans: 2/2
