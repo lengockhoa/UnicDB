@@ -2,6 +2,30 @@
 
 Track session-level execution details.
 
+## 2026-09-21 — Cycle CHATUX2 (AIChat composer/footer redesign + steering + transcript fixes)
+
+- TASK-CHATUX2-001 (footer/header): `shell.ts` — bottom `hint` element deleted;
+  new `footnote` inside composer (after `composerBottom`) carries the Enter/
+  Shift+Enter hint; `usage` + `engineState` spans added to header (hidden until
+  populated); `styles.css` — composer bottom gap ~5px, tree rail/stub/dim CSS;
+  `aiChatPanelMain.ts` — usage chip retargeted to V2 header spans.
+- TASK-CHATUX2-002 (steer queue core): `keyboard.ts` `{kind:"steer"}` decision +
+  `canSteerDraft()`; `store.ts` `steerQueue` FIFO (cap 8, `STEER_ENQUEUED`
+  no-ops at cap, cleared on `session_hydrated`); `composer.ts`
+  `COMPOSER_QUEUE_*` exports.
+- TASK-CHATUX2-003 (tree marking): `transcript.ts` marks `data-tree` =
+  first/last/"first last" on maximal consecutive tool+reasoning runs —
+  tree-style step visualization per Claude Code idiom.
+- TASK-CHATUX2-004 (steer wiring + overlap cutover): `controller.ts` steer →
+  `STEER_ENQUEUED`, `turn_finished` → `flushSteerQueue()` FIFO via
+  `requestRetry`; **overlap root cause fixed** — duplicate activity timeline
+  renderer + `-activity-*` CSS deleted (it double-rendered inside
+  `shell.transcript` alongside `#thread`, causing the overlapping text);
+  `#thread` flow-child override added.
+- Verification: vitest aiChat 482/482, shell+grid 29/29, panel+session 42/42,
+  typecheck clean, compile clean. Reviewer (unic-smart) approved all 4 tasks
+  (3× approved_minor, 1× approved). Pushed 2ffe79f.
+
 ## 2026-09-21 — Cycle BACKLOG (commit-gen UX hardening + AIChat a11y/perf)
 
 - TASK-GITMSG-001 (commit-gen core): new `src/ai/commitGenGate.ts` — single-flight
