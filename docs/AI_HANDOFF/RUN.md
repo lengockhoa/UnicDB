@@ -1,7 +1,7 @@
 Command: handoff-fullstack
-Goal: Fix UnicDB AIChat UX — auto-scroll to bottom, readable command/code blocks with copy buttons, copy-answer button, smaller compact input box.
+Goal: Claude Code–first UX redesign of UnicDB AIChat webview per advisor spec (layout stabilization, scroll state machine, message system, compact composer, a11y).
 Base: main
-Phase: P1
-Cursor: sweep done — 12 stale pending tasks from old AIX cycles found, will queue in INDEX; uncommitted PROJECT_IMPORTANT.md + package-lock.json to checkpoint
-Next: P1 lite-model context read via ukit-small-task-maintainer
+Phase: P2.5
+Cursor: P2 done — SPEC.md + PLAN.md + TASK-CHATUX-001..004 ready; waves: W1{T001∥T002} W2{T003} W3{T004}; W5 + 18 stale AIX tasks queued in INDEX
+Next: spawn code-reviewer REVIEW_TARGET_TYPE=plan on PLAN.md + SPEC.md
 QuietScans: 0/2
