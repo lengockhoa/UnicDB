@@ -8,6 +8,12 @@
   setting (default 300s). Connection is released and the error reported instead of hanging.
   Cycle SQLHANG-2026-09-21, pushed `33b7263`.
 
+## [1.54.4] — 2026-09-22
+
+- Summary: AI Chat V2 composer/footer redesign — bottom info bar removed (hints folded into composer footnote, token/session stats moved to header), composer pinned ~5px from panel edge, mid-turn steering via webview FIFO queue (cap 8, flushed on turn_finished), overlapping-text fix (duplicate activity timeline renderer deleted), tree-style step visualization with dimmed thinking.
+- Files: webview/aiChat/{shell.ts,keyboard.ts,store.ts,composer.ts,controller.ts,transcript.ts,styles.css}, webview/aiChatPanelMain.ts, colocated tests in webview/aiChat/__tests__/, docs/AI_HANDOFF CHATUX2 cycle
+- Verification: vitest aiChat 482/482 ✅ · shell+grid 29/29 ✅ · panel+session 42/42 ✅ · typecheck clean ✅ · 4/4 tasks approved (unic-smart review)
+
 ## [1.54.1] — 2026-09-17
 
 - Summary: AI Chat V2 UX fixes: compact composer always pinned at the bottom (explicit grid placement fixes giant-on-open and crushed-after-turns), transcript scrollbar with auto-follow to newest message and unread pill, Claude Code-style tool activity timeline (status dots, Bash IN/OUT cards, live working indicator), and fully wired message actions (copy/edit/retry/3-dot menu).
