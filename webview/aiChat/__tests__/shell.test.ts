@@ -17,6 +17,7 @@ import {
   CHAT_V2_SHELL_MARKER,
   CHAT_V2_STATUS_LIVE_ID,
   mountChatShell,
+  mountChatShellIfNeeded,
 } from "../shell";
 
 const ROOT_CLASSES = ["UnicDB-chat", CHAT_V2_ROOT_CLASS];
@@ -89,7 +90,6 @@ describe("TASK-CHATV2-005 mountChatShell — semantic shell (#1)", () => {
       refs.banner,
       refs.main,
       refs.composer,
-      refs.hint,
       refs.statusLiveRegion,
       refs.alertLiveRegion,
     ]) {
@@ -100,6 +100,96 @@ describe("TASK-CHATV2-005 mountChatShell — semantic shell (#1)", () => {
     expect(refs.main.contains(refs.context)).toBe(true);
     expect(refs.composer.contains(refs.composerTop)).toBe(true);
     expect(refs.composer.contains(refs.composerBottom)).toBe(true);
+    expect(refs.composer.contains(refs.footnote)).toBe(true);
+    expect(refs.header.contains(refs.usage)).toBe(true);
+    expect(refs.header.contains(refs.engineState)).toBe(true);
+  });
+});
+
+describe("TASK-CHATUX2-001 footer removal + header stats (#1, #2)", () => {
+  it("exposes footnote/usage/engineState and no hint element or ref", () => {
+    const root = makeRoot();
+    const refs = mountChatShell(root);
+
+    // The bottom info bar is gone: no -hint node anywhere, no hint ref.
+    expect(root.querySelector(`.${CHAT_V2_ROOT_CLASS}-hint`)).toBeNull();
+    expect("hint" in refs).toBe(false);
+    // Nothing renders below the composer: it is the last visible grid child
+    // (the two live regions that follow are visually hidden).
+    const visibleChildren = Array.from(root.children).filter(
+      (el) => !el.classList.contains(`${CHAT_V2_ROOT_CLASS}-visually-hidden`),
+    );
+    expect(visibleChildren[visibleChildren.length - 1]).toBe(refs.composer);
+
+    // The keyboard hint copy moved inside the composer card as a sibling
+    // AFTER composerBottom (renderComposerV2's bottom.replaceChildren()
+    // cannot remove it).
+    expect(refs.footnote.parentElement).toBe(refs.composer);
+    expect(refs.footnote.classList.contains(`${CHAT_V2_ROOT_CLASS}-footnote`)).toBe(true);
+    expect(refs.footnote.textContent).toBe(
+      "Enter to send · Shift+Enter for a new line",
+    );
+    const order = refs.composerBottom.compareDocumentPosition(refs.footnote);
+    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // Header right zone: [engine-state] [usage] [overflow], both hidden
+    // until their first frame.
+    expect(refs.engineState.id).toBe("UnicDB-ai-chat-v2-engine-state");
+    expect(refs.usage.id).toBe("UnicDB-ai-chat-v2-usage");
+    expect(refs.engineState.hidden).toBe(true);
+    expect(refs.usage.hidden).toBe(true);
+    const overflow = refs.header.querySelector(`.${CHAT_V2_ROOT_CLASS}-overflow`);
+    expect(overflow).not.toBeNull();
+    expect(
+      refs.engineState.compareDocumentPosition(refs.usage) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      refs.usage.compareDocumentPosition(overflow!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("remount via mountChatShellIfNeeded rebuilds refs from the DOM without duplicating nodes", () => {
+    const first = makeRoot();
+    mountChatShell(first);
+    const html = first.innerHTML;
+    first.remove();
+
+    // A fresh root carrying the marker + the full shell tree but unknown to
+    // the in-memory WeakMap — the module-reload recovery path.
+    const root = makeRoot();
+    root.setAttribute(CHAT_V2_SHELL_MARKER, "1");
+    root.innerHTML = html;
+
+    const refs = mountChatShellIfNeeded(root);
+    expect(refs.footnote.classList.contains(`${CHAT_V2_ROOT_CLASS}-footnote`)).toBe(true);
+    expect(refs.footnote.parentElement).toBe(refs.composer);
+    expect(refs.usage.id).toBe("UnicDB-ai-chat-v2-usage");
+    expect(refs.engineState.id).toBe("UnicDB-ai-chat-v2-engine-state");
+    expect("hint" in refs).toBe(false);
+
+    // No duplicated nodes: exactly one of every structural element.
+    for (const sel of [
+      "header",
+      "banner",
+      "main",
+      "transcript",
+      "context",
+      "composer",
+      "composer-top",
+      "composer-bottom",
+      "actions",
+      "footnote",
+      "usage",
+      "engine-state",
+    ]) {
+      expect(
+        root.querySelectorAll(`.${CHAT_V2_ROOT_CLASS}-${sel}`).length,
+        `exactly one -${sel}`,
+      ).toBe(1);
+    }
+    expect(root.querySelectorAll("[aria-live]").length).toBe(2);
   });
 });
 

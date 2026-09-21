@@ -107,3 +107,121 @@ stub, reasoning dim). The `-activity-*` deletion and the
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+- EXECUTOR_TOOL: other (Oh My Pi harness)
+- EXECUTOR_MODEL: unic-code
+- EXECUTOR_SUBAGENT: ExecC1 (feature-implementer)
+- Status: **PASS**
+
+### RED_OUTPUT (before implementation)
+
+```
+× shellGrid.test.ts > pins all four shell children to explicit grid-row 1..4
+× shellGrid.test.ts > keeps minmax(0,1fr) transcript track … (expected
+  "grid-template-rows: 40px auto minmax(0, 1fr) auto auto 20px" → new 4-track)
+× shellGrid.test.ts > TASK-CHATUX2-001: 4-row root grid, 5px bottom padding,
+  footnote + header stat rules
+× shellGrid.test.ts > TASK-CHATUX2-001: tree rail + branch stubs + dimmed
+  reasoning (shared ::before rail must exist: expected null)
+× shell.test.ts > returns refs whose mount points are all live children
+  (refs.footnote/refs.usage/refs.engineState missing)
+× shell.test.ts > TASK-CHATUX2-001 > exposes footnote/usage/engineState and
+  no hint element or ref
+× shell.test.ts > TASK-CHATUX2-001 > remount via mountChatShellIfNeeded
+  rebuilds refs from the DOM
+Test Files 2 failed (2) · Tests 7 failed | 20 passed (27)
+
+aiChatPanelSessionStateWebview.test.ts:
+× applyUsage writes #usageChip into #UnicDB-ai-chat-v2-usage
+  (V2 header usage span must exist after boot: expected null)
+× applyEngineState writes #engineLifecycle into
+  #UnicDB-ai-chat-v2-engine-state (expected null)
+Tests 2 failed | 5 passed (7)
+```
+
+### Verification Output (after implementation)
+
+```
+$ npx vitest run webview/aiChat/__tests__/shell.test.ts \
+    webview/aiChat/__tests__/shellGrid.test.ts
+✓ shellGrid.test.ts (11 tests) · ✓ shell.test.ts (16 tests)
+Test Files 2 passed (2) · Tests 27 passed (27)
+
+$ npx vitest run src/ui/__tests__/aiChatPanel.test.ts \
+    src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts
+Test Files 2 passed (2) · Tests 42 passed (42)
+
+$ npx vitest run webview/aiChat/__tests__        (regression sweep)
+Test Files 24 passed (24) · Tests 457 passed (457)
+
+$ npx vitest run src/ui/__tests__/aiChatPanelV2E2e.test.ts   (prod bundle)
+Tests 20 passed (20)
+
+$ npm run typecheck   → tsc --noEmit, 0 errors
+$ npm run compile     → dist/aiChatPanel.js 307.8kb, Done
+```
+
+### FILES_CHANGED
+
+- `webview/aiChat/shell.ts` — `hint` element/ref/querySelector deleted;
+  `-footnote` appended inside `refs.composer` after `composerBottom`;
+  `-engine-state` + `-usage` spans (hidden) added in `buildHeader` before
+  the overflow button; `ChatShellRefs` gains `footnote`/`usage`/
+  `engineState`; remount querySelector list updated.
+- `webview/aiChat/styles.css` — root grid → `40px auto minmax(0,1fr) auto`,
+  padding → `10px 12px 5px`; `-hint` rule deleted; `-footnote`/`-usage`/
+  `-engine-state` rules added; rail `::before` extended to
+  `-item-reasoning` (shared selector); `data-tree~="first"/"last"` rail
+  variants; `::after` 1px×10px branch stubs on both step kinds;
+  `-reasoning-body` 12px/18px muted; `-reasoning-toggle` 24px/11px;
+  `-item-reasoning` gets `position:relative` + `padding-left:24px` (content
+  column alignment so the rail/stub never strikes through text).
+- `webview/aiChatPanelMain.ts` — `applyUsage`/`applyEngineState` mount
+  `#usageChip`/`#engineLifecycle` into `#UnicDB-ai-chat-v2-usage` /
+  `#UnicDB-ai-chat-v2-engine-state` (unhide on first frame); fallback host
+  is `#UnicDB-root .UnicDB-ai-chat-v2-header`; no `rootEl.appendChild`
+  remains.
+- `webview/aiChat/__tests__/shell.test.ts` — cases 1-2 (new
+  TASK-CHATUX2-001 describe; refs contract updated).
+- `webview/aiChat/__tests__/shellGrid.test.ts` — cases 3+5 (4-row pins,
+  footnote/usage/engine-state rules, tree CSS contract).
+- `webview/aiChat/__tests__/transcript.test.ts` — rail selector pin
+  relaxed to tolerate the shared `::before` selector list (same
+  border-left contract).
+- `src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts` — case 4 (see
+  Note).
+
+### TESTS_ADDED
+
+- `webview/aiChat/__tests__/shell.test.ts`: "exposes footnote/usage/
+  engineState and no hint element or ref", "remount via
+  mountChatShellIfNeeded rebuilds refs from the DOM without duplicating
+  nodes"
+- `webview/aiChat/__tests__/shellGrid.test.ts`: "TASK-CHATUX2-001: 4-row
+  root grid, 5px bottom padding, footnote + header stat rules",
+  "TASK-CHATUX2-001: tree rail + branch stubs + dimmed reasoning"
+- `src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts`: "applyUsage
+  writes #usageChip into #UnicDB-ai-chat-v2-usage, never as a root child",
+  "applyEngineState writes #engineLifecycle into
+  #UnicDB-ai-chat-v2-engine-state, never as a root child"
+
+### Note
+
+- **Test-file deviation (case 4):** the task names
+  `src/ui/__tests__/aiChatPanel.test.ts`, but that suite is host-side
+  (node env, mocked vscode — it cannot boot the webview). The file that
+  "already drives the legacy bridge" via jsdom + esbuild-eval of
+  `aiChatPanelMain.ts` is `aiChatPanelSessionStateWebview.test.ts` (it owns
+  the existing `#usageChip` describe). Case 4 landed there; the named file
+  was still run in verification and passes (42/42).
+- **Spec-plus change:** `-item-reasoning` gets `padding-left:24px` beyond
+  the literal spec text — without it the rail/stub at `left:9px` draws
+  through the reasoning text (tool rows clear the rail via their 16px dot
+  column + 6px gap + 2px pad = 24px content offset). Required for G4's
+  "reasoning joins the same tree" to render correctly.
+- `node_modules` in the worktree is a symlink to the main repo's install
+  (worktrees don't carry ignored dirs; the esbuild-eval webview suites
+  need it). Untracked, not committed.
+- Milestone commit: `432a533` on `handoff/task-chatux2-001`.

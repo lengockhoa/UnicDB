@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AUTOCOMPLETE_PAGE_DELTA,
+  canSteerDraft,
   canSubmitDraft,
   decideComposerKey,
   isSubmittablePhase,
@@ -51,8 +52,9 @@ describe("decideComposerKey — precedence (PLAN §4)", () => {
     expect(decideComposerKey(key({ hasUnresolvedContext: true }))).toEqual({ kind: "native" });
   });
 
-  // KBD-06 regression: busy phases keep the draft editable but refuse submit.
-  it("plain Enter in every busy phase → native (no submit/queue)", () => {
+  // CHATUX2-002: busy phases keep the draft editable; a valid draft steers
+  // (queues) instead of submitting, an invalid one stays native.
+  it("plain Enter in every busy phase on a valid draft → steer (never submit)", () => {
     const busy: TurnPhase[] = [
       "validating",
       "connecting",
@@ -62,11 +64,34 @@ describe("decideComposerKey — precedence (PLAN §4)", () => {
       "stopping",
     ];
     for (const phase of busy) {
-      expect(decideComposerKey(key({ phase }))).toEqual({ kind: "native" });
+      expect(decideComposerKey(key({ phase }))).toEqual({ kind: "steer" });
       expect(canSubmitDraft({ phase, draftText: "hello", hasUnresolvedContext: false })).toBe(
         false,
       );
+      expect(canSteerDraft({ phase, draftText: "hello", hasUnresolvedContext: false })).toBe(
+        true,
+      );
     }
+  });
+
+  it("plain Enter while busy on a blank draft → native (nothing queued)", () => {
+    for (const draftText of ["", "   \n  "]) {
+      expect(decideComposerKey(key({ phase: "streaming", draftText }))).toEqual({
+        kind: "native",
+      });
+      expect(
+        canSteerDraft({ phase: "streaming", draftText, hasUnresolvedContext: false }),
+      ).toBe(false);
+    }
+  });
+
+  it("plain Enter while busy with unresolved context → native (nothing queued)", () => {
+    expect(
+      decideComposerKey(key({ phase: "streaming", hasUnresolvedContext: true })),
+    ).toEqual({ kind: "native" });
+    expect(
+      canSteerDraft({ phase: "streaming", draftText: "hello", hasUnresolvedContext: true }),
+    ).toBe(false);
   });
 
   it("plain Enter submits after completed/failed (a new turn is allowed)", () => {

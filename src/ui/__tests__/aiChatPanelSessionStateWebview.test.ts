@@ -169,3 +169,61 @@ describe("webview — usage chip (TASK-ARP06-005)", () => {
     expect(chip!.innerHTML).not.toContain("<");
   });
 });
+
+describe("webview — usage/engine chips mount in the V2 header (TASK-CHATUX2-001)", () => {
+  const usageMsg = (
+    over: Partial<Record<string, unknown>> = {},
+  ): Record<string, unknown> => ({
+    type: "usage",
+    inputTokens: 12,
+    outputTokens: 34,
+    unknown: false,
+    sessionTokens: { inputTokens: 100, outputTokens: 200 },
+    policyNotice: "",
+    ...over,
+  });
+
+  it("applyUsage writes #usageChip into #UnicDB-ai-chat-v2-usage, never as a root child", () => {
+    const h = makeHarness();
+    const usageEl = document.getElementById("UnicDB-ai-chat-v2-usage");
+    expect(usageEl, "V2 header usage span must exist after boot").not.toBeNull();
+    expect(usageEl!.hidden, "usage span starts hidden until its first frame").toBe(true);
+
+    h.dispatch(usageMsg());
+
+    const chip = document.getElementById("usageChip") as HTMLElement | null;
+    expect(chip).not.toBeNull();
+    expect(chip!.parentElement).toBe(usageEl);
+    expect(usageEl!.hidden, "first usage frame unhides the header span").toBe(false);
+    expect(chip!.textContent).toContain("Turn: 12 in / 34 out");
+    expect(chip!.textContent).toContain("Session: 100 in / 200 out");
+    // Never an implicit grid child stacked under the composer.
+    expect(chip!.parentElement).not.toBe(h.root);
+    expect(
+      Array.from(h.root.children).some(
+        (el) => el.id === "usageChip" || el.id === "engineLifecycle",
+      ),
+    ).toBe(false);
+  });
+
+  it("applyEngineState writes #engineLifecycle into #UnicDB-ai-chat-v2-engine-state, never as a root child", () => {
+    const h = makeHarness();
+    const stateEl = document.getElementById("UnicDB-ai-chat-v2-engine-state");
+    expect(stateEl, "V2 header engine-state span must exist after boot").not.toBeNull();
+    expect(stateEl!.hidden, "engine-state span starts hidden").toBe(true);
+
+    h.dispatch({ type: "engine_state", state: "ready" });
+
+    const chip = document.getElementById("engineLifecycle") as HTMLElement | null;
+    expect(chip).not.toBeNull();
+    expect(chip!.parentElement).toBe(stateEl);
+    expect(stateEl!.hidden, "first engine_state frame unhides the header span").toBe(false);
+    expect(chip!.textContent).toBe("Ready");
+    expect(chip!.parentElement).not.toBe(h.root);
+    expect(
+      Array.from(h.root.children).some(
+        (el) => el.id === "usageChip" || el.id === "engineLifecycle",
+      ),
+    ).toBe(false);
+  });
+});

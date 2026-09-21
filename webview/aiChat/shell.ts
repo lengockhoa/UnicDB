@@ -1,8 +1,10 @@
 // webview/aiChat/shell.ts — TASK-CHATV2-005
 //
 // The semantic V2 skeleton: ONE vertical grid (header · banner · transcript ·
-// context strip · composer · keyboard hint) plus the two visually-hidden
-// aria-live regions every later V2 component announces through.
+// context strip · composer) plus the two visually-hidden aria-live regions
+// every later V2 component announces through. The keyboard hint lives inside
+// the composer card as a `-footnote`; usage + engine lifecycle stats live in
+// the header's right zone.
 //
 // CONTRACT
 // - `mountChatShell(root)` is idempotent: repeated calls reuse the existing
@@ -59,7 +61,16 @@ export interface ChatShellRefs {
   readonly composerTop: HTMLElement;
   readonly composerBottom: HTMLElement;
   readonly actions: HTMLElement;
-  readonly hint: HTMLElement;
+  /** Keyboard-hint footnote inside the composer card (sibling AFTER
+   *  composerBottom so renderComposerV2's bottom.replaceChildren() cannot
+   *  remove it). */
+  readonly footnote: HTMLElement;
+  /** Header right-zone mount for the legacy `#usageChip` (hidden until the
+   *  first `usage` frame). */
+  readonly usage: HTMLElement;
+  /** Header right-zone mount for the legacy `#engineLifecycle` chip (hidden
+   *  until the first `engine_state` frame). */
+  readonly engineState: HTMLElement;
   readonly statusLiveRegion: HTMLElement;
   readonly alertLiveRegion: HTMLElement;
 }
@@ -135,6 +146,20 @@ function buildHeader(root: HTMLElement): HTMLElement {
   engine.appendChild(engineLabel);
   header.appendChild(engine);
 
+  // Header right zone (CHATUX2-001): the legacy usage + engine-lifecycle
+  // chips mount into these spans — hidden until their first frame.
+  const engineState = document.createElement("span");
+  engineState.className = prefix("engine-state");
+  engineState.id = prefix("engine-state");
+  engineState.hidden = true;
+  header.appendChild(engineState);
+
+  const usage = document.createElement("span");
+  usage.className = prefix("usage");
+  usage.id = prefix("usage");
+  usage.hidden = true;
+  header.appendChild(usage);
+
   const overflow = button(prefix("control"), prefix("overflow"));
   overflow.id = prefix("overflow");
   overflow.setAttribute("aria-label", "More actions");
@@ -202,9 +227,12 @@ export function mountChatShell(root: HTMLElement): ChatShellRefs {
   composerBottom.appendChild(actions);
   composer.appendChild(composerTop);
   composer.appendChild(composerBottom);
-
-  const hint = div(prefix("hint"));
-  hint.textContent = KEYBOARD_HINT;
+  // CHATUX2-001: the keyboard hint is a footnote INSIDE the composer card —
+  // a sibling of composerBottom (never a child: renderComposerV2 calls
+  // bottom.replaceChildren() and would delete it).
+  const footnote = div(prefix("footnote"));
+  footnote.textContent = KEYBOARD_HINT;
+  composer.appendChild(footnote);
 
   const statusLiveRegion = buildLiveRegion(CHAT_V2_STATUS_LIVE_ID, "polite");
   const alertLiveRegion = buildLiveRegion(CHAT_V2_ALERT_LIVE_ID, "assertive");
@@ -213,7 +241,6 @@ export function mountChatShell(root: HTMLElement): ChatShellRefs {
   root.appendChild(banner);
   root.appendChild(main);
   root.appendChild(composer);
-  root.appendChild(hint);
   root.appendChild(statusLiveRegion);
   root.appendChild(alertLiveRegion);
 
@@ -228,7 +255,9 @@ export function mountChatShell(root: HTMLElement): ChatShellRefs {
     composerTop,
     composerBottom,
     actions,
-    hint,
+    footnote,
+    usage: header.querySelector<HTMLElement>(`.${prefix("usage")}`)!,
+    engineState: header.querySelector<HTMLElement>(`.${prefix("engine-state")}`)!,
     statusLiveRegion,
     alertLiveRegion,
   };
@@ -258,7 +287,9 @@ export function mountChatShellIfNeeded(root: HTMLElement): ChatShellRefs {
   const composerTop = root.querySelector<HTMLElement>(`.${prefix("composer-top")}`);
   const composerBottom = root.querySelector<HTMLElement>(`.${prefix("composer-bottom")}`);
   const actions = root.querySelector<HTMLElement>(`.${prefix("actions")}`);
-  const hint = root.querySelector<HTMLElement>(`.${prefix("hint")}`);
+  const footnote = root.querySelector<HTMLElement>(`.${prefix("footnote")}`);
+  const usage = root.querySelector<HTMLElement>(`.${prefix("usage")}`);
+  const engineState = root.querySelector<HTMLElement>(`.${prefix("engine-state")}`);
   const statusLiveRegion = document.getElementById(CHAT_V2_STATUS_LIVE_ID);
   const alertLiveRegion = document.getElementById(CHAT_V2_ALERT_LIVE_ID);
   if (
@@ -271,7 +302,9 @@ export function mountChatShellIfNeeded(root: HTMLElement): ChatShellRefs {
     !composerTop ||
     !composerBottom ||
     !actions ||
-    !hint ||
+    !footnote ||
+    !usage ||
+    !engineState ||
     !statusLiveRegion ||
     !alertLiveRegion
   ) {
@@ -288,7 +321,9 @@ export function mountChatShellIfNeeded(root: HTMLElement): ChatShellRefs {
     composerTop,
     composerBottom,
     actions,
-    hint,
+    footnote,
+    usage,
+    engineState,
     statusLiveRegion,
     alertLiveRegion,
   };

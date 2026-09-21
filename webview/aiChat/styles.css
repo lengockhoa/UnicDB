@@ -13,9 +13,10 @@
  *
  * Root geometry: a vertical grid —
  *   40px header · conditional 28–40px banner · minmax(0,1fr) transcript ·
- *   conditional max-72px context strip · sticky composer · 20px hint.
- * Root padding is 10px block / 12px inline; the transcript pads 8px inline
- * and lays turns out with 16px gaps.
+ *   sticky composer (context strip + keyboard-hint footnote live INSIDE the
+ *   composer card). Root padding is 10px block-start / 12px inline / 5px
+ *   block-end so the composer card sits ~5px above the panel edge; the
+ *   transcript pads 8px inline and lays turns out with 16px gaps.
  */
 
 /* ---- Root ---------------------------------------------------------------- */
@@ -51,13 +52,13 @@
 
   box-sizing: border-box;
   display: grid;
-  grid-template-rows: 40px auto minmax(0, 1fr) auto auto 20px;
+  grid-template-rows: 40px auto minmax(0, 1fr) auto;
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   width: 100%;
   height: 100%;
-  padding: 10px 12px;
+  padding: 10px 12px 5px;
   overflow: hidden;
   background: var(--UnicDB-ai-chat-v2-canvas);
   color: var(--UnicDB-ai-chat-v2-text);
@@ -412,18 +413,39 @@
   box-shadow: 0 8px 24px var(--UnicDB-ai-chat-v2-shadow);
 }
 
-/* ---- Keyboard hint (20px) ------------------------------------------------ */
+/* ---- Composer footnote + header stats (CHATUX2-001) ---------------------- */
 
-.UnicDB-ai-chat-v2-hint {
-  grid-row: 5;
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  min-height: 0;
-  height: 20px;
+/* Keyboard hint inside the composer card, under the bottom lane. */
+.UnicDB-ai-chat-v2-footnote {
+  padding: 0 var(--UnicDB-ai-chat-v2-space-4) var(--UnicDB-ai-chat-v2-space-2);
   color: var(--UnicDB-ai-chat-v2-muted);
   font-size: 11px;
   line-height: 16px;
+  text-align: right;
+}
+/* Header right-zone mounts for the legacy #usageChip / #engineLifecycle. */
+.UnicDB-ai-chat-v2-usage {
+  flex: 0 0 auto;
+  min-width: 0;
+  margin-left: auto;
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.UnicDB-ai-chat-v2-engine-state {
+  flex: 0 0 auto;
+  min-width: 0;
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.UnicDB-ai-chat-v2-usage[hidden],
+.UnicDB-ai-chat-v2-engine-state[hidden] {
+  display: none;
 }
 
 /* Metadata text (11/16). */
@@ -591,17 +613,28 @@
   white-space: pre-wrap;
 }
 
-/* Assistant answer: unboxed, max 92%, 4px 0. */
+/* Assistant answer: unboxed, max 92%, 4px 0. position:relative also anchors
+   the reasoning item's tree rail/branch stub (CHATUX2-001). */
 .UnicDB-ai-chat-v2-item-text,
 .UnicDB-ai-chat-v2-item-reasoning {
+  position: relative;
   align-self: flex-start;
   max-width: 92%;
   padding: 4px 0;
   overflow-wrap: anywhere;
 }
 
+/* Reasoning joins the step tree: content indents to the tool rows' content
+   column (2px pad + 16px dot column + 6px gap) so the rail/stub at left:9px
+   never strikes through the text. */
+.UnicDB-ai-chat-v2-item-reasoning {
+  padding-left: 24px;
+}
+
 .UnicDB-ai-chat-v2-reasoning-body {
   color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 12px;
+  line-height: 18px;
   white-space: pre-wrap;
 }
 
@@ -611,13 +644,13 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  min-height: 28px;
+  min-height: 24px;
   padding: 0;
   border: none;
   border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
   background: transparent;
   color: var(--UnicDB-ai-chat-v2-muted);
-  font-size: 12px;
+  font-size: 11px;
   cursor: pointer;
 }
 
@@ -766,14 +799,41 @@
   line-height: 18px;
 }
 
-/* Vertical connector joining the step dots (subtle, sits behind the dot). */
-.UnicDB-ai-chat-v2-item-tool::before {
+/* Vertical connector joining the step dots (subtle, sits behind the dot).
+   Shared by tool + reasoning steps (CHATUX2-001 tree): consecutive step rows
+   form one continuous rail; data-tree marks run boundaries. */
+.UnicDB-ai-chat-v2-item-tool::before,
+.UnicDB-ai-chat-v2-item-reasoning::before {
   content: "";
   position: absolute;
   left: 9px;
   top: 0;
   bottom: 0;
   border-left: 1px solid var(--UnicDB-ai-chat-v2-border);
+  opacity: 0.5;
+}
+
+/* Run head: the rail starts at the branch stub, not the row top. */
+.UnicDB-ai-chat-v2-item-tool[data-tree~="first"]::before,
+.UnicDB-ai-chat-v2-item-reasoning[data-tree~="first"]::before {
+  top: 14px;
+}
+
+/* Run tail: the rail stops at the branch stub — no dangling line. */
+.UnicDB-ai-chat-v2-item-tool[data-tree~="last"]::before,
+.UnicDB-ai-chat-v2-item-reasoning[data-tree~="last"]::before {
+  bottom: calc(100% - 14px);
+}
+
+/* Branch stub: 1px × 10px horizontal tick from the rail into the row. */
+.UnicDB-ai-chat-v2-item-tool::after,
+.UnicDB-ai-chat-v2-item-reasoning::after {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 14px;
+  width: 10px;
+  border-top: 1px solid var(--UnicDB-ai-chat-v2-border);
   opacity: 0.5;
 }
 

@@ -198,8 +198,8 @@ import { escapeHtml, renderMarkdown } from "./markdownSafe";
  * modules (renderHeader / renderComposer) are DELETED; every live surface is
  * owned by the V2 shell + controller.
  *   1. mountChatShellIfNeeded(root) → the semantic `.UnicDB-ai-chat-v2`
- *      skeleton (header / banner / transcript / composer / hint + live
- *      regions). Idempotent on repeat boots.
+ *      skeleton (header / banner / transcript / composer + live regions).
+ *      Idempotent on repeat boots.
  *   2. <#thread> — the legacy live message container inside the shell's
  *      transcript mount. The legacy bubble builders (appendUser /
  *      appendAssistant / appendDelta / appendError / …) still write here:
@@ -761,16 +761,23 @@ const root = document.getElementById("UnicDB-root") as HTMLDivElement;
  * wire text. `unknown: true` renders an "unknown" label instead of the
  * zeros so unknown usage is never displayed as a confirmed zero cost. */
 function applyUsage(msg: UsageMsg): void {
-  const rootEl = document.getElementById("UnicDB-root");
-  if (!rootEl) return;
+  // CHATUX2-001: the chip renders INSIDE the V2 header's -usage span — never
+  // as an implicit grid child of #UnicDB-root (that stacked a stray bar
+  // under the composer). Fallback: the V2 header itself.
+  const usageEl = document.getElementById("UnicDB-ai-chat-v2-usage");
+  const host =
+    usageEl ??
+    document.querySelector<HTMLElement>(
+      "#UnicDB-root .UnicDB-ai-chat-v2-header",
+    );
+  if (!host) return;
   let chip = document.getElementById("usageChip") as HTMLSpanElement | null;
   if (!chip) {
     chip = document.createElement("span");
     chip.id = "usageChip";
-    const banner = document.getElementById("engineBanner");
-    const host = banner ?? rootEl;
-    host.appendChild(chip);
   }
+  if (chip.parentElement !== host) host.appendChild(chip);
+  if (usageEl) usageEl.hidden = false;
   const inTok = Number.isFinite(msg.inputTokens) ? msg.inputTokens : 0;
   const outTok = Number.isFinite(msg.outputTokens) ? msg.outputTokens : 0;
   const inSes = Number.isFinite(msg.sessionTokens?.inputTokens)
@@ -798,21 +805,27 @@ function applyUsage(msg: UsageMsg): void {
   chip.title = "AI token usage for this turn and this panel session";
 }
 
-/** TASK-AIX05-103: render the OMP engine runtime lifecycle inside the
- * existing engine banner (`#engineLifecycle` span, textContent only).
+/** TASK-AIX05-103: render the OMP engine runtime lifecycle inside the V2
+ * header's `-engine-state` span (`#engineLifecycle` chip, textContent only).
  * The state literal is host-enum; the label map is fixed — never rendered
  * verbatim from the wire. */
 function applyEngineState(state: string): void {
-  const rootEl = document.getElementById("UnicDB-root");
-  if (!rootEl) return;
+  // CHATUX2-001: same retarget as applyUsage — the chip lives inside the V2
+  // header's -engine-state span, never appended to #UnicDB-root.
+  const stateEl = document.getElementById("UnicDB-ai-chat-v2-engine-state");
+  const host =
+    stateEl ??
+    document.querySelector<HTMLElement>(
+      "#UnicDB-root .UnicDB-ai-chat-v2-header",
+    );
+  if (!host) return;
   let chip = document.getElementById("engineLifecycle") as HTMLSpanElement | null;
   if (!chip) {
     chip = document.createElement("span");
     chip.id = "engineLifecycle";
-    const banner = document.getElementById("engineBanner");
-    const host = banner ?? rootEl;
-    host.appendChild(chip);
   }
+  if (chip.parentElement !== host) host.appendChild(chip);
+  if (stateEl) stateEl.hidden = false;
   const labels: Record<string, string> = {
     "stopped": "Stopped",
     "starting": "Starting…",

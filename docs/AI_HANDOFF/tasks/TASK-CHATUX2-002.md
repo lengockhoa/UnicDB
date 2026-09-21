@@ -102,3 +102,58 @@ still no-ops; the NEW path is STEER_ENQUEUED).
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+- 2026-09-21T23:23+07:00 · milestone: steer-queue-core · last-green: 72/72 tests pass in the three target suites · files: webview/aiChat/keyboard.ts, webview/aiChat/store.ts, webview/aiChat/composer.ts, webview/aiChat/__tests__/keyboard.test.ts, webview/aiChat/__tests__/store.test.ts, webview/aiChat/__tests__/composer.test.ts · drift: none
+
+EXECUTOR_TOOL: other (Oh My Pi harness)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecC2 (feature-implementer)
+
+RED_OUTPUT (before implementation — `npx vitest run webview/aiChat/__tests__/keyboard.test.ts webview/aiChat/__tests__/store.test.ts webview/aiChat/__tests__/composer.test.ts`):
+
+```
+TypeError: Cannot read properties of undefined (reading 'map')
+ ❯ webview/aiChat/__tests__/store.test.ts:402:25
+FAIL webview/aiChat/__tests__/store.test.ts > CHATUX2-002 — steer queue > a queue at the cap of 8 refuses the 9th enqueue (same-state, draft kept)
+AssertionError: Target cannot be null or undefined.
+FAIL webview/aiChat/__tests__/store.test.ts > CHATUX2-002 — steer queue > a session-reset frame clears the queue (no cross-session send)
+AssertionError: Target cannot be null or undefined.
+ Test Files  3 failed (3)
+      Tests  11 failed | 61 passed (72)
+```
+
+(11 failures: `canSteerDraft`/`{kind:"steer"}` missing in keyboard.ts, `steerQueue`/`STEER_*` missing in store.ts, `COMPOSER_QUEUE_*` exports missing in composer.ts.)
+
+Verification Output (after implementation):
+
+```
+$ npx vitest run webview/aiChat/__tests__/keyboard.test.ts webview/aiChat/__tests__/store.test.ts webview/aiChat/__tests__/composer.test.ts
+ ✓ webview/aiChat/__tests__/keyboard.test.ts (25 tests) 4ms
+ ✓ webview/aiChat/__tests__/store.test.ts (21 tests) 8ms
+ ✓ webview/aiChat/__tests__/composer.test.ts (26 tests) 46ms
+ Test Files 3 passed (3)
+      Tests 72 passed (72)
+
+$ npm run typecheck
+> tsc --noEmit            (clean, exit 0)
+
+$ npm run compile
+⚡ Done in 37ms
+dist/webview.js 2.3mb ⚠️
+dist/webview.css 41.6kb
+```
+
+Status: PASS
+
+Note: SPEC §7 says "the same frames that reset `state.transcript`" — the
+reducer never replaces `state.transcript` today, so `steerQueue` is cleared
+on `session_hydrated`, the only hydrate/session frame in the V2 vocabulary
+(initial ready + `resume_saved_session` re-hydration). `STEER_ENQUEUED`
+snapshots the full draft (text/context/attachments) but clears only
+text/selection in the composer per the task contract; context/attachments
+stay editable for the next draft. `BUSY_PHASES` in keyboard.ts is a
+`Partial<Record<TurnPhase, true>>` (project rule: static string-keyed
+membership tables use Record, not Set) mirroring store.ts. Milestone commit
+74a6301 on branch handoff/task-chatux2-002.

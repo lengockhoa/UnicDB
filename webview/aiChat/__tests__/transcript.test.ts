@@ -555,7 +555,7 @@ describe("transcript — TASK-CHATFIX-003 tool activity timeline", () => {
     expect(labelRule?.[1] ?? "").toContain("font-weight");
     const summaryRule = /\.UnicDB-ai-chat-v2-tool-summary\s*\{([^}]*)\}/.exec(css);
     expect(summaryRule?.[1] ?? "").toContain("var(--UnicDB-ai-chat-v2-muted)");
-    expect(css).toMatch(/\.UnicDB-ai-chat-v2-item-tool::before\s*\{[^}]*border-left/);
+    expect(css).toMatch(/\.UnicDB-ai-chat-v2-item-tool::before[^{]*\{[^}]*border-left/);
   });
 
   it("case 2 (happy): live indicator appears while the turn is open, leaves on turn_finished", () => {
@@ -775,5 +775,155 @@ describe("transcript — TASK-CHATUX-W5-2 ≤30fps stream paint", () => {
     expect(rafQueue.length).toBe(0);
     vi.advanceTimersByTime(100);
     expect(byKey("m1")?.querySelector(`[data-chat-body]`)?.textContent).toContain("no-raf paint");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-CHATUX2-003 — tree-style step visualization (SPEC FR-005 / §8.5):
+// after the reconcile loop, render() marks each maximal run of consecutive
+// tool/reasoning items with data-tree boundary attributes — "first" (run
+// head, len>1), "last" (run tail, len>1), "first last" (singleton). Middle
+// items and every non-step item carry no attribute.
+// ---------------------------------------------------------------------------
+
+describe("transcript — TASK-CHATUX2-003 data-tree step runs", () => {
+  function tool(state: ChatViewState, seq: number, toolId: string): ChatViewState {
+    const started = host(
+      state,
+      { kind: "tool_started", turnId: "t1", toolId, label: "Bash", action: "run" },
+      seq,
+    );
+    return host(
+      started,
+      { kind: "tool_finished", turnId: "t1", toolId, label: "Bash", status: "ok", summary: "done" },
+      seq + 1,
+    );
+  }
+
+  function reasoning(state: ChatViewState, seq: number, messageId: string): ChatViewState {
+    return host(state, { kind: "reasoning_delta", turnId: "t1", messageId, text: "thinking" }, seq);
+  }
+
+  function treeAttr(key: string): string | null {
+    return byKey(key)?.getAttribute("data-tree") ?? null;
+  }
+
+  function treeCount(): number {
+    return container.querySelectorAll("[data-tree]").length;
+  }
+
+  it("case 1: a run of 3 consecutive tools marks first / (none) / last", () => {
+    let { state, next } = openTurn();
+    state = tool(state, next, "tool1"); next += 2;
+    state = tool(state, next, "tool2"); next += 2;
+    state = tool(state, next, "tool3");
+    renderer.render(state);
+    expect(treeAttr("tool1")).toBe("first");
+    expect(treeAttr("tool2")).toBeNull();
+    expect(treeAttr("tool3")).toBe("last");
+    expect(treeCount()).toBe(2);
+  });
+
+  it("case 1b: a singleton tool run marks 'first last'", () => {
+    let { state, next } = openTurn();
+    state = tool(state, next, "tool1");
+    renderer.render(state);
+    expect(treeAttr("tool1")).toBe("first last");
+    expect(treeCount()).toBe(1);
+  });
+
+  it("case 2: a text item splits the run — both tools become 'first last'", () => {
+    let { state, next } = openTurn();
+    state = tool(state, next, "tool1"); next += 2;
+    state = streamText(state, next++, "answer");
+    state = tool(state, next, "tool2");
+    renderer.render(state);
+    expect(treeAttr("tool1")).toBe("first last");
+    expect(treeAttr("tool2")).toBe("first last");
+    expect(treeAttr("m1")).toBeNull();
+    expect(treeCount()).toBe(2);
+  });
+
+  it("case 3a: reasoning in the middle of a run joins the tree unmarked", () => {
+    let { state, next } = openTurn();
+    state = tool(state, next, "tool1"); next += 2;
+    state = reasoning(state, next++, "r1");
+    state = tool(state, next, "tool2");
+    renderer.render(state);
+    expect(treeAttr("tool1")).toBe("first");
+    expect(treeAttr("reasoning-r1")).toBeNull();
+    expect(treeAttr("tool2")).toBe("last");
+    expect(treeCount()).toBe(2);
+  });
+
+  it("case 3b: reasoning at the head of a run carries 'first'", () => {
+    let { state, next } = openTurn();
+    state = reasoning(state, next++, "r1");
+    state = tool(state, next, "tool1");
+    renderer.render(state);
+    expect(treeAttr("reasoning-r1")).toBe("first");
+    expect(treeAttr("tool1")).toBe("last");
+    expect(treeCount()).toBe(2);
+  });
+
+  it("case 3c: reasoning at the tail of a run carries 'last'", () => {
+    let { state, next } = openTurn();
+    state = tool(state, next, "tool1"); next += 2;
+    state = reasoning(state, next++, "r1");
+    renderer.render(state);
+    expect(treeAttr("tool1")).toBe("first");
+    expect(treeAttr("reasoning-r1")).toBe("last");
+    expect(treeCount()).toBe(2);
+  });
+
+  it("case 4: empty transcript and non-step items carry no data-tree", () => {
+    renderer.render(createInitialChatState());
+    expect(items().length).toBe(0);
+    expect(treeCount()).toBe(0);
+
+    const { state, next } = openTurn();
+    renderer.render(state); // user bubble only
+    expect(treeCount()).toBe(0);
+    expect(treeAttr("user-c1")).toBeNull();
+
+    const s = streamText(state, next, "hello");
+    renderer.render(s);
+    expect(treeAttr("m1")).toBeNull();
+    expect(treeCount()).toBe(0);
+  });
+
+  it("case 5a: a 'last' item that becomes the middle of a grown run loses the attribute", () => {
+    let { state, next } = openTurn();
+    state = tool(state, next, "tool1"); next += 2;
+    state = tool(state, next, "tool2"); next += 2;
+    renderer.render(state);
+    expect(treeAttr("tool2")).toBe("last");
+
+    // The run grows: tool2 is now the middle item and must drop the attribute.
+    state = tool(state, next, "tool3");
+    renderer.render(state);
+    expect(treeAttr("tool1")).toBe("first");
+    expect(treeAttr("tool2")).toBeNull();
+    expect(treeAttr("tool3")).toBe("last");
+    expect(treeCount()).toBe(2);
+  });
+
+  it("case 5b: items leaving the viewport are detached; survivors recompute", () => {
+    let { state, next } = openTurn();
+    state = tool(state, next, "tool1"); next += 2;
+    state = tool(state, next, "tool2"); next += 2;
+    state = tool(state, next, "tool3");
+    renderer.render(state);
+    expect(treeCount()).toBe(2);
+
+    // A shrunken transcript: tool2/tool3 left the viewport, tool1 is now a
+    // singleton run and must not keep a stale "first".
+    const r2 = openTurn();
+    const s2 = tool(r2.state, r2.next, "tool1");
+    renderer.render(s2);
+    expect(byKey("tool2")).toBeNull();
+    expect(byKey("tool3")).toBeNull();
+    expect(treeAttr("tool1")).toBe("first last");
+    expect(treeCount()).toBe(1);
   });
 });

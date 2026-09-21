@@ -25,6 +25,18 @@ const SUBMITTABLE_PHASES: ReadonlySet<TurnPhase> = new Set<TurnPhase>([
   "failed",
 ]);
 
+/** Phases in which a turn is live: a plain Enter on a valid draft steers
+ * (queues) instead of submitting. Mirrors `BUSY_PHASES` in `store.ts` — the
+ * two sets must never drift. */
+const BUSY_PHASES: Partial<Record<TurnPhase, true>> = {
+  validating: true,
+  connecting: true,
+  waiting_for_first_event: true,
+  streaming: true,
+  awaiting_permission: true,
+  stopping: true,
+};
+
 /** Rows a PageUp/PageDown moves the autocomplete active row by. */
 export const AUTOCOMPLETE_PAGE_DELTA = 5;
 
@@ -56,6 +68,9 @@ export type ComposerKeyDecision =
   | { readonly kind: "consume-modifier-enter" }
   /** Plain Enter on a valid draft in idle/completed/failed: submit once. */
   | { readonly kind: "submit" }
+  /** Plain Enter on a valid draft while a turn is live: queue the draft for
+   * the next turn boundary (CHATUX2-002). */
+  | { readonly kind: "steer" }
   /** Anything else: let the native textarea behavior run. */
   | { readonly kind: "native" };
 
@@ -106,6 +121,20 @@ export function canSubmitDraft(input: {
   return true;
 }
 
+/** True when a draft may be steered (queued): a live turn, a non-blank draft
+ * and no unresolved context — the same validity bar as submit, minus the
+ * phase requirement (CHATUX2-002). */
+export function canSteerDraft(input: {
+  readonly phase: TurnPhase;
+  readonly draftText: string;
+  readonly hasUnresolvedContext: boolean;
+}): boolean {
+  if (BUSY_PHASES[input.phase] !== true) return false;
+  if (input.draftText.trim().length === 0) return false;
+  if (input.hasUnresolvedContext) return false;
+  return true;
+}
+
 /**
  * The immutable precedence ladder (PLAN §4). Order is load-bearing:
  * composition → Shift+Enter → permission sheet → autocomplete →
@@ -151,9 +180,12 @@ export function decideComposerKey(input: ComposerKeyInput): ComposerKeyDecision 
     return { kind: "consume-modifier-enter" };
   }
 
-  // (6) Plain Enter submits only a valid draft in a submittable phase.
+  // (6) Plain Enter submits a valid draft in a submittable phase; while a turn
+  // is live the same valid draft steers (queues) instead of inserting a
+  // newline or being refused (CHATUX2-002).
   if (input.key === "Enter" && modifiersClean(input)) {
-    return canSubmitDraft(input) ? { kind: "submit" } : { kind: "native" };
+    if (canSubmitDraft(input)) return { kind: "submit" };
+    return canSteerDraft(input) ? { kind: "steer" } : { kind: "native" };
   }
 
   // (7) Everything else is native textarea behavior.

@@ -701,6 +701,59 @@ export function createTranscriptRenderer(
 
     applyStopped(state);
     syncLiveIndicator(state);
+    syncTreeMarkers(desired, transcript.entities);
+  }
+
+  /** TASK-CHATUX2-003 (SPEC FR-005 / §8.5): mark each maximal run of
+   * consecutive tool/reasoning items with `data-tree` boundary attributes so
+   * the CSS rail renders one continuous tree — `"first"` on the run head,
+   * `"last"` on the run tail (len>1), `"first last"` on a singleton. Middle
+   * items and every non-step item carry no attribute. Recomputed on every
+   * render so grown/shrunk runs never leave stale marks. */
+  function syncTreeMarkers(
+    desired: readonly string[],
+    entities: Readonly<Record<string, ChatTranscriptItem>>,
+  ): void {
+    let head: KeyedRecord | null = null;
+    let tail: KeyedRecord | null = null;
+    let runLen = 0;
+    const flush = (): void => {
+      if (runLen === 0) return;
+      if (runLen === 1) {
+        head!.root.setAttribute("data-tree", "first last");
+      } else {
+        head!.root.setAttribute("data-tree", "first");
+        tail!.root.setAttribute("data-tree", "last");
+      }
+      head = null;
+      tail = null;
+      runLen = 0;
+    };
+    for (const id of desired) {
+      const item = entities[id];
+      const isStep = item !== undefined && (item.kind === "tool" || item.kind === "reasoning");
+      if (!isStep) {
+        flush();
+        records.get(id)?.root.removeAttribute("data-tree");
+        continue;
+      }
+      const record = records.get(id);
+      if (record === undefined) {
+        // A step item with no node yet (empty streaming reasoning) is an
+        // invisible run member: it neither breaks the run nor takes a mark.
+        continue;
+      }
+      if (runLen === 0) {
+        head = record;
+      } else {
+        // Middle items carry no attribute; this also clears a stale "last"
+        // when a run grows past a former tail.
+        record.root.removeAttribute("data-tree");
+      }
+      tail = record;
+      runLen += 1;
+    }
+    flush();
   }
 
   /** TASK-CHATFIX-003: ONE trailing pulsing indicator while the current turn

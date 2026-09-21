@@ -83,3 +83,68 @@ not computed style (jsdom has no layout).
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Progress
+
+- 2026-09-21T23:16:00+07:00 · milestone: data-tree step-run marking · last-green: `npx vitest run webview/aiChat/__tests__/transcript.test.ts` (41 pass), `npm run typecheck`, `npm run compile` · files: webview/aiChat/transcript.ts, webview/aiChat/__tests__/transcript.test.ts · drift: none
+
+## Executor Report
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: other (Oh My Pi harness)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecC3 (feature-implementer)
+SUMMARY: render() now walks `desired` after the reconcile loop and marks each
+  maximal run of consecutive tool/reasoning items with data-tree boundary
+  attributes ("first" / "last" / "first last"); middle items, non-step items,
+  and node-less step items carry no attribute. Recomputed every render, so
+  grown/shrunk runs never leave stale marks.
+TEST_PLAN_FOLLOWED: task §Test Cases — all 5 cases implemented (case 3 split
+  into head/middle/tail positions; case 5 split into grown-run stale-attr and
+  viewport-shrink variants)
+FILES_CHANGED:
+  - webview/aiChat/transcript.ts: added syncTreeMarkers(desired, entities)
+    called after the reconcile loop in render()
+  - webview/aiChat/__tests__/transcript.test.ts: added "TASK-CHATUX2-003
+    data-tree step runs" describe block (8 tests)
+TESTS_ADDED:
+  - webview/aiChat/__tests__/transcript.test.ts: case 1 (3-tool run
+    first/none/last), case 1b (singleton "first last"), case 2 (text splits
+    run), case 3a/3b/3c (reasoning middle/head/tail), case 4 (empty +
+    non-step), case 5a (grown run drops stale "last"), case 5b (viewport
+    shrink detaches + survivors recompute)
+RED_OUTPUT: |
+  FAIL transcript — TASK-CHATUX2-003 data-tree step runs > case 1: a run of 3 consecutive tools marks first / (none) / last
+  FAIL transcript — TASK-CHATUX2-003 data-tree step runs > case 1b: a singleton tool run marks 'first last'
+  FAIL transcript — TASK-CHATUX2-003 data-tree step runs > case 2: a text item splits the run — both tools become 'first last'
+  FAIL transcript — TASK-CHATUX2-003 data-tree step runs > case 3a: reasoning in the middle of a run joins the tree unmarked
+  FAIL transcript — TASK-CHATUX2-003 data-tree step runs > case 3b: reasoning at the head of a run carries 'first'
+  FAIL transcript — TASK-CHATUX2-003 data-tree step runs > case 3c: reasoning at the tail of a run carries 'last'
+  FAIL transcript — TASK-CHATUX2-003 data-tree step runs > case 4: empty transcript and non-step items carry no data-tree
+  FAIL transcript — TASK-CHATUX2-003 data-tree step runs > case 5a: a 'last' item that becomes the middle of a grown run loses the attribute
+  FAIL transcript — TASK-CHATUX2-003 data-tree step runs > case 5b: items leaving the viewport are detached; survivors recompute
+  Tests 8 failed | 33 passed (41)
+VERIFICATION:
+  command: npx vitest run webview/aiChat/__tests__/transcript.test.ts
+  result: 41 pass / 0 fail
+  output_excerpt: |
+    ✓ webview/aiChat/__tests__/transcript.test.ts (41 tests) 197ms
+    Test Files 1 passed (1)
+    Tests 41 passed (41)
+  command: npm run typecheck && npm run compile
+  result: exit 0
+  output_excerpt: |
+    > UnicDB@1.54.3 typecheck
+    > tsc --noEmit
+    (clean)
+    ⚡ Done in 31ms
+    dist/webview.js 2.3mb ⚠️
+    dist/webview.css 41.6kb
+ISSUES: none — node-less step items (empty streaming reasoning) are treated
+  as invisible run members: they neither break the run nor take a mark
+  (spec §10 stub-collapse intent preserved).
+HANDOFF_TO_REVIEWER: yes — STATUS DONE; per handoff flow the reviewer picks
+  up pending_review tasks in a separate session.
+NEXT: ready for review
+```

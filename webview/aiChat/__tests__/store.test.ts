@@ -347,6 +347,100 @@ describe("CHATV2-004 #5 — busy draft editing (regression)", () => {
   });
 });
 
+// ---- CHATUX2-002 steer queue (unit + boundary + lifecycle) -----------------
+
+describe("CHATUX2-002 — steer queue", () => {
+  /** A streaming state with an editable next draft. */
+  function streamingWithDraft(text: string) {
+    let s = hydrated();
+    s = reduceChatState(s, { type: "DRAFT_CHANGED", text: "first" });
+    s = reduceChatState(s, { type: "SUBMIT_REQUESTED", clientRequestId: "req-1" });
+    s = host(s, f({ kind: "turn_started", turnId: "t1", clientRequestId: "req-1" }));
+    s = host(s, f({ kind: "text_delta", turnId: "t1", messageId: "m1", text: "..." }));
+    s = reduceChatState(s, { type: "DRAFT_CHANGED", text });
+    return s;
+  }
+
+  it("STEER_ENQUEUED snapshots the draft and clears the composer text", () => {
+    let s = streamingWithDraft("next");
+    s = reduceChatState(s, {
+      type: "ATTACHMENT_ADDED",
+      attachment: { id: "a1", mime: "image/png", base64: "AA==", bytes: 1 },
+    });
+    s = reduceChatState(s, {
+      type: "CONTEXT_ADDED",
+      ref: { kind: "file", id: "f1", label: "a.ts" },
+    });
+    const revision = s.draft.revision;
+
+    s = reduceChatState(s, { type: "STEER_ENQUEUED" });
+
+    expect(s.steerQueue).toHaveLength(1);
+    expect(s.steerQueue[0]!.text).toBe("next");
+    expect(s.steerQueue[0]!.attachments.map((a) => a.id)).toEqual(["a1"]);
+    expect(s.steerQueue[0]!.context.map((r) => r.id)).toEqual(["f1"]);
+    expect(s.draft.text).toBe("");
+    expect(s.draft.selectionStart).toBe(0);
+    expect(s.draft.selectionEnd).toBe(0);
+    expect(s.draft.revision).toBe(revision + 1);
+    expect(s.phase).toBe("streaming");
+  });
+
+  it("STEER_ENQUEUED while idle is a same-state no-op", () => {
+    let s = hydrated();
+    s = reduceChatState(s, { type: "DRAFT_CHANGED", text: "idle draft" });
+    const next = reduceChatState(s, { type: "STEER_ENQUEUED" });
+    expect(next).toBe(s);
+    expect(next.steerQueue).toHaveLength(0);
+  });
+
+  it("STEER_DEQUEUED shifts the head; an empty queue is a same-state no-op", () => {
+    let s = streamingWithDraft("a");
+    s = reduceChatState(s, { type: "STEER_ENQUEUED" });
+    s = reduceChatState(s, { type: "DRAFT_CHANGED", text: "b" });
+    s = reduceChatState(s, { type: "STEER_ENQUEUED" });
+    expect(s.steerQueue.map((d) => d.text)).toEqual(["a", "b"]);
+
+    s = reduceChatState(s, { type: "STEER_DEQUEUED" });
+    expect(s.steerQueue.map((d) => d.text)).toEqual(["b"]);
+
+    const empty = reduceChatState(
+      reduceChatState(s, { type: "STEER_DEQUEUED" }),
+      { type: "STEER_DEQUEUED" },
+    );
+    expect(empty.steerQueue).toHaveLength(0);
+    expect(reduceChatState(empty, { type: "STEER_DEQUEUED" })).toBe(empty);
+  });
+
+  it("a queue at the cap of 8 refuses the 9th enqueue (same-state, draft kept)", () => {
+    let s = streamingWithDraft("q0");
+    for (let i = 0; i < 8; i += 1) {
+      s = reduceChatState(s, { type: "STEER_ENQUEUED" });
+      s = reduceChatState(s, { type: "DRAFT_CHANGED", text: `q${i + 1}` });
+    }
+    expect(s.steerQueue).toHaveLength(8);
+
+    const next = reduceChatState(s, { type: "STEER_ENQUEUED" });
+    expect(next).toBe(s);
+    expect(next.steerQueue).toHaveLength(8);
+    expect(next.draft.text).toBe("q8");
+  });
+
+  it("a session-reset frame clears the queue (no cross-session send)", () => {
+    let s = streamingWithDraft("queued one");
+    s = reduceChatState(s, { type: "STEER_ENQUEUED" });
+    s = reduceChatState(s, { type: "DRAFT_CHANGED", text: "queued two" });
+    s = reduceChatState(s, { type: "STEER_ENQUEUED" });
+    expect(s.steerQueue).toHaveLength(2);
+
+    s = host(
+      s,
+      f({ kind: "session_hydrated", hasHistory: false, visionCapable: false }),
+    );
+    expect(s.steerQueue).toHaveLength(0);
+  });
+});
+
 // ---- #6 >200 rendered items (boundary) -------------------------------------
 
 describe("CHATV2-004 #6 — more than 200 rendered items (boundary)", () => {

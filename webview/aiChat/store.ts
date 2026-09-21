@@ -257,6 +257,10 @@ export interface ChatViewState {
   readonly turn: ChatActiveTurn | null;
   readonly transcript: ChatTranscript;
   readonly draft: ComposerDraft;
+  /** CHATUX2-002: FIFO of draft snapshots queued by Enter-while-busy. The
+   * controller drains it on `turn_finished`; a session reset clears it so a
+   * queued draft can never leak into another session. */
+  readonly steerQueue: readonly ComposerDraft[];
   readonly autocomplete: AutocompleteState;
   readonly layout: ChatLayout;
   readonly banners: readonly ChatBanner[];
@@ -308,6 +312,8 @@ export type ChatLocalAction =
   | { readonly type: "SCROLL_PROXIMITY_CHANGED"; readonly distancePx: number }
   | { readonly type: "SUBMIT_REQUESTED"; readonly clientRequestId: string; readonly draft?: ComposerDraft }
   | { readonly type: "SUBMIT_CONSUMED"; readonly clientRequestId: string }
+  | { readonly type: "STEER_ENQUEUED" }
+  | { readonly type: "STEER_DEQUEUED" }
   | { readonly type: "STOP_REQUESTED"; readonly clientRequestId: string }
   | { readonly type: "STOP_DISPATCHED"; readonly clientRequestId: string }
   | { readonly type: "PERMISSION_RESPONDED"; readonly requestId: string }
@@ -324,6 +330,10 @@ export const TOAST_CAP = 3;
 
 /** Maximum retained inline attachment rejection notices. */
 export const ATTACH_NOTICE_CAP = 8;
+
+/** Maximum queued steer drafts (CHATUX2-002). At the cap `STEER_ENQUEUED`
+ * is a same-state no-op — the draft stays in the composer, never dropped. */
+export const STEER_QUEUE_CAP = 8;
 
 /** Distance (px) within which the transcript counts as "at the bottom". */
 export const SCROLL_NEAR_BOTTOM_PX = 48;
@@ -367,6 +377,7 @@ export function createInitialChatState(): ChatViewState {
       attachments: [],
       context: [],
     },
+    steerQueue: [],
     autocomplete: {
       open: false,
       mode: "draft",
@@ -530,6 +541,9 @@ function applyFrameBody(
           truncated: f.truncated === true,
           truncatedCount: typeof f.truncatedCount === "number" ? f.truncatedCount : 0,
         },
+        // CHATUX2-002: a (re)hydration is the session boundary — a queued
+        // steer draft must never send into the session that follows.
+        steerQueue: [],
       };
     }
 
@@ -930,6 +944,33 @@ function applyLocal(state: ChatViewState, action: ChatLocalAction): ChatViewStat
         return state;
       }
       return { ...state, pendingSubmit: null };
+    }
+
+    case "STEER_ENQUEUED": {
+      // CHATUX2-002: Enter-while-busy queues a snapshot of the live draft and
+      // clears the composer text for the next one. Only while a turn is live
+      // and only under the cap — at the cap the draft stays put (same-state
+      // no-op) so nothing is ever silently dropped.
+      if (!isBusyPhase(state.phase)) return state;
+      if (state.steerQueue.length >= STEER_QUEUE_CAP) return state;
+      return {
+        ...state,
+        steerQueue: [...state.steerQueue, { ...state.draft }],
+        draft: {
+          ...state.draft,
+          text: "",
+          selectionStart: 0,
+          selectionEnd: 0,
+          revision: state.draft.revision + 1,
+        },
+      };
+    }
+
+    case "STEER_DEQUEUED": {
+      // The controller pops the head right before re-submitting it; an empty
+      // queue is a same-state no-op.
+      if (state.steerQueue.length === 0) return state;
+      return { ...state, steerQueue: state.steerQueue.slice(1) };
     }
 
     case "STOP_REQUESTED": {

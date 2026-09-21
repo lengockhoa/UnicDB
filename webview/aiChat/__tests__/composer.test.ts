@@ -14,6 +14,9 @@ import {
   COMPOSER_AUTO_GROW_MIN_PX,
   COMPOSER_BUSY_HINT,
   COMPOSER_IDS,
+  COMPOSER_QUEUE_FULL_LABEL,
+  COMPOSER_QUEUE_HINT_LABEL,
+  COMPOSER_QUEUE_SUFFIX,
   COMPOSER_REASON_EMPTY,
   COMPOSER_REASON_UNRESOLVED,
   COMPOSER_SEND_LABEL,
@@ -330,6 +333,69 @@ describe("TASK-CHATV2-008 composer — busy draft regression (#3)", () => {
     // separate send/queue path the component could take on its own.
     view.primaryButton.click();
     expect(cb.primary).toBe(1);
+  });
+});
+
+describe("TASK-CHATUX2-002 composer — steer queue hint", () => {
+  let mount: HTMLElement;
+  let view: ComposerView;
+  let cb: Recorder & ComposerCallbacks;
+
+  const queuedDraft = (text: string) => ({
+    ...createInitialChatState().draft,
+    text,
+  });
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    mount = document.createElement("div");
+    document.body.appendChild(mount);
+    cb = recorder();
+    view = renderComposerV2(mount, cb);
+  });
+
+  it("shows the queued count while busy and beats the busy hint", () => {
+    view.render(
+      idleValid({
+        phase: "streaming",
+        steerQueue: [queuedDraft("one"), queuedDraft("two")],
+      }),
+    );
+    expect(view.hint.hidden).toBe(false);
+    expect(view.hint.textContent).toBe(
+      `${COMPOSER_QUEUE_HINT_LABEL} 2 of 8 — ${COMPOSER_QUEUE_SUFFIX}`,
+    );
+    expect(view.hint.textContent).toBe("Queued 2 of 8 — sends when this turn ends");
+  });
+
+  it("shows the full-queue copy at the cap of 8", () => {
+    view.render(
+      idleValid({
+        phase: "streaming",
+        steerQueue: Array.from({ length: 8 }, (_, i) => queuedDraft(`q${i}`)),
+      }),
+    );
+    expect(view.hint.hidden).toBe(false);
+    expect(view.hint.textContent).toBe(
+      `${COMPOSER_QUEUE_FULL_LABEL} (8) — ${COMPOSER_QUEUE_SUFFIX}`,
+    );
+    expect(view.hint.textContent).toBe("Queue full (8) — sends when this turn ends");
+  });
+
+  it("keeps the queue hint visible after the turn ends until the queue drains", () => {
+    view.render(
+      idleValid({
+        phase: "completed",
+        steerQueue: [queuedDraft("one")],
+      }),
+    );
+    expect(view.hint.hidden).toBe(false);
+    expect(view.hint.textContent).toBe("Queued 1 of 8 — sends when this turn ends");
+  });
+
+  it("hides the hint when idle with an empty queue", () => {
+    view.render(idleValid({ phase: "idle", steerQueue: [] }));
+    expect(view.hint.hidden).toBe(true);
   });
 });
 
