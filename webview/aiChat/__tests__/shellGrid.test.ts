@@ -230,3 +230,24 @@ describe("TASK-CHATUX-001 layout stabilization contract", () => {
     expect(code).toMatch(/white-space:\s*pre\s*;/);
   });
 });
+
+describe("TASK-CHATUX2-004 single scroll owner + activity cutover", () => {
+  it("overrides the legacy #thread into a flow child — transcript stays the sole scroller", () => {
+    const thread = ruleBody(
+      "\\.UnicDB-ai-chat-v2-transcript\\s*>\\s*\\.UnicDB-chat-thread",
+    );
+    expect(thread, "transcript > .UnicDB-chat-thread override rule must exist").toBeDefined();
+    expect(thread).toMatch(/flex:\s*0 0 auto/);
+    expect(thread).toMatch(/overflow:\s*visible/);
+    expect(thread).toMatch(/scroll-behavior:\s*auto/);
+    expect(thread).toMatch(/margin-bottom:\s*0/);
+
+    // The transcript remains the only vertical scroll region.
+    const transcript = ruleBody("\\.UnicDB-ai-chat-v2-transcript");
+    expect(transcript).toMatch(/overflow-y:\s*auto/);
+  });
+
+  it("has no -activity- selector left after the timeline renderer was deleted", () => {
+    expect(/-activity-/.test(stripped())).toBe(false);
+  });
+});

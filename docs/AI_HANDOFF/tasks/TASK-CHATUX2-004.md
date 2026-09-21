@@ -119,3 +119,63 @@ cap enforcement lives solely in the reducer (SPEC §7/§10, PLAN §3). Case
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Progress
+
+- 2026-09-21T23:35:43+0700 · milestone: steer-wiring+overlap-cutover GREEN · last-green: 69/69 target tests + 482/482 aiChat suite + typecheck + compile · files: webview/aiChat/controller.ts, webview/aiChat/activity.ts, webview/aiChat/styles.css, webview/aiChat/__tests__/controller.test.ts, webview/aiChat/__tests__/controllerSurfaces.test.ts, webview/aiChat/__tests__/activity.test.ts, webview/aiChat/__tests__/shellGrid.test.ts, webview/aiChat/__tests__/errorsScrollA11y.test.ts, docs/AI_HANDOFF/tasks/TASK-CHATUX2-004.md · drift: errorsScrollA11y.test.ts pinned 4 deleted -activity-:focus-visible selectors (removed); task file carries this Progress/Report per protocol
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: other (omp subagent ExecC4)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: feature-implementer (ExecC4)
+SUMMARY: Wired the steer queue into the controller — `steer` decision →
+preventDefault + `STEER_ENQUEUED`; `turn_finished` → `flushSteerQueue()`
+(FIFO, one `submit_turn` per boundary via `requestRetry`, `disposed` guard).
+Deleted the duplicate activity timeline renderer (`createActivityTimeline`,
+`activity.render`, `activity.dispose`, imports), pruned `activity.ts` to pure
+helpers (`isActivePhase` now exported), deleted the `-activity-*` CSS block
+and added the `transcript > .UnicDB-chat-thread` flow-child override.
+TEST_PLAN_FOLLOWED: task §Test Cases — all 8 cases implemented (case 3 in
+controllerSurfaces #14, case 4 in shellGrid CHATUX2-004 describe, cases
+1/2/5/6/7/8 in controller.test.ts steer-queue describe + rewritten
+busy-submit test).
+FILES_CHANGED:
+  - webview/aiChat/controller.ts: steer case in handleDecision; flushSteerQueue; turn_finished flush call; removed createActivityTimeline/activity.render/activity.dispose + import
+  - webview/aiChat/activity.ts: DOM renderer deleted; pure helpers kept; isActivePhase exported
+  - webview/aiChat/styles.css: -activity-* block (~280 lines) deleted; transcript > .UnicDB-chat-thread override added
+  - webview/aiChat/__tests__/controller.test.ts: busy-submit test rewritten to assert steer; new "steer queue (CHATUX2-004)" describe (6 tests)
+  - webview/aiChat/__tests__/controllerSurfaces.test.ts: #14 single-renderer regression; #3 updated to await announcer coalesce via fake timers (announcer is now the only polite-region writer)
+  - webview/aiChat/__tests__/activity.test.ts: rewritten to pure-helper tests only
+  - webview/aiChat/__tests__/shellGrid.test.ts: CHATUX2-004 describe — thread override rule + no -activity- selector
+  - webview/aiChat/__tests__/errorsScrollA11y.test.ts: removed 4 pinned -activity-:focus-visible selectors (deleted rules)
+TESTS_ADDED:
+  - controller.test.ts: steer ENQUEUED; FIFO flush one-per-finish; stopping→flush; empty-queue no-op; requestSubmit-busy-still-stops; cap-8 no-op
+  - controllerSurfaces.test.ts: #14 single renderer / one keyed node per tool
+  - shellGrid.test.ts: thread flow-child override; no -activity- selector
+RED_OUTPUT: |
+  Test Files 4 failed (4); Tests 10 failed | 59 passed (69)
+  - activity.test.ts: isActivePhase is not a function
+  - controller.test.ts: 6 failures — defaultPrevented false (no steer case), steerQueue [] (no enqueue/flush)
+  - controllerSurfaces.test.ts #14: expected 2 to be +0 (duplicate -activity-header nodes)
+  - shellGrid.test.ts: override rule undefined; -activity- selectors still present
+VERIFICATION:
+  command: npx vitest run webview/aiChat/__tests__/controller.test.ts webview/aiChat/__tests__/controllerSurfaces.test.ts webview/aiChat/__tests__/activity.test.ts webview/aiChat/__tests__/shellGrid.test.ts
+  result: 69 pass / 0 fail (exit 0)
+  output_excerpt: |
+    ✓ webview/aiChat/__tests__/shellGrid.test.ts (13 tests) 8ms
+    ✓ webview/aiChat/__tests__/activity.test.ts (13 tests) 2ms
+    ✓ webview/aiChat/__tests__/controllerSurfaces.test.ts (14 tests) 147ms
+    ✓ webview/aiChat/__tests__/controller.test.ts (29 tests) 180ms
+    Test Files 4 passed (4)
+    Tests 69 passed (69)
+  command: npx vitest run webview/aiChat/__tests__/
+  result: 482 pass / 0 fail (exit 0) — no related-suite regression
+  command: npm run typecheck && npm run compile
+  result: exit 0 / exit 0 — tsc --noEmit clean; dist/aiChatPanel.js 298.3kb
+ISSUES: controllerSurfaces #3 needed a coalesce-aware update — the activity
+timeline previously wrote the polite region synchronously; the announcer
+(100ms coalesce) is now the sole writer, so the test drives fake timers.
+HANDOFF_TO_REVIEWER: yes — STATUS DONE, reviewer phase per pipeline
+NEXT: ready for review

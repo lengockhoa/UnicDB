@@ -7,7 +7,7 @@
 // @vitest-environment jsdom
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createChatController, type ChatController, type VsCodeApiLike } from "../controller";
 import { AI_CHAT_PROTOCOL_VERSION_V2 } from "../../../src/ui/aiChatPanelMessages";
@@ -170,17 +170,25 @@ describe("controller V2 surfaces — TASK-CHATV2-017", () => {
   });
 
   it("#3 announces a phase change into the polite live region (coalesced)", () => {
-    const h = makeHarness();
-    h.send({ kind: "session_hydrated", sessionId: "s1", sequence: 1, hasHistory: false, visionCapable: false });
-    const prompt = h.controller.prompt;
-    prompt.value = "hello";
-    prompt.dispatchEvent(new Event("input", { bubbles: true }));
-    h.controller.requestSubmit();
-    h.send({ kind: "turn_started", sessionId: "s1", sequence: 2, turnId: "t1", clientRequestId: "req-2" });
-    h.send({ kind: "phase", sessionId: "s1", sequence: 3, turnId: "t1", phase: "streaming" });
-    h.controller.flushRender();
-    const polite = h.root.querySelector(`#${CHAT_V2_STATUS_LIVE_ID}`) as HTMLElement;
-    expect(polite.textContent?.length ?? 0).toBeGreaterThan(0);
+    vi.useFakeTimers();
+    try {
+      const h = makeHarness();
+      h.send({ kind: "session_hydrated", sessionId: "s1", sequence: 1, hasHistory: false, visionCapable: false });
+      const prompt = h.controller.prompt;
+      prompt.value = "hello";
+      prompt.dispatchEvent(new Event("input", { bubbles: true }));
+      h.controller.requestSubmit();
+      h.send({ kind: "turn_started", sessionId: "s1", sequence: 2, turnId: "t1", clientRequestId: "req-2" });
+      h.send({ kind: "phase", sessionId: "s1", sequence: 3, turnId: "t1", phase: "streaming" });
+      h.controller.flushRender();
+      // CHATUX2-004: the announcer is now the ONLY writer of the polite region —
+      // its 100ms coalesce window must elapse before the copy lands.
+      vi.advanceTimersByTime(150);
+      const polite = h.root.querySelector(`#${CHAT_V2_STATUS_LIVE_ID}`) as HTMLElement;
+      expect(polite.textContent?.length ?? 0).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("#4 mounts a change plan from its V2 frame, posts one approve intent, and tears it down", () => {
@@ -643,5 +651,56 @@ describe("controller V2 surfaces — TASK-CHATV2-017", () => {
     const before = h.sent.length;
     pill.click();
     expect(h.sent.length).toBe(before);
+  });
+
+  it("#14 mounts exactly ONE renderer in the transcript — no activity timeline, one keyed node per tool (CHATUX2-004)", () => {
+    const h = makeHarness();
+    h.send({ kind: "session_hydrated", sessionId: "s1", sequence: 1, hasHistory: false, visionCapable: false });
+    const prompt = h.controller.prompt;
+    prompt.value = "run it";
+    prompt.dispatchEvent(new Event("input", { bubbles: true }));
+    h.controller.requestSubmit();
+    const submit = h.sent
+      .filter((m): m is Record<string, unknown> => m !== null && typeof m === "object")
+      .find((m) => m["kind"] === "submit_turn");
+    const clientRequestId =
+      typeof submit?.["clientRequestId"] === "string" ? submit["clientRequestId"] : "req-1";
+    h.send({
+      kind: "turn_started",
+      sessionId: "s1",
+      sequence: 2,
+      turnId: "t1",
+      clientRequestId,
+    });
+    h.send({
+      kind: "tool_started",
+      sessionId: "s1",
+      sequence: 3,
+      turnId: "t1",
+      toolId: "tool-1",
+      label: "Run query",
+      action: "query",
+    });
+    h.send({
+      kind: "tool_finished",
+      sessionId: "s1",
+      sequence: 4,
+      turnId: "t1",
+      toolId: "tool-1",
+      label: "Run query",
+      status: "ok",
+      summary: "3 rows",
+      durationMs: 42,
+    });
+    h.controller.flushRender();
+
+    const transcript = h.root.querySelector(".UnicDB-ai-chat-v2-transcript") as HTMLElement;
+    expect(transcript).not.toBeNull();
+    // The duplicate activity timeline is gone: no header/body/row nodes at all.
+    expect(transcript.querySelectorAll('[class*="-activity-header"]').length).toBe(0);
+    expect(transcript.querySelectorAll('[class*="-activity-body"]').length).toBe(0);
+    expect(transcript.querySelectorAll('[class*="-activity-row"]').length).toBe(0);
+    // Each tool id owns exactly ONE keyed node — the transcript renderer's.
+    expect(transcript.querySelectorAll('[data-chat-key="tool-1"]').length).toBe(1);
   });
 });

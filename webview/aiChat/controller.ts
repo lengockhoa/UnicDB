@@ -62,7 +62,7 @@ import {
 import { createTranscriptRenderer, type TranscriptRenderer } from "./transcript";
 import { createOverlayMenu, type OverlayMenu } from "./overlays";
 import { createScrollController, SCROLL_FOLLOW_EXIT_PX, type ScrollController } from "./scroll";
-import { createActivityTimeline, phaseCopyLabel, type ActivityTimeline } from "./activity";
+import { phaseCopyLabel } from "./activity";
 import { createLiveAnnouncer, type LiveAnnouncer } from "./a11y";
 import { renderChangePlanCard, type ChangePlanCard } from "./changePlan";
 import { createErrorCard, type ErrorCardHandle } from "./errors";
@@ -299,10 +299,11 @@ function mountController(options: ChatControllerOptions): ChatController {
     renderAttachments();
     renderAutocomplete();
     renderSchemaAndContext();
-    // TASK-CHATV2-017: the keyed transcript + activity timeline paint from the
-    // SAME reducer state the composer does — one state, one paint pass.
+    // TASK-CHATV2-017: the keyed transcript paints from the SAME reducer
+    // state the composer does — one state, one paint pass. CHATUX2-004: the
+    // transcript is the ONLY renderer in shell.transcript (the duplicate
+    // activity timeline was deleted).
     transcript.render(state);
-    activity.render(state);
     // TASK-CHATFIX-002: ONE driver, this coalesced pass — no scattered notify
     // calls inside frame handlers. A user-visible id the previous paint did
     // not have is a new response; reasoning rows are mere activity.
@@ -856,14 +857,6 @@ function mountController(options: ChatControllerOptions): ChatController {
     },
   );
 
-  const activity: ActivityTimeline = createActivityTimeline({
-    activities: shell.transcript,
-    statusLiveRegion: shell.statusLiveRegion,
-    alertLiveRegion: shell.alertLiveRegion,
-    // TASK-CHATV2-017 group D: the header is the SINGLE pill writer — the
-    // timeline no longer writes the engine button/label.
-  });
-
   const scroll: ScrollController = createScrollController({
     viewport: shell.transcript,
     pillHost: shell.main,
@@ -1187,6 +1180,22 @@ function mountController(options: ChatControllerOptions): ChatController {
     dispatch({ type: "SUBMIT_CONSUMED", clientRequestId });
   }
 
+  /**
+   * CHATUX2-004: drain the steer queue at a turn boundary. Pops the head and
+   * re-submits it through the ONE retry path (fresh clientRequestId,
+   * `submit_turn` intent). The loop exits as soon as the flushed submit
+   * re-enters a busy phase, so each queued item waits for its own
+   * `turn_finished` — strict FIFO, one turn at a time.
+   */
+  function flushSteerQueue(): void {
+    if (disposed) return;
+    while (state.steerQueue.length > 0 && !busyPhase(state.phase)) {
+      const dequeued = state.steerQueue[0]!;
+      dispatch({ type: "STEER_DEQUEUED" });
+      requestRetry({ draft: dequeued });
+    }
+  }
+
   /** The single stop action: one `stop_turn` per active turn, 250ms lock. */
   function requestStop(): void {
     if (disposed) return;
@@ -1415,6 +1424,14 @@ function mountController(options: ChatControllerOptions): ChatController {
         event.preventDefault();
         return;
       }
+      case "steer": {
+        // CHATUX2-004: Enter-while-busy queues the draft for the next turn
+        // boundary. The reducer snapshots + clears the draft (no-op at the
+        // cap — the draft stays put, never dropped).
+        event.preventDefault();
+        dispatch({ type: "STEER_ENQUEUED" });
+        return;
+      }
       case "submit": {
         event.preventDefault();
         requestSubmit();
@@ -1471,6 +1488,10 @@ function mountController(options: ChatControllerOptions): ChatController {
     if (frame.kind === "turn_finished") {
       options.onV2TurnGate?.(false);
       releaseStopLock();
+      // CHATUX2-004: the turn boundary drains the steer queue — one queued
+      // draft per `turn_finished`, FIFO (each flushed submit re-enters busy,
+      // so the tail waits for ITS turn boundary).
+      flushSteerQueue();
       return;
     }
     if (frame.kind === "error") {
@@ -1546,7 +1567,6 @@ function mountController(options: ChatControllerOptions): ChatController {
       teardownMessageMenu();
       messageMenuRaw = null;
       announcer.destroy();
-      activity.dispose();
       transcript.dispose();
       scroll.destroy();
       activeMounts.delete(root);
