@@ -34,3 +34,4 @@
 | TASK-AIX06-002 | (prior cycle leftover) | pending | queued — prior cycle leftovers |
 | TASK-AIX06-003 | (prior cycle leftover) | pending | queued — prior cycle leftovers |
 | TASK-AIX06-004 | (prior cycle leftover) | pending | queued — prior cycle leftovers |
+| TASK-GITMSG-001 | Generate-commit-message UX: slow generation, loading hangs/loops, repeated appearance — needs debounce/timeout/cancel + progress feedback | pending | queued — user-reported mid-cycle, next cycle candidate |
