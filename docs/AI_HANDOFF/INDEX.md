@@ -4,12 +4,12 @@
 
 ## Cycle — CHATUX-2026-09-21
 
-| Task | Name | Status | Dependencies | Owner |
-|------|------|--------|--------------|-------|
-| TASK-CHATUX-001 | W1 layout stabilization (grid/scroll-owner/normal flow/spacing) | pending_review | none | - |
-| TASK-CHATUX-002 | W2 scroll state machine (hysteresis, rAF, Jump-to-latest) | pending_review | none | - |
-| TASK-CHATUX-003 | W3 message visuals (code-block header+Copy, collapsed rows, visible actions) | pending_review | TASK-CHATUX-001 | - |
-| TASK-CHATUX-004 | W4 compact composer (≤104px, 36–88 clamp, IME/Enter pinned) | pending_review | TASK-CHATUX-003 | ExecT004 |
+| Task | Name | Status | Dependencies | Owner  | Reviewer |
+|------|------|--------|--------------|-------|-------|
+| TASK-CHATUX-001 | W1 layout stabilization (grid/scroll-owner/normal flow/spacing) | done | none | - | - |
+| TASK-CHATUX-002 | W2 scroll state machine (hysteresis, rAF, Jump-to-latest) | approved_minor | none | - | unic-smart |
+| TASK-CHATUX-003 | W3 message visuals (code-block header+Copy, collapsed rows, visible actions) | done | TASK-CHATUX-001 | - | - |
+| TASK-CHATUX-004 | W4 compact composer (≤104px, 36–88 clamp, IME/Enter pinned) | approved_minor | TASK-CHATUX-003 | ExecT004 | unic-smart |
 
 ## Queued — future cycles
 

@@ -111,3 +111,27 @@ ISSUES: none — collapsed footprint = 36px top + 36px bottom + hint ≤104px; <
 HANDOFF_TO_REVIEWER: yes — Status set to pending_review in INDEX.md; reviewer must run on a different model.
 NEXT: ready for review
 
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run webview/aiChat/__tests__/composer.test.ts
+  result: 22 pass / 0 fail
+  command: npm run typecheck
+  result: exit 0
+  command: npm run compile
+  result: exit 0 — dist/webview.js 2.3mb, dist/webview.css 41.6kb
+  command: npx vitest run webview/aiChat/__tests__/
+  result: 24 files / 442 pass / 0 fail
+TEST_PLAN_COVERAGE: all-followed — rows 1–4 implemented; 3 edge tests (≥2 required); RED_OUTPUT shows real assertion failures (64→36, missing min-height: 36px)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: webview/aiChat/__tests__/composer.test.ts:106-123 — `keyInput()` is a verbatim copy of `key()` in keyboard.test.ts:19-36; justified by the task mandating the tests live here (importing a .test.ts file would re-register its describes), but a shared non-test helper would remove the drift risk if a third consumer appears.
+    - file: webview/aiChat/__tests__/composer.test.ts:551-563 — IME/Enter assertions duplicate keyboard.test.ts:104-115 coverage; mandated by task Test Plan row 3, so acceptable as a deliberate pin.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Collapsed footprint verified in styles.css: 36px top + 36px bottom + hint ≤104px; <320px two-row media query intact (styles.css:481-498); send/primary slots 32x32 at :348-364 and :1188-1199. Drift re-pins in errorsScrollA11y.test.ts:606 and shell.test.ts:199 are consistent with the contract change.

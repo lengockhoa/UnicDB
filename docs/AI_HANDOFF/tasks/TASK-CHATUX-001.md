@@ -121,3 +121,26 @@ Tests 425 passed (425)
 ### Note
 
 `-error-card` `width: 880px` (:2650) / `max-width: 880px` (:2836) and `-change-plan` `max-inline-size: 880px` (:2512) are intentional per §Test Cases and untouched. Other `overflow-y: auto` sites (input, scroll regions inside composer/menus) are outside the transcript contract and untouched. Milestone commit `832ba58` on `handoff/task-chatux-001`.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (EXECUTOR_SUBAGENT: ExecT001) — differs from reviewer, isolation OK
+VERIFICATION_RERUN:
+  command: npx vitest run webview/aiChat/__tests__/shellGrid.test.ts
+  result: 9 pass / 0 fail
+  command: npm run typecheck
+  result: clean, exit 0
+  command: npm run compile
+  result: built, exit 0
+  command: npx vitest run webview/aiChat/__tests__/ (regression gate)
+  result: 442 pass / 0 fail (24 files)
+TEST_PLAN_COVERAGE: all-followed — 3/3 cases implemented (1 happy + 2 edge); RED_OUTPUT contains a real assertion failure on the width:880px row
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: webview/aiChat/styles.css:533-535 — section comment still reads "user bubble max 78%, 8x12px" and "assistant unboxed max 880px/92% ... appear on hover or focus"; drifted from current code (70%, 6x10px, 92%, always-visible actions). Update comment on next touch.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Contract verified directly in source: sole overflow-y:auto at styles.css:247 (transcript), context strip is overflow-x only (:272-273), zero position:fixed file-wide, -item-text/-item-reasoning rule has no width/max-inline-size. Intentional 880px caps on -change-plan (:2582) and -error-card (:2720) untouched per §Test Cases.

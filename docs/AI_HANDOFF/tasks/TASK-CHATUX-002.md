@@ -120,3 +120,29 @@ HANDOFF_TO_REVIEWER: yes — Status DONE, reviewer picks up pending_review per p
 NEXT: ready for review
 
 Milestone commit: 5342715 (worktree branch handoff/task-chatux-002)
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (EXECUTOR_SUBAGENT: ExecT002) — differs from reviewer, isolation OK
+VERIFICATION_RERUN:
+  command: npx vitest run webview/aiChat/__tests__/autoScroll.test.ts webview/aiChat/__tests__/errorsScrollA11y.test.ts
+  result: 53 pass / 0 fail (fresh rerun by reviewer)
+  command: npm run typecheck
+  result: exit 0 (tsc --noEmit clean)
+  command: npm run compile
+  result: exit 0 (esbuild done)
+  command: npx vitest run webview/aiChat/__tests__/
+  result: 442 pass / 0 fail (24 files) — shared-code regression net, clean
+  command: grep -rn "isInputFocused|SCROLL_BOTTOM_THRESHOLD_PX|isNearBottom|nearBottom" webview/aiChat/
+  result: zero hits
+TEST_PLAN_COVERAGE: all-followed — rows 1–5 implemented as autoScroll #4/#8/#9/#10/#11 plus the errorsScrollA11y migration block; RED_OUTPUT contains real assertion failures (13 failed pre-fix), not a bare claim.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: webview/aiChat/__tests__/autoScroll.test.ts:350 — `vi.stubGlobal("requestAnimationFrame", undefined)` (and :378 ResizeObserver stub) is never unstubbed; vitest.config.ts does not set `unstubGlobals`, so rAF stays undefined for #11 (harmless — #11's assertions are synchronous — but leaks across tests). Add `vi.unstubAllGlobals()` in afterEach.
+    - file: webview/aiChat/controller.ts:330 — routing growth-of-existing-id at preDistance ≤96 to `notifyNewResponse` means a reader in `reading-history` inside the 72–96px band gets `unread += 1` per render pass for a single growing message (pill can read "N new" for one response). Planner-mandated EXIT edge; cosmetic, self-corrects via sync() on re-entry. Noted for awareness.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Hysteresis classify (≤72 enter / ≥96 exit / band keeps state), focus-suppression removal, rAF coalescing with setTimeout(0) fallback, and guarded ResizeObserver re-pin all match SPEC §7/FR-002–FR-004 exactly. The 40→32px send/stop hunk in errorsScrollA11y.test.ts belongs to wave-3 commit 0e4eeea (TASK-CHATUX-004), not this task.
