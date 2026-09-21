@@ -102,3 +102,47 @@ abort must stay rejected even after the new connection is up.
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+EXECUTOR_TOOL: omp vibe worker
+EXECUTOR_MODEL: devin/swe-2
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT:
+```
+FAIL  src/adapters/__tests__/mssqlAbort.test.ts > MsSqlAdapter.abortActiveQuery (TASK-SQLHANG-003) > #7 regression: hung statement no longer parks every later runQuery
+FAIL  src/adapters/__tests__/mssqlAbort.test.ts > MsSqlAdapter.abortActiveQuery (TASK-SQLHANG-003) > #8 abort in the enqueue await-window rejects the op before it executes
+TypeError: adapter.abortActiveQuery is not a function
+TypeError: adapter.abortActiveQuery is not a function
+TypeError: adapter.abortActiveQuery is not a function
+Test Files 1 failed (1)
+Tests 8 failed (8)
+```
+Verification Output:
+```
+$ npx vitest run src/adapters/__tests__/mssqlAbort.test.ts
+✓ src/adapters/__tests__/mssqlAbort.test.ts  (8 tests) 374ms
+Test Files 1 passed (1)
+Tests 8 passed (8)
+
+$ npx vitest run src/adapters/__tests__/mssql.parameterized.test.ts src/adapters/__tests__/mssql.sortQuery.test.ts
+✓ src/adapters/__tests__/mssql.sortQuery.test.ts  (7 tests) 1ms
+✓ src/adapters/__tests__/mssql.parameterized.test.ts  (17 tests) 485ms
+Test Files 2 passed (2)
+Tests 24 passed (24)
+
+$ npm run typecheck
+> UnicDB@1.54.1 typecheck
+> tsc --noEmit
+(0 errors)
+
+$ npm run compile
+⚡ Done in 43ms
+dist/webview.js 2.3mb ⚠️
+dist/webview.css 41.6kb
+
+$ npm test
+Test Files 315 passed | 2 skipped (317)
+Tests 4726 passed | 5 skipped (4731)
+```
+Status: PASS
+Note: Worktree had no node_modules — vitest resolved upward but 6 webview/vsix tests spawn `.bin/esbuild`/`vsce` by relative path; fixed with `node_modules/.bin -> ../../../node_modules/.bin` symlink (untracked). Test #7 asserts the spec's "rejects §8.3 OR reconnects" contract via the reconnect path (the second runQuery's enqueue stamps generation after the abort due to ensureConnection microtask ordering). tedious 18.6.2 verified: Connection.close() → cleanupConnection fires request.callback with RequestError ECLOSE, so teardown settles parked runRequest promises — no reject-hook needed.

@@ -90,6 +90,11 @@ export class MsSqlAdapter implements DbAdapter {
   private connecting: Promise<void> | null = null;
   private readonly activeRequests = new Set<Request>();
   private operationQueue: Promise<unknown> = Promise.resolve();
+  /**
+   * SQLHANG — bumped by abortActiveQuery() so ops enqueued before an abort
+   * reject instead of replaying stale work on the fresh connection.
+   */
+  private queueGeneration = 0;
 
   constructor(
     private readonly cfg: ConnectionConfig,
@@ -254,6 +259,53 @@ export class MsSqlAdapter implements DbAdapter {
     }
   }
 
+  /**
+   * SQLHANG — hard abort of in-flight work (SPEC §8.3). Unlike
+   * cancelActiveQuery (best-effort server-side cancel), this also tears the
+   * connection down so a parked runRequest promise settles (tedious fires
+   * the request callback with an ECLOSE error on close) and the queue's
+   * `finally` can advance it.
+   *
+   *  - `queueGeneration` bumps FIRST and unconditionally — even with no
+   *    connection — so ops enqueued before the abort stay rejected after
+   *    the lazy reconnect.
+   *  - `request.cancel()` is best-effort per request (swallowed); the
+   *    connection teardown is what actually settles the parked callers.
+   *  - `connection.close()` is swallowed; `connection`/`connected` clear so
+   *    the next runQuery lazily reconnects via ensureConnection().
+   *  - Idempotent; never throws.
+   */
+  async abortActiveQuery(): Promise<void> {
+    this.queueGeneration++;
+    for (const request of [...this.activeRequests]) {
+      try {
+        request.cancel();
+      } catch {
+        // Best-effort — teardown below settles the caller regardless.
+      }
+    }
+    const connection = this.connection;
+    this.connection = null;
+    this.connected = false;
+    if (connection) {
+      try {
+        connection.close();
+      } catch {
+        // close is best effort; Tedious closes asynchronously.
+      }
+    }
+  }
+
+  /**
+   * SQLHANG — lazy reconnect after abort/close: connect() dedups concurrent
+   * callers via `this.connecting`.
+   */
+  private async ensureConnection(): Promise<void> {
+    if (!this.connected || !this.connection) {
+      await this.connect();
+    }
+  }
+
   async testConnection(): Promise<void> {
     if (!this.connected || !this.connection) {
       await this.connect();
@@ -262,9 +314,7 @@ export class MsSqlAdapter implements DbAdapter {
   }
 
   async runQuery(sql: string): Promise<RunResult> {
-    if (!this.connected || !this.connection) {
-      throw new Error("MsSqlAdapter: connect() chưa được gọi");
-    }
+    await this.ensureConnection();
 
     // Finding #3 (review fix round C): must pass the real dialect — without
     // it, MSSQL's `GO` batch separator is never recognized and gets sent to
@@ -578,8 +628,14 @@ export class MsSqlAdapter implements DbAdapter {
       resolveNext = resolve;
     });
     this.operationQueue = next;
+    const gen = this.queueGeneration;
     try {
       await previous;
+      if (gen !== this.queueGeneration) {
+        throw new Error(
+          "MsSqlAdapter: operation aborted — connection was reset",
+        );
+      }
       return await operation();
     } finally {
       resolveNext();
@@ -590,9 +646,7 @@ export class MsSqlAdapter implements DbAdapter {
     sql: string,
     params?: MssqlQueryParam[],
   ): Promise<QueryResult> {
-    if (!this.connection) {
-      throw new Error("MsSqlAdapter: connect() chưa được gọi");
-    }
+    await this.ensureConnection();
 
     const startedAt = Date.now();
     const request = this.newRequest(sql, params);
