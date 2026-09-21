@@ -1,6 +1,6 @@
 # TASK-CHATUX-003 — W3 message visual system: code-block header+Copy, collapsed tool/thinking rows, visible actions, compact user card
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §2/§3 (W3)
@@ -70,3 +70,86 @@ The "no copy button" report is a CSS defect, not missing wiring: `buildActions` 
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+## Executor Report
+
+- EXECUTOR_TOOL: omp (Oh My Pi)
+- EXECUTOR_MODEL: unic-code
+- EXECUTOR_SUBAGENT: ExecT003
+- Status: PASS
+
+### RED_OUTPUT (before implementation)
+
+```
+❯ webview/aiChat/__tests__/codeBlock.test.ts  (7 tests | 6 failed)
+  → #1 expected the -codeblock wrapper: expected null not to be null
+  → #2 expected 'UnicDB-ai-chat-v2-code' to be 'UnicDB-ai-chat-v2-codeblock'
+  → #3/success/missing/rapid: expected a codeblock Copy button: expected null not to be null
+❯ webview/aiChat/__tests__/transcript.test.ts  (28 tests | 4 failed)
+  → tool items start collapsed: expected null to be '1'
+  → reasoning items start collapsed: expected null to be '1'
+  → user bubble 70%: expected '…max-width: 78%…' to contain 'max-width: 70%'
+  → action visible at rest: expected '…opacity: 0…' not to contain 'opacity: 0'
+❯ webview/aiChat/__tests__/messageActions.test.ts  (9 tests | 1 failed)
+  → #9 CSS contract: expected '…opacity: 0…' not to contain 'opacity: 0'
+Test Files  3 failed (3) · Tests  11 failed | 33 passed (44)
+```
+
+### Implementation
+
+- `webview/aiChat/markdown.ts` — `createCodeBlock` now returns the
+  `-codeblock` wrapper div (`data-lang` moved from `pre` to wrapper, absent
+  for empty lang) containing `-codeblock-header` (`-codeblock-lang` label,
+  `text` fallback) + `-codeblock-copy` button around the unchanged
+  `pre.-code`/`code.-code-<lang|plain>` node. Copy handler: frozen
+  `Copy`/`Copied`/`Failed` labels, 1500 ms restore, missing/rejecting
+  clipboard → `Failed` without throwing, rapid clicks reset the timer.
+  createElement/textContent only.
+- `webview/aiChat/transcript.ts` — new shared `disclosureToggle` helper
+  (mounts `data-collapsed="1"` + `aria-expanded="false"`, click flips both).
+  Tool items use it (was inline toggle starting `aria-expanded="true"`,
+  expanded); reasoning items gain a `-reasoning-toggle` button (chevron +
+  "Reasoning" label) mounted before `-reasoning-body`, default collapsed.
+- `webview/aiChat/styles.css` — new `-codeblock`/`-codeblock-header`/
+  `-codeblock-lang`/`-codeblock-copy` rules + inner `-code` override
+  (`margin:0; border:0; border-radius:0; padding:10px 12px; line-height:1.5`);
+  `-reasoning-toggle` row + `[data-collapsed="1"]` body-hide + chevron rotate;
+  `-item-user` → `max-width:70%; padding:6px 10px`; `-tool-head`
+  `min-height:28px`; `-action` `opacity: 0` + `transition` removed and the
+  `:hover`/`:focus-within` reveal rule deleted.
+
+### Verification Output
+
+```
+$ npx vitest run webview/aiChat/__tests__/codeBlock.test.ts \
+    webview/aiChat/__tests__/transcript.test.ts \
+    webview/aiChat/__tests__/messageActions.test.ts
+✓ codeBlock.test.ts (7 tests) · ✓ transcript.test.ts (28 tests) · ✓ messageActions.test.ts (9 tests)
+Test Files 3 passed (3) · Tests 44 passed (44)
+
+$ npm run typecheck
+> tsc --noEmit   → exit 0
+
+$ npm run compile
+> node esbuild.js → ⚡ Done in 43ms · dist/webview.js 2.3mb   → exit 0
+
+$ npx vitest run webview/aiChat/__tests__/   (regression sweep)
+Test Files 24 passed (24) · Tests 439 passed (439)
+
+$ grep -n "opacity: 0;" webview/aiChat/styles.css   → no hits (exit 1)
+$ grep -rn "innerHTML *=" webview/aiChat/markdown.ts webview/aiChat/transcript.ts → no hits (exit 1)
+```
+
+### Note
+
+- Two pre-existing CSS-pin tests in `transcript.test.ts` pinned the OLD
+  contract (78%/8x12 user bubble; hover-reveal actions) — updated in place to
+  the new FR-006 contract, per spec.
+- `data-lang` moved from `pre` to the `-codeblock` wrapper per FR-005 markup;
+  no other code read `pre[data-lang]`.
+- Reasoning toggle carries a "Reasoning" text label (consistent with the
+  activity timeline's `Reasoning` section naming); spec froze only the class
+  name and collapsed default.
+- Milestone commits on `handoff/task-chatux-003`: `0647b4a` (RED),
+  `8d29a10` (GREEN). Working tree clean.
+
+---

@@ -604,6 +604,69 @@ describe("transcript — TASK-CHATFIX-003 tool activity timeline", () => {
 });
 
 // ---------------------------------------------------------------------------
+// TASK-CHATUX-003 — collapsed disclosure rows (SPEC FR-006 / §8.4): tool and
+// reasoning items mount collapsed (data-collapsed="1", aria-expanded="false")
+// and expand on toggle click.
+// ---------------------------------------------------------------------------
+
+describe("transcript — TASK-CHATUX-003 collapsed disclosure rows", () => {
+  it("tool items start collapsed and expand on toggle click", () => {
+    let { state, next } = openTurn();
+    state = host(
+      state,
+      {
+        kind: "tool_started",
+        turnId: "t1",
+        toolId: "tool1",
+        label: "Bash",
+        action: "run",
+        detail: "git status",
+      },
+      next++,
+    );
+    state = host(
+      state,
+      { kind: "tool_finished", turnId: "t1", toolId: "tool1", label: "Bash", status: "ok", summary: "done" },
+      next++,
+    );
+    renderer.render(state);
+
+    const tool = byKey("tool1");
+    expect(tool).not.toBeNull();
+    expect(tool!.getAttribute("data-collapsed")).toBe("1");
+    const toggle = tool!.querySelector<HTMLButtonElement>(`.${PREFIX}-tool-toggle`);
+    expect(toggle).not.toBeNull();
+    expect(toggle!.getAttribute("aria-expanded")).toBe("false");
+
+    toggle!.click();
+    expect(tool!.getAttribute("data-collapsed")).toBeNull();
+    expect(toggle!.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("reasoning items start collapsed behind a -reasoning-toggle disclosure", () => {
+    let { state, next } = openTurn();
+    state = host(
+      state,
+      { kind: "reasoning_delta", turnId: "t1", messageId: "m1", text: "thinking…" },
+      next++,
+    );
+    renderer.render(state);
+    flushRaf(); // streaming deltas paint on the next frame
+    const item = byKey("reasoning-m1");
+    expect(item, "expected the reasoning item").not.toBeNull();
+    expect(item!.getAttribute("data-collapsed")).toBe("1");
+    const toggle = item!.querySelector<HTMLButtonElement>(`.${PREFIX}-reasoning-toggle`);
+    expect(toggle, "expected the -reasoning-toggle disclosure button").not.toBeNull();
+    expect(toggle!.getAttribute("aria-expanded")).toBe("false");
+    expect(item!.querySelector(`.${PREFIX}-reasoning-body`)?.textContent).toContain("thinking…");
+
+    toggle!.click();
+    expect(item!.getAttribute("data-collapsed")).toBeNull();
+    expect(toggle!.getAttribute("aria-expanded")).toBe("true");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Visual contract is pinned in the scoped stylesheet (jsdom cannot prove
 // geometry; these assertions guard against the rules silently disappearing).
 // ---------------------------------------------------------------------------
@@ -613,13 +676,13 @@ describe("transcript — scoped CSS keeps the PLAN §6 geometry", () => {
     ? readFileSync(resolve(process.cwd(), "webview", "aiChat", "styles.css"), "utf8")
     : "";
 
-  it("user bubble: 78% max-width, 8x12px padding, asymmetric radius", () => {
+  it("user bubble: 70% max-width, 6x10px padding, asymmetric radius", () => {
     expect(css).not.toBe("");
     const rule = /\.UnicDB-ai-chat-v2-item-user\s*\{([^}]*)\}/.exec(css);
     expect(rule).not.toBeNull();
     const body = rule![1]!;
-    expect(body).toContain("max-width: 78%");
-    expect(body).toContain("padding: 8px 12px");
+    expect(body).toContain("max-width: 70%");
+    expect(body).toContain("padding: 6px 10px");
     expect(body).toContain("border-radius: 12px 12px 4px 12px");
   });
 
@@ -633,12 +696,15 @@ describe("transcript — scoped CSS keeps the PLAN §6 geometry", () => {
     expect(body).toContain("padding: 4px 0");
   });
 
-  it("action buttons are 28x28 and reveal on hover/focus-within", () => {
+  it("action buttons are 28x28 and visible at rest (no opacity gate)", () => {
     const rule = /\.UnicDB-ai-chat-v2-action\s*\{([^}]*)\}/.exec(css);
     expect(rule).not.toBeNull();
     expect(rule![1]!).toContain("width: 28px");
     expect(rule![1]!).toContain("height: 28px");
-    expect(css).toContain(".UnicDB-ai-chat-v2-item:hover .UnicDB-ai-chat-v2-action");
-    expect(css).toContain(".UnicDB-ai-chat-v2-item:focus-within .UnicDB-ai-chat-v2-action");
+    expect(rule![1]!).not.toContain("opacity: 0");
+    // TASK-CHATUX-003: the hover/focus-within reveal rule is gone — actions
+    // stay visible (muted) at rest.
+    expect(css).not.toMatch(/\.UnicDB-ai-chat-v2-item:hover\s+\.UnicDB-ai-chat-v2-action/);
+    expect(css).not.toMatch(/\.UnicDB-ai-chat-v2-item:focus-within\s+\.UnicDB-ai-chat-v2-action/);
   });
 });

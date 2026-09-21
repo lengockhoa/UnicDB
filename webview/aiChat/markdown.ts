@@ -151,11 +151,61 @@ function appendInline(parent: HTMLElement, text: string): void {
 // DOM block builders
 // ---------------------------------------------------------------------------
 
-/** Build a `<pre><code>` code block, colorizing SQL through DOM fragments. */
+/** Frozen copy-button labels for the code-block header (SPEC FR-005). */
+const CODEBLOCK_COPY_LABEL = "Copy";
+const CODEBLOCK_COPIED_LABEL = "Copied";
+const CODEBLOCK_FAILED_LABEL = "Failed";
+/** Feedback label lifetime before restoring `Copy` (ms). */
+const CODEBLOCK_COPY_RESTORE_MS = 1500;
+
+/**
+ * Build a fenced code block as a `-codeblock` wrapper: a header strip
+ * (language label + Copy button) above the existing `pre.-code` node.
+ *
+ * Copy writes the RAW code through `navigator.clipboard` and reports via the
+ * button label — `Copied`/`Failed` for 1500 ms, then `Copy` again. A missing
+ * or rejecting clipboard is a quiet `Failed`, never a throw. Rapid clicks
+ * restart the restore timer. createElement/textContent only.
+ */
 export function createCodeBlock(block: { readonly lang: string; readonly code: string }): HTMLElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = "UnicDB-ai-chat-v2-codeblock";
+  if (block.lang.length > 0) wrapper.setAttribute("data-lang", block.lang);
+
+  const header = document.createElement("div");
+  header.className = "UnicDB-ai-chat-v2-codeblock-header";
+  const lang = document.createElement("span");
+  lang.className = "UnicDB-ai-chat-v2-codeblock-lang";
+  lang.textContent = block.lang.length > 0 ? block.lang : "text";
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "UnicDB-ai-chat-v2-codeblock-copy";
+  copy.setAttribute("aria-label", "Copy code");
+  copy.textContent = CODEBLOCK_COPY_LABEL;
+  let restoreTimer: ReturnType<typeof setTimeout> | null = null;
+  const feedback = (label: string): void => {
+    copy.textContent = label;
+    clearTimeout(restoreTimer ?? undefined);
+    restoreTimer = setTimeout(() => {
+      restoreTimer = null;
+      copy.textContent = CODEBLOCK_COPY_LABEL;
+    }, CODEBLOCK_COPY_RESTORE_MS);
+  };
+  copy.addEventListener("click", () => {
+    const clipboard = navigator.clipboard;
+    if (!clipboard || typeof clipboard.writeText !== "function") {
+      feedback(CODEBLOCK_FAILED_LABEL);
+      return;
+    }
+    clipboard.writeText(block.code).then(
+      () => feedback(CODEBLOCK_COPIED_LABEL),
+      () => feedback(CODEBLOCK_FAILED_LABEL),
+    );
+  });
+  header.append(lang, copy);
+
   const pre = document.createElement("pre");
   pre.className = "UnicDB-ai-chat-v2-code";
-  if (block.lang.length > 0) pre.setAttribute("data-lang", block.lang);
   const code = document.createElement("code");
   code.className = `UnicDB-ai-chat-v2-code-${block.lang.length > 0 ? block.lang : "plain"}`;
   if (isSqlLang(block.lang)) {
@@ -165,7 +215,8 @@ export function createCodeBlock(block: { readonly lang: string; readonly code: s
     code.textContent = block.code;
   }
   pre.appendChild(code);
-  return pre;
+  wrapper.append(header, pre);
+  return wrapper;
 }
 
 /** Build one block element. */

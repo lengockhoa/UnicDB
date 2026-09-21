@@ -143,6 +143,32 @@ function actionButton(
   return btn;
 }
 
+/** TASK-CHATUX-003: one disclosure-toggle button bound to a record root's
+ * `data-collapsed` flag. Mounts collapsed (`data-collapsed="1"` +
+ * `aria-expanded="false"`); each click flips both. Shared by the tool IN/OUT
+ * toggle and the reasoning disclosure row. */
+function disclosureToggle(
+  root: HTMLElement,
+  className: string,
+  label: string,
+): HTMLButtonElement {
+  root.setAttribute("data-collapsed", "1");
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = className;
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.setAttribute("aria-label", label);
+  toggle.title = label;
+  toggle.appendChild(createChatIcon("chevron-down", 12));
+  toggle.addEventListener("click", () => {
+    const collapsed = root.getAttribute("data-collapsed") === "1";
+    if (collapsed) root.removeAttribute("data-collapsed");
+    else root.setAttribute("data-collapsed", "1");
+    toggle.setAttribute("aria-expanded", collapsed ? "true" : "false");
+  });
+  return toggle;
+}
+
 /**
  * Create the keyed transcript renderer bound to `refs`.
  *
@@ -323,6 +349,19 @@ export function createTranscriptRenderer(
     };
 
     if (item.kind === "text" || item.kind === "reasoning") {
+      if (item.kind === "reasoning") {
+        // TASK-CHATUX-003: reasoning mounts as a collapsed disclosure row —
+        // the toggle sits above the body and flips data-collapsed on the root.
+        const reasoningToggle = disclosureToggle(
+          root,
+          cls("reasoning-toggle"),
+          "Toggle reasoning",
+        );
+        const reasoningLabel = document.createElement("span");
+        reasoningLabel.textContent = "Reasoning";
+        reasoningToggle.appendChild(reasoningLabel);
+        root.appendChild(reasoningToggle);
+      }
       const body = el("div", item.kind === "text" ? "assistant-body" : "reasoning-body");
       body.setAttribute("data-chat-body", "1");
       record.body = body;
@@ -344,19 +383,7 @@ export function createTranscriptRenderer(
       const head = el("div", "tool-head");
       const label = el("span", "tool-label");
       const summary = el("span", "tool-summary");
-      const toggle = document.createElement("button");
-      toggle.type = "button";
-      toggle.className = cls("tool-toggle");
-      toggle.setAttribute("aria-expanded", "true");
-      toggle.setAttribute("aria-label", "Toggle tool output");
-      toggle.title = "Toggle tool output";
-      toggle.appendChild(createChatIcon("chevron-down", 12));
-      toggle.addEventListener("click", () => {
-        const collapsed = root.getAttribute("data-collapsed") === "1";
-        if (collapsed) root.removeAttribute("data-collapsed");
-        else root.setAttribute("data-collapsed", "1");
-        toggle.setAttribute("aria-expanded", collapsed ? "true" : "false");
-      });
+      const toggle = disclosureToggle(root, cls("tool-toggle"), "Toggle tool output");
       head.append(label, summary, toggle);
       root.append(status, head);
       record.toolToggle = toggle;

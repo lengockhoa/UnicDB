@@ -559,11 +559,11 @@
   line-height: 20px;
 }
 
-/* User bubble: right-aligned, max 78%, 8x12px, asymmetric radius. */
+/* User bubble: right-aligned, max 70%, 6x10px, asymmetric radius. */
 .UnicDB-ai-chat-v2-item-user {
   align-self: flex-end;
-  max-width: 78%;
-  padding: 8px 12px;
+  max-width: 70%;
+  padding: 6px 10px;
   border-radius: 12px 12px 4px 12px;
   background: var(--UnicDB-ai-chat-v2-surface);
   word-break: break-word;
@@ -583,6 +583,34 @@
 .UnicDB-ai-chat-v2-reasoning-body {
   color: var(--UnicDB-ai-chat-v2-muted);
   white-space: pre-wrap;
+}
+
+/* TASK-CHATUX-003 — reasoning disclosure row: collapsed by default
+   (data-collapsed="1" on the item root hides the body). */
+.UnicDB-ai-chat-v2-reasoning-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: transparent;
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-reasoning-toggle:hover {
+  color: var(--UnicDB-ai-chat-v2-text);
+}
+
+.UnicDB-ai-chat-v2-item-reasoning[data-collapsed="1"] .UnicDB-ai-chat-v2-reasoning-toggle svg {
+  transform: rotate(-90deg);
+}
+
+.UnicDB-ai-chat-v2-item-reasoning[data-collapsed="1"] .UnicDB-ai-chat-v2-reasoning-body {
+  display: none;
 }
 
 /* Long unbroken SQL keeps wrapping; code blocks scroll horizontally. */
@@ -617,6 +645,55 @@
   font-family: var(--vscode-editor-font-family, monospace);
   font-size: 12px;
   line-height: 18px;
+}
+
+/* TASK-CHATUX-003 — fenced code block: header strip (lang + Copy) above the
+   pre. The wrapper owns margin/border/background; the inner -code is reset. */
+.UnicDB-ai-chat-v2-codeblock {
+  margin: 8px 0;
+  border: 1px solid var(--UnicDB-ai-chat-v2-border);
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: var(--UnicDB-ai-chat-v2-input);
+  overflow: hidden;
+}
+
+.UnicDB-ai-chat-v2-codeblock-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 4px 12px;
+  border-bottom: 1px solid var(--UnicDB-ai-chat-v2-border);
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 11px;
+}
+
+.UnicDB-ai-chat-v2-codeblock-lang {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.UnicDB-ai-chat-v2-codeblock-copy {
+  padding: 2px 8px;
+  border: none;
+  border-radius: var(--UnicDB-ai-chat-v2-radius-sm);
+  background: transparent;
+  color: var(--UnicDB-ai-chat-v2-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-codeblock-copy:hover {
+  color: var(--UnicDB-ai-chat-v2-text);
+  background: var(--UnicDB-ai-chat-v2-surface);
+}
+
+.UnicDB-ai-chat-v2-codeblock .UnicDB-ai-chat-v2-code {
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 0;
+  line-height: 1.5;
 }
 
 /* Decorative streaming caret — never announced. */
@@ -676,6 +753,7 @@
   align-items: baseline;
   gap: 4px;
   min-width: 0;
+  min-height: 28px;
 }
 
 /* Bold, high-contrast step label. */
@@ -818,8 +896,9 @@
   animation: UnicDB-ai-chat-v2-pulse 1.2s ease-in-out infinite;
 }
 
-/* Action row: visible on hover or keyboard focus-within, never on touch-only
-   or reduced-motion traps. Buttons are 28x28 with a 2px focus ring. */
+/* Action row: always visible, muted at rest (TASK-CHATUX-003 — the hover
+   opacity gate hid the copy button entirely). Buttons are 28x28 with a 2px
+   focus ring. */
 .UnicDB-ai-chat-v2-actions {
   display: flex;
   gap: 4px;
@@ -843,14 +922,6 @@
   background: transparent;
   color: var(--UnicDB-ai-chat-v2-muted);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 150ms ease;
-}
-
-.UnicDB-ai-chat-v2-item:hover .UnicDB-ai-chat-v2-action,
-.UnicDB-ai-chat-v2-item:focus-within .UnicDB-ai-chat-v2-action,
-.UnicDB-ai-chat-v2-action:focus-visible {
-  opacity: 1;
 }
 
 .UnicDB-ai-chat-v2-action:hover {

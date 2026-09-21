@@ -378,3 +378,19 @@ describe("message actions — TASK-CHATFIX-004", () => {
     expect(writeText).toHaveBeenCalledWith("answer text + streamed tail");
   });
 });
+
+describe("message actions — TASK-CHATUX-003 action row visible at rest", () => {
+  it("#9 CSS contract: -action has no opacity:0 gate and no hover/focus reveal rule", () => {
+    // The reported "no copy button" bug was pure CSS: `opacity: 0` on
+    // `-action` hid the row until hover. Pin the always-visible contract.
+    const css = readFileSync(
+      resolve(process.cwd(), "webview", "aiChat", "styles.css"),
+      "utf8",
+    );
+    const rule = /\.UnicDB-ai-chat-v2-action\s*\{([^}]*)\}/.exec(css);
+    expect(rule, "expected the -action rule").not.toBeNull();
+    expect(rule![1]!).not.toContain("opacity: 0");
+    expect(css).not.toMatch(/\.UnicDB-ai-chat-v2-item:hover\s+\.UnicDB-ai-chat-v2-action/);
+    expect(css).not.toMatch(/\.UnicDB-ai-chat-v2-item:focus-within\s+\.UnicDB-ai-chat-v2-action/);
+  });
+});
