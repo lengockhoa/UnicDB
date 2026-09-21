@@ -1,17 +1,21 @@
 # Handoff INDEX
 
-<!-- No active cycle. Cycle CHATUX-2026-09-21 archived to docs/AI_HANDOFF/archive/cycle-CHATUX-2026-09-21/ (4/4 done, pushed 176bbaa). -->
+<!-- Active cycle: BACKLOG-2026-09-21. Prior cycle CHATUX-2026-09-21 archived to docs/AI_HANDOFF/archive/cycle-CHATUX-2026-09-21/ (4/4 done, pushed 176bbaa). -->
 
-## Cycle — (none)
+## Cycle — BACKLOG-2026-09-21
 
 | Task | Name | Status | Dependencies | Owner  | Reviewer |
 |------|------|--------|--------------|-------|-------|
+| TASK-GITMSG-001 | Commit-gen core: single-flight gate, cancel channel, stage progress | ready | none | - | - |
+| TASK-GITMSG-002 | Commit-gen wiring: cancellable progress + omp driver cancel | ready | TASK-GITMSG-001 | - | - |
+| TASK-CHATUX-W5-1 | W5 a11y audit: reduced-motion coverage + focus-ring/aria pins | ready | none | - | - |
+| TASK-CHATUX-W5-2 | W5 perf: ≤30fps stream paint + memoized markdown blocks | ready | none | - | - |
 
 ## Queued — future cycles
 
 | Task | Name | Status | Note |
 |------|------|--------|------|
-| TASK-CHATUX-W5 | W5 accessibility/performance audit (focus rings, aria, reduced-motion, ≤30fps batching, memoized blocks) | queued | advisor spec §19 W5 — next cycle |
+| TASK-CHATUX-W5 | W5 accessibility/performance audit — PLANNED this cycle as TASK-CHATUX-W5-1 + TASK-CHATUX-W5-2 | planned | folded into BACKLOG-2026-09-21 |
 | TASK-AIX03-001 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
 | TASK-AIX03-002 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
 | TASK-AIX03-003 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
@@ -30,4 +34,4 @@
 | TASK-AIX06-002 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
 | TASK-AIX06-003 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
 | TASK-AIX06-004 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-GITMSG-001 | Generate-commit-message UX: slow generation, loading hangs/loops, repeated appearance — needs debounce/timeout/cancel + progress feedback | pending | queued — user-reported mid-cycle, next cycle candidate |
+| TASK-GITMSG-001 | Generate-commit-message UX — PLANNED this cycle as TASK-GITMSG-001 + TASK-GITMSG-002 | planned | folded into BACKLOG-2026-09-21 |
