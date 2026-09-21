@@ -1,37 +1,15 @@
 # Handoff INDEX
 
-<!-- Active cycle: BACKLOG-2026-09-21. Prior cycle CHATUX-2026-09-21 archived to docs/AI_HANDOFF/archive/cycle-CHATUX-2026-09-21/ (4/4 done, pushed 176bbaa). -->
+<!-- No active cycle. Cycle BACKLOG-2026-09-21 archived to docs/AI_HANDOFF/archive/cycle-BACKLOG-2026-09-21/ (4/4 done, pushed a16d742). -->
 
-## Cycle — BACKLOG-2026-09-21
+## Cycle — (none)
 
 | Task | Name | Status | Dependencies | Owner  | Reviewer |
 |------|------|--------|--------------|-------|-------|
-| TASK-GITMSG-001 | Commit-gen core: single-flight gate, cancel channel, stage progress | done | none | - | unic-smart |
-| TASK-GITMSG-002 | Commit-gen wiring: cancellable progress + omp driver cancel | done | TASK-GITMSG-001 | - | unic-smart |
-| TASK-CHATUX-W5-1 | W5 a11y audit: reduced-motion coverage + focus-ring/aria pins | done | none | - | - |
-| TASK-CHATUX-W5-2 | W5 perf: ≤30fps stream paint + memoized markdown blocks | done | none | ExecW52 | unic-smart |
 
 ## Queued — future cycles
 
 | Task | Name | Status | Note |
 |------|------|--------|------|
-| TASK-CHATUX-W5 | W5 accessibility/performance audit — PLANNED this cycle as TASK-CHATUX-W5-1 + TASK-CHATUX-W5-2 | planned | folded into BACKLOG-2026-09-21 |
-| TASK-AIX03-001 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX03-002 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX03-003 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX03-004 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX03-101 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX03-102 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX03-103 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX05-001 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX05-002 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX05-003 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX05-004 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX05-101 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX05-102 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX05-103 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX06-001 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX06-002 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX06-003 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-AIX06-004 | (prior cycle leftover) | done | done — shipped in prior cycles (deliverables verified in src/ai/) |
-| TASK-GITMSG-001 | Generate-commit-message UX — PLANNED this cycle as TASK-GITMSG-001 + TASK-GITMSG-002 | planned | folded into BACKLOG-2026-09-21 |
+| TASK-CHATUX-W5 | W5 accessibility/performance audit | done | shipped in BACKLOG-2026-09-21 as W5-1 + W5-2 |
+| TASK-GITMSG-001 | Generate-commit-message UX | done | shipped in BACKLOG-2026-09-21 as GITMSG-001 + GITMSG-002 |

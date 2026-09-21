@@ -2,6 +2,32 @@
 
 Track session-level execution details.
 
+## 2026-09-21 — Cycle BACKLOG (commit-gen UX hardening + AIChat a11y/perf)
+
+- TASK-GITMSG-001 (commit-gen core): new `src/ai/commitGenGate.ts` — single-flight
+  gate so the Generate-commit-message command can never stack duplicate runs;
+  `commitGenCommand.ts` gained `COMMIT_GEN_TIMEOUT_MS`, stage progress consts,
+  `CommitGenDeps.report?/isCancelled?/signal?`, `OmpOneShot.cancel?()`; provider
+  timeout wired. Root cause of "loading forever": no timeout + no cancel path.
+- TASK-GITMSG-002 (wiring): `src/extension.ts` registers the command with
+  `cancellable: true` + `(progress, token)` — token cancellation calls
+  `oneShot.cancel()`; `commitGenOmpOneShot.ts` exposes pure
+  `createCommitGenOmpTurn` (unit-testable driver). Manifest guard test added.
+- TASK-CHATUX-W5-1 (a11y): `webview/aiChat/styles.css` — reduced-motion block now
+  suppresses every animated selector (5 gaps closed: live-dot, activity-icon,
+  autocomplete-spinner, …); 16 focus-ring gaps closed incl. real `-tool-toggle`
+  ring. `errorsScrollA11y.test.ts` +2 CSS-scan tests.
+- TASK-CHATUX-W5-2 (perf): `transcript.ts` `STREAM_PAINT_MIN_INTERVAL_MS = 33`
+  (≤30fps stream paint gate, rAF + 100ms fallback intact); `markdown.ts`
+  memoized code-block nodes (stable identity across re-paints, copy listener
+  not re-attached).
+- Housekeeping: 226 stale orphan task files archived to
+  `archive/stale-tasks/`; 18 AIX leftover rows verified shipped in src/ai/ and
+  marked done.
+- Verification: vitest aiChat 450/450, src/ai suite 400/401 (1 skipped),
+  extension 192/192, typecheck clean, compile clean. Reviewer (unic-smart)
+  approved all 4 tasks (3× approved_minor, 1× approved). Pushed a16d742.
+
 ## 2026-09-21 — Cycle CHATUX (AIChat webview Claude Code–first UX redesign, W1–W4)
 
 - W1 layout stabilization (TASK-CHATUX-001): removed `width:880px` caps from
