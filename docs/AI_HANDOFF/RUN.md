@@ -1,7 +1,7 @@
 Command: handoff-fullstack
-Goal: Process the entire queued backlog — GITMSG-001 (generate-commit-message UX) + CHATUX-W5 (a11y/perf); 18 AIX leftovers verified shipped and closed.
+Goal: AIChat composer/footer redesign — remove bottom info bar, relocate hints+stats, ~5px bottom gap, steering for continuous chat, fix overlapping text, tree-style step visualization with dimmed thinking.
 Base: main
-Phase: done
-Cursor: cycle complete — 4/4 approved, pushed 28cad14; archived to archive/cycle-BACKLOG-2026-09-21/
-Next: none — run closed
-QuietScans: 2/2
+Phase: P2.5
+Cursor: P2 done — SPEC.md + PLAN.md + 4 task files written (all validator-ok); INDEX/ACTIVE updated. NOTE: Planner Report footer blocked by model-tier guard (planner was devin/swe-2, not opus tier) — PLAN.md carries an inline note; plan review must decide accept-or-replan.
+Next: spawn code-reviewer (REVIEW_TARGET_TYPE=plan) on PLAN.md + SPEC.md; then P3 commit plan
+QuietScans: 0/2
