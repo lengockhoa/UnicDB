@@ -241,3 +241,44 @@ describe("TASK-GC-004 — package.json manifest guards for the Generate Commit M
     expect(source, "no stale hyphenated claim remains in this file").not.toMatch(forbidden);
   });
 });
+
+// =============================================================================
+// TASK-GITMSG-002 — host wiring source-scan (SPEC FR-001/FR-002).
+// The command callback must acquire the single-flight gate BEFORE opening the
+// progress notification, and the progress must be cancellable. The manifest
+// itself is unchanged — the guards above keep passing.
+// =============================================================================
+describe("TASK-GITMSG-002 — extension.ts commit-gen wiring", () => {
+  function commandBlock(): string {
+    const src = readFileSync(
+      resolve(process.cwd(), "src/extension.ts"),
+      "utf8",
+    );
+    const start = src.indexOf(`"${NEW_COMMAND_ID}"`);
+    expect(start, "command id registered in extension.ts").toBeGreaterThan(-1);
+    const end = src.indexOf("registerCommand(", start);
+    return src.slice(start, end === -1 ? undefined : end);
+  }
+
+  it("case 4: gate acquire precedes withProgress; progress is cancellable; release in finally", () => {
+    const block = commandBlock();
+
+    const acquireIdx = block.indexOf("acquire()");
+    const progressIdx = block.indexOf("withProgress(");
+    expect(acquireIdx, "gate acquire() before withProgress").toBeGreaterThan(-1);
+    expect(progressIdx, "withProgress present").toBeGreaterThan(-1);
+    expect(acquireIdx).toBeLessThan(progressIdx);
+
+    // Gate refusal → frozen in-progress toast, and it must come BEFORE the
+    // progress notification so a second click never stacks a spinner.
+    const toastIdx = block.indexOf("TOAST_GENERATION_IN_PROGRESS");
+    expect(toastIdx).toBeGreaterThan(-1);
+    expect(toastIdx).toBeLessThan(progressIdx);
+
+    expect(block).toMatch(/cancellable:\s*true/);
+    expect(block).toMatch(/finally[\s\S]*release\(\)/);
+    // The callback consumes the progress + token handles (stage reports and
+    // the cancel channel both flow through them).
+    expect(block).toMatch(/\(progress,\s*token\)/);
+  });
+});

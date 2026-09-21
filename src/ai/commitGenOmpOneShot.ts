@@ -59,7 +59,11 @@ export interface CommitGenOneShotDriver {
   events: CommitGenOneShotEvents;
   /** Reject the turn from an external failure (e.g. `engine.send()` rejected). */
   fail(error: unknown): void;
-  /** Resolves with the buffered text, or rejects on error/timeout. */
+  /** Settle the turn early on user cancel (SPEC FR-005). Rejects the promise
+   *  with `commit-gen: cancelled` and runs `onSettle` (engine shutdown).
+   *  No-op once the driver has already settled. */
+  cancel(): void;
+  /** Resolves with the buffered text, or rejects on error/timeout/cancel. */
   promise: Promise<string>;
 }
 
@@ -126,6 +130,44 @@ export function driveCommitGenOneShot(params: {
       settle(() =>
         rejectPromise(error instanceof Error ? error : new Error(String(error))),
       ),
+    cancel: () =>
+      settle(() => rejectPromise(new Error("commit-gen: cancelled"))),
     promise,
+  };
+}
+
+/**
+ * Build the `OmpOneShot`-shaped turn handle the host returns from
+ * `buildCommitGenOmpOneShot` (SPEC FR-005). Pure — the engine surface is
+ * injected as two functions so the cancel path is unit-testable without an
+ * ACP process.
+ *
+ * `generate()` spawns a fresh driver per call (the settled-outcome contract
+ * is unchanged); `cancel()` delegates to the LIVE driver and is a no-op
+ * before the first `generate()` or after the turn settled.
+ */
+export function createCommitGenOmpTurn(engine: {
+  send(prompt: string, events: CommitGenOneShotEvents): Promise<unknown>;
+  shutdown(): Promise<unknown> | void;
+}): { generate(prompt: string): Promise<string>; cancel(): void } {
+  let driver: CommitGenOneShotDriver | null = null;
+  return {
+    async generate(prompt: string): Promise<string> {
+      // One settled outcome guaranteed: done → text, error → reject, cancel →
+      // reject, or the bounded timeout → reject. Never an indefinite pending
+      // promise.
+      const d = driveCommitGenOneShot({
+        timeoutMs: COMMIT_GEN_OMP_TIMEOUT_MS,
+        onSettle: () => {
+          void engine.shutdown();
+        },
+      });
+      driver = d;
+      void engine.send(prompt, d.events).catch((e: unknown) => d.fail(e));
+      return await d.promise;
+    },
+    cancel(): void {
+      driver?.cancel();
+    },
   };
 }

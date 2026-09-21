@@ -1,6 +1,6 @@
 # TASK-GITMSG-002 — Commit-gen wiring: cancellable progress + omp driver cancel
 
-- Status: `ready`
+- Status: `done`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3
@@ -84,3 +84,85 @@ npm run typecheck
 `let driver: CommitGenOneShotDriver | null` in the closure — `cancel()`
 calls `driver?.cancel()` (no-op before first `generate()`). Keep the
 fresh-`AcpProcess`-per-invocation contract unchanged.
+## Progress
+
+- 2026-09-21T21:51:00+0700 · milestone: red→green — driver.cancel + createCommitGenOmpTurn + extension wiring (gate/cancellable progress/token ports) · last-green: `npx vitest run src/ai/__tests__/commitGenOmpOneShot.test.ts src/ui/__tests__/commitGenManifest.test.ts src/ui/__tests__/commitGenIntegration.test.ts` (32 pass) + `npm run typecheck` (0 errors) + `npx vitest run src/ai/__tests__/ src/ui/__tests__/commitGen src/extension.test.ts` (608 pass, 1 skipped — no regression; one env-only failure resolved by `npm run compile` emitting dist/schemaForm.js) · files: src/ai/commitGenOmpOneShot.ts, src/extension.ts, src/ai/__tests__/commitGenOmpOneShot.test.ts, src/ui/__tests__/commitGenManifest.test.ts, src/ui/__tests__/commitGenIntegration.test.ts · drift: none
+
+## Executor Report
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: other (Oh My Pi harness)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecG2
+SUMMARY: Wired the host side of the commit-gen UX fix: module-scope
+  commitGenGate + cancellable withProgress((progress, token)) in the
+  UnicDB.generateCommitMessage registration; buildCommitGenDeps now takes
+  progress+token and supplies report/isCancelled/signal ports (token →
+  AbortController → ProviderRequest.signal); builtinComplete client pinned
+  to COMMIT_GEN_TIMEOUT_MS; token.onCancellationRequested → oneShot.cancel()
+  in buildOmpEngine. CommitGenOneShotDriver gained cancel() (settles with
+  "commit-gen: cancelled", onSettle once); new pure createCommitGenOmpTurn
+  wraps send/shutdown into the OmpOneShot {generate,cancel} shape so the
+  cancel path is unit-testable — buildCommitGenOmpOneShot now returns it.
+TEST_PLAN_FOLLOWED: task §Test Cases — all 6 cases implemented (1–3, 5 in
+  commitGenOmpOneShot.test.ts; 4 in commitGenManifest.test.ts; 6 in
+  commitGenIntegration.test.ts)
+FILES_CHANGED:
+  - src/ai/commitGenOmpOneShot.ts: CommitGenOneShotDriver.cancel() (settle
+    once with "commit-gen: cancelled"); NEW createCommitGenOmpTurn(engine)
+    returning {generate,cancel} — hoisted live-driver per planner note
+  - src/extension.ts: module-scope commitGenGate; command callback acquires
+    gate (null → TOAST_GENERATION_IN_PROGRESS + return), withProgress gains
+    cancellable:true + (progress, token) callback, release() in finally;
+    buildCommitGenDeps(progress, token) wires report/isCancelled/signal +
+    token→oneShot.cancel() + COMMIT_GEN_TIMEOUT_MS provider client
+  - src/ai/__tests__/commitGenOmpOneShot.test.ts: +5 tests — cases 1–3, 5 +
+    cancel-before-generate no-op
+  - src/ui/__tests__/commitGenManifest.test.ts: +1 test — case 4 wiring
+    source-scan (acquire<withProgress, toast<withProgress, cancellable:true,
+    finally release, (progress, token) callback)
+  - src/ui/__tests__/commitGenIntegration.test.ts: +1 test — case 6
+    early-return order scan (acquire→toast→withProgress→handler, return in
+    refusal slice)
+TESTS_ADDED:
+  - commitGenOmpOneShot.test.ts: cancel mid-turn rejects + onSettle once;
+    cancel after onDone no-op; cancel before events clears timer;
+    OmpOneShot.cancel settles in-flight generate; cancel pre-generate no-op
+  - commitGenManifest.test.ts: gate/cancellable/finally source-scan
+  - commitGenIntegration.test.ts: second-invocation refusal order scan
+RED_OUTPUT: |
+  FAIL commitGenOmpOneShot.test.ts — 5 failed: "d.cancel is not a function"
+    (cases 1–3), "createCommitGenOmpTurn is not a function" (case 5 + no-op)
+  FAIL commitGenManifest.test.ts — case 4: "gate acquire() before
+    withProgress: expected -1 to be greater than -1"
+  FAIL commitGenIntegration.test.ts — case 6: "acquire() present in command
+    block: expected -1 to be greater than -1"
+  (7 failed | 25 passed)
+VERIFICATION:
+  command: npx vitest run src/ai/__tests__/commitGenOmpOneShot.test.ts src/ui/__tests__/commitGenManifest.test.ts src/ui/__tests__/commitGenIntegration.test.ts
+  result: 32 pass / 0 fail
+  output_excerpt: |
+    ✓ src/ui/__tests__/commitGenManifest.test.ts  (9 tests) 6ms
+    ✓ src/ai/__tests__/commitGenOmpOneShot.test.ts  (15 tests) 5ms
+    ✓ src/ui/__tests__/commitGenIntegration.test.ts  (8 tests) 6ms
+    Test Files 3 passed (3)
+    Tests 32 passed (32)
+  command: npm run typecheck
+  result: exit 0 — 0 errors
+  command: npx vitest run src/ai/__tests__/ src/ui/__tests__/commitGen src/extension.test.ts
+  result: 608 pass / 0 fail / 1 skipped (live smoke) — no regression
+ISSUES: |
+  - extension.test.ts "npm run compile emits dist/schemaForm.js" failed on
+    first regression run because the worktree had no dist/ build; after
+    `npm run compile` (esbuild, exit 0) the suite is 192/192. Environmental
+    precondition, unrelated to this change.
+  - Deviation from planner note: instead of hoisting `let driver` inside
+    buildCommitGenOmpOneShot (untestable in extension.ts), the turn shape
+    lives in pure createCommitGenOmpTurn — same hoisted-driver semantics,
+    unit-tested directly (case 5). Fresh-AcpProcess-per-invocation contract
+    unchanged.
+HANDOFF_TO_REVIEWER: no — handoff.reviewer not configured; status set to
+  done matching TASK-GITMSG-001 precedent.
+NEXT: ready for review — GITMSG wave complete; orchestrator merges worktree.
+```

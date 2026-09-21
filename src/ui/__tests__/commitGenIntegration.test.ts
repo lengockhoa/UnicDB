@@ -414,3 +414,44 @@ describe("TASK-GC-008 #6 sanitizer boundary via the real module", () => {
     expect(firstLine.length).toBe(72);
   });
 });
+
+// =============================================================================
+// 7. Single-flight wiring — TASK-GITMSG-002 case 6 (concurrent edge).
+// The gate module itself is unit-tested in ai/__tests__/commitGenGate.test.ts;
+// this scan pins the HOST order: a second click while a run is in flight must
+// hit the gate's null branch — toast TOAST_GENERATION_IN_PROGRESS and return
+// BEFORE withProgress / runGenerateCommitMessage can stack a second spinner.
+// =============================================================================
+describe("TASK-GITMSG-002 #7 second invocation while first in flight", () => {
+  it("case 6: gate refusal toasts + returns before withProgress and the handler", () => {
+    const src = readFileSync(
+      resolve(process.cwd(), "src/extension.ts"),
+      "utf8",
+    );
+    const start = src.indexOf(`"${NEW_COMMAND_ID}"`);
+    expect(start).toBeGreaterThan(-1);
+    const end = src.indexOf("registerCommand(", start);
+    const block = src.slice(start, end === -1 ? undefined : end);
+
+    const acquireIdx = block.indexOf("acquire()");
+    const toastIdx = block.indexOf("TOAST_GENERATION_IN_PROGRESS");
+    const progressIdx = block.indexOf("withProgress(");
+    const handlerIdx = block.indexOf("runGenerateCommitMessage");
+
+    for (const [name, idx] of [
+      ["acquire()", acquireIdx],
+      ["TOAST_GENERATION_IN_PROGRESS", toastIdx],
+      ["withProgress(", progressIdx],
+      ["runGenerateCommitMessage", handlerIdx],
+    ] as const) {
+      expect(idx, `${name} present in command block`).toBeGreaterThan(-1);
+    }
+
+    // Order: acquire → (null → toast + return) → withProgress → handler.
+    expect(acquireIdx).toBeLessThan(toastIdx);
+    expect(toastIdx).toBeLessThan(progressIdx);
+    expect(progressIdx).toBeLessThan(handlerIdx);
+    // The refusal path must return before reaching the progress call.
+    expect(block.slice(toastIdx, progressIdx)).toMatch(/return/);
+  });
+});

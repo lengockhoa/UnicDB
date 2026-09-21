@@ -56,13 +56,15 @@ import { AiSettingsForm } from "./ui/aiSettingsForm";
 import { createProviderClient } from "./ai/provider";
 import {
   runGenerateCommitMessage,
+  COMMIT_GEN_TIMEOUT_MS,
+  TOAST_GENERATION_IN_PROGRESS,
   type CommitGenDeps,
   type OmpOneShot,
 } from "./ai/commitGenCommand";
+import { createCommitGenGate } from "./ai/commitGenGate";
 import {
   answerCommitGenServerRequest,
-  driveCommitGenOneShot,
-  COMMIT_GEN_OMP_TIMEOUT_MS,
+  createCommitGenOmpTurn,
 } from "./ai/commitGenOmpOneShot";
 import { collectCommitDiff, pickRepository, getGitApi } from "./adapters/gitDiff";
 import type { AdapterFactory } from "./ai/tools/types";
@@ -180,6 +182,14 @@ let invalidateAfterSchemaDdl:
  * cancelled in `deactivate()` so no refresh lands after teardown started.
  */
 let schemaTreeRefresher: ReturnType<typeof createDebouncedRefresher> | null = null;
+
+/**
+ * TASK-GITMSG-002 — single-flight gate for `UnicDB.generateCommitMessage`
+ * (SPEC FR-001 / §7.1). ONE instance at module scope: while a generation is
+ * in flight a second click gets the frozen in-progress toast instead of a
+ * second stacked progress notification.
+ */
+const commitGenGate = createCommitGenGate();
 
 // =====================================================================
 // BQ01-001 — narrow DriverType → SqlDialect. BigQuery's path is wired by
@@ -1277,14 +1287,32 @@ export async function activate(
   disposables.push(
     vscode.commands.registerCommand(
       "UnicDB.generateCommitMessage",
-      () =>
-        vscode.window.withProgress(
-          {
-            location: vscode.ProgressLocation.SourceControl,
-            title: "UnicDB: generating commit message…",
-          },
-          async () => runGenerateCommitMessage(buildCommitGenDeps(aiStore, context)),
-        ),
+      async () => {
+        // Single-flight (SPEC FR-001): a second click while a run is in
+        // flight gets the frozen toast — never a second stacked spinner.
+        const release = commitGenGate.acquire();
+        if (release === null) {
+          void vscode.window.showInformationMessage(
+            TOAST_GENERATION_IN_PROGRESS,
+          );
+          return;
+        }
+        try {
+          await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.SourceControl,
+              title: "UnicDB: generating commit message…",
+              cancellable: true,
+            },
+            async (progress, token) =>
+              runGenerateCommitMessage(
+                buildCommitGenDeps(aiStore, context, progress, token),
+              ),
+          );
+        } finally {
+          release();
+        }
+      },
     ),
   );
   // 16. UnicDB.aiChat — TASK-004: AI chat panel with real deps.
@@ -4286,25 +4314,14 @@ async function buildCommitGenOmpOneShot(
     cwd,
     mcpServers: [],
   });
-  return {
-    async generate(prompt: string): Promise<string> {
-      // One settled outcome guaranteed: done → text, error → reject, or the
-      // bounded timeout below → reject. Never an indefinite pending promise.
-      const driver = driveCommitGenOneShot({
-        timeoutMs: COMMIT_GEN_OMP_TIMEOUT_MS,
-        onSettle: () => {
-          void engine.shutdown();
-        },
-      });
-      void engine.send(prompt, driver.events).catch((e: unknown) => driver.fail(e));
-      return await driver.promise;
-    },
-  };
+  return createCommitGenOmpTurn(engine);
 }
 
 function buildCommitGenDeps(
   aiStore: AiConfigStore,
   context: vscode.ExtensionContext,
+  progress: vscode.Progress<{ message?: string }>,
+  token: vscode.CancellationToken,
 ): CommitGenDeps {
   // Cached repo handle — pick once per command invocation, not per call.
   // `pickRepository()` is multi-repo-out-of-scope (PLAN §2); falls back to
@@ -4314,20 +4331,38 @@ function buildCommitGenDeps(
     const api = getGitApi();
     return pickRepository(api);
   })();
+  // Cancel channel (SPEC FR-003/FR-005): the progress token drives an
+  // AbortController whose signal reaches the in-flight provider fetch via
+  // `deps.signal` → `ProviderRequest.signal`; the same token cancels the omp
+  // one-shot driver below.
+  const cancelController = new AbortController();
+  token.onCancellationRequested(() => cancelController.abort());
+
 
   return {
     loadSettings: () => aiStore.loadSettings(),
     loadConfig: () => aiStore.loadConfig(),
     detectOmp: () => detectOmp(),
     resolveEngine,
-    buildOmpEngine: async (choice, modelId) =>
-      buildCommitGenOmpOneShot(choice.path ?? "omp", modelId),
+    buildOmpEngine: async (choice, modelId) => {
+      const oneShot = await buildCommitGenOmpOneShot(
+        choice.path ?? "omp",
+        modelId,
+      );
+      // FR-005: a user cancel settles the omp turn early instead of waiting
+      // out the 120s ceiling; the flow then returns silently at the
+      // isCancelled checkpoint.
+      token.onCancellationRequested(() => oneShot.cancel?.());
+      return oneShot;
+    },
     builtinComplete: (cfg, req) =>
       createProviderClient({
         baseUrl: cfg.baseUrl,
         apiKey: cfg.apiKey,
         method: cfg.method,
-        timeoutMs: cfg.timeoutMs,
+        // FR-004: the commit-gen flow is capped at COMMIT_GEN_TIMEOUT_MS —
+        // this overrides the user's configured timeout for this flow only.
+        timeoutMs: COMMIT_GEN_TIMEOUT_MS,
       }).complete(req),
     collectDiff: async () => {
       if (!selectedRepo) return null;
@@ -4351,6 +4386,15 @@ function buildCommitGenDeps(
     openSettings: () => {
       commandOpenAiSettings(aiStore);
     },
+    // FR-002: stage text rotates through the frozen PROGRESS_* strings on
+    // the SCM progress notification; the token is the cancel poll.
+    report: (message: string) => {
+      progress.report({ message });
+    },
+    isCancelled: () => token.isCancellationRequested,
+    // FR-003: forwarded onto every ProviderRequest so a cancel reaches the
+    // in-flight fetch (complete() links it to its internal AbortController).
+    signal: cancelController.signal,
     writeDebugArtifact: ({ label, body, context: meta }) => {
       // Persist raw provider payloads to disk so the user can paste them
       // back for diagnosis without DevTools. Skipped silently if the body
