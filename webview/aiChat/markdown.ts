@@ -234,16 +234,49 @@ export function createBlockElement(block: MarkdownBlock): HTMLElement {
   return p;
 }
 
+/** Per-root memoized render: block keys alongside their DOM nodes. */
+interface RenderedBlocks {
+  keys: string[];
+  nodes: HTMLElement[];
+}
+
+const renderedByRoot = new WeakMap<HTMLElement, RenderedBlocks>();
+
+/** Serialize a block into its memoization key. */
+function blockKey(block: MarkdownBlock): string {
+  if (block.kind === "heading") return `heading|${block.level}||${block.text}`;
+  if (block.kind === "code") return `code||${block.lang}|${block.code}`;
+  return `paragraph|||${block.text}`;
+}
+
 /**
  * Replace `root`'s children with the rendered Markdown for `raw`.
  *
  * `root` should be a dedicated body element the caller owns; this function
  * clears it with `replaceChildren` and never touches the caller's own nodes.
+ *
+ * TASK-CHATUX-W5-2: rendered blocks are memoized per root. Each block's key
+ * (`kind|level|lang|text/code`) is compared index-by-index against the
+ * previous render; an unchanged key reuses the SAME element (re-appended in
+ * place, listeners intact — a code-block Copy button keeps its state), a
+ * changed or new key is rebuilt through `createBlockElement`. A streaming
+ * repaint therefore only rebuilds the tail block instead of every block.
  */
 export function renderMarkdownInto(root: HTMLElement, raw: string): void {
-  const fragment = document.createDocumentFragment();
-  for (const block of parseMarkdownBlocks(raw)) {
-    fragment.appendChild(createBlockElement(block));
+  const cached = renderedByRoot.get(root);
+  const keys: string[] = [];
+  const nodes: HTMLElement[] = [];
+  const blocks = parseMarkdownBlocks(raw);
+  for (let i = 0; i < blocks.length; i++) {
+    const key = blockKey(blocks[i]!);
+    keys.push(key);
+    nodes.push(
+      cached !== undefined && cached.keys[i] === key
+        ? cached.nodes[i]!
+        : createBlockElement(blocks[i]!),
+    );
   }
-  root.replaceChildren(fragment);
+  renderedByRoot.set(root, { keys, nodes });
+  // Reused nodes are re-appended in place — append order is the new order.
+  root.replaceChildren(...nodes);
 }

@@ -1088,3 +1088,68 @@ describe("provider — streamComplete (caller abort during fetch phase)", () => 
     }
   });
 });
+
+// ============================================================================
+// TASK-GITMSG-001 — ProviderRequest.signal cancel channel (SPEC FR-003)
+// ============================================================================
+describe("provider — complete() caller signal (TASK-GITMSG-001)", () => {
+  // Case 6 — boundary: a pre-aborted req.signal rejects before fetch is
+  // ever invoked.
+  it("pre-aborted req.signal rejects and never calls fetch", async () => {
+    const fetch: FetchLike = vi.fn(async () => jsonResponse({}));
+    const client = createProviderClient({
+      baseUrl: "https://x/v1",
+      apiKey: "sk-1",
+      method: "chat/completions",
+      fetch,
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    try {
+      await client.complete(baseReq({ signal: controller.signal }));
+      throw new Error("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ProviderError);
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  // Case 7 — concurrent: an in-flight complete() rejects when req.signal
+  // aborts; the internal timeout timer is cleared (never fires later).
+  it("external abort mid-flight rejects and clears the timeout timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const abortErr: Error & { name: string } = Object.assign(new Error("aborted"), {
+        name: "AbortError",
+      });
+      const fetch: FetchLike = vi.fn(async (_url, init) => {
+        // Never resolves on its own — rejects only when the linked signal fires.
+        return await new Promise<Response>((_resolve, reject) => {
+          init.signal.addEventListener("abort", () => reject(abortErr), {
+            once: true,
+          });
+        });
+      });
+      const client = createProviderClient({
+        baseUrl: "https://x/v1",
+        apiKey: "sk-1",
+        method: "chat/completions",
+        timeoutMs: 60_000,
+        fetch,
+      });
+      const controller = new AbortController();
+      const p = client.complete(baseReq({ signal: controller.signal }));
+      const assertion = expect(p).rejects.toBeInstanceOf(ProviderError);
+
+      await Promise.resolve();
+      controller.abort();
+      await assertion;
+
+      // The internal timeout timer must have been cleared on rejection.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

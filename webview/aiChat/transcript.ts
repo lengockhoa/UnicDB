@@ -15,10 +15,12 @@
 //   `textContent`-only). User text, context labels, tool labels/summaries,
 //   errors and every action label are written through `textContent`. No raw
 //   provider/user string is ever assigned to `innerHTML`.
-// - COALESCED STREAM PAINT. Streaming deltas are painted on the next
+// - COALESCED STREAM PAINT, ≤30FPS. Streaming deltas are painted on the next
 //   `requestAnimationFrame`, with a hard 100 ms `setTimeout` fallback, so a
-//   burst of deltas costs at most one Markdown re-render. Terminal items paint
-//   synchronously and finalize exactly once.
+//   burst of deltas costs at most one Markdown re-render — and a flush that
+//   would land inside `STREAM_PAINT_MIN_INTERVAL_MS` (33 ms) of the previous
+//   one is deferred through a timeout instead (TASK-CHATUX-W5-2). Terminal
+//   items paint synchronously and finalize exactly once.
 // - STOP. A stopped turn keeps its partial text, drops the decorative caret,
 //   and gains one muted `Stopped` footer.
 // - VIEWPORT CAP. Only `state.transcript.renderOrder` (<= `paging.cap`, default
@@ -37,6 +39,10 @@ import { extractSqlFences, renderMarkdownInto } from "./markdown";
 import { CHAT_V2_ROOT_CLASS } from "./shell";
 
 const PREFIX = CHAT_V2_ROOT_CLASS;
+
+/** Min interval between stream paints — caps streaming repaints at ~30fps
+ * (TASK-CHATUX-W5-2, SPEC §7.2). */
+export const STREAM_PAINT_MIN_INTERVAL_MS = 33;
 
 /** Max stream-paint latency before a forced flush (ms). */
 export const STREAM_PAINT_FALLBACK_MS = 100;
@@ -192,6 +198,10 @@ export function createTranscriptRenderer(
   let liveNode: HTMLElement | null = null;
   let rafHandle: number | null = null;
   let fallbackHandle: ReturnType<typeof setTimeout> | null = null;
+  /** Deferred flush while inside the min-interval window. */
+  let throttleHandle: ReturnType<typeof setTimeout> | null = null;
+  /** Timestamp of the last flush that actually painted; null before the first. */
+  let lastFlushAt: number | null = null;
   let disposed = false;
 
   // ------------------------------------------------------------------
@@ -201,6 +211,7 @@ export function createTranscriptRenderer(
   function flushPending(): void {
     cancelScheduled();
     if (pendingPaint.size === 0) return;
+    lastFlushAt = Date.now();
     const batch = Array.from(pendingPaint.values());
     pendingPaint.clear();
     for (const { record, raw } of batch) {
@@ -219,11 +230,28 @@ export function createTranscriptRenderer(
       clearTimeout(fallbackHandle);
       fallbackHandle = null;
     }
+    if (throttleHandle !== null) {
+      clearTimeout(throttleHandle);
+      throttleHandle = null;
+    }
   }
 
   function schedulePaint(record: KeyedRecord, raw: string): void {
     pendingPaint.set(recordKey(record), { record, raw });
-    if (rafHandle !== null || fallbackHandle !== null) return;
+    if (rafHandle !== null || fallbackHandle !== null || throttleHandle !== null) return;
+    // TASK-CHATUX-W5-2: a flush that would land inside
+    // STREAM_PAINT_MIN_INTERVAL_MS of the previous one is deferred through a
+    // timeout for the remainder of the window instead of the next frame.
+    if (lastFlushAt !== null) {
+      const wait = STREAM_PAINT_MIN_INTERVAL_MS - (Date.now() - lastFlushAt);
+      if (wait > 0) {
+        throttleHandle = setTimeout(() => {
+          throttleHandle = null;
+          flushPending();
+        }, wait);
+        return;
+      }
+    }
     if (typeof requestAnimationFrame === "function") {
       rafHandle = requestAnimationFrame(() => {
         rafHandle = null;
@@ -235,6 +263,7 @@ export function createTranscriptRenderer(
       flushPending();
     }, STREAM_PAINT_FALLBACK_MS);
   }
+
 
   /** Stable identity for the pending map across repaints of one node. */
   const keyOf = new WeakMap<KeyedRecord, string>();

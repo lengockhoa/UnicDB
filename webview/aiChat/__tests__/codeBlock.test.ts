@@ -159,3 +159,74 @@ describe("code block — TASK-CHATUX-003 FR-005", () => {
     expect(source).not.toMatch(/innerHTML\s*=/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// TASK-CHATUX-W5-2 — memoized markdown blocks (SPEC FR-009/FR-010). A repaint
+// of the same root reuses the SAME element object for every block whose key
+// (kind|level|lang|text/code) is unchanged, so a streaming repaint only
+// rebuilds the tail block — and listeners on reused nodes (code-block Copy)
+// survive. The cache is per-root: two roots never share nodes.
+// ---------------------------------------------------------------------------
+
+describe("markdown — TASK-CHATUX-W5-2 memoized blocks", () => {
+  const RAW_A = "intro paragraph\n\n```sql\nselect 1\n```\n\ntail";
+  const RAW_B = "intro paragraph\n\n```sql\nselect 1\n```\n\ntail grew";
+
+  it("#4 node identity: unchanged blocks reuse the SAME element object", () => {
+    const root = document.createElement("div");
+    renderMarkdownInto(root, RAW_A);
+    const before = Array.from(root.children);
+    expect(before.length).toBe(3);
+
+    renderMarkdownInto(root, RAW_B);
+    const after = Array.from(root.children);
+    expect(after.length).toBe(3);
+    expect(after[0]).toBe(before[0]); // unchanged paragraph — same node
+    expect(after[1]).toBe(before[1]); // unchanged code block — same node
+    expect(after[2]).not.toBe(before[2]); // changed tail — rebuilt
+  });
+
+  it("#5 changed tail rebuilds: new text renders, block order preserved", () => {
+    const root = document.createElement("div");
+    renderMarkdownInto(root, RAW_A);
+    renderMarkdownInto(root, RAW_B);
+    const after = Array.from(root.children);
+    expect(after[0]!.textContent).toBe("intro paragraph");
+    expect(after[1]!.textContent).toContain("select 1");
+    expect(after[2]!.textContent).toBe("tail grew");
+    // Order: paragraph, codeblock wrapper, paragraph.
+    expect(after[0]!.tagName).toBe("P");
+    expect(after[1]!.className).toBe(`${PREFIX}-codeblock`);
+    expect(after[2]!.tagName).toBe("P");
+  });
+
+  it("#6 code-block Copy listener survives a repaint on a reused node", async () => {
+    vi.useFakeTimers();
+    const writeText = stubClipboard(() => Promise.resolve());
+    const root = document.createElement("div");
+    renderMarkdownInto(root, RAW_A);
+    const copyBefore = copyButtonOf(root);
+
+    renderMarkdownInto(root, RAW_B); // code block key unchanged → node reused
+    const copyAfter = copyButtonOf(root);
+    expect(copyAfter).toBe(copyBefore);
+
+    copyAfter.click();
+    expect(writeText).toHaveBeenCalledWith("select 1");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(copyAfter.textContent).toBe(COPIED_LABEL);
+  });
+
+  it("#7 per-root cache: two roots rendering the same raw get DISTINCT nodes", () => {
+    const rootA = document.createElement("div");
+    const rootB = document.createElement("div");
+    renderMarkdownInto(rootA, RAW_A);
+    renderMarkdownInto(rootB, RAW_A);
+    const a = Array.from(rootA.children);
+    const b = Array.from(rootB.children);
+    expect(a.length).toBe(b.length);
+    for (let i = 0; i < a.length; i++) {
+      expect(a[i]).not.toBe(b[i]);
+    }
+  });
+});

@@ -1,6 +1,6 @@
 # TASK-CHATUX-W5-1 — W5 a11y audit: reduced-motion coverage + focus-ring/aria pins
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3
@@ -77,3 +77,82 @@ here (same-wave file-sharing rule). The CSS scan should extract selectors
 textually (the file has no build-time CSS parser); a regex over
 `selector { … animation|transition … }` blocks is sufficient — see the
 existing scan patterns in `errorsScrollA11y.test.ts` and `shellGrid.test.ts`.
+
+### 2026-09-21 · executor · unic-code
+Audit findings beyond the planner's verified gaps:
+- `-tool-head` (FR-007 pinned) is a non-focusable `<div>` — the real button is
+  `-tool-toggle` inside it. Added the pin rule for `-tool-head` plus a real
+  rule for `-tool-toggle`; noted here per the scope guard (transcript.ts is
+  W5-2's file, untouched).
+- Additional focusable elements had no `:focus-visible` rule and got one:
+  `-mark`, `-title`, `-engine`, `-overflow`, `-composer-menu-row`,
+  `-activity-detail-toggle`, `-activity-copy`, `-autocomplete-retry`,
+  `-context-chip-preview`, `-title-editor`, `-attachment-thumb-remove`.
+- `-overlay-menu-row` is `role=option` (activedescendant pattern, never
+  focused) — intentionally no `:focus-visible` rule.
+- `-stop` class is dead CSS (no TS emits it; the stop state is `-primary-busy`)
+  — left untouched.
+- `-toast`/`-menu-row`/`-overlay-modal`/`-dialog` carry no
+  `animation:`/`transition:` declarations — nothing to suppress there.
+- `.UnicDB-ai-chat-v2-composer .UnicDB-ai-chat-v2-control` out-specified the
+  old RM rule (real specificity bug, not just a scan gap) — fixed by listing
+  the descendant selector in the new composer RM block.
+- No a11y.ts gap found: live regions, announcer, combobox, tooltip helpers all
+  satisfy the pinned invariants — file unchanged.
+
+## Progress
+
+- 2026-09-21T21:31:00+07:00 · milestone: green · last-green: 45/45 errorsScrollA11y + 445/445 aiChat dir + tsc clean · files: webview/aiChat/styles.css, webview/aiChat/__tests__/errorsScrollA11y.test.ts, docs/AI_HANDOFF/tasks/TASK-CHATUX-W5-1.md · drift: none
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: other (Oh My Pi harness)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecW51 (feature-implementer)
+SUMMARY: Extended prefers-reduced-motion coverage to every animated/transitioned
+selector (5 real gaps: -tool-status[running], -live-dot, composer -control,
+-primary, -autocomplete-spinner) and added :focus-visible rings for the 4
+missing FR-007 pins plus 12 audit-found focusable classes. Three CSS-scan tests
+pin the invariants permanently.
+TEST_PLAN_FOLLOWED: task §Test Cases — cases 1-3 added as new CSS-scan tests;
+cases 4-6 already existed verbatim in this file (live regions :415, announcer
+refusal :445, combobox activedescendant :481).
+FILES_CHANGED:
+  - webview/aiChat/styles.css: 3 new RM blocks + 16 new :focus-visible rules
+  - webview/aiChat/__tests__/errorsScrollA11y.test.ts: new "W5 a11y audit"
+    describe (3 tests: RM coverage scan, outline:none uniqueness, focus pins)
+TESTS_ADDED:
+  - errorsScrollA11y.test.ts: "reduced-motion coverage: every
+    animation/transition selector is suppressed inside a reduce block",
+    "`outline: none` appears exactly once, on the composer input",
+    "focus-visible: every pinned interactive selector has an outline + offset ring"
+RED_OUTPUT: |
+  FAIL > reduced-motion coverage … expected [ …(5) ] to deeply equal []
+    + ".UnicDB-ai-chat-v2-tool-status[data-status=\"running\"]"
+    + ".UnicDB-ai-chat-v2-live-dot"
+    + ".UnicDB-ai-chat-v2-composer .UnicDB-ai-chat-v2-control"
+    + ".UnicDB-ai-chat-v2-primary"
+    + ".UnicDB-ai-chat-v2-autocomplete-spinner"
+  FAIL > focus-visible … expected [ …(16) ] to deeply equal []
+    (+16 selectors incl. -codeblock-copy, -load-earlier, -reasoning-toggle,
+     -tool-head, -mark, -title, -engine, -overflow, -composer-menu-row,
+     -activity-detail-toggle, -activity-copy, -tool-toggle,
+     -autocomplete-retry, -context-chip-preview, -title-editor,
+     -attachment-thumb-remove)
+  Tests 2 failed | 43 passed (45)
+VERIFICATION:
+  command: npx vitest run webview/aiChat/__tests__/errorsScrollA11y.test.ts
+  result: 45 pass / 0 fail
+  output_excerpt: |
+    ✓ webview/aiChat/__tests__/errorsScrollA11y.test.ts (45 tests) 38ms
+    Test Files 1 passed (1)
+    Tests 45 passed (45)
+  command: npm run typecheck
+  result: exit 0 (tsc --noEmit clean)
+  command: npx vitest run webview/aiChat/__tests__/
+  result: 445 pass / 0 fail across 24 files (no regression)
+ISSUES: none — a11y.ts untouched (no gap); transcript.ts/markdown.ts untouched
+  per same-wave file-sharing rule.
+HANDOFF_TO_REVIEWER: yes — DONE with fresh PASS output.
+NEXT: ready for review

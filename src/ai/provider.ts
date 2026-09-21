@@ -44,6 +44,10 @@ export interface ProviderRequest {
   tools?: ToolDef[];
   maxOutputTokens?: number;
   temperature?: number;
+  /** User-cancel channel (SPEC FR-003). `complete()` links it to its
+   *  internal AbortController: an abort propagates to the in-flight fetch
+   *  and a pre-aborted signal rejects before fetch is ever called. */
+  signal?: AbortSignal;
 }
 
 export interface ProviderResult {
@@ -685,6 +689,17 @@ export function createProviderClient(opts: ProviderOptions): {
       const url = buildUrl(baseUrl, method);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
+      // Caller cancel channel (SPEC FR-003): forward req.signal aborts into
+      // the internal controller so a cancel reaches the in-flight fetch.
+      if (req.signal) {
+        if (req.signal.aborted) {
+          controller.abort();
+        } else {
+          req.signal.addEventListener("abort", () => controller.abort(), {
+            once: true,
+          });
+        }
+      }
       let body: Record<string, unknown>;
       try {
         body =
@@ -692,6 +707,17 @@ export function createProviderClient(opts: ProviderOptions): {
       } catch (e) {
         clearTimeout(timer);
         throw new ProviderError(`invalid request: ${(e as Error).message}`, {
+          timeout: false,
+          endpoint: url,
+          bodySnippet: "",
+        });
+      }
+
+      // Pre-aborted (caller cancel landed before we got here): reject before
+      // fetch is ever invoked.
+      if (controller.signal.aborted) {
+        clearTimeout(timer);
+        throw new ProviderError("request aborted before fetch", {
           timeout: false,
           endpoint: url,
           bodySnippet: "",
@@ -713,6 +739,15 @@ export function createProviderClient(opts: ProviderOptions): {
         clearTimeout(timer);
         const err = e as Error & { name?: string };
         if (err.name === "AbortError") {
+          // Distinguish caller-level abort from our internal timeout: a
+          // caller abort is not a timeout.
+          if (req.signal?.aborted) {
+            throw new ProviderError("request aborted by caller", {
+              timeout: false,
+              endpoint: url,
+              bodySnippet: "",
+            });
+          }
           throw new ProviderError(`request timed out after ${timeoutMs}ms`, {
             timeout: true,
             endpoint: url,

@@ -9,7 +9,7 @@
 | TASK-GITMSG-001 | Commit-gen core: single-flight gate, cancel channel, stage progress | ready | none | - | - |
 | TASK-GITMSG-002 | Commit-gen wiring: cancellable progress + omp driver cancel | ready | TASK-GITMSG-001 | - | - |
 | TASK-CHATUX-W5-1 | W5 a11y audit: reduced-motion coverage + focus-ring/aria pins | ready | none | - | - |
-| TASK-CHATUX-W5-2 | W5 perf: ≤30fps stream paint + memoized markdown blocks | ready | none | - | - |
+| TASK-CHATUX-W5-2 | W5 perf: ≤30fps stream paint + memoized markdown blocks | pending_review | none | ExecW52 | - |
 
 ## Queued — future cycles
 

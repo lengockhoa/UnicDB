@@ -1,6 +1,6 @@
 # TASK-GITMSG-001 — Commit-gen core: single-flight gate, cancel channel, stage progress
 
-- Status: `ready`
+- Status: `done`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3
@@ -82,3 +82,81 @@ Cancel UX: silent close (no toast, no injection) — SPEC §14 Q4. The
 `PROGRESS_RETRYING` stage fires inside the `generateWithGuard` call closure
 on the second attempt only; keep the report call adjacent to the retry
 branch, not inside `generateWithGuard` (its signature is frozen).
+
+## Progress
+
+- 2026-09-21T21:23:11+0700 · milestone: red→green — gate + progress/cancel ports + provider signal · last-green: `npx vitest run src/ai/__tests__/commitGenGate.test.ts src/ai/__tests__/commitGenCommand.test.ts src/ai/__tests__/provider.test.ts` (74 pass) + `npm run typecheck` (0 errors) + `npx vitest run src/ai/__tests__/` (395 pass, 1 skipped — no regression) · files: src/ai/commitGenGate.ts, src/ai/commitGenCommand.ts, src/ai/provider.ts, src/ai/__tests__/commitGenGate.test.ts, src/ai/__tests__/commitGenCommand.test.ts, src/ai/__tests__/provider.test.ts · drift: none
+
+## Executor Report
+
+```
+STATUS: DONE
+EXECUTOR_TOOL: other (Oh My Pi harness)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecG1
+SUMMARY: Landed the pure/testable half of the commit-gen UX fix: new
+  single-flight gate module (createCommitGenGate), frozen stage/timeout
+  strings + report/isCancelled/signal ports on CommitGenDeps, cancel?() on
+  OmpOneShot, stage reporting + silent cancel checkpoints in
+  runGenerateCommitMessage, and ProviderRequest.signal linked into
+  complete()'s AbortController (pre-aborted rejects before fetch; caller
+  abort ≠ timeout).
+TEST_PLAN_FOLLOWED: task §Test Cases — all 9 cases implemented (cases 1–2 in
+  commitGenGate.test.ts; cases 3–5, 8–9 + a PROGRESS_RETRYING pin in
+  commitGenCommand.test.ts; cases 6–7 in provider.test.ts)
+FILES_CHANGED:
+  - src/ai/commitGenGate.ts: NEW — createCommitGenGate() single-flight slot,
+    idempotent release (SPEC §8.1)
+  - src/ai/commitGenCommand.ts: COMMIT_GEN_TIMEOUT_MS=120_000,
+    TOAST_GENERATION_IN_PROGRESS, PROGRESS_* consts; CommitGenDeps gains
+    report?/isCancelled?/signal?; OmpOneShot gains cancel?();
+    runGenerateCommitMessage reports stages, checks isCancelled post-diff
+    and post-outcome, passes signal on builtinComplete requests, reports
+    PROGRESS_RETRYING on the corrective attempt only
+  - src/ai/provider.ts: ProviderRequest gains signal?: AbortSignal;
+    complete() links it to the internal AbortController, rejects
+    pre-aborted before fetch, maps caller abort to non-timeout ProviderError
+  - src/ai/__tests__/commitGenGate.test.ts: NEW — cases 1–2
+  - src/ai/__tests__/commitGenCommand.test.ts: +6 tests — cases 3–5, 8–9,
+    PROGRESS_RETRYING order pin
+  - src/ai/__tests__/provider.test.ts: +2 tests — cases 6–7
+TESTS_ADDED:
+  - src/ai/__tests__/commitGenGate.test.ts: acquire→release→acquire;
+    acquire-while-held + idempotent release
+  - src/ai/__tests__/commitGenCommand.test.ts: stage order; isCancelled
+    post-diff silent return; req.signal is AbortSignal;
+    COMMIT_GEN_TIMEOUT_MS===120_000; cancel mid-retry silent return;
+    PROGRESS_RETRYING only on retry
+  - src/ai/__tests__/provider.test.ts: pre-aborted signal rejects before
+    fetch; external abort mid-flight rejects + timer cleared
+RED_OUTPUT: |
+  FAIL src/ai/__tests__/commitGenGate.test.ts — Failed to load url
+    ../commitGenGate (module did not exist)
+  FAIL commitGenCommand.test.ts — 6 failed: stage order, isCancelled silent
+    return, req.signal AbortSignal, COMMIT_GEN_TIMEOUT_MS export,
+    cancel mid-retry, PROGRESS_RETRYING (exports/ports absent)
+  FAIL provider.test.ts — 2 failed: "expected Error: should have thrown to
+    be an instance of ProviderError" (pre-aborted); mid-flight abort test
+    timed out (signal not linked)
+VERIFICATION:
+  command: npx vitest run src/ai/__tests__/commitGenGate.test.ts src/ai/__tests__/commitGenCommand.test.ts src/ai/__tests__/provider.test.ts
+  result: 74 pass / 0 fail
+  output_excerpt: |
+    ✓ src/ai/__tests__/commitGenGate.test.ts  (2 tests) 2ms
+    ✓ src/ai/__tests__/provider.test.ts  (46 tests) 14ms
+    ✓ src/ai/__tests__/commitGenCommand.test.ts  (26 tests) 9ms
+    Test Files 3 passed (3)
+    Tests 74 passed (74)
+  command: npm run typecheck
+  result: exit 0 — 0 errors
+  command: npx vitest run src/ai/__tests__/
+  result: 395 pass / 0 fail / 1 skipped (live smoke) — no regression
+ISSUES: none — CommitGenDeps gained an optional `signal?: AbortSignal` port
+  beyond the frozen §8.2 list; required so GITMSG-002 can wire the progress
+  token's AbortController into builtinComplete (FR-003). Optional, so the
+  frozen shape is preserved.
+HANDOFF_TO_REVIEWER: yes — handoff mode; task status set to done, ready for
+  reviewer pickup per pipeline.
+NEXT: ready for review — TASK-GITMSG-002 consumes these exports for host
+  wiring (extension.ts gate + withProgress token + omp driver cancel).
+```

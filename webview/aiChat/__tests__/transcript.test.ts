@@ -30,6 +30,7 @@ import {
   COPY_OK_LABEL,
   LOAD_EARLIER_LABEL,
   STOPPED_LABEL,
+  STREAM_PAINT_MIN_INTERVAL_MS,
   createTranscriptRenderer,
   type TranscriptRenderer,
 } from "../transcript";
@@ -128,9 +129,9 @@ beforeEach(() => {
   });
   renderer = createTranscriptRenderer(makeRefs());
 });
-
 afterEach(() => {
   renderer.dispose();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -163,20 +164,20 @@ describe("transcript — case 1: one stable node per messageId", () => {
   });
 
   it("coalesces a delta burst into a single deferred paint", () => {
+    vi.useFakeTimers();
     let { state, next } = openTurn();
     state = streamText(state, next++, "a");
     renderer.render(state);
     flushRaf();
-    const renderSpy = vi.spyOn(Number.prototype, "toString"); // no-op holder
-    renderSpy.mockRestore();
 
     state = streamText(state, next++, "b");
     renderer.render(state);
     state = streamText(state, next++, "c");
     renderer.render(state);
-    // Not painted yet — the frame callback has not run.
+    // Not painted yet — inside the 33ms min-interval window the flush is
+    // deferred through a timeout, not the next frame (TASK-CHATUX-W5-2).
     expect(container.querySelector(`.${PREFIX}-assistant-body`)?.textContent).toBe("a");
-    flushRaf();
+    vi.advanceTimersByTime(STREAM_PAINT_MIN_INTERVAL_MS);
     expect(container.querySelector(`.${PREFIX}-assistant-body`)?.textContent).toBe("abc");
   });
 });
@@ -706,5 +707,73 @@ describe("transcript — scoped CSS keeps the PLAN §6 geometry", () => {
     // stay visible (muted) at rest.
     expect(css).not.toMatch(/\.UnicDB-ai-chat-v2-item:hover\s+\.UnicDB-ai-chat-v2-action/);
     expect(css).not.toMatch(/\.UnicDB-ai-chat-v2-item:focus-within\s+\.UnicDB-ai-chat-v2-action/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK-CHATUX-W5-2 — ≤30fps stream paint (SPEC §7.2). Streaming deltas still
+// coalesce on rAF, but a flush that lands inside
+// STREAM_PAINT_MIN_INTERVAL_MS of the previous one is deferred through a
+// timeout instead of painting on the very next frame. The 100ms
+// STREAM_PAINT_FALLBACK_MS path is preserved for environments without rAF.
+// ---------------------------------------------------------------------------
+
+describe("transcript — TASK-CHATUX-W5-2 ≤30fps stream paint", () => {
+  it("exports STREAM_PAINT_MIN_INTERVAL_MS === 33", () => {
+    expect(STREAM_PAINT_MIN_INTERVAL_MS).toBe(33);
+  });
+
+  it("#1 burst coalescing: 5 rapid updates produce exactly 1 flush", () => {
+    vi.useFakeTimers();
+    const paintSpy = vi.spyOn(Element.prototype, "replaceChildren");
+    const { state, next } = openTurn();
+    renderer.render(state);
+    let seq = next;
+    let s = state;
+    // Five deltas inside one <33ms window, each followed by a frame — today
+    // every frame paints (5 flushes); the min-interval gate must coalesce
+    // the burst to exactly 1 flush.
+    for (const text of ["a", "ab", "abc", "abcd", "abcde"]) {
+      s = streamText(s, seq++, text);
+      renderer.render(s);
+      flushRaf();
+    }
+    expect(paintSpy).toHaveBeenCalledTimes(1);
+    // The deferred tail paint still lands (latest raw wins, nothing lost).
+    vi.advanceTimersByTime(STREAM_PAINT_MIN_INTERVAL_MS + 1);
+    flushRaf();
+    expect(paintSpy).toHaveBeenCalledTimes(2);
+    expect(byKey("m1")?.querySelector(`[data-chat-body]`)?.textContent).toContain("abcde");
+  });
+
+  it("#2 interval boundary: an update ≥33ms after the last flush uses the rAF path", () => {
+    vi.useFakeTimers();
+    const { state, next } = openTurn();
+    renderer.render(state);
+    let s = streamText(state, next, "first");
+    renderer.render(s);
+    flushRaf(); // first paint flushes immediately via rAF
+
+    vi.advanceTimersByTime(STREAM_PAINT_MIN_INTERVAL_MS);
+    s = streamText(s, next + 1, "second");
+    renderer.render(s);
+    // rAF path: exactly one queued frame callback and only the 100ms
+    // fallback timer pending — no throttle timeout was armed.
+    expect(rafQueue.length).toBe(1);
+    expect(vi.getTimerCount()).toBe(1);
+    flushRaf();
+    expect(byKey("m1")?.querySelector(`[data-chat-body]`)?.textContent).toContain("second");
+  });
+
+  it("#3 fallback preserved: without requestAnimationFrame paints flush via setTimeout", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("requestAnimationFrame", undefined);
+    const { state, next } = openTurn();
+    renderer.render(state);
+    const s = streamText(state, next, "no-raf paint");
+    renderer.render(s);
+    expect(rafQueue.length).toBe(0);
+    vi.advanceTimersByTime(100);
+    expect(byKey("m1")?.querySelector(`[data-chat-body]`)?.textContent).toContain("no-raf paint");
   });
 });

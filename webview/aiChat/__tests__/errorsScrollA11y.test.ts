@@ -652,3 +652,157 @@ describe("responsive/HC/reduced-motion CSS contract", () => {
     expect(body).not.toContain("width: 100vw");
   });
 });
+
+// ---------------------------------------------------------------------------
+// TASK-CHATUX-W5-1 — a11y audit pins: reduced-motion coverage + focus ring
+// ---------------------------------------------------------------------------
+
+describe("W5 a11y audit — reduced-motion coverage + focus ring", () => {
+  const rawCss = readFileSync(resolve(process.cwd(), "webview", "aiChat", "styles.css"), "utf8");
+
+  /** Index just past the `}` that closes the `{` at `open`. */
+  function blockEnd(text: string, open: number): number {
+    let depth = 0;
+    for (let i = open; i < text.length; i++) {
+      if (text[i] === "{") depth++;
+      else if (text[i] === "}") {
+        depth--;
+        if (depth === 0) return i + 1;
+      }
+    }
+    return text.length;
+  }
+
+  // Comments are blanked (length-preserving) so `animation:` inside a comment
+  // can never produce a false gap, and a comment can never fake coverage.
+  const css = rawCss.replace(/\/\*[\s\S]*?\*\//g, (m) => " ".repeat(m.length));
+
+  // Every @media block is unwrapped in place (opener + closing brace blanked,
+  // inner rules kept at their original offsets). Rules nested inside
+  // non-reduced-motion media queries still count as "outside" coverage.
+  const reducedRanges: Array<[number, number]> = [];
+  const flat = css.replace(/@media[^{]+\{/g, (m, offset: number) => {
+    const open = offset + m.length - 1;
+    const end = blockEnd(css, open);
+    if (/prefers-reduced-motion\s*:\s*reduce/.test(m)) {
+      reducedRanges.push([open + 1, end - 1]);
+    }
+    return " ".repeat(m.length);
+  });
+  // Blank each @media block's closing brace (the `}` right before each
+  // recorded end, and the matching `}` for non-RM blocks) so inner rules scan
+  // as top-level. Re-derive ends on the flattened text to stay exact.
+  let flatCss = flat;
+  {
+    const closers: number[] = [];
+    const re = /@media[^{]+\{/g;
+    let mm: RegExpExecArray | null;
+    while ((mm = re.exec(css)) !== null) {
+      closers.push(blockEnd(css, mm.index + mm[0].length - 1) - 1);
+    }
+    const chars = flatCss.split("");
+    for (const c of closers) chars[c] = " ";
+    flatCss = chars.join("");
+  }
+  // @keyframes bodies are not selectors — blank them (length-preserving) so
+  // the recorded reduce-block ranges still line up with the scanned text.
+  const noKeyframes = flatCss.replace(/@keyframes[^{]+\{[\s\S]*?\}\s*\}/g, (m) => " ".repeat(m.length));
+
+  const rules: Array<{ selector: string; body: string }> = [];
+  {
+    const re = /([^{}]+)\{([^{}]*)\}/g;
+    let mm: RegExpExecArray | null;
+    while ((mm = re.exec(noKeyframes)) !== null) {
+      const selector = mm[1]!.trim().replace(/\s+/g, " ");
+      if (selector === "" || selector.startsWith("@")) continue;
+      rules.push({ selector, body: mm[2]! });
+    }
+  }
+
+  const reducedSelectors = new Set<string>();
+  for (const [start, end] of reducedRanges) {
+    const inner = noKeyframes.slice(start, end);
+    const re = /([^{}]+)\{([^{}]*)\}/g;
+    let mm: RegExpExecArray | null;
+    while ((mm = re.exec(inner)) !== null) {
+      for (const part of mm[1]!.split(",")) {
+        const sel = part.trim().replace(/\s+/g, " ");
+        if (sel !== "") reducedSelectors.add(sel);
+      }
+    }
+  }
+
+  it("reduced-motion coverage: every animation/transition selector is suppressed inside a reduce block", () => {
+    const gaps: string[] = [];
+    for (const rule of rules) {
+      if (!/\b(?:animation|transition)(?:-[\w-]+)?\s*:/.test(rule.body)) continue;
+      const covered = rule.selector
+        .split(",")
+        .map((s) => s.trim())
+        .every((s) => reducedSelectors.has(s));
+      if (!covered) gaps.push(rule.selector);
+    }
+    expect(gaps).toEqual([]);
+  });
+
+  it("`outline: none` appears exactly once, on the composer input (ring via :focus-within)", () => {
+    const offenders = rules.filter((r) => /\boutline\s*:\s*none\b/.test(r.body));
+    expect(offenders.map((r) => r.selector)).toEqual([".UnicDB-ai-chat-v2-input"]);
+  });
+
+  it("focus-visible: every pinned interactive selector has an outline + offset ring", () => {
+    // SPEC FR-007 pinned list plus the focusable classes the audit found
+    // without a rule (buttons/tabindex targets in the V2 surface).
+    const pinned = [
+      ".UnicDB-ai-chat-v2-control:focus-visible",
+      ".UnicDB-ai-chat-v2-send:focus-visible",
+      ".UnicDB-ai-chat-v2-action:focus-visible",
+      ".UnicDB-ai-chat-v2-chip:focus-visible",
+      ".UnicDB-ai-chat-v2-context-chip-body:focus-visible",
+      ".UnicDB-ai-chat-v2-context-chip-remove:focus-visible",
+      ".UnicDB-ai-chat-v2-primary:focus-visible",
+      ".UnicDB-ai-chat-v2-activity-header:focus-visible",
+      ".UnicDB-ai-chat-v2-activity-reasoning-header:focus-visible",
+      ".UnicDB-ai-chat-v2-menu-row:focus-visible",
+      ".UnicDB-ai-chat-v2-dialog-action:focus-visible",
+      ".UnicDB-ai-chat-v2-title-input:focus-visible",
+      ".UnicDB-ai-chat-v2-resume-row:focus-visible",
+      ".UnicDB-ai-chat-v2-permission-action:focus-visible",
+      ".UnicDB-ai-chat-v2-permission-details-toggle:focus-visible",
+      ".UnicDB-ai-chat-v2-permission-detail-copy:focus-visible",
+      ".UnicDB-ai-chat-v2-overlay-modal-action:focus-visible",
+      ".UnicDB-ai-chat-v2-change-plan-action:focus-visible",
+      ".UnicDB-ai-chat-v2-error-card-action:focus-visible",
+      ".UnicDB-ai-chat-v2-scroll-pill:focus-visible",
+      ".UnicDB-ai-chat-v2-codeblock-copy:focus-visible",
+      ".UnicDB-ai-chat-v2-load-earlier:focus-visible",
+      ".UnicDB-ai-chat-v2-reasoning-toggle:focus-visible",
+      ".UnicDB-ai-chat-v2-tool-head:focus-visible",
+      // Audit additions: focusable elements missing a ring entirely.
+      ".UnicDB-ai-chat-v2-mark:focus-visible",
+      ".UnicDB-ai-chat-v2-title:focus-visible",
+      ".UnicDB-ai-chat-v2-engine:focus-visible",
+      ".UnicDB-ai-chat-v2-overflow:focus-visible",
+      ".UnicDB-ai-chat-v2-composer-menu-row:focus-visible",
+      ".UnicDB-ai-chat-v2-activity-detail-toggle:focus-visible",
+      ".UnicDB-ai-chat-v2-activity-copy:focus-visible",
+      ".UnicDB-ai-chat-v2-tool-toggle:focus-visible",
+      ".UnicDB-ai-chat-v2-autocomplete-retry:focus-visible",
+      ".UnicDB-ai-chat-v2-context-chip-preview:focus-visible",
+      ".UnicDB-ai-chat-v2-title-editor:focus-visible",
+      ".UnicDB-ai-chat-v2-attachment-thumb-remove:focus-visible",
+    ];
+    const missing: string[] = [];
+    for (const sel of pinned) {
+      const rule = rules.find((r) => r.selector.split(",").map((s) => s.trim()).includes(sel));
+      if (rule === undefined || !/\boutline\s*:/.test(rule.body) || !/\boutline-offset\s*:/.test(rule.body)) {
+        missing.push(sel);
+        continue;
+      }
+      // No hard-coded ring colors: the ring must come from a theme variable.
+      const outline = rule.body.match(/\boutline\s*:\s*([^;]+)/)?.[1] ?? "";
+      expect(outline).toMatch(/var\(--(?:UnicDB-ai-chat-v2-focus|vscode-focusBorder)/);
+    }
+    expect(missing).toEqual([]);
+  });
+});

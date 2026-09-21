@@ -7,7 +7,14 @@ import type {
   CommitDiffInputLike,
   OmpOneShot,
 } from "../commitGenCommand";
-import { runGenerateCommitMessage } from "../commitGenCommand";
+import {
+  runGenerateCommitMessage,
+  COMMIT_GEN_TIMEOUT_MS,
+  PROGRESS_COLLECTING_DIFF,
+  PROGRESS_CONTACTING_MODEL,
+  PROGRESS_VALIDATING,
+  PROGRESS_RETRYING,
+} from "../commitGenCommand";
 import type { AiSettings, AiConfig } from "../settings";
 import type { EngineChoice } from "../engineChoice";
 import type { OmpDetection } from "../omp/detect";
@@ -964,5 +971,143 @@ describe("ai/commitGenCommand — guard flow (SPEC §8.4/§8.5)", () => {
     expect(showError).toHaveBeenCalledTimes(1);
     expect(showError.mock.calls[0][0]).toContain("network exploded");
     expect(showError.mock.calls[0][0]).not.toContain("failed validation");
+  });
+});
+
+
+// ============================================================================
+// TASK-GITMSG-001 — cancellable progress + stages (SPEC FR-002/FR-003/FR-004)
+// ============================================================================
+describe("ai/commitGenCommand — progress stages + cancel (TASK-GITMSG-001)", () => {
+  // Case 3 — happy: report() receives the frozen stages in order on the
+  // builtin happy path.
+  it("reports COLLECTING_DIFF → CONTACTING_MODEL → VALIDATING in order", async () => {
+    const report = vi.fn();
+    const builtinComplete = vi.fn(
+      fakeBuiltinComplete(providerResult("feat(db): thêm chỉ mục cho bảng users")),
+    );
+    const deps = makeDeps({
+      report,
+      builtinComplete: builtinComplete as never,
+    });
+
+    await runGenerateCommitMessage(deps);
+
+    const stages = report.mock.calls.map((c) => c[0]);
+    expect(stages).toEqual([
+      PROGRESS_COLLECTING_DIFF,
+      PROGRESS_CONTACTING_MODEL,
+      PROGRESS_VALIDATING,
+    ]);
+  });
+
+  // Case 4 — edge: isCancelled() true at the post-diff checkpoint → silent
+  // return: no engine call, no injection, no toast of any kind.
+  it("isCancelled after diff → silent return (no builtinComplete, no setInputBox, no toast)", async () => {
+    const builtinComplete = vi.fn(
+      fakeBuiltinComplete(providerResult("feat(db): thêm chỉ mục")),
+    );
+    const setInputBox = vi.fn();
+    const showInfo = vi.fn();
+    const showError = vi.fn();
+    const showSettingsToast = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps({
+      builtinComplete: builtinComplete as never,
+      setInputBox,
+      showInfo,
+      showError,
+      showSettingsToast,
+      isCancelled: () => true,
+    });
+
+    await runGenerateCommitMessage(deps);
+
+    expect(builtinComplete).not.toHaveBeenCalled();
+    expect(setInputBox).not.toHaveBeenCalled();
+    expect(showInfo).not.toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled();
+    expect(showSettingsToast).not.toHaveBeenCalled();
+  });
+
+  // Case 5 — regression: builtinComplete receives req.signal (AbortSignal).
+  it("passes an AbortSignal on the ProviderRequest to builtinComplete", async () => {
+    const builtinComplete = vi.fn(
+      fakeBuiltinComplete(providerResult("feat(db): thêm chỉ mục")),
+    );
+    const deps = makeDeps({ builtinComplete: builtinComplete as never });
+
+    await runGenerateCommitMessage(deps);
+
+    expect(builtinComplete).toHaveBeenCalledTimes(1);
+    const req = builtinComplete.mock.calls[0][1] as ProviderRequest;
+    expect(req.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  // Case 8 — boundary: COMMIT_GEN_TIMEOUT_MS export.
+  it("exports COMMIT_GEN_TIMEOUT_MS === 120_000", () => {
+    expect(COMMIT_GEN_TIMEOUT_MS).toBe(120_000);
+  });
+
+  // Case 9 — edge: cancel mid-retry. Attempt 1 fails the guard → the retry
+  // runs; isCancelled flips true inside the retry call → the post-outcome
+  // checkpoint returns silently (no setInputBox, no toast).
+  it("cancel mid-retry → silent return after the retry outcome", async () => {
+    let cancelled = false;
+    const builtinComplete = vi.fn(
+      (async (_cfg: AiConfig, _req: ProviderRequest) => {
+        if (cancelled) {
+          // Retry attempt — cancel already requested; still resolve so the
+          // post-outcome checkpoint is what stops the flow.
+          return providerResult("fix(db): sửa lỗi truy vấn chậm");
+        }
+        cancelled = true; // cancel lands while attempt 2 is in flight
+        return providerResult(HEX_BLOB_72); // attempt 1 fails the guard
+      }) as unknown as CommitGenDeps["builtinComplete"],
+    );
+    const setInputBox = vi.fn();
+    const showInfo = vi.fn();
+    const showError = vi.fn();
+    const showSettingsToast = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps({
+      builtinComplete: builtinComplete as never,
+      setInputBox,
+      showInfo,
+      showError,
+      showSettingsToast,
+      isCancelled: () => cancelled,
+    });
+
+    await runGenerateCommitMessage(deps);
+
+    expect(builtinComplete).toHaveBeenCalledTimes(2);
+    expect(setInputBox).not.toHaveBeenCalled();
+    expect(showInfo).not.toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled();
+    expect(showSettingsToast).not.toHaveBeenCalled();
+  });
+
+  // Retry stage: PROGRESS_RETRYING fires only on the corrective attempt.
+  it("reports PROGRESS_RETRYING only on the corrective retry attempt", async () => {
+    const report = vi.fn();
+    const builtinComplete = vi.fn(
+      fakeBuiltinSequence([
+        providerResult(HEX_BLOB_72),
+        providerResult("fix(db): sửa lỗi truy vấn chậm"),
+      ]),
+    );
+    const deps = makeDeps({
+      report,
+      builtinComplete: builtinComplete as never,
+    });
+
+    await runGenerateCommitMessage(deps);
+
+    const stages = report.mock.calls.map((c) => c[0]);
+    expect(stages).toEqual([
+      PROGRESS_COLLECTING_DIFF,
+      PROGRESS_CONTACTING_MODEL,
+      PROGRESS_RETRYING,
+      PROGRESS_VALIDATING,
+    ]);
   });
 });

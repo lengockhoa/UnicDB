@@ -1,6 +1,6 @@
 # TASK-CHATUX-W5-2 — W5 perf: ≤30fps stream paint + memoized markdown blocks
 
-- Status: `ready`
+- Status: `pending_review`
 - Owner: `-`
 - Reviewer: `-`
 - Parent plan: `docs/AI_HANDOFF/PLAN.md` §3
@@ -82,3 +82,45 @@ key match, rebuild that index otherwise). Reused nodes keep their
 listeners — that is the point (code-block Copy state survives).
 `pendingPaint` already maps record→latest raw; the throttle only changes
 WHEN `flushPending` runs, never what it paints.
+
+## Progress
+
+- 2026-09-21T21:26+07:00 · milestone: green-verify · last-green: vitest transcript+codeBlock 43/43, aiChat dir 450/450, tsc --noEmit clean · files: webview/aiChat/transcript.ts, webview/aiChat/markdown.ts, webview/aiChat/__tests__/transcript.test.ts, webview/aiChat/__tests__/codeBlock.test.ts · drift: none
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: other (Oh My Pi)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecW52
+SUMMARY: Capped streaming transcript paints at ≤30fps via STREAM_PAINT_MIN_INTERVAL_MS=33 gate in schedulePaint (throttled flushes defer through a remainder timeout; rAF + 100ms fallback preserved) and memoized renderMarkdownInto per root via WeakMap keyed on kind|level|lang|text/code so unchanged blocks reuse the same DOM node.
+TEST_PLAN_FOLLOWED: task §Test Cases — all 7 cases implemented (1-3 in transcript.test.ts, 4-7 in codeBlock.test.ts)
+FILES_CHANGED:
+  - webview/aiChat/transcript.ts: STREAM_PAINT_MIN_INTERVAL_MS export, throttleHandle + lastFlushAt gate in schedulePaint, cancelScheduled covers throttle timer, contract comment updated
+  - webview/aiChat/markdown.ts: RenderedBlocks WeakMap cache + blockKey serializer; renderMarkdownInto reuses unchanged block nodes per root
+  - webview/aiChat/__tests__/transcript.test.ts: W5-2 describe block (export pin, burst coalescing, 33ms boundary, no-rAF fallback); existing burst test updated to deferred-flush contract; afterEach adds useRealTimers
+  - webview/aiChat/__tests__/codeBlock.test.ts: W5-2 describe block (node identity, tail rebuild, Copy listener survival, per-root isolation)
+TESTS_ADDED:
+  - webview/aiChat/__tests__/transcript.test.ts: "exports STREAM_PAINT_MIN_INTERVAL_MS === 33", "#1 burst coalescing", "#2 interval boundary", "#3 fallback preserved"
+  - webview/aiChat/__tests__/codeBlock.test.ts: "#4 node identity", "#5 changed tail rebuilds", "#6 code-block Copy listener survives", "#7 per-root cache"
+RED_OUTPUT: |
+  FAIL codeBlock.test.ts > #4 node identity: unchanged blocks reuse the SAME element object
+  FAIL codeBlock.test.ts > #6 code-block Copy listener survives a repaint on a reused node
+  FAIL transcript.test.ts > exports STREAM_PAINT_MIN_INTERVAL_MS === 33 (expected undefined to be 33)
+  FAIL transcript.test.ts > #1 burst coalescing (expected "replaceChildren" to be called 1 times, but got 5 times)
+  Test Files 2 failed (2) — Tests 4 failed | 39 passed (43)
+VERIFICATION:
+  command: npx vitest run webview/aiChat/__tests__/transcript.test.ts webview/aiChat/__tests__/codeBlock.test.ts
+  result: 43 pass / 0 fail / exit 0
+  output_excerpt: |
+    ✓ webview/aiChat/__tests__/codeBlock.test.ts (11 tests) 21ms
+    ✓ webview/aiChat/__tests__/transcript.test.ts (32 tests) 165ms
+    Test Files 2 passed (2)
+    Tests 43 passed (43)
+  command: npm run typecheck
+  result: exit 0 (tsc --noEmit clean)
+  command: npx vitest run webview/aiChat/__tests__/
+  result: 450 pass / 0 fail / exit 0 (24 files — no regression)
+ISSUES: none — one existing test ("coalesces a delta burst") updated to the new deferred-flush contract; node_modules symlinked from main checkout for vitest (untracked)
+HANDOFF_TO_REVIEWER: yes — task status set to pending_review in INDEX.md
+NEXT: ready for review

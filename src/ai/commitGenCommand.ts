@@ -47,6 +47,17 @@ export const ERROR_COMMIT_GUARD_FAILED_PREFIX =
 export const ERROR_COMMIT_GUARD_RETRY_NOTE =
   "Retried once and still invalid — nothing was injected into the commit box.";
 
+// Progress/cancel frozen strings (SPEC FR-002 / §8.2). Stage text is reported
+// through `deps.report`; the in-progress toast is shown by the host when the
+// single-flight gate refuses a second run.
+export const COMMIT_GEN_TIMEOUT_MS = 120_000;
+export const TOAST_GENERATION_IN_PROGRESS =
+  "UnicDB: a commit message is already being generated — wait for it to finish or cancel it.";
+export const PROGRESS_COLLECTING_DIFF = "Collecting diff…";
+export const PROGRESS_CONTACTING_MODEL = "Contacting model…";
+export const PROGRESS_VALIDATING = "Validating message…";
+export const PROGRESS_RETRYING = "Retrying with corrective prompt…";
+
 // ---- guard + retry-1 orchestration (SPEC §8.4) ------------------------------
 /**
  * Outcome of the sanitize → guard → (retry once) pipeline.
@@ -130,6 +141,10 @@ export interface CommitDiffInputLike {
  * resolving when the turn ends. */
 export interface OmpOneShot {
   generate(prompt: string): Promise<string>;
+  /** Cancel the in-flight turn (SPEC FR-005). The host wires this to the
+   *  progress cancellation token; a cancelled turn settles the driver with
+   *  `commit-gen: cancelled` and the flow returns silently. */
+  cancel?(): void;
 }
 
 // ---- injected ports ---------------------------------------------------------
@@ -175,6 +190,17 @@ export interface CommitGenDeps {
     body: string;
     context?: Record<string, unknown>;
   }): string | undefined;
+  /** Progress stage reporter (SPEC FR-002). Receives the frozen
+   *  `PROGRESS_*` strings; absent ⇒ stages are skipped. */
+  report?(message: string): void;
+  /** Cancellation poll (SPEC FR-002). Checked at the post-diff and
+   *  post-outcome checkpoints; `true` ⇒ silent return (no toast, no
+   *  injection). */
+  isCancelled?(): boolean;
+  /** Cancellation signal forwarded onto `ProviderRequest.signal` so a
+   *  cancel reaches the in-flight fetch (SPEC FR-003). The host wires it
+   *  from the progress token via an AbortController. */
+  signal?: AbortSignal;
 }
 
 // ---- main entry -------------------------------------------------------------
@@ -219,9 +245,15 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
   }
 
   // 2. Diff must exist.
+  deps.report?.(PROGRESS_COLLECTING_DIFF);
   const diff = await deps.collectDiff();
   if (diff === null) {
     deps.showError(TOAST_NO_CHANGES);
+    return;
+  }
+  // Cancel checkpoint (SPEC FR-002): a cancel that landed while the diff was
+  // being collected closes the flow silently — no engine call, no toast.
+  if (deps.isCancelled?.()) {
     return;
   }
 
@@ -243,6 +275,11 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
   });
   let outcome: GuardOutcome | null = null;
   let cfg: AiConfig | null = null;
+  deps.report?.(PROGRESS_CONTACTING_MODEL);
+  // Cancel channel (SPEC FR-003): forward the host's signal onto every
+  // ProviderRequest so a cancel reaches the in-flight fetch. When the host
+  // supplies none, a fresh non-aborting signal keeps the field populated.
+  const requestSignal: AbortSignal = deps.signal ?? new AbortController().signal;
   // Engine routing — closed three-way classification so the validator
   // (`aiSettingsErrors`) gates unknown values upstream. If a future cycle
   // adds a dedicated adapter for one of those engines, add the branch here
@@ -261,7 +298,12 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
     }
     try {
       const oneShot = await deps.buildOmpEngine(choice, lite.modelId);
+      let attempt = 0;
       outcome = await generateWithGuard(async (messages) => {
+        attempt += 1;
+        if (attempt > 1) {
+          deps.report?.(PROGRESS_RETRYING);
+        }
         const raw = await oneShot.generate(serializeCommitPrompt(messages));
         if (typeof raw !== "string") {
           throw new Error(ERROR_NON_STRING_TEXT_OMP);
@@ -269,6 +311,9 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
         return raw;
       }, prompt);
     } catch (e) {
+      if (deps.isCancelled?.()) {
+        return;
+      }
       deps.showError(`UnicDB: omp error — ${(e as Error).message ?? String(e)}`);
       return;
     }
@@ -288,12 +333,18 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
       return;
     }
     try {
+      let attempt = 0;
       outcome = await generateWithGuard(async (messages) => {
+        attempt += 1;
+        if (attempt > 1) {
+          deps.report?.(PROGRESS_RETRYING);
+        }
         const result = await deps.builtinComplete(cfg as AiConfig, {
           modelId: lite.modelId,
           messages: [...messages],
           maxOutputTokens: 300,
           temperature: 0.2,
+          signal: requestSignal,
         });
         if (typeof result.text !== "string") {
           throw new Error(ERROR_NON_STRING_TEXT_BUILTIN);
@@ -301,6 +352,9 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
         return result.text;
       }, prompt);
     } catch (e) {
+      if (deps.isCancelled?.()) {
+        return;
+      }
       const err = e as Error & { bodySnippet?: string };
       const detail = err.bodySnippet ? `: ${err.bodySnippet}` : "";
       deps.showError(`UnicDB: provider error — ${err.message ?? String(e)}${detail}`);
@@ -338,12 +392,18 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
     // would be noise and would break the observed count === 1 contract).
     let hintShown = false;
     try {
+      let attempt = 0;
       outcome = await generateWithGuard(async (messages) => {
+        attempt += 1;
+        if (attempt > 1) {
+          deps.report?.(PROGRESS_RETRYING);
+        }
         const result = await deps.builtinComplete(cfg as AiConfig, {
           modelId: lite.modelId,
           messages: [...messages],
           maxOutputTokens: 300,
           temperature: 0.2,
+          signal: requestSignal,
         });
         if (typeof result.text !== "string") {
           throw new Error(ERROR_NON_STRING_TEXT_BUILTIN);
@@ -360,6 +420,9 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
         return result.text;
       }, prompt);
     } catch (e) {
+      if (deps.isCancelled?.()) {
+        return;
+      }
       const err = e as Error & { bodySnippet?: string };
       const detail = err.bodySnippet ? `: ${err.bodySnippet}` : "";
       deps.showError(
@@ -371,6 +434,13 @@ export async function runGenerateCommitMessage(deps: CommitGenDeps): Promise<voi
 
   // 4. Guard verdict. `outcome` is always set: every branch either returns
   // early on error or assigns it above.
+  deps.report?.(PROGRESS_VALIDATING);
+  // Post-outcome cancel checkpoint (SPEC FR-002): a cancel that landed while
+  // the engine ran (including mid-retry) closes silently — no injection, no
+  // toast — even when the outcome itself is usable.
+  if (deps.isCancelled?.()) {
+    return;
+  }
   if (outcome !== null && outcome.ok) {
     deps.setInputBox(outcome.message);
     return;

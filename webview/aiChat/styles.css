@@ -96,6 +96,11 @@
   pointer-events: none;
 }
 
+.UnicDB-ai-chat-v2-mark:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
+}
+
 /* Session title — 13/18 weight 600. */
 .UnicDB-ai-chat-v2-title {
   flex: 1 1 auto;
@@ -106,6 +111,11 @@
   font-size: 13px;
   line-height: 18px;
   font-weight: 600;
+}
+
+.UnicDB-ai-chat-v2-title:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
 }
 
 /* Engine status pill — provider-neutral, at least 32px tall. */
@@ -125,6 +135,11 @@
   line-height: 18px;
   font-weight: 600;
   cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-engine:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
 }
 
 .UnicDB-ai-chat-v2-engine-dot {
@@ -551,6 +566,11 @@
   color: var(--UnicDB-ai-chat-v2-text);
 }
 
+.UnicDB-ai-chat-v2-load-earlier:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
+}
+
 .UnicDB-ai-chat-v2-item {
   display: flex;
   flex-direction: column;
@@ -603,6 +623,11 @@
 
 .UnicDB-ai-chat-v2-reasoning-toggle:hover {
   color: var(--UnicDB-ai-chat-v2-text);
+}
+
+.UnicDB-ai-chat-v2-reasoning-toggle:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
 }
 
 .UnicDB-ai-chat-v2-item-reasoning[data-collapsed="1"] .UnicDB-ai-chat-v2-reasoning-toggle svg {
@@ -686,6 +711,11 @@
 .UnicDB-ai-chat-v2-codeblock-copy:hover {
   color: var(--UnicDB-ai-chat-v2-text);
   background: var(--UnicDB-ai-chat-v2-surface);
+}
+
+.UnicDB-ai-chat-v2-codeblock-copy:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
 }
 
 .UnicDB-ai-chat-v2-codeblock .UnicDB-ai-chat-v2-code {
@@ -815,6 +845,14 @@
 .UnicDB-ai-chat-v2-tool-toggle:hover {
   color: var(--UnicDB-ai-chat-v2-text);
   background: var(--UnicDB-ai-chat-v2-hover);
+}
+
+/* The head row itself is not focusable (the toggle inside it is); the pin
+   keeps the row selector honest if it ever becomes a focus target. */
+.UnicDB-ai-chat-v2-tool-head:focus-visible,
+.UnicDB-ai-chat-v2-tool-toggle:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
 }
 
 .UnicDB-ai-chat-v2-item-tool[data-collapsed="1"] .UnicDB-ai-chat-v2-tool-toggle svg {
@@ -980,6 +1018,13 @@
   .UnicDB-ai-chat-v2-action {
     animation: none;
     transition: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .UnicDB-ai-chat-v2-tool-status[data-status="running"],
+  .UnicDB-ai-chat-v2-live-dot {
+    animation: none;
   }
 }
 
@@ -1288,6 +1333,11 @@
   cursor: default;
 }
 
+.UnicDB-ai-chat-v2-composer-menu-row:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: -2px;
+}
+
 /* <420px: optional chip labels hide; accessible names remain on the control. */
 @media (max-width: 419px) {
   .UnicDB-ai-chat-v2-composer .UnicDB-ai-chat-v2-label-optional {
@@ -1319,6 +1369,13 @@
 
   .UnicDB-ai-chat-v2-composer-lane-right {
     justify-content: flex-end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .UnicDB-ai-chat-v2-composer .UnicDB-ai-chat-v2-control,
+  .UnicDB-ai-chat-v2-primary {
+    transition: none;
   }
 }
 
@@ -1513,6 +1570,12 @@
 
 .UnicDB-ai-chat-v2-activity-detail-toggle[aria-expanded="true"] svg {
   transform: rotate(90deg);
+}
+
+.UnicDB-ai-chat-v2-activity-detail-toggle:focus-visible,
+.UnicDB-ai-chat-v2-activity-copy:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
 }
 
 .UnicDB-ai-chat-v2-activity-detail {
@@ -1953,6 +2016,17 @@
   cursor: pointer;
 }
 
+.UnicDB-ai-chat-v2-autocomplete-retry:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #5f9eff);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .UnicDB-ai-chat-v2-autocomplete-spinner {
+    animation: none;
+  }
+}
+
 /* ---- Context chips ------------------------------------------------------ */
 
 .UnicDB-ai-chat-v2-context-chip {
@@ -1984,6 +2058,11 @@
   border: none;
   color: inherit;
   cursor: pointer;
+}
+
+.UnicDB-ai-chat-v2-context-chip-preview:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: -2px;
 }
 
 .UnicDB-ai-chat-v2-context-chip-icon {
@@ -2126,6 +2205,11 @@
   justify-content: center;
 }
 
+.UnicDB-ai-chat-v2-overflow:focus-visible {
+  outline: 2px solid var(--UnicDB-ai-chat-v2-focus);
+  outline-offset: 2px;
+}
+
 .UnicDB-ai-chat-v2-title-editor {
   min-width: 120px;
   font: inherit;
@@ -2134,6 +2218,11 @@
   border: 1px solid var(--vscode-focusBorder, #5f9eff);
   border-radius: 4px;
   padding: 2px 6px;
+}
+
+.UnicDB-ai-chat-v2-title-editor:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #5f9eff);
+  outline-offset: 1px;
 }
 
 /* ---- Non-modal overlay menu -------------------------------------------- */
@@ -2367,6 +2456,11 @@
 
 .UnicDB-ai-chat-v2-attachment-thumb-remove:hover {
   background: rgba(13, 17, 23, 0.9);
+}
+
+.UnicDB-ai-chat-v2-attachment-thumb-remove:focus-visible {
+  outline: 2px solid var(--vscode-focusBorder, #5f9eff);
+  outline-offset: -2px;
 }
 
 /* ---- Inline amber rejection notices ----------------------------------- */
