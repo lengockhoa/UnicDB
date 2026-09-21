@@ -124,3 +124,22 @@ VERIFICATION:
 ISSUES: none — one existing test ("coalesces a delta burst") updated to the new deferred-flush contract; node_modules symlinked from main checkout for vitest (untracked)
 HANDOFF_TO_REVIEWER: yes — task status set to pending_review in INDEX.md
 NEXT: ready for review
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (EXECUTOR_SUBAGENT: ExecW52) — differs from reviewer, isolation OK
+VERIFICATION_RERUN:
+  command: npx vitest run webview/aiChat/__tests__/transcript.test.ts webview/aiChat/__tests__/codeBlock.test.ts
+  result: 43 pass / 0 fail / exit 0 (fresh re-run by reviewer)
+  command: npm run typecheck
+  result: exit 0 (tsc --noEmit clean)
+TEST_PLAN_COVERAGE: all-followed — 7/7 cases implemented (1-3 transcript.test.ts, 4-7 codeBlock.test.ts); RED_OUTPUT contains real failing-test output (4 failures incl. assertion diffs)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: webview/aiChat/markdown.ts:246-250 — blockKey uses "|" as separator; a literal "|" inside block text could theoretically collide keys, but a collision only reuses a node whose rendered content is identical, so impact is nil. No change needed.
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: Throttle gate (transcript.ts:236-258) defers in-window flushes via remainder timeout, rAF + 100ms fallback intact, cancelScheduled/dispose cover the new throttleHandle. Memoization (markdown.ts:241-282) is per-root WeakMap, index-by-index key compare, reused nodes keep listeners — matches planner Discussion exactly.

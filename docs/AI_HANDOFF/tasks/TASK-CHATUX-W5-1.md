@@ -156,3 +156,39 @@ ISSUES: none — a11y.ts untouched (no gap); transcript.ts/markdown.ts untouched
   per same-wave file-sharing rule.
 HANDOFF_TO_REVIEWER: yes — DONE with fresh PASS output.
 NEXT: ready for review
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (EXECUTOR_SUBAGENT: ExecW51)
+VERIFICATION_RERUN:
+  command: npx vitest run webview/aiChat/__tests__/errorsScrollA11y.test.ts
+  result: 45 pass / 0 fail
+  command: npm run typecheck
+  result: exit 0 (tsc --noEmit clean)
+TEST_PLAN_COVERAGE: all-followed — cases 1-3 added as new CSS-scan tests with real
+  assertions (RED_OUTPUT contains genuine failing-diff output); cases 4-6 verified
+  pre-existing at :415 (countLiveRegions), :445-454 (announcer refusal +
+  isAnnounceablePhase), :490-506 (linkCombobox + activeDescendantResolves).
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: webview/aiChat/__tests__/errorsScrollA11y.test.ts:~735 — the
+      reduced-motion coverage test asserts the animated selector *appears* inside
+      a reduce block but not that the block actually suppresses motion
+      (`animation: none`/`transition: none`). A future reduce block that lists the
+      selector without a `none` declaration would pass the pin while leaving the
+      animation running. Current CSS is correct (all 3 new blocks use `none`), so
+      this is a future-proofing gap, not a present defect.
+    - file: webview/aiChat/styles.css:2020,2224,2462 — three new rings use
+      `var(--vscode-focusBorder, #5f9eff)` while most use
+      `var(--UnicDB-ai-chat-v2-focus)`; matches the pre-existing convention in
+      this file (:2592, :2666, :2796) and the test accepts both, so consistent —
+      noted only for awareness.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Spot-checked executor's audit claims: `-activity-state-running` (:1485)
+  and `-engine-working .-engine-dot` (:163) were already covered by pre-existing
+  RM blocks (:541, :1651); `-toast` carries no animation/transition — claims
+  accurate. `outline: none` confirmed unique at :329 on `-input`.

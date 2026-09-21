@@ -166,3 +166,49 @@ HANDOFF_TO_REVIEWER: no — handoff.reviewer not configured; status set to
   done matching TASK-GITMSG-001 precedent.
 NEXT: ready for review — GITMSG wave complete; orchestrator merges worktree.
 ```
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (self-reported; differs from reviewer — isolation OK)
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/__tests__/commitGenOmpOneShot.test.ts src/ui/__tests__/commitGenManifest.test.ts src/ui/__tests__/commitGenIntegration.test.ts
+  result: 32 pass / 0 fail
+  command: npm run typecheck
+  result: exit 0 — 0 errors
+  command: npx vitest run src/extension.test.ts (shared-host regression net)
+  result: 192 pass / 0 fail
+TEST_PLAN_COVERAGE: all-followed — cases 1–3, 5 + pre-generate no-op in commitGenOmpOneShot.test.ts; case 4 in commitGenManifest.test.ts; case 6 in commitGenIntegration.test.ts; RED_OUTPUT contains real failing assertions ("d.cancel is not a function", "expected -1 to be greater than -1")
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: src/extension.ts:4348-4353 — cancel landing after buildOmpEngine resolves but before oneShot.generate() is a no-op (driver still null inside createCommitGenOmpTurn); the turn then runs to its 120s ceiling. Silent-return contract still holds via isCancelled checkpoints; bounded, narrow window.
+    - file: src/ui/__tests__/commitGenIntegration.test.ts:457 — file now ends without trailing newline.
+    - file: src/extension.ts:4340 — stray double blank line after the AbortController comment block.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Deviation from planner note (pure createCommitGenOmpTurn instead of hoisted let-driver inside buildCommitGenOmpOneShot) is a strict improvement — same semantics, directly unit-testable; fresh-AcpProcess-per-invocation contract unchanged.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code (EXECUTOR_SUBAGENT: ExecG2) — isolation OK
+VERIFICATION_RERUN:
+  command: npx vitest run src/ai/__tests__/commitGenOmpOneShot.test.ts src/ui/__tests__/commitGenManifest.test.ts src/ui/__tests__/commitGenIntegration.test.ts
+  result: 32 pass / 0 fail
+  command: npm run typecheck
+  result: exit 0 — 0 errors
+  command: npx vitest run src/extension.test.ts + commit-gen suites (shared-code regression net — extension.ts touched)
+  result: 252 pass / 0 fail
+TEST_PLAN_COVERAGE: all-followed — 6/6 cases implemented; cases 4/6 are source-scans per plan; RED_OUTPUT contains genuine failure output
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: src/ai/commitGenOmpOneShot.ts:169 — cancel landing between buildOmpEngine resolving and generate() creating the driver is a no-op; turn still runs to completion in background (post-outcome isCancelled checkpoint still returns silently, so UX is correct — only wasted work). Optional hardening: check token.isCancellationRequested inside generate().
+    - file: src/extension.ts:4340,4356 — token.onCancellationRequested disposables not retained; harmless (token scoped to the progress callback) but inconsistent with disposables hygiene elsewhere.
+    - file: src/ui/__tests__/commitGenIntegration.test.ts:457 — file now ends without trailing newline.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Deviation from planner note (createCommitGenOmpTurn vs hoisted let in buildCommitGenOmpOneShot) is justified — same semantics, directly unit-testable; fresh-AcpProcess-per-invocation contract preserved.
