@@ -321,10 +321,17 @@ describe(`TASK-BQ04-003 frozen-surface guard (base ${BASE_REF})`, () => {
     // `@@ -...` header (or end of diff). We drop the entire hunk (header +
     // context + add + remove lines).
     const runQueryRemovalRe = /^\-\s+runQuery\(sql: string\):\s+Promise<RunResult>;\s*$/;
+    // SQLHANG (TASK-SQLHANG-001) ADDITIVELY extended `DbAdapter` with the
+    // optional `abortActiveQuery?(): Promise<void>` seam — same category of
+    // intentional additive surface extension as the BQF runQuery widening
+    // above (Pg/Mysql/Mssql implement it in their own tasks; the interface
+    // gain is tracked by the SQLHANG spec, not BQ-04 drift). Identify the
+    // hunk by its ADDED line and drop it the same way.
+    const abortAdditionRe = /^\+\s+abortActiveQuery\?\(\):\s+Promise<void>;\s*$/;
     const dropHunkIndices = new Set<number>();
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
-      if (!runQueryRemovalRe.test(line)) continue;
+      if (!runQueryRemovalRe.test(line) && !abortAdditionRe.test(line)) continue;
       // Walk backward to find the most recent hunk header.
       let start = i - 1;
       while (start >= 0 && !hunkHeaderRe.test(lines[start]!)) start -= 1;

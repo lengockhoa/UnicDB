@@ -664,6 +664,11 @@ export async function activate(
     batchSize:
       vscode.workspace.getConfiguration("UnicDB").get<number>("batchSize") ??
       500,
+    // SQLHANG (FR-013) — per-statement watchdog, seconds → ms; 0 disables.
+    statementTimeoutMs:
+      (vscode.workspace
+        .getConfiguration("UnicDB")
+        .get<number>("queryTimeoutSeconds") ?? 300) * 1000,
   });
   // TASK-503 — Save flow dependencies: dialect (from active connection) +
   // PK metadata via DbAdapter.listColumns. Cached at construction; the

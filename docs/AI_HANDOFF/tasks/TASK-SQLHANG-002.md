@@ -118,3 +118,55 @@ DECLARE where `processID` is already read, ~line 1198).
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+EXECUTOR_TOOL: omp vibe worker
+EXECUTOR_MODEL: devin/swe-2
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT:
+```
+❯ src/adapters/__tests__/mysqlAbort.test.ts  (3 tests | 3 failed)
+  → seam.abortActiveQuery is not a function (cases 5, 7)
+  → Test timed out in 5000ms (case 6 — hanging rollback unbounded)
+❯ src/adapters/__tests__/postgresAbort.test.ts  (5 tests | 5 failed)
+  → adapter.abortActiveQuery is not a function (cases 1-3)
+  → Test timed out in 5000ms (cases 4, 8 — hanging ROLLBACK unbounded)
+Test Files  2 failed (2)   Tests  8 failed (8)
+```
+Verification Output:
+```
+$ npx vitest run src/adapters/__tests__/postgresAbort.test.ts src/adapters/__tests__/mysqlAbort.test.ts
+✓ src/adapters/__tests__/mysqlAbort.test.ts  (3 tests) 56ms
+✓ src/adapters/__tests__/postgresAbort.test.ts  (5 tests) 110ms
+Test Files 2 passed (2)   Tests 8 passed (8)
+
+$ npx vitest run src/adapters/__tests__/postgres.test.ts src/adapters/__tests__/mysqlQueueBound.test.ts
+✓ src/adapters/__tests__/mysqlQueueBound.test.ts  (5 tests) 89ms
+✓ src/adapters/__tests__/postgres.test.ts  (26 tests) 3050ms
+Test Files 2 passed (2)   Tests 31 passed (31)
+
+$ npm run typecheck
+> tsc --noEmit   (exit 0, 0 errors)
+
+$ npm run compile
+⚡ Done in 37ms — dist/webview.js 2.3mb   (exit 0)
+
+$ npm test
+Test Files  6 failed | 310 passed | 2 skipped (318)
+Tests  1 failed | 4677 passed | 5 skipped (4683)
+— all 6 failures are environmental ENOENT: node_modules/.bin/esbuild and
+  node_modules/.bin/vsce are absent in this worktree (5 aiChatPanel webview
+  suites spawn esbuild; vsixSecretsExclusion spawns vsce). Unrelated to the
+  change; every adapter/core suite passes.
+```
+Status: PASS
+Note: CLEANUP_GRACE_MS (3_000) defined locally in both adapters — TASK-001's
+core/queryRunner export not yet landed in this worktree (per §Interfaces
+fallback). abortActiveQuery added as concrete class methods; DbAdapter seam
+declaration belongs to TASK-001. pg abort ordering: pg_cancel_backend via
+dedicated client FIRST, then release(true) on runQuery + cursor clients;
+sets snapshotted+cleared up front → idempotent. Bounded: runQuery ROLLBACK,
+cursor finalize CLOSE/COMMIT(+ROLLBACK), cursor cancel ROLLBACK, mysql
+rollback — timeout → destroy path, original error always propagates.
+releaseSwallow preserves the historical no-arg release() contract pinned by
+postgres.test.ts.

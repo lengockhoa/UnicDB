@@ -60,6 +60,66 @@ export class RunnerBusy extends Error {
  */
 export const RETAINED_ROW_CAP = 10_000;
 
+/**
+ * SQLHANG — per-statement watchdog defaults (SPEC §8.2, frozen).
+ * `statementTimeoutMs <= 0` disables the watchdog entirely (pass-through,
+ * byte-identical to pre-watchdog behavior).
+ */
+export const DEFAULT_STATEMENT_TIMEOUT_MS = 300_000;
+/** Grace for an abort/cancel seam call itself — abort must never hang. */
+export const ABORT_GRACE_MS = 5_000;
+/** Grace for each graceful channel inside `cancel()`. */
+export const CANCEL_GRACE_MS = 5_000;
+/** Grace for best-effort cleanup awaits (stale-cursor sweep). */
+export const CLEANUP_GRACE_MS = 3_000;
+
+/**
+ * SQLHANG — thrown when a statement-execution await exceeds
+ * `statementTimeoutMs`. The message is the observable marker: it flows
+ * through the existing STOPERR error path verbatim (error row + toast).
+ */
+export class QueryTimeoutError extends Error {
+  readonly name = "QueryTimeoutError";
+  constructor(ms: number) {
+    super(`Statement timed out after ${ms}ms — aborted`);
+  }
+}
+
+/**
+ * SQLHANG (SPEC §8.2) — race `p` against a `ms` timer. On expiry, fire
+ * `onTimeout()` best-effort (the seam is contractually ≤ ABORT_GRACE_MS and
+ * never throws; a hung seam must not hang the rejection path, so it is not
+ * awaited past the rejection) then reject with `makeError()`. The timer is
+ * cleared on BOTH branches so a settled promise never leaves an armed
+ * watchdog behind. `ms <= 0` is a pass-through: no timer armed.
+ */
+function bounded<T>(
+  p: Promise<T>,
+  ms: number,
+  onTimeout: () => Promise<void> | void,
+  makeError: () => Error,
+): Promise<T> {
+  if (ms <= 0) return p;
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      void Promise.resolve()
+        .then(() => onTimeout())
+        .catch(() => undefined);
+      reject(makeError());
+    }, ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 export interface StatementResult {
   index: number;
   sql: string;
@@ -148,6 +208,13 @@ export interface QueryRunnerOptions {
    * được thread vào StatementResult: marker observable là `resultLimited`.
    */
   maxRetainedRows?: number;
+  /**
+   * SQLHANG — per-statement watchdog (SPEC §8.2). Bounds every
+   * statement-execution await (`runQuery`, initial `fetchBatch`,
+   * `loadMore` fetch). `<= 0` disables (pass-through). Default
+   * `DEFAULT_STATEMENT_TIMEOUT_MS`.
+   */
+  statementTimeoutMs?: number;
 }
 
 export class QueryRunner {
@@ -155,6 +222,12 @@ export class QueryRunner {
   private readonly batchSize: number;
   /** TASK-ARP03-002 — retained-row budget (default RETAINED_ROW_CAP). */
   private readonly maxRetainedRows: number;
+  /**
+   * SQLHANG — per-statement watchdog bound (default
+   * DEFAULT_STATEMENT_TIMEOUT_MS). `<= 0` disables: every `bounded()` call
+   * becomes a pass-through, byte-identical to pre-watchdog behavior.
+   */
+  private readonly statementTimeoutMs: number;
   private results: StatementResult[] = [];
   private cancelRequested = false;
   /**
@@ -233,6 +306,8 @@ export class QueryRunner {
     this.adapterProvider = adapterProvider;
     this.batchSize = options.batchSize ?? 500;
     this.maxRetainedRows = options.maxRetainedRows ?? RETAINED_ROW_CAP;
+    this.statementTimeoutMs =
+      options.statementTimeoutMs ?? DEFAULT_STATEMENT_TIMEOUT_MS;
   }
 
   /**
@@ -382,9 +457,18 @@ export class QueryRunner {
     );
     for (const entry of stale) {
       try {
-        await entry.batched!.close();
+        // SQLHANG (FR-005) — a dead cursor must not wedge the NEXT run:
+        // bound the close by CLEANUP_GRACE_MS; on expiry fire the
+        // connection-level abort (resolved lazily via the provider — cost
+        // only on timeout) and still mark the cursor closed.
+        await bounded(
+          entry.batched!.close(),
+          CLEANUP_GRACE_MS,
+          () => this.abortViaProvider(),
+          () => new QueryTimeoutError(CLEANUP_GRACE_MS),
+        );
       } catch {
-        // best-effort — cursor có thể đã đóng.
+        // best-effort — cursor có thể đã đóng hoặc close() timed out.
       }
       entry.cursorClosed = true;
     }
@@ -440,9 +524,16 @@ export class QueryRunner {
         const adapterOpts: { pageSize?: number; useLegacySql?: boolean } = {};
         if (runPageSize !== undefined) adapterOpts.pageSize = runPageSize;
         if (runUseLegacySql !== undefined) adapterOpts.useLegacySql = runUseLegacySql;
-        const runResult: RunResult = await adapter.runQuery(
-          statements[i].text,
-          adapterOpts,
+        // SQLHANG (FR-002) — bound the statement await: a driver promise
+        // that never settles (dead socket, lock wait, lost response) must
+        // not park the run forever. On expiry the watchdog fires the
+        // adapter's abort seam and rejects with QueryTimeoutError, which
+        // flows through the existing catch → error → rest-cancelled path.
+        const runResult: RunResult = await bounded(
+          adapter.runQuery(statements[i].text, adapterOpts),
+          this.statementTimeoutMs,
+          () => this.abortAdapter(adapter),
+          () => new QueryTimeoutError(this.statementTimeoutMs),
         );
         // PID window ĐÓNG: statement đã settle (kể cả khi cancel đã được
         // yêu cầu trong lúc chờ) — cancel() sau điểm này là no-op.
@@ -490,7 +581,12 @@ export class QueryRunner {
         }
 
         // Pick result với batched-aware contract.
-        const result = await pickResult(runResult);
+        const result = await bounded(
+          pickResult(runResult),
+          this.statementTimeoutMs,
+          () => this.abortAdapter(adapter),
+          () => new QueryTimeoutError(this.statementTimeoutMs),
+        );
         // TASK-BQ03-003 — first successful pickResult clears `pending`.
         // (A failing pickResult — e.g. a rejected initial fetchBatch —
         // leaves `pending` set so the error path doesn't accidentally
@@ -683,7 +779,16 @@ export class QueryRunner {
     // this because both the snapshot and the post-await value are 0.
     const runGenBefore = this.runGeneration;
     try {
-      const batch = await batched.fetchBatch();
+      // SQLHANG (FR-003) — bound the page fetch: a hung fetchBatch means a
+      // hung cursor client that only a connection-level abort releases
+      // (batched.cancel() would await the same dead client). The adapter
+      // resolves lazily via the provider — cost only on timeout.
+      const batch = await bounded(
+        batched.fetchBatch(),
+        this.statementTimeoutMs,
+        () => this.abortViaProvider(),
+        () => new QueryTimeoutError(this.statementTimeoutMs),
+      );
       // TASK-ARP02-001 — post-await re-check (load-bearing): the run()'s
       // finally reset alone cannot catch a cancel that arrives AFTER the run
       // settled but DURING this fetch. If the cancel sequence advanced while
@@ -819,18 +924,39 @@ export class QueryRunner {
         return;
       }
       this.currentBatchedCancelDelivered = true;
+      // SQLHANG (FR-004) — every graceful channel is bounded by
+      // CANCEL_GRACE_MS: a hung batched.cancel()/close() must not hang the
+      // Stop button. On expiry the connection-level abort fires below.
       try {
-        await this.currentBatched.cancel();
+        await bounded(
+          this.currentBatched.cancel(),
+          CANCEL_GRACE_MS,
+          () => this.abortViaProvider(),
+          () => new QueryTimeoutError(CANCEL_GRACE_MS),
+        );
       } catch {
         // ignore
       }
       try {
-        await this.currentBatched.close();
+        await bounded(
+          this.currentBatched.close(),
+          CANCEL_GRACE_MS,
+          () => this.abortViaProvider(),
+          () => new QueryTimeoutError(CANCEL_GRACE_MS),
+        );
       } catch {
         // ignore
       }
       this.currentBatched = null;
       this.cancelPending = false;
+      // Escalation: a still-held adapter means a parked runQuery outlived
+      // the graceful channels — fire the hard abort (abortActiveQuery ONLY,
+      // never the cancelActiveQuery fallback: the graceful seam already
+      // fired above and must not be re-fired). Fire-and-forget, bounded by
+      // contract — cancel() MUST always resolve.
+      if (this.activeAdapter !== null) {
+        this.fireAbort(this.activeAdapter);
+      }
       return;
     }
     // TASK-RLX-001 — non-batched in-flight cancellation. Chỉ bắn seam khi
@@ -843,11 +969,82 @@ export class QueryRunner {
     if (adapter?.cancelActiveQuery) {
       this.seamDelivered = true;
       try {
-        await adapter.cancelActiveQuery();
+        await bounded(
+          adapter.cancelActiveQuery(),
+          CANCEL_GRACE_MS,
+          () => this.abortAdapter(adapter),
+          () => new QueryTimeoutError(CANCEL_GRACE_MS),
+        );
       } catch {
         // best-effort — seam failure không được làm hỏng cancel flow.
       }
       this.cancelPending = false;
+    }
+    // SQLHANG (FR-004) — guaranteed escape hatch: while the PID window is
+    // still open the parked runQuery may outlive the graceful seam, so
+    // escalate to the hard abort. abortActiveQuery ONLY — the graceful
+    // cancelActiveQuery seam above already delivered exactly once.
+    // Fire-and-forget: cancel() MUST always resolve, never hang on abort.
+    if (this.activeAdapter !== null) {
+      this.fireAbort(this.activeAdapter);
+    }
+  }
+
+  /**
+   * SQLHANG — fire `abortActiveQuery` on an adapter without awaiting it
+   * past the caller's grace. The seam is contractually ≤ ~5s, never
+   * throws, idempotent; errors are swallowed here regardless so a hung or
+   * failing abort can never hang or reject `cancel()`/the watchdog path.
+   */
+  private fireAbort(adapter: DbAdapter): void {
+    try {
+      void Promise.resolve(adapter.abortActiveQuery?.()).catch(
+        () => undefined,
+      );
+    } catch {
+      // best-effort — a synchronous seam throw is swallowed too.
+    }
+  }
+
+  /**
+   * SQLHANG — hard-abort one adapter: prefer `abortActiveQuery` (which also
+   * releases/destroys the connection handle so a parked driver promise
+   * settles and the pool slot is freed), fall back to the best-effort
+   * `cancelActiveQuery` seam. Bounded by ABORT_GRACE_MS; every error is
+   * swallowed — abort must never throw or hang its caller.
+   */
+  private async abortAdapter(adapter: DbAdapter): Promise<void> {
+    try {
+      await bounded(
+        Promise.resolve(
+          adapter.abortActiveQuery?.() ?? adapter.cancelActiveQuery?.(),
+        ),
+        ABORT_GRACE_MS,
+        () => undefined,
+        () => new QueryTimeoutError(ABORT_GRACE_MS),
+      );
+    } catch {
+      // best-effort — abort errors are swallowed by contract.
+    }
+  }
+
+  /**
+   * SQLHANG — resolve the adapter lazily via the provider (cost only on
+   * timeout, e.g. a hung loadMore fetch where no adapter reference is
+   * held) then hard-abort it. The provider call itself is bounded so a
+   * hung provider cannot hang the watchdog path.
+   */
+  private async abortViaProvider(): Promise<void> {
+    try {
+      const adapter = await bounded(
+        this.adapterProvider(),
+        ABORT_GRACE_MS,
+        () => undefined,
+        () => new QueryTimeoutError(ABORT_GRACE_MS),
+      );
+      await this.abortAdapter(adapter);
+    } catch {
+      // best-effort — provider failure must not hang the watchdog path.
     }
   }
 
@@ -913,7 +1110,14 @@ export class QueryRunner {
    */
   async runSql(sql: string): Promise<RunResult> {
     const adapter = await this.adapterProvider();
-    return adapter.runQuery(sql);
+    // SQLHANG (FR-002) — same watchdog as executeAll: the Save flow's
+    // requery path must not park forever on a dead driver promise either.
+    return bounded(
+      adapter.runQuery(sql),
+      this.statementTimeoutMs,
+      () => this.abortAdapter(adapter),
+      () => new QueryTimeoutError(this.statementTimeoutMs),
+    );
   }
 
   async beginTransaction(): Promise<DbTransaction> {

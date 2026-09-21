@@ -107,6 +107,39 @@ const DEFAULT_BATCH_SIZE = 500;
 const PG_POOL_MAX = 4;
 
 /**
+ * SQLHANG — bound for every cleanup await on an error path (ROLLBACK /
+ * CLOSE / COMMIT). A dead connection must never turn error propagation
+ * itself into a hang: on expiry the caller destroy-releases the client and
+ * the ORIGINAL error keeps propagating. Mirrors the constant TASK-001
+ * exports from core/queryRunner; defined locally until that lands (per
+ * TASK-SQLHANG-002 §Interfaces).
+ */
+const CLEANUP_GRACE_MS = 3_000;
+
+type CleanupOutcome = "ok" | "timeout" | "error";
+
+/**
+ * SQLHANG — race a best-effort cleanup promise against CLEANUP_GRACE_MS.
+ * Returns "timeout" when the grace expired (caller must destroy-release
+ * the client — the socket is presumed dead) and "error" when the cleanup
+ * itself rejected (client still usable for a plain release). Never throws.
+ */
+function boundedCleanup(promise: Promise<unknown>): Promise<CleanupOutcome> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race<CleanupOutcome>([
+    promise.then(
+      () => "ok" as const,
+      () => "error" as const,
+    ),
+    new Promise<CleanupOutcome>((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), CLEANUP_GRACE_MS);
+      // Never keep the process alive for a bookkeeping timer.
+      (timer as unknown as { unref?: () => void }).unref?.();
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/**
  * D5 fix — cursor-routing decision as a single, pure, exported-for-test
  * helper instead of the inline `/^\s*SELECT\b/i.test(text) &&
  * !text.includes(";")` regex that used to guard `runQuery`'s fast path.
@@ -242,6 +275,10 @@ interface OpenCursorRecord {
   client: PoolClient;
   cursorName: string;
   closed: Promise<void>;
+  // SQLHANG — backend PID recorded right after DECLARE so abortActiveQuery
+  // can pg_cancel_backend cursor work too (a hung fetchBatch holds this
+  // client, not a runQuery client).
+  backendPid?: number;
 }
 
 export class PostgresAdapter implements DbAdapter {
@@ -266,6 +303,14 @@ export class PostgresAdapter implements DbAdapter {
    * (không có gì để cancel).
    */
   private readonly activeNonCursorPids = new Set<number>();
+  /**
+   * SQLHANG — checked-out runQuery clients (the PoolClient objects behind
+   * activeNonCursorPids). cancelActiveQuery only cancels the backend; abort
+   * additionally needs the HANDLE so it can release(true) — destroy — the
+   * socket and settle the parked driver promise. Same ownership window:
+   * added at pool.connect(), deleted in runQuery's finally.
+   */
+  private readonly activeNonCursorClients = new Set<PoolClient>();
 
   constructor(
     private readonly cfg: ConnectionConfig,
@@ -456,6 +501,8 @@ export class PostgresAdapter implements DbAdapter {
     if (trackedPid !== null) {
       this.activeNonCursorPids.add(trackedPid);
     }
+    // SQLHANG — track the HANDLE too so abortActiveQuery can destroy it.
+    this.activeNonCursorClients.add(client);
     let failed = false;
     try {
       const results: QueryResult[] = [];
@@ -487,6 +534,7 @@ export class PostgresAdapter implements DbAdapter {
       if (trackedPid !== null) {
         this.activeNonCursorPids.delete(trackedPid);
       }
+      this.activeNonCursorClients.delete(client);
       if (failed) {
         // The save flow bundles `BEGIN; <stmts>; COMMIT;` through THIS branch
         // (single checked-out client for the whole script). A statement
@@ -497,14 +545,19 @@ export class PostgresAdapter implements DbAdapter {
         // transaction is aborted, commands ignored until end of transaction
         // block". Best-effort ROLLBACK first (a no-op when the script opened
         // no transaction); only destroy the connection if even that fails.
-        try {
-          await client.query("ROLLBACK");
-          client.release();
-        } catch {
-          client.release(true);
+        // SQLHANG — the ROLLBACK await is bounded: a dead connection must
+        // not turn error propagation into a hang. Timeout → destroy path;
+        // the ORIGINAL statement error always propagates.
+        const rollbackOutcome = await boundedCleanup(client.query("ROLLBACK"));
+        if (rollbackOutcome === "ok") {
+          this.releaseSwallow(client, false);
+        } else {
+          this.releaseSwallow(client, true);
         }
       } else {
-        client.release();
+        // Swallow-guard: a client already destroyed by abortActiveQuery
+        // must not mask the original error with a double-release throw.
+        this.releaseSwallow(client, false);
       }
     }
   }
@@ -598,6 +651,65 @@ export class PostgresAdapter implements DbAdapter {
       } catch {
         // ignore
       }
+    }
+  }
+
+  /**
+   * SQLHANG — release a client through the swallow-guard: a double-release
+   * (client already destroyed by abortActiveQuery or by an earlier cleanup
+   * path) must never throw and mask the original error.
+   */
+  private releaseSwallow(client: PoolClient, destroy: boolean): void {
+    try {
+      // No-arg call when not destroying — matches the historical
+      // `client.release()` contract pinned by postgres.test.ts.
+      if (destroy) client.release(true);
+      else client.release();
+    } catch {
+      // ignore — already released/destroyed.
+    }
+  }
+
+  /**
+   * SQLHANG — DbAdapter.abortActiveQuery seam (SPEC §8.1). Hard abort of
+   * in-flight work: cancel every tracked backend FIRST (pg_cancel_backend
+   * via dedicated one-off Client — server-side cancel is in flight while
+   * we destroy), then release(true) every tracked client so the parked
+   * runQuery/fetchBatch driver promise settles and the pool slot is freed.
+   *
+   *  - Covers BOTH tracking sets: runQuery clients (activeNonCursorPids +
+   *    activeNonCursorClients) and open cursors (OpenCursorRecord.client +
+   *    backendPid) — a hung fetchBatch holds a cursor client.
+   *  - Idempotent: sets are snapshotted then cleared, so a second abort
+   *    finds nothing and never opens a second dedicated client per PID.
+   *  - Never throws: every step is best-effort/swallow-guarded. No tracked
+   *    work → returns without constructing a dedicated client.
+   *  - The adapter stays usable: the pool itself is untouched; the next
+   *    runQuery checks out a fresh client.
+   */
+  async abortActiveQuery(): Promise<void> {
+    const pids = new Set<number>(this.activeNonCursorPids);
+    const clients = new Set<PoolClient>(this.activeNonCursorClients);
+    const cursors = Array.from(this.openCursors);
+    for (const rec of cursors) {
+      if (typeof rec.backendPid === "number") pids.add(rec.backendPid);
+      clients.add(rec.client);
+    }
+    if (pids.size === 0 && clients.size === 0) return;
+
+    // Clear tracking up front — idempotency: a repeat abort (or the
+    // runQuery/cursor finally paths racing in) sees empty sets.
+    this.activeNonCursorPids.clear();
+    this.activeNonCursorClients.clear();
+    this.openCursors.clear();
+
+    // Server-side cancel first: destroying the socket first would lose the
+    // backend before the cancel lands.
+    for (const pid of pids) {
+      await this.cancelBackendViaDedicatedClient(pid);
+    }
+    for (const client of clients) {
+      this.releaseSwallow(client, true);
     }
   }
 
@@ -1177,19 +1289,24 @@ export class PostgresAdapter implements DbAdapter {
         return;
       }
       state = "closed";
-      try {
-        await client.query(`CLOSE "${cursorName}"`).catch(() => undefined);
-      } catch {
-        // ignore
+      // SQLHANG — CLOSE/COMMIT are bounded: a dead cursor connection must
+      // not hang finalize. Timeout → destroy-release below.
+      let timedOut = false;
+      if (
+        (await boundedCleanup(client.query(`CLOSE "${cursorName}"`))) ===
+        "timeout"
+      ) {
+        timedOut = true;
       }
-      try {
-        await client.query("COMMIT").catch(async () => {
-          await client.query("ROLLBACK").catch(() => undefined);
-        });
-      } catch {
-        // ignore
+      const commitOutcome = await boundedCleanup(client.query("COMMIT"));
+      if (commitOutcome === "timeout") {
+        timedOut = true;
+      } else if (commitOutcome === "error") {
+        if ((await boundedCleanup(client.query("ROLLBACK"))) === "timeout") {
+          timedOut = true;
+        }
       }
-      releaseClient(destroy);
+      releaseClient(destroy || timedOut);
     };
 
     try {
@@ -1197,6 +1314,9 @@ export class PostgresAdapter implements DbAdapter {
       await client.query(`DECLARE "${cursorName}" CURSOR FOR ${sql}`);
       const pid = (client as unknown as { processID?: number }).processID;
       backendPid = typeof pid === "number" ? pid : null;
+      // SQLHANG — record the PID on the tracked record too so
+      // abortActiveQuery can cancel cursor backends.
+      record.backendPid = backendPid ?? undefined;
 
       const colRes = await client.query({
         text: `FETCH 0 FROM "${cursorName}"`,
@@ -1250,11 +1370,8 @@ export class PostgresAdapter implements DbAdapter {
         if (backendPid !== null) {
           await this.cancelBackendViaDedicatedClient(backendPid);
         }
-        try {
-          await client.query("ROLLBACK").catch(() => undefined);
-        } catch {
-          // ignore
-        }
+        // SQLHANG — bounded: a dead connection must not hang cancel().
+        await boundedCleanup(client.query("ROLLBACK"));
         releaseClient(true);
       };
 

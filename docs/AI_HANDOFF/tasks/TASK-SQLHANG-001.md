@@ -122,3 +122,58 @@ property exists", which typecheck + the watchdog tests already cover).
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+EXECUTOR_TOOL: omp vibe worker
+EXECUTOR_MODEL: devin/swe-2
+EXECUTOR_SUBAGENT: -
+RED_OUTPUT:
+```
+❯ src/core/__tests__/queryRunnerWatchdog.test.ts  (9 tests | 7 failed) 30020ms
+ ❯ exports the frozen constants and QueryTimeoutError
+   → expected undefined to be 300000 // Object.is equality
+ ❯ #2 — stmt 2 of 3 never settles: timeout → error + rest cancelled + abort once
+   → Test timed out in 5000ms.
+ ❯ #4 — adapter without abortActiveQuery falls back to cancelActiveQuery
+   → Test timed out in 5000ms.
+ ❯ #5 — cancel() resolves within grace when batched.cancel() hangs; abort fires
+   → Test timed out in 5000ms.
+ ❯ #6 — loadMore fetchBatch never settles: rejects with QueryTimeoutError, status stays done
+   → Test timed out in 5000ms.
+ ❯ #7 — regression: 3-stmt run with never-settling stmt 2 resolves (was: hang)
+   → Test timed out in 5000ms.
+ ❯ #8 — stale cursor close() hangs at next run start: sweep bounded, run proceeds
+   → Test timed out in 5000ms.
+ Test Files  1 failed (1)
+      Tests  7 failed | 2 passed (9)
+```
+Verification Output:
+```
+$ npx vitest run src/core/__tests__/queryRunnerWatchdog.test.ts
+✓ src/core/__tests__/queryRunnerWatchdog.test.ts  (9 tests) 7ms
+ Test Files 1 passed (1) — Tests 9 passed (9)
+
+$ npx vitest run src/core/__tests__/queryRunner.test.ts
+✓ src/core/__tests__/queryRunner.test.ts  (83 tests) 260ms
+ Test Files 1 passed (1) — Tests 83 passed (83)
+
+$ npm run typecheck
+> UnicDB@1.54.1 typecheck
+> tsc --noEmit
+(exit 0)
+
+$ npm run compile
+(exit 0) — dist/webview.js.map 4.1mb, dist/webview.css.map 85.2kb
+
+$ npm test
+ Test Files 315 passed | 2 skipped (317)
+      Tests 4727 passed | 5 skipped (4732)
+(exit 0)
+```
+Status: PASS
+Note: cancel() escalation fires abortActiveQuery ONLY (fire-and-forget) — the
+cancelActiveQuery fallback would have re-fired the already-delivered graceful
+seam (caught by existing RLX-001 tests asserting seam exactly-once). Worktree
+node_modules was empty; symlinked to main repo install so esbuild/vsce-driven
+suites run. bq04SurfaceGuard extended to drop the intentional additive
+abortActiveQuery hunk (same precedent as the BQF runQuery widening).

@@ -8,7 +8,7 @@ natural language. None of it adds commands or user-facing surface.
 ## Long-Run Continuity — detail
 
 The root contract carries the LAND/DEFER/DELEGATE summary. This section mirrors what UKit
-hooks inject at runtime on Claude Code and omp; on harnesses without hooks (Codex, OpenCode)
+hooks inject at runtime on Claude Code and omp; on harnesses without hooks (Codex)
 the root contract is the only carrier — keep both in sync with
 `.claude/hooks/context-window-guard.sh`.
 
@@ -48,6 +48,10 @@ the root contract is the only carrier — keep both in sync with
   [--target <file>]` when routing is complex or ambiguous.
 - Prefer `node .claude/ukit/index/resolve-context.mjs ...` for indexed related-file context.
 - Prefer `node .claude/ukit/index/verify-context.mjs ...` for concrete verification lanes.
+- Context-layer docs are declared in `manifests/documentation.yaml` (`context_layers`) and
+  surfaced in the route summary line via the `docs=[...]` basename segment
+  (`routeSummary.contextDocs`; DOC-201). The routing-side copy is `CONTEXT_LAYER_DOCS` in
+  `src/index/taskRouting.js` / `route-task.mjs` — keep it in sync with the manifest.
 - Do not ask normal contributors to memorize `ukit doctor`, `ukit diff`, `ukit uninstall`,
   or `ukit index ...` unless they explicitly need maintainer/debug help.
 - If the workspace needs a refresh, prefer telling them to rerun `ukit install`.
@@ -175,7 +179,7 @@ whose own definition binds that model.
 | Harness | Agent definitions | How to launch one |
 |---------|-------------------|-------------------|
 | Claude Code | `.claude/agents/*.md` (`model:` frontmatter) | Agent tool, `subagent_type: "<name>"` |
-| omp | `.omp/agents/*.md` (`model: "@lite"` / `"@code"` / `"@smart"` / `"@vision"`, resolved through `modelRoles` in `.omp/config.yml`) | task-agent `<name>` |
+| omp | `.omp/agents/*.md` (`model: "@smol"` / `"@default"` / `"@slow"` / `"@vision"`, resolved through `modelRoles` in `.omp/config.yml`) | task-agent `<name>` |
 
 When a task's contract maps to a tier other than the current session model, hand it to the
 matching agent instead of doing it inline. Doing everything inline is exactly what makes
@@ -217,3 +221,20 @@ otherwise route to the specialist.
   - `.claude/skills/duraone/references/sql.md`
   - `.claude/skills/duraone/references/workflow.md`
 - Khi không active: dùng generic coding standards + project-specific patterns từ index.
+
+## Learning loop — detail
+
+Phase-4 telemetry → advisory tuning loop (FR-206, TASK-232).
+
+- **Config namespace `learning.*`** (optional-present; absent → defaults merge + valid):
+  - `learning.feedback.enabled` (default `true`) — gates `collectFeedbackEvents`.
+  - `learning.feedback.maxEvents` (default `200`) — cap on labeled feedback events.
+  - `learning.proposals.minCount` / `learning.proposals.minSessions` (defaults `3`/`2`) — pattern-proposal thresholds.
+  - `learning.episodes.autoWrite` (default `false`) — gates the SessionEnd episode hook.
+  - `learning.tuning.enabled` / `learning.tuning.applyMode` (defaults `true`/`'manual'`; `'off'` disables computation).
+- **Artifacts** (all under `.ukit/storage/`, written tmp+rename):
+  - `learning/feedback-events.json` — labeled wrong-route events (`rescue`, `re-route`, `repeat-stall`, `user-correction`).
+  - `learning/skill-accuracy.json` — per-skill trigger/join/accuracy roll-up.
+  - `learning/suggestions.json` — result of `computeTuningSuggestions(projectRoot)` (`src/learning/tuning.js`).
+  - `cache/retriever-lanes.jsonl` — per-query lane hit/weight telemetry consumed by `collectLaneStats`.
+- **Advisory-only contract**: `suggestions` carry `{target, current, suggested, evidence}`; `applied` is always `[]`. `applyMode` is restricted to `manual|off` — **no writer ever mutates `codeIntel.retriever.weights` or `orchestration.escalation.debugLoopThreshold`**. Rules: lane weight ±0.1 step (clamped `[0.1, 2.0]`) when events ≥ 50 with a >0.5 dominant lane and a <0.02 starved lane; `debugLoopThreshold − 1` (min 1) when repeat-stall events ≥ 10. `ukit metrics` prints a `learning` section (pending count + targets; `n/a` when the artifact is absent).

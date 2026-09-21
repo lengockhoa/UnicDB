@@ -65,6 +65,37 @@ export function setPoolAcquireTimeoutMsForTests(ms: number): void {
   POOL_ACQUIRE_TIMEOUT_MS = ms;
 }
 
+/**
+ * SQLHANG — bound for the error-path cleanup await (rollback()). A dead
+ * connection must never turn error propagation itself into a hang: on
+ * expiry the caller destroys the connection and the ORIGINAL error keeps
+ * propagating. Mirrors the constant TASK-001 exports from core/queryRunner;
+ * defined locally until that lands (per TASK-SQLHANG-002 §Interfaces).
+ */
+const CLEANUP_GRACE_MS = 3_000;
+
+type CleanupOutcome = "ok" | "timeout" | "error";
+
+/**
+ * SQLHANG — race a best-effort cleanup promise against CLEANUP_GRACE_MS.
+ * Returns "timeout" when the grace expired (caller must destroy the
+ * connection — it is presumed dead). Never throws.
+ */
+function boundedCleanup(promise: Promise<unknown>): Promise<CleanupOutcome> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race<CleanupOutcome>([
+    promise.then(
+      () => "ok" as const,
+      () => "error" as const,
+    ),
+    new Promise<CleanupOutcome>((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), CLEANUP_GRACE_MS);
+      // Never keep the process alive for a bookkeeping timer.
+      (timer as unknown as { unref?: () => void }).unref?.();
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 type MySqlRow = any[];
 
 type MySqlQueryResult = {
@@ -331,10 +362,18 @@ export class MySqlAdapter implements DbAdapter {
       }
       await connection.commit();
     } catch (error) {
-      try {
-        await connection.rollback();
-      } catch {
-        // Rollback failure must not mask the original statement error below.
+      // SQLHANG — bound the rollback: a dead connection must not turn the
+      // error path into a hang. Timeout → destroy the connection (the
+      // `finally` below then skips release()); the ORIGINAL statement
+      // error always propagates.
+      const rollbackOutcome = await boundedCleanup(connection.rollback());
+      if (rollbackOutcome === "timeout" && !connectionDestroyed) {
+        connectionDestroyed = true;
+        try {
+          connection.destroy();
+        } catch {
+          // Best-effort — never mask the original error.
+        }
       }
       throw error;
     } finally {
@@ -410,6 +449,22 @@ export class MySqlAdapter implements DbAdapter {
         // ignore — best-effort for each record.
       }
     }
+  }
+
+  /**
+   * SQLHANG — DbAdapter.abortActiveQuery seam (SPEC §8.1). Hard abort of
+   * in-flight work: fires every registered cancel closure, which already
+   * `connection.destroy()`s the held batch connection and any pre-handoff
+   * stream — destroying the socket settles the parked driver promise and
+   * frees the connectionLimit:1 pool slot.
+   *
+   * Same semantics as cancelActiveQuery (delegates to it): never closes
+   * the adapter/pool, idempotent (closures self-remove on fire), never
+   * throws, and the adapter stays usable — the next runQuery checks out a
+   * fresh connection.
+   */
+  async abortActiveQuery(): Promise<void> {
+    await this.cancelActiveQuery();
   }
 
   async listSchemas(includeSystem: boolean): Promise<SchemaInfo[]> {

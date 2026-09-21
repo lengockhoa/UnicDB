@@ -132,6 +132,14 @@ export interface DbAdapter {
    *  - Idempotent: không có operation active → resolve không làm gì.
    */
   cancelActiveQuery?(): Promise<void>;
+  /**
+   * SQLHANG — hard abort of in-flight work. Unlike cancelActiveQuery (best-effort
+   * server-side cancel), abort MUST also force-release/destroy the connection
+   * handle so a parked runQuery/fetchBatch promise settles and the pool slot is
+   * freed. Always resolves (≤ ~5s), never throws, idempotent. After abort the
+   * adapter MUST be usable for the next runQuery (lazy reconnect where needed).
+   */
+  abortActiveQuery?(): Promise<void>;
   beginTransaction?(): Promise<DbTransaction>;
   listSchemas(includeSystem: boolean): Promise<SchemaInfo[]>;
   listTables(schema?: string): Promise<TableInfo[]>;

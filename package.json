@@ -771,6 +771,12 @@
           "maximum": 10000,
           "description": "Số rows tải về mỗi lần (Load 500 more)."
         },
+        "UnicDB.queryTimeoutSeconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 0,
+          "description": "Auto-stop a SQL statement that runs longer than this many seconds — cancels the batch, aborts the connection work, and reports the error. 0 disables the watchdog."
+        },
         "UnicDB.admin.confirmGrant": {
           "type": "boolean",
           "default": true,
