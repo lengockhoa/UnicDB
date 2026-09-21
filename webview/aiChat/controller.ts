@@ -61,7 +61,7 @@ import {
 } from "./store";
 import { createTranscriptRenderer, type TranscriptRenderer } from "./transcript";
 import { createOverlayMenu, type OverlayMenu } from "./overlays";
-import { createScrollController, SCROLL_BOTTOM_THRESHOLD_PX, type ScrollController } from "./scroll";
+import { createScrollController, SCROLL_FOLLOW_EXIT_PX, type ScrollController } from "./scroll";
 import { createActivityTimeline, phaseCopyLabel, type ActivityTimeline } from "./activity";
 import { createLiveAnnouncer, type LiveAnnouncer } from "./a11y";
 import { renderChangePlanCard, type ChangePlanCard } from "./changePlan";
@@ -323,10 +323,11 @@ function mountController(options: ChatControllerOptions): ChatController {
       // a new response to FOLLOW while the reader is pinned — routing it to
       // notifyReasoningActivity stopped auto-follow after the first delta of
       // a message and let drift past the pin window raise a spurious unread
-      // pill on the next id. Judged on the PRE-frame distance so input-focus
-      // suppression stays intact; far from the bottom it stays mere activity
-      // (no scroll, no count).
-      if (preDistance <= SCROLL_BOTTOM_THRESHOLD_PX) {
+      // pill on the next id. Judged on the PRE-frame distance against the
+      // EXIT edge so a pinned reader inside the hysteresis band still
+      // follows; far from the bottom it stays mere activity (no scroll, no
+      // count).
+      if (preDistance <= SCROLL_FOLLOW_EXIT_PX) {
         scroll.notifyNewResponse();
       } else {
         scroll.notifyReasoningActivity();

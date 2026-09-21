@@ -571,12 +571,11 @@
   white-space: pre-wrap;
 }
 
-/* Assistant answer: unboxed, max 880px/92%, 4px 0. */
+/* Assistant answer: unboxed, max 92%, 4px 0. */
 .UnicDB-ai-chat-v2-item-text,
 .UnicDB-ai-chat-v2-item-reasoning {
   align-self: flex-start;
   max-width: 92%;
-  width: 880px;
   padding: 4px 0;
   overflow-wrap: anywhere;
 }

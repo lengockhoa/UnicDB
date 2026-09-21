@@ -99,3 +99,52 @@ describe("TASK-CHATFIX-001 explicit shell grid placement", () => {
     expect(ruleBodyHas("\\.UnicDB-ai-chat-v2-banner", "grid-row:\\s*2")).toBe(true);
   });
 });
+
+describe("TASK-CHATUX-001 layout stabilization contract", () => {
+  it("keeps minmax(0,1fr) transcript track and transcript as sole overflow-y:auto region", () => {
+    const root = ruleBody("\\.UnicDB-ai-chat-v2");
+    expect(root, "root .UnicDB-ai-chat-v2 rule must exist").toBeDefined();
+    expect(root).toContain(
+      "grid-template-rows: 40px auto minmax(0, 1fr) auto auto 20px",
+    );
+
+    const transcript = ruleBody("\\.UnicDB-ai-chat-v2-transcript");
+    expect(transcript, ".UnicDB-ai-chat-v2-transcript rule must exist").toBeDefined();
+    const scrollDecls = transcript!.match(/overflow-y:\s*auto/g) ?? [];
+    expect(scrollDecls).toHaveLength(1);
+
+    // Context strip scrolls horizontally only — never a second vertical region.
+    const context = ruleBody("\\.UnicDB-ai-chat-v2-context");
+    expect(context, ".UnicDB-ai-chat-v2-context rule must exist").toBeDefined();
+    expect(context).toMatch(/overflow-x:\s*auto/);
+    expect(context).not.toMatch(/overflow-y:\s*auto/);
+  });
+
+  it("has no fixed positioning or fixed widths on message blocks", () => {
+    expect(stripped()).not.toMatch(/position:\s*fixed/);
+
+    const m = stripped().match(
+      /\.UnicDB-ai-chat-v2-item-text[^{]*\{([^}]*)\}/,
+    );
+    expect(m, "item-text/item-reasoning rule must exist").not.toBeNull();
+    const body = m![1];
+    expect(body).toMatch(/max-width:\s*92%/);
+    expect(body).not.toMatch(/(^|;)\s*width\s*:/);
+    expect(body).not.toMatch(/(^|;)\s*max-inline-size\s*:/);
+  });
+
+  it("normalizes Markdown block spacing", () => {
+    const paragraph = ruleBody("\\.UnicDB-ai-chat-v2-md-paragraph");
+    expect(paragraph, "md-paragraph rule must exist").toBeDefined();
+    expect(paragraph).toMatch(/margin:\s*0 0 8px/);
+
+    const heading = ruleBody("\\.UnicDB-ai-chat-v2-md-heading");
+    expect(heading, "md-heading rule must exist").toBeDefined();
+    expect(heading).toMatch(/margin:\s*12px 0 6px/);
+
+    const code = ruleBody("\\.UnicDB-ai-chat-v2-code");
+    expect(code, "code rule must exist").toBeDefined();
+    expect(code).toMatch(/overflow-x:\s*auto/);
+    expect(code).toMatch(/white-space:\s*pre\s*;/);
+  });
+});

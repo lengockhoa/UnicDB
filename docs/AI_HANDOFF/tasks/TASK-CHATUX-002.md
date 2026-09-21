@@ -69,3 +69,54 @@ Root cause of the reported "doesn't stick to bottom": `isInputFocused()` early-r
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+STATUS: DONE
+EXECUTOR_TOOL: other (Oh My Pi harness)
+EXECUTOR_MODEL: unic-code
+EXECUTOR_SUBAGENT: ExecT002
+SUMMARY: Replaced the boolean proximity model in scroll.ts with the `following-tail | reading-history` hysteresis machine (enter ≤72px / exit ≥96px, band keeps current state), removed the focus-suppression early-return, rAF-coalesced the deferred scroll write (setTimeout(0) fallback), added a guarded ResizeObserver re-pin (following-tail only; destroy() disconnects), and retitled the pill "↓ Jump to latest — N new". controller.ts: import + pinned-growth check now use SCROLL_FOLLOW_EXIT_PX.
+TEST_PLAN_FOLLOWED: task §Test Cases — all 5 rows implemented (autoScroll #4/#8/#9/#10/#11) plus the errorsScrollA11y migration block.
+FILES_CHANGED:
+  - webview/aiChat/scroll.ts: state machine, new constants/pill copy, rAF-coalesced write, ResizeObserver re-pin, followState() replaces nearBottom(), isInputFocused/isNearBottom/SCROLL_BOTTOM_THRESHOLD_PX removed
+  - webview/aiChat/controller.ts: SCROLL_BOTTOM_THRESHOLD_PX → SCROLL_FOLLOW_EXIT_PX (import + :330 pinned-growth check)
+  - webview/aiChat/__tests__/autoScroll.test.ts: #4 inverted to focused-follow, pill copy updated, new #8–#11
+  - webview/aiChat/__tests__/errorsScrollA11y.test.ts: imports migrated, 72px enter re-pin, new pill copy, focus test inverted, isNearBottom test → followState() boundary assertions
+TESTS_ADDED:
+  - webview/aiChat/__tests__/autoScroll.test.ts: #8 hysteresis band both directions, #9 scrolled-up+focused pill counts, #10 no-rAF setTimeout fallback, #11 mocked ResizeObserver re-pin/disconnect
+
+RED_OUTPUT (pre-fix, `npx vitest run webview/aiChat/__tests__/autoScroll.test.ts webview/aiChat/__tests__/errorsScrollA11y.test.ts` — 13 failed / 40 passed):
+```
+FAIL autoScroll > #4 focused textarea + new text_delta while pinned follows to bottom
+AssertionError: expected 1600 to be 2000 // Object.is equality   ← row 1 RED (focus suppression)
+FAIL autoScroll > #8 hysteresis band → expected 1520 to be 2000  ← row 2 RED (48px edge, no band)
+FAIL autoScroll > #10 setTimeout fallback → expected 2000 to be 2400  ← row 4 RED (no deferred write)
+FAIL autoScroll > #11 ResizeObserver → expected null not to be null  ← row 5 RED (no observer)
+FAIL autoScroll > #3/#6/#7/#9 + errorsScrollA11y pill tests → '↓ 1 new response' ≠ '↓ Jump to latest — 1 new'
+FAIL errorsScrollA11y > composer focus does not suppress follow → expected 800 to be 1000
+FAIL errorsScrollA11y > followState edges → TypeError: c.followState is not a function
+```
+
+VERIFICATION:
+  command: npx vitest run webview/aiChat/__tests__/autoScroll.test.ts webview/aiChat/__tests__/errorsScrollA11y.test.ts
+  result: 53 pass / 0 fail
+  output_excerpt: |
+    ✓ webview/aiChat/__tests__/errorsScrollA11y.test.ts (42 tests) 42ms
+    ✓ webview/aiChat/__tests__/autoScroll.test.ts (11 tests) 102ms
+    Test Files 2 passed (2)
+    Tests 53 passed (53)
+  command: npm run typecheck
+  result: exit 0 (tsc --noEmit clean)
+  command: npm run compile
+  result: exit 0 — dist/webview.js 2.3mb, dist/webview.css 41.6kb
+  command: grep -rn "isInputFocused\|SCROLL_BOTTOM_THRESHOLD_PX\|isNearBottom\|nearBottom" webview/aiChat/
+  result: zero hits (exit 1)
+  command: npx vitest run webview/aiChat/__tests__/
+  result: 426 pass / 0 fail (23 files) — no regression in related suites
+
+ISSUES: none. Note: vitest jsdom ships pretendToBeVisual → rAF exists in tests; test #10 stubs it to undefined to exercise the setTimeout(0) fallback. The deferred write re-reads scrollHeight at flush and skips if the reader moved the viewport off the pin between schedule and flush.
+HANDOFF_TO_REVIEWER: yes — Status DONE, reviewer picks up pending_review per pipeline.
+NEXT: ready for review
+
+Milestone commit: 5342715 (worktree branch handoff/task-chatux-002)

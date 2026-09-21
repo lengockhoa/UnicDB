@@ -1,19 +1,31 @@
-// webview/aiChat/scroll.ts — TASK-CHATV2-016
+// webview/aiChat/scroll.ts — TASK-CHATV2-016 / TASK-CHATUX-002
 //
 // The bottom-proximity + unread controller for the transcript viewport.
 //
-// CONTRACT (PLAN §6, exact)
-// - The controller reads the bottom distance BEFORE it paints a new frame, so
-//   an "am I pinned?" decision is made against the pre-insert geometry.
-// - Auto-scroll happens ONLY when the distance was <= 48px. Further away, the
-//   scroll position is PRESERVED and a pill counts the missed responses.
+// CONTRACT (SPEC §7, frozen)
+// - Explicit `following-tail | reading-history` state machine with a
+//   hysteresis band: distance <= 72px enters following, >= 96px exits to
+//   reading, and inside the band the CURRENT state is kept (no flapping).
+// - The controller reads the bottom distance BEFORE it paints a new frame,
+//   so an "am I pinned?" decision is made against the pre-insert geometry.
+// - following-tail + a new response → scroll to the bottom. Composer focus
+//   NEVER suppresses follow — a pinned reader tracks the stream while
+//   typing (the old focus-suppression early-return is gone).
+// - reading-history + a new response → the scroll position is PRESERVED and
+//   a pill counts the missed responses.
 // - Reasoning-only events never increment the unread count and never scroll.
-//   Only user-visible transcript activity (an assistant text item, a tool row,
-//   a terminal turn) counts as a "new response".
-// - The pill is a real button, min 28px, bottom-right. Clicking it scrolls to
-//   the bottom and clears the count.
-// - Composer focus must NOT jump the viewport: the controller never scrolls on
-//   focus and never steals scrollTop while an input owns focus.
+//   Only user-visible transcript activity (an assistant text item, a tool
+//   row, a terminal turn) counts as a "new response".
+// - The pill is a real button, min 28px, bottom-right, labeled
+//   "↓ Jump to latest — N new". Clicking it scrolls to the bottom, returns
+//   to following-tail, and clears the count.
+// - Scroll writes are rAF-coalesced (one per frame; setTimeout(0) fallback
+//   when requestAnimationFrame is unavailable, e.g. bare jsdom). The
+//   logical pin is synchronous so readers see honest geometry immediately;
+//   the deferred write re-reads scrollHeight at flush to catch growth that
+//   landed after the coalesced pass.
+// - A guarded ResizeObserver re-pins the viewport on resize while
+//   following-tail; in reading-history it is a no-op. destroy() disconnects.
 // - `prefers-reduced-motion: reduce` forces `behavior: "auto"` (no smooth
 //   animation). The CSS caret/spinner/pulse rules are removed in styles.css.
 // - A prepended history batch preserves the visual anchor: the controller
@@ -26,15 +38,21 @@ import { CHAT_V2_ROOT_CLASS } from "./shell";
 
 const PREFIX = CHAT_V2_ROOT_CLASS;
 
-/** Exact bottom-proximity threshold (px) from PLAN §6. */
-export const SCROLL_BOTTOM_THRESHOLD_PX = 48;
+/** The follow machine's two states (SPEC §7). */
+export type ScrollFollowState = "following-tail" | "reading-history";
+
+/** Distance at/below which the machine enters `following-tail` (px). */
+export const SCROLL_FOLLOW_ENTER_PX = 72;
+
+/** Distance at/above which the machine exits to `reading-history` (px). */
+export const SCROLL_FOLLOW_EXIT_PX = 96;
 
 /** Minimum pill size (px) — a real, tappable control. */
 export const SCROLL_PILL_MIN_PX = 28;
 
 /** Pill copy (exact). */
 export function unreadPillLabel(count: number): string {
-  return count === 1 ? "↓ 1 new response" : `↓ ${count} new responses`;
+  return `↓ Jump to latest — ${count} new`;
 }
 
 /** Marker attribute for the pill button. */
@@ -51,11 +69,6 @@ export function bottomDistance(metrics: ScrollMetrics): number {
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop);
 }
 
-/** Is the viewport pinned close enough to auto-follow? */
-export function isNearBottom(metrics: ScrollMetrics, threshold = SCROLL_BOTTOM_THRESHOLD_PX): boolean {
-  return bottomDistance(metrics) <= Math.max(0, threshold);
-}
-
 /** The scroll behavior to use for this environment. */
 export function scrollBehavior(reducedMotion: boolean): ScrollBehavior {
   return reducedMotion ? "auto" : "smooth";
@@ -68,7 +81,8 @@ export interface ScrollControllerOptions {
   readonly pillHost?: HTMLElement;
   /** Reduce-motion source. Defaults to the live media query (or false). */
   readonly reducedMotion?: boolean;
-  /** Called when proximity changes (mirrors the reducer's `scrollNearBottom`). */
+  /** Called on follow-state transitions (mirrors the reducer's
+   * `scrollNearBottom`): `near` is true for `following-tail`. */
   readonly onProximityChange?(near: boolean): void;
   /** Called when the unread count changes. */
   readonly onUnreadChange?(count: number): void;
@@ -77,13 +91,16 @@ export interface ScrollControllerOptions {
 export interface ScrollController {
   /** Read the CURRENT bottom distance off the live element. */
   distance(): number;
-  nearBottom(): boolean;
+  /** Recompute the follow state from live geometry (hysteresis applied)
+   * and return it. */
+  followState(): ScrollFollowState;
   unreadCount(): number;
   /** Capture pre-paint metrics; returns the bottom distance for this frame. */
   beginFrame(): number;
   /**
-   * A new user-visible response was appended. If the pre-frame distance was
-   * <= 48px, follow it; otherwise preserve scroll and count it as unread.
+   * A new user-visible response was appended. In `following-tail` (judged on
+   * the pre-frame distance) it is followed to the bottom; in
+   * `reading-history` the scroll position is preserved and it is counted.
    */
   notifyNewResponse(): void;
   /**
@@ -96,9 +113,9 @@ export interface ScrollController {
    * so the message the user was reading stays visually fixed.
    */
   notifyPrependedHistory(prepend: () => void): void;
-  /** Scroll to the bottom and clear the unread count. */
+  /** Scroll to the bottom, return to `following-tail`, and clear unread. */
   scrollToBottom(): void;
-  /** Recompute proximity from the live element and emit change callbacks. */
+  /** Recompute the follow state off the live element and emit callbacks. */
   sync(): void;
   destroy(): void;
 }
@@ -107,11 +124,15 @@ export function createScrollController(options: ScrollControllerOptions): Scroll
   const viewport = options.viewport;
   const pillHost = options.pillHost ?? viewport.parentElement ?? viewport;
 
-  let reducedMotion = options.reducedMotion ?? prefersReducedMotion();
+  const reducedMotion = options.reducedMotion ?? prefersReducedMotion();
   let unread = 0;
-  let lastNear = true;
+  let followState: ScrollFollowState = "following-tail";
+  let destroyed = false;
   // Distance captured BEFORE the current paint was applied.
   let preFrameDistance = bottomDistance(readMetrics(viewport));
+  // rAF-coalesced scroll write: one pending flush per frame at most.
+  let scrollWriteScheduled = false;
+  let pendingPinTop = 0;
 
   const pill = document.createElement("button");
   pill.type = "button";
@@ -134,61 +155,75 @@ export function createScrollController(options: ScrollControllerOptions): Scroll
     options.onUnreadChange?.(unread);
   }
 
-  function emitProximity(near: boolean): void {
-    if (near === lastNear) return;
-    lastNear = near;
-    options.onProximityChange?.(near);
+  /** Hysteresis classifier: inside the 72–96px band the CURRENT state wins. */
+  function classify(distancePx: number, current: ScrollFollowState): ScrollFollowState {
+    if (distancePx <= SCROLL_FOLLOW_ENTER_PX) return "following-tail";
+    if (distancePx >= SCROLL_FOLLOW_EXIT_PX) return "reading-history";
+    return current;
+  }
+
+  function setFollowState(next: ScrollFollowState): void {
+    if (next === followState) return;
+    followState = next;
+    options.onProximityChange?.(next === "following-tail");
   }
 
   function distance(): number {
     return bottomDistance(readMetrics(viewport));
   }
 
-  function applyBottom(): void {
-    viewport.scrollTop = viewport.scrollHeight;
+  /** The deferred half of a pin: re-reads scrollHeight so growth that landed
+   * after the coalesced pass is still followed. Skipped when the reader
+   * moved the viewport off the pin between schedule and flush. */
+  function flushScrollWrite(): void {
+    scrollWriteScheduled = false;
+    if (destroyed) return;
+    if (viewport.scrollTop !== pendingPinTop) return;
+    const top = viewport.scrollHeight;
+    if (!reducedMotion && typeof viewport.scrollTo === "function") {
+      viewport.scrollTo({ top, behavior: scrollBehavior(false) });
+    }
+    viewport.scrollTop = top;
     preFrameDistance = bottomDistance(readMetrics(viewport));
-    emitProximity(true);
+  }
+
+  /** One scroll write per frame: rAF when present, setTimeout(0) fallback. */
+  function scheduleScrollWrite(): void {
+    if (scrollWriteScheduled) return;
+    scrollWriteScheduled = true;
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => flushScrollWrite());
+    } else {
+      setTimeout(() => flushScrollWrite(), 0);
+    }
   }
 
   function scrollToBottom(): void {
+    // The logical pin is synchronous — readers (sync(), the next frame's
+    // beginFrame) must see honest geometry immediately. The DOM write is
+    // coalesced: at most one deferred write per frame, re-reading
+    // scrollHeight at flush.
+    pendingPinTop = viewport.scrollHeight;
     if (!reducedMotion && typeof viewport.scrollTo === "function") {
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior: scrollBehavior(false) });
-      // A smooth scroll is applied asynchronously; the logical state is pinned
-      // the moment the user asked for it.
-      viewport.scrollTop = viewport.scrollHeight;
-      preFrameDistance = 0;
-      emitProximity(true);
-    } else {
-      // Reduced motion (or no scrollTo): a jump, never an animation.
-      applyBottom();
+      viewport.scrollTo({ top: pendingPinTop, behavior: scrollBehavior(false) });
     }
+    viewport.scrollTop = pendingPinTop;
+    preFrameDistance = bottomDistance(readMetrics(viewport));
+    setFollowState("following-tail");
+    scheduleScrollWrite();
     unread = 0;
     emitUnread();
   }
 
-  /** Composer focus must NOT move the viewport. Read statelessly (no global
-   * listener to leak) — a focused text field suppresses auto-follow so the
-   * caret the user is typing into never jumps. */
-  function isInputFocused(): boolean {
-    if (typeof document === "undefined") return false;
-    const active = document.activeElement as HTMLElement | null;
-    return !!active && (active.tagName === "TEXTAREA" || active.tagName === "INPUT");
-  }
-
   function notifyNewResponse(): void {
-    if (preFrameDistance <= SCROLL_BOTTOM_THRESHOLD_PX) {
-      // Composer focus must not jump the viewport: follow silently next time.
-      if (isInputFocused()) {
-        preFrameDistance = distance();
-        return;
-      }
+    if (classify(preFrameDistance, followState) === "following-tail") {
       scrollToBottom();
       return;
     }
-    // Far from the bottom: preserve scroll, count the response.
+    // Reading history: preserve scroll, count the response.
+    setFollowState("reading-history");
     unread += 1;
     emitUnread();
-    emitProximity(false);
     preFrameDistance = distance();
   }
 
@@ -212,21 +247,37 @@ export function createScrollController(options: ScrollControllerOptions): Scroll
   }
 
   function sync(): void {
-    const near = distance() <= SCROLL_BOTTOM_THRESHOLD_PX;
-    emitProximity(near);
-    if (near && unread > 0) {
+    setFollowState(classify(distance(), followState));
+    if (followState === "following-tail" && unread > 0) {
       unread = 0;
       emitUnread();
     }
     preFrameDistance = distance();
   }
 
+  // Re-pin on viewport resize while following the tail; a reader mid-history
+  // is left alone. Guarded: jsdom and older runtimes lack ResizeObserver.
+  let resizeObserver: ResizeObserver | null = null;
+  if (typeof ResizeObserver === "function") {
+    resizeObserver = new ResizeObserver(() => {
+      if (destroyed || followState !== "following-tail") return;
+      pendingPinTop = viewport.scrollHeight;
+      viewport.scrollTop = pendingPinTop;
+      preFrameDistance = bottomDistance(readMetrics(viewport));
+      scheduleScrollWrite();
+    });
+    resizeObserver.observe(viewport);
+  }
+
   options.onUnreadChange?.(0);
-  emitProximity(distance() <= SCROLL_BOTTOM_THRESHOLD_PX);
+  setFollowState(classify(distance(), followState));
 
   return {
     distance,
-    nearBottom: () => distance() <= SCROLL_BOTTOM_THRESHOLD_PX,
+    followState: () => {
+      setFollowState(classify(distance(), followState));
+      return followState;
+    },
     unreadCount: () => unread,
     beginFrame: () => {
       preFrameDistance = distance();
@@ -238,6 +289,9 @@ export function createScrollController(options: ScrollControllerOptions): Scroll
     scrollToBottom,
     sync,
     destroy: () => {
+      destroyed = true;
+      resizeObserver?.disconnect();
+      resizeObserver = null;
       pill.remove();
     },
   };

@@ -25,10 +25,10 @@ import {
 } from "../errors";
 import { mapHostChatError, type AiChatErrorFrame } from "../../../src/ui/aiChatErrors";
 import {
-  SCROLL_BOTTOM_THRESHOLD_PX,
+  SCROLL_FOLLOW_ENTER_PX,
+  SCROLL_FOLLOW_EXIT_PX,
   bottomDistance,
   createScrollController,
-  isNearBottom,
   scrollBehavior,
   unreadPillLabel,
 } from "../scroll";
@@ -275,11 +275,11 @@ function makeViewport(): { viewport: HTMLElement; host: HTMLElement; set(top: nu
 }
 
 describe("scroll controller — proximity discipline", () => {
-  it("auto-scrolls only when the pre-frame distance is <= 48px", () => {
+  it("auto-scrolls when the pre-frame distance is within the 72px enter edge", () => {
     const { viewport } = makeViewport();
     const c = createScrollController({ viewport, reducedMotion: true });
-    // 48px away: pinned.
-    viewport.scrollTop = 952; // 1000 - 200 - 952 = -48 -> clamped to 0? no: max(0,...)
+    // Exactly at the enter edge: 1000 - 200 - 728 = 72px → following-tail.
+    viewport.scrollTop = 1000 - 200 - SCROLL_FOLLOW_ENTER_PX;
     c.beginFrame();
     c.notifyNewResponse();
     expect(viewport.scrollTop).toBe(1000);
@@ -303,8 +303,8 @@ describe("scroll controller — proximity discipline", () => {
   });
 
   it("pill copy is exact for 1 and n", () => {
-    expect(unreadPillLabel(1)).toBe("↓ 1 new response");
-    expect(unreadPillLabel(4)).toBe("↓ 4 new responses");
+    expect(unreadPillLabel(1)).toBe("↓ Jump to latest — 1 new");
+    expect(unreadPillLabel(4)).toBe("↓ Jump to latest — 4 new");
   });
 
   it("renders a real min-28px pill in the host and clears on click", () => {
@@ -317,7 +317,7 @@ describe("scroll controller — proximity discipline", () => {
     expect(pill).not.toBeNull();
     expect(pill.tagName).toBe("BUTTON");
     expect(pill.hidden).toBe(false);
-    expect(pill.textContent).toBe("↓ 1 new response");
+    expect(pill.textContent).toBe("↓ Jump to latest — 1 new");
 
     pill.click();
     expect(viewport.scrollTop).toBe(1000);
@@ -338,16 +338,18 @@ describe("scroll controller — proximity discipline", () => {
     c.destroy();
   });
 
-  it("composer focus does not jump the viewport", () => {
+  it("composer focus does not suppress follow", () => {
     const { viewport } = makeViewport();
     const c = createScrollController({ viewport, reducedMotion: true });
     const textarea = document.createElement("textarea");
     document.body.appendChild(textarea);
     textarea.focus();
-    viewport.scrollTop = 800; // 0px from bottom
+    viewport.scrollTop = 800; // 0px from bottom → following-tail
     c.beginFrame();
     c.notifyNewResponse();
-    expect(viewport.scrollTop).toBe(800);
+    // TASK-CHATUX-002: focus suppression removed — a pinned viewport follows
+    // the stream even while the composer owns focus.
+    expect(viewport.scrollTop).toBe(1000);
     textarea.remove();
     c.destroy();
   });
@@ -369,10 +371,20 @@ describe("scroll controller — proximity discipline", () => {
     c.destroy();
   });
 
-  it("bottomDistance clamps at 0 and isNearBottom respects the threshold", () => {
+  it("bottomDistance clamps at 0 and followState honors the 72/96 hysteresis edges", () => {
     expect(bottomDistance({ scrollTop: 800, scrollHeight: 1000, clientHeight: 200 })).toBe(0);
-    expect(isNearBottom({ scrollTop: 752, scrollHeight: 1000, clientHeight: 200 })).toBe(true); // 48
-    expect(isNearBottom({ scrollTop: 751, scrollHeight: 1000, clientHeight: 200 })).toBe(false); // 49
+    const { viewport } = makeViewport();
+    const c = createScrollController({ viewport, reducedMotion: true });
+    // scrollHeight 1000, clientHeight 200 → distance = 800 - scrollTop.
+    viewport.scrollTop = 800 - SCROLL_FOLLOW_ENTER_PX; // 72px — enter edge
+    expect(c.followState()).toBe("following-tail");
+    viewport.scrollTop = 800 - (SCROLL_FOLLOW_ENTER_PX + 8); // 80px — band keeps following
+    expect(c.followState()).toBe("following-tail");
+    viewport.scrollTop = 800 - SCROLL_FOLLOW_EXIT_PX; // 96px — exit edge
+    expect(c.followState()).toBe("reading-history");
+    viewport.scrollTop = 800 - (SCROLL_FOLLOW_EXIT_PX - 8); // 88px — band keeps reading
+    expect(c.followState()).toBe("reading-history");
+    c.destroy();
   });
 });
 

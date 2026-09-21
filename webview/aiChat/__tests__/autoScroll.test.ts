@@ -1,28 +1,35 @@
-// webview/aiChat/__tests__/autoScroll.test.ts — TASK-CHATFIX-002
+// webview/aiChat/__tests__/autoScroll.test.ts — TASK-CHATFIX-002 / TASK-CHATUX-002
 //
-// `createScrollController` (scroll.ts) is fully implemented but was never
-// driven. These tests prove the SINGLE coalesced render pass in controller.ts
-// now drives it:
+// `createScrollController` (scroll.ts) is driven by the SINGLE coalesced
+// render pass in controller.ts. TASK-CHATUX-002 replaced the boolean
+// proximity model with a `following-tail | reading-history` state machine
+// (enter <=72px, exit >=96px, hysteresis band between), removed the
+// focus-suppression early-return, rAF-coalesced scroll writes
+// (setTimeout(0) fallback), and added a guarded ResizeObserver re-pin.
 //   #1 a new user-visible response auto-follows to the bottom
 //   #2 reasoning-only deltas never scroll and never show the pill
 //   #3 a user scrolled up keeps their position and gets the unread pill
-//   #4 composer textarea focus mid-turn never scroll-jacks the transcript
-//      (plan-review edge row, scroll.ts isInputFocused contract)
-//   #5 regression: the coalesced pass is the ONE driver (RED today)
+//   #4 TASK-CHATUX-002 row 1: focused composer + delta while pinned FOLLOWS
+//      (inverts the old focus suppression — RED before the fix)
+//   #5 regression: the coalesced pass is the ONE driver
 //   #6 fix-round-1 regression: same-message streaming growth keeps following
-//      while pinned (fix-round verdict: growth routed to
-//      notifyReasoningActivity stopped auto-follow after the FIRST delta of a
-//      message and let drift past 48px raise a spurious unread pill)
+//      while pinned
 //   #7 fix-round-1 sibling: the same growth while scrolled up never scrolls
-//      and never counts (the far side of the pinned-growth branch)
-// Rows 1/3/5 were executed RED against the pre-wiring controller and pasted
-// into the task's Executor Report; rows 2/4 are "never scrolls" invariants.
+//      and never counts
+//   #8 TASK-CHATUX-002 row 2: the 72–96 hysteresis band keeps the current
+//      state in BOTH directions
+//   #9 TASK-CHATUX-002 row 3: scrolled-up + focused + delta → no scroll,
+//      pill counts with the new "Jump to latest" copy
+//   #10 TASK-CHATUX-002 row 4: no rAF → setTimeout(0) fallback still lands
+//      the deferred write (re-reads scrollHeight at flush)
+//   #11 TASK-CHATUX-002 row 5: mocked ResizeObserver re-pins only while
+//      following-tail; destroy() disconnects
 // jsdom does no layout: geometry is mocked with defineProperty, per the task.
 // @vitest-environment jsdom
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createChatController, type ChatController, type VsCodeApiLike } from "../controller";
 import { AI_CHAT_PROTOCOL_VERSION_V2 } from "../../../src/ui/aiChatPanelMessages";
@@ -184,10 +191,10 @@ describe("auto-scroll — the render pass drives the scroll controller (TASK-CHA
     h.controller.flushRender();
     expect(h.viewport.top).toBe(0);
     expect(h.pill.hidden).toBe(false);
-    expect(h.pill.textContent).toBe("↓ 1 new response");
+    expect(h.pill.textContent).toBe("↓ Jump to latest — 1 new");
   });
 
-  it("#4 composer focus mid-turn never scroll-jacks the transcript", () => {
+  it("#4 focused textarea + new text_delta while pinned follows to bottom", () => {
     const h = makeHarness();
     openTurn(h);
     h.viewport.top = 1600; // near bottom
@@ -195,7 +202,9 @@ describe("auto-scroll — the render pass drives the scroll controller (TASK-CHA
     expect(document.activeElement).toBe(h.controller.prompt);
     h.send({ kind: "text_delta", sessionId: "s1", sequence: h.nextSequence(), turnId: "t1", messageId: "m1", text: "more" });
     h.controller.flushRender();
-    expect(h.viewport.top).toBe(1600);
+    // TASK-CHATUX-002: composer focus no longer suppresses follow — the
+    // pinned viewport tracks the stream while the user types.
+    expect(h.viewport.top).toBe(2000);
     expect(h.pill.hidden).toBe(true);
   });
 
@@ -273,7 +282,7 @@ describe("auto-scroll — the render pass drives the scroll controller (TASK-CHA
     h.controller.flushRender();
     expect(h.viewport.top).toBe(2800);
     expect(h.pill.hidden).toBe(true);
-    expect(h.pill.textContent).toBe("↓ 0 new responses");
+    expect(h.pill.textContent).toBe("↓ Jump to latest — 0 new");
   });
 
   it("#7 fix-round sibling: same-message growth while scrolled up never scrolls and never counts", () => {
@@ -294,9 +303,99 @@ describe("auto-scroll — the render pass drives the scroll controller (TASK-CHA
     h.controller.flushRender();
     // Far from the bottom, growth stays mere activity: position preserved,
     // no scroll, and the unread count is never incremented (still 0 — a
-    // spurious count would read "↓ 1 new response" with the pill visible).
+    // spurious count would read "↓ Jump to latest — 1 new" with the pill visible).
     expect(h.viewport.top).toBe(0);
     expect(h.pill.hidden).toBe(true);
-    expect(h.pill.textContent).toBe("↓ 0 new responses");
+    expect(h.pill.textContent).toBe("↓ Jump to latest — 0 new");
+  });
+
+  it("#8 distance inside the 72–96 hysteresis band keeps the current state", () => {
+    const h = makeHarness();
+    openTurn(h);
+    // From following-tail: 80px of drift (inside the band) still follows.
+    h.viewport.top = 1520; // 2000 - 400 - 1520 = 80px — inside the band
+    h.send({ kind: "text_delta", sessionId: "s1", sequence: h.nextSequence(), turnId: "t1", messageId: "m1", text: "hi" });
+    h.controller.flushRender();
+    expect(h.viewport.top).toBe(2000);
+    expect(h.pill.hidden).toBe(true);
+
+    // From reading-history: the same 80px distance keeps reading — no
+    // scroll, and the missed response is counted.
+    h.viewport.top = 0; // scrolled far up → exits to reading-history
+    h.send({ kind: "text_delta", sessionId: "s1", sequence: h.nextSequence(), turnId: "t1", messageId: "m2", text: "far" });
+    h.controller.flushRender();
+    expect(h.viewport.top).toBe(0);
+    expect(h.pill.hidden).toBe(false);
+    h.viewport.top = 1520; // 80px — inside the band, state must not flap
+    h.send({ kind: "text_delta", sessionId: "s1", sequence: h.nextSequence(), turnId: "t1", messageId: "m3", text: "still far" });
+    h.controller.flushRender();
+    expect(h.viewport.top).toBe(1520);
+    expect(h.pill.textContent).toBe("↓ Jump to latest — 2 new");
+  });
+
+  it("#9 scrolled-up + focused + delta → no scroll, pill counts", () => {
+    const h = makeHarness();
+    openTurn(h);
+    h.viewport.top = 0; // far from the bottom
+    h.controller.prompt.focus();
+    expect(document.activeElement).toBe(h.controller.prompt);
+    h.send({ kind: "text_delta", sessionId: "s1", sequence: h.nextSequence(), turnId: "t1", messageId: "m1", text: "the answer" });
+    h.controller.flushRender();
+    expect(h.viewport.top).toBe(0);
+    expect(h.pill.hidden).toBe(false);
+    expect(h.pill.textContent).toBe("↓ Jump to latest — 1 new");
+  });
+
+  it("#10 jsdom without rAF constructs and follows via the setTimeout fallback", () => {
+    vi.stubGlobal("requestAnimationFrame", undefined);
+    vi.useFakeTimers();
+    const h = makeHarness(); // must not throw without rAF/ResizeObserver
+    openTurn(h);
+    h.send({ kind: "text_delta", sessionId: "s1", sequence: h.nextSequence(), turnId: "t1", messageId: "m1", text: "hi" });
+    h.controller.flushRender();
+    expect(h.viewport.top).toBe(2000); // logical pin is synchronous
+    // The deferred write re-reads scrollHeight at flush: content that grew
+    // after the pass is still caught by the setTimeout(0) fallback.
+    h.viewport.height = 2400;
+    vi.runOnlyPendingTimers();
+    expect(h.viewport.top).toBe(2400);
+    vi.useRealTimers();
+  });
+
+  it("#11 mocked ResizeObserver re-pins only while following-tail", () => {
+    let captured: (() => void) | null = null;
+    let disconnected = false;
+    class FakeResizeObserver {
+      constructor(cb: () => void) {
+        captured = cb;
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {
+        disconnected = true;
+      }
+    }
+    vi.stubGlobal("ResizeObserver", FakeResizeObserver);
+    const h = makeHarness();
+    openTurn(h);
+    expect(captured).not.toBeNull();
+    const fire = (): void => (captured as unknown as () => void)();
+
+    // following-tail: a viewport resize re-pins to the bottom.
+    h.viewport.top = 1200; // simulate the viewport drifting off the pin
+    fire();
+    expect(h.viewport.top).toBe(2000);
+
+    // reading-history: the same callback leaves the reader alone.
+    h.viewport.top = 0;
+    h.send({ kind: "text_delta", sessionId: "s1", sequence: h.nextSequence(), turnId: "t1", messageId: "m1", text: "far" });
+    h.controller.flushRender(); // exits to reading-history, pill counts
+    expect(h.pill.hidden).toBe(false);
+    h.viewport.top = 500;
+    fire();
+    expect(h.viewport.top).toBe(500);
+
+    h.controller.dispose();
+    expect(disconnected).toBe(true);
   });
 });

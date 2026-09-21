@@ -623,12 +623,13 @@ describe("transcript — scoped CSS keeps the PLAN §6 geometry", () => {
     expect(body).toContain("border-radius: 12px 12px 4px 12px");
   });
 
-  it("assistant answer: unboxed 880px/92%, 4px 0", () => {
+  it("assistant answer: unboxed 92% max-width, no fixed width, 4px 0", () => {
     const rule = /\.UnicDB-ai-chat-v2-item-text,\s*\.UnicDB-ai-chat-v2-item-reasoning\s*\{([^}]*)\}/.exec(css);
     expect(rule).not.toBeNull();
     const body = rule![1]!;
     expect(body).toContain("max-width: 92%");
-    expect(body).toContain("width: 880px");
+    expect(body).not.toMatch(/(^|;)\s*width\s*:/);
+    expect(body).not.toMatch(/(^|;)\s*max-inline-size\s*:/);
     expect(body).toContain("padding: 4px 0");
   });
 

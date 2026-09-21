@@ -63,3 +63,61 @@ CSS-only task by design — the grid and single-scroll-owner structure already e
 Phase 3 executor appends `## Executor Report` BELOW this separator.
 Phase 4 reviewer appends `## Reviewer Verdict` BELOW the Executor Report.
 -->
+
+## Executor Report
+
+- Timestamp: 2026-09-21
+- EXECUTOR_TOOL: omp (Oh My Pi)
+- EXECUTOR_MODEL: unic-code
+- EXECUTOR_SUBAGENT: ExecT001 (feature-implementer)
+- Status: PASS
+
+### Summary
+
+Removed the fixed `width: 880px` from `.UnicDB-ai-chat-v2-item-text, .UnicDB-ai-chat-v2-item-reasoning` (styles.css:579) so assistant items size in normal flow under `max-width: 92%`, and updated the stale `max 880px/92%` comment to `max 92%`. Added the three TASK-CHATUX-001 contract tests to `shellGrid.test.ts` (root grid rows + sole `overflow-y:auto` transcript, no `position:fixed`/fixed widths on message blocks, normalized md spacing). Migrated the stale `transcript.test.ts` case that pinned `width: 880px` to assert the new contract (no `width:`/`max-inline-size`, keeps `max-width: 92%` + `padding: 4px 0`).
+
+### RED_OUTPUT
+
+```
+❯ webview/aiChat/__tests__/shellGrid.test.ts (9 tests | 1 failed) 6ms
+❯ webview/aiChat/__tests__/shellGrid.test.ts > TASK-CHATUX-001 layout stabilization contract > has no fixed positioning or fixed widths on message blocks
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+FAIL webview/aiChat/__tests__/shellGrid.test.ts > ... > has no fixed positioning or fixed widths on message blocks
+AssertionError: expected '...align-self: flex-start; max-wi…' not to match /(^|;)\s*width\s*:/
+❯ webview/aiChat/__tests__/shellGrid.test.ts:132:22
+Test Files 1 failed (1)
+```
+
+(RED confirmed on the `width: 880px` row; the other two new cases passed pre-edit since the grid/spacing contract already held.)
+
+### Verification Output
+
+```
+$ npx vitest run webview/aiChat/__tests__/shellGrid.test.ts
+✓ webview/aiChat/__tests__/shellGrid.test.ts (9 tests) 4ms
+Test Files 1 passed (1)
+Tests 9 passed (9)
+
+$ npm run typecheck
+> tsc --noEmit
+(clean, exit 0)
+
+$ npm run compile
+⚡ Done in 32ms
+dist/webview.js 2.3mb ⚠️
+dist/webview.css 41.6kb
+
+$ npx vitest run webview/aiChat/__tests__/
+Test Files 23 passed (23)
+Tests 425 passed (425)
+```
+
+### Files Changed
+
+- `webview/aiChat/styles.css` — removed `width: 880px` from `-item-text`/`-item-reasoning`; comment updated.
+- `webview/aiChat/__tests__/shellGrid.test.ts` — +3 TASK-CHATUX-001 contract tests.
+- `webview/aiChat/__tests__/transcript.test.ts` — migrated stale 880px assertion to the new no-fixed-width contract.
+
+### Note
+
+`-error-card` `width: 880px` (:2650) / `max-width: 880px` (:2836) and `-change-plan` `max-inline-size: 880px` (:2512) are intentional per §Test Cases and untouched. Other `overflow-y: auto` sites (input, scroll regions inside composer/menus) are outside the transcript contract and untouched. Milestone commit `832ba58` on `handoff/task-chatux-001`.
