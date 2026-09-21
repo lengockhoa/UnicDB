@@ -294,20 +294,20 @@
   background: var(--UnicDB-ai-chat-v2-input);
 }
 
-/* Top region: auto-growing borderless textarea, 64–160px. */
+/* Top region: auto-growing borderless textarea, 36–88px. */
 .UnicDB-ai-chat-v2-composer-top {
   display: flex;
   min-width: 0;
-  min-height: 64px;
-  max-height: 160px;
-  padding: 14px 16px 10px;
+  min-height: 36px;
+  max-height: 88px;
+  padding: 6px 10px 4px;
 }
 
 .UnicDB-ai-chat-v2-input {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  max-height: 147px; /* up to seven 21px visual lines */
+  max-height: 76px; /* ~3.5 21px visual lines, then overflow-y */
   margin: 0;
   padding: 0;
   border: 0;
@@ -325,15 +325,15 @@
   color: var(--UnicDB-ai-chat-v2-muted);
 }
 
-/* Bottom region: min 48px, 7px 10px padding, 6px gaps. */
+/* Bottom region: min 36px, 4px 8px padding, 6px gaps. */
 .UnicDB-ai-chat-v2-composer-bottom {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  min-height: 48px;
-  padding: 7px 10px;
+  min-height: 36px;
+  padding: 4px 8px;
 }
 
 .UnicDB-ai-chat-v2-actions {
@@ -344,16 +344,16 @@
   min-height: 0;
 }
 
-/* Send/stop slot: exactly 40x40, radius 10. */
+/* Send/stop slot: exactly 32x32, radius 10. */
 .UnicDB-ai-chat-v2-send {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 40px;
-  height: 40px;
-  min-width: 40px;
-  min-height: 40px;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
   padding: 0;
   border: 0;
   border-radius: var(--UnicDB-ai-chat-v2-radius-md);
@@ -1009,7 +1009,7 @@
    =========================================================================== */
 
 .UnicDB-ai-chat-v2-input-v2 {
-  max-height: 147px; /* exactly seven 21px visual lines, then overflow-y */
+  max-height: 76px; /* ~3.5 21px visual lines, then overflow-y */
 }
 
 .UnicDB-ai-chat-v2-input-scroll {
@@ -1184,16 +1184,16 @@
   outline-offset: -2px;
 }
 
-/* Primary slot: one 40x40 slot whose meaning follows state (send | stop). */
+/* Primary slot: one 32x32 slot whose meaning follows state (send | stop). */
 .UnicDB-ai-chat-v2-primary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 40px;
-  height: 40px;
-  min-width: 40px;
-  min-height: 40px;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
   padding: 0;
   border: 0;
   border-radius: var(--UnicDB-ai-chat-v2-radius-md);

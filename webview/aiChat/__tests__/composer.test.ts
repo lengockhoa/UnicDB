@@ -28,6 +28,7 @@ import { createContextChipStrip, CONTEXT_CHIP_MARKER } from "../contextChips";
 import { createSchemaControl } from "../schemaControl";
 import { buildContextRefs } from "../../../src/ui/aiChatContext";
 import { createInitialChatState, type ChatViewState } from "../store";
+import { decideComposerKey, type ComposerKeyInput } from "../keyboard";
 
 interface Recorder {
   inputs: Array<{ value: string; selection: ComposerSelection }>;
@@ -101,6 +102,28 @@ function stubScrollHeight(prompt: HTMLTextAreaElement, value: number): void {
     get: () => value,
   });
 }
+/** Build a `decideComposerKey` input with sane defaults (mirrors the
+ * keyboard.test.ts helper) so each assertion states only what matters. */
+function keyInput(overrides: Partial<ComposerKeyInput> = {}): ComposerKeyInput {
+  return {
+    key: "Enter",
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    isComposing: false,
+    keyCode: 13,
+    composing: false,
+    phase: "idle",
+    draftText: "hello",
+    hasUnresolvedContext: false,
+    permissionFocused: false,
+    autocompleteOpen: false,
+    autocompleteItemCount: 0,
+    ...overrides,
+  };
+}
+
 
 /** Read the addEventListener types actually registered by the component. */
 function listenerTypes(view: ComposerView): string[] {
@@ -399,20 +422,25 @@ describe("TASK-CHATV2-008 composer — auto-grow boundary (#5)", () => {
     document.body.appendChild(mount);
     view = renderComposerV2(mount, recorder());
   });
+  it("clamps measured scrollHeight to 36–88px and scrolls beyond the max", () => {
+    // TASK-CHATUX-004 pins the compact clamp with literals, not just the
+    // exported constants, so a silent constant change cannot self-adjust.
+    expect(COMPOSER_AUTO_GROW_MIN_PX).toBe(36);
+    expect(COMPOSER_AUTO_GROW_MAX_PX).toBe(88);
 
-  it("clamps measured scrollHeight to 64–160px and scrolls beyond the max", () => {
     stubScrollHeight(view.prompt, 20);
     view.render(idleValid());
-    expect(view.prompt.style.height).toBe(`${COMPOSER_AUTO_GROW_MIN_PX}px`);
+    expect(view.prompt.style.height).toBe("36px");
     expect(view.prompt.classList.contains("UnicDB-ai-chat-v2-input-scroll")).toBe(false);
 
-    stubScrollHeight(view.prompt, 120);
+    stubScrollHeight(view.prompt, 60);
     view.render(idleValid());
-    expect(view.prompt.style.height).toBe("120px");
+    expect(view.prompt.style.height).toBe("60px");
+    expect(view.prompt.classList.contains("UnicDB-ai-chat-v2-input-scroll")).toBe(false);
 
     stubScrollHeight(view.prompt, 400);
     view.render(idleValid());
-    expect(view.prompt.style.height).toBe(`${COMPOSER_AUTO_GROW_MAX_PX}px`);
+    expect(view.prompt.style.height).toBe("88px");
     expect(view.prompt.classList.contains("UnicDB-ai-chat-v2-input-scroll")).toBe(true);
   });
 });
@@ -476,5 +504,77 @@ describe("TASK-CHATV2-008 composer — architecture: no transport/key owner (#7)
     expect(surface).toBe("onPrimaryActivate");
     expect(COMPOSER_CODE).not.toContain("onSend");
     expect(COMPOSER_CODE).not.toContain("onQueue");
+  });
+});
+
+describe("TASK-CHATUX-004 composer — compact metrics + pinned contracts", () => {
+  let mount: HTMLElement;
+  let view: ComposerView;
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    mount = document.createElement("div");
+    document.body.appendChild(mount);
+    view = renderComposerV2(mount, recorder());
+  });
+
+  afterEach(() => {
+    view.destroy();
+  });
+
+  it("CSS pins the compact metrics (≤104px collapsed footprint)", () => {
+    const ruleBody = (selector: string): string => {
+      const match = STYLES.match(new RegExp(`${selector}\\s*\\{([^}]*)\\}`));
+      expect(match, `${selector} rule must exist`).not.toBeNull();
+      return match![1]!;
+    };
+
+    // Top region: 36–88px auto-grow clamp, tighter padding.
+    const top = ruleBody("\\.UnicDB-ai-chat-v2-composer-top");
+    expect(top).toContain("min-height: 36px");
+    expect(top).toContain("max-height: 88px");
+    expect(top).toContain("padding: 6px 10px 4px");
+
+    // Textarea scrolls past ~3.5 lines instead of seven.
+    expect(ruleBody("\\.UnicDB-ai-chat-v2-input")).toContain("max-height: 76px");
+    expect(ruleBody("\\.UnicDB-ai-chat-v2-input-v2")).toContain("max-height: 76px");
+
+    // Bottom lane: 36px minimum, tighter padding.
+    const bottom = ruleBody("\\.UnicDB-ai-chat-v2-composer-bottom");
+    expect(bottom).toContain("min-height: 36px");
+    expect(bottom).toContain("padding: 4px 8px");
+
+    // Send + primary slots shrink to a 32px box.
+    for (const selector of ["\\.UnicDB-ai-chat-v2-send", "\\.UnicDB-ai-chat-v2-primary"]) {
+      const body = ruleBody(selector);
+      expect(body).toContain("width: 32px");
+      expect(body).toContain("height: 32px");
+      expect(body).toContain("min-width: 32px");
+      expect(body).toContain("min-height: 32px");
+    }
+  });
+
+  it("IME composition Enter never submits; the Enter contract is pinned", () => {
+    // Composition owns the keystroke: no prevent, no select, no send.
+    expect(decideComposerKey(keyInput({ isComposing: true }))).toEqual({ kind: "ignore" });
+    expect(decideComposerKey(keyInput({ composing: true }))).toEqual({ kind: "ignore" });
+    expect(decideComposerKey(keyInput({ keyCode: 229 }))).toEqual({ kind: "ignore" });
+    // Composition outranks even Shift+Enter and an open autocomplete.
+    expect(decideComposerKey(keyInput({ isComposing: true, shiftKey: true }))).toEqual({
+      kind: "ignore",
+    });
+
+    // Plain Enter on a valid idle draft submits exactly once.
+    expect(decideComposerKey(keyInput())).toEqual({ kind: "submit" });
+    // Shift+Enter always inserts a newline, never submits.
+    expect(decideComposerKey(keyInput({ shiftKey: true }))).toEqual({ kind: "insert-newline" });
+  });
+
+  it("draft text survives a render round-trip", () => {
+    const state = idleValid();
+    state.draft.text = "select *";
+    view.render(state);
+    view.render(state);
+    expect(view.prompt.value).toBe("select *");
   });
 });

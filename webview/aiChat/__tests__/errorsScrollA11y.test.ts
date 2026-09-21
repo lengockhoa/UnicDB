@@ -603,10 +603,10 @@ describe("responsive/HC/reduced-motion CSS contract", () => {
     expect(body).toContain("min-height: 28px");
   });
 
-  it("send/stop stay 40x40 and generic controls stay >=32px", () => {
+  it("send/stop stay 32x32 and generic controls stay >=32px", () => {
     const send = ruleBody(".UnicDB-ai-chat-v2-send");
-    expect(send).toContain("width: 40px");
-    expect(send).toContain("height: 40px");
+    expect(send).toContain("width: 32px");
+    expect(send).toContain("height: 32px");
     const control = ruleBody(".UnicDB-ai-chat-v2-control");
     if (control) {
       expect(control).toContain("min-height: 32px");

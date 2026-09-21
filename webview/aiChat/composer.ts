@@ -60,9 +60,9 @@ export const COMPOSER_REASON_EMPTY = "Enter a message to send";
 export const COMPOSER_REASON_UNRESOLVED =
   "Resolve changed or missing context before sending";
 
-/** Auto-grow clamp, in px, for the borderless textarea (PLAN §3: 64–160). */
-export const COMPOSER_AUTO_GROW_MIN_PX = 64;
-export const COMPOSER_AUTO_GROW_MAX_PX = 160;
+/** Auto-grow clamp, in px, for the borderless textarea (SPEC §8.3: 36–88). */
+export const COMPOSER_AUTO_GROW_MIN_PX = 36;
+export const COMPOSER_AUTO_GROW_MAX_PX = 88;
 
 /** Visual stop lock, in ms. Textarea/context stay editable throughout. */
 export const COMPOSER_STOP_LOCK_MS = 250;

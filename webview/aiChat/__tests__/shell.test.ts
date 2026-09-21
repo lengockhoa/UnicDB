@@ -196,7 +196,7 @@ describe("TASK-CHATV2-005 responsive primitives (#5)", () => {
     expect(/@media\s*\(max-width:\s*319px\)[\s\S]*grid-template-rows/.test(css)).toBe(true);
   });
 
-  it("declares 32px control minima and a 40x40 send slot", () => {
+  it("declares 32px control minima and a 32x32 send slot", () => {
     const control = css.match(/\.UnicDB-ai-chat-v2-control\s*\{([^}]*)\}/);
     expect(control, ".UnicDB-ai-chat-v2-control rule must exist").not.toBeNull();
     expect(/min-width:\s*32px/.test(control![1])).toBe(true);
@@ -204,8 +204,8 @@ describe("TASK-CHATV2-005 responsive primitives (#5)", () => {
 
     const send = css.match(/\.UnicDB-ai-chat-v2-send\s*\{([^}]*)\}/);
     expect(send, ".UnicDB-ai-chat-v2-send rule must exist").not.toBeNull();
-    expect(/width:\s*40px/.test(send![1])).toBe(true);
-    expect(/height:\s*40px/.test(send![1])).toBe(true);
+    expect(/width:\s*32px/.test(send![1])).toBe(true);
+    expect(/height:\s*32px/.test(send![1])).toBe(true);
   });
 
   it("implements the PLAN §3 grid: 40px header, minmax(0,1fr) transcript, min-width:0 boundaries", () => {
