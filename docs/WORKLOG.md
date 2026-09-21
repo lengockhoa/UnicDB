@@ -2,6 +2,31 @@
 
 Track session-level execution details.
 
+## 2026-09-21 — Cycle CHATUX (AIChat webview Claude Code–first UX redesign, W1–W4)
+
+- W1 layout stabilization (TASK-CHATUX-001): removed `width:880px` caps from
+  `-item-text`/`-item-reasoning` in `webview/aiChat/styles.css`; shell grid +
+  single transcript scroll owner pinned by `__tests__/shellGrid.test.ts` (9 tests).
+- W2 scroll state machine (TASK-CHATUX-002): `webview/aiChat/scroll.ts` +
+  `controller.ts` — follow-tail/reading-history modes with 72/96px hysteresis,
+  rAF-coalesced tail scroll, ResizeObserver re-pin, Jump-to-latest pill
+  (`↓ Jump to latest — N new`); root cause of "chat doesn't follow" was
+  `isInputFocused()` suppression. `autoScroll.test.ts` + `errorsScrollA11y.test.ts`
+  migrated to the new contract.
+- W3 message visuals (TASK-CHATUX-003): `markdown.ts` code blocks now render a
+  28–30px header with language label + Copy button (raw code only); assistant
+  copy-answer action made visible (was hidden by `opacity:0`); collapsed
+  disclosure rows for tool/thinking. New `codeBlock.test.ts`; `transcript.test.ts`
+  + `messageActions.test.ts` updated.
+- W4 compact composer (TASK-CHATUX-004): `composer.ts` + `styles.css` — collapsed
+  composer ≤104px, auto-grow clamp 36–88px (was 64–160), input cap 76px, send
+  button 40→32px; IME/Enter contract pinned by regression tests.
+- Verification: vitest aiChat suite 442/442 green; `npm run typecheck` clean;
+  `npm run compile` clean. Reviewer (unic-smart) approved all 4 tasks
+  (3× approved_minor, 1× approved). Pushed to main (433742d, 176bbaa).
+- Queued for next cycles: W5 a11y/perf polish (TASK-CHATUX-W5), 18 stale AIX
+  leftovers, TASK-GITMSG-001 (generate-commit-message slow/hanging loading UX).
+
 ## 2026-09-21 — Cycle SQLHANG (multi-query auto-stop on error)
 
 - Implemented statement-timeout watchdog + `abortActiveQuery` seam in `src/core/queryRunner.ts` so a
