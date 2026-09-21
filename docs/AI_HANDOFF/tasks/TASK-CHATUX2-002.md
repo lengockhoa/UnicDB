@@ -157,3 +157,20 @@ stay editable for the next draft. `BUSY_PHASES` in keyboard.ts is a
 `Partial<Record<TurnPhase, true>>` (project rule: static string-keyed
 membership tables use Record, not Set) mirroring store.ts. Milestone commit
 74a6301 on branch handoff/task-chatux2-002.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run webview/aiChat/__tests__/keyboard.test.ts webview/aiChat/__tests__/store.test.ts webview/aiChat/__tests__/composer.test.ts && npm run typecheck && npm run compile
+  result: 72 pass / 0 fail; tsc --noEmit clean; esbuild done
+TEST_PLAN_COVERAGE: all-followed — cases 1-7 implemented (keyboard 3 incl. blank/unresolved edges; store 5 incl. cap-8 + session-reset; composer 4 incl. precedence + idle-hidden)
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: webview/aiChat/keyboard.ts:33 — `BUSY_PHASES` uses `Partial<Record<TurnPhase,true>>` while `SUBMITTABLE_PHASES` (keyboard.ts:25) and store.ts `BUSY_PHASES` (store.ts:37) use `ReadonlySet`; two membership conventions now coexist in one file. Cosmetic only — Record has project precedent (readOnlyIntent.ts); no action required.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: `steerQueue` cleared on `session_hydrated` — verified the only frame that resets session state; no other transcript/session reset path exists in the reducer. Queue persistence after `error` frame is TASK-004 flush wiring, out of scope here.

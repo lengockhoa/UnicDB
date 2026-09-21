@@ -225,3 +225,26 @@ $ npm run compile     → dist/aiChatPanel.js 307.8kb, Done
   (worktrees don't carry ignored dirs; the esbuild-eval webview suites
   need it). Untracked, not committed.
 - Milestone commit: `432a533` on `handoff/task-chatux2-001`.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run webview/aiChat/__tests__/shell.test.ts webview/aiChat/__tests__/shellGrid.test.ts
+  result: 29 pass / 0 fail
+  command: npx vitest run src/ui/__tests__/aiChatPanel.test.ts src/ui/__tests__/aiChatPanelSessionStateWebview.test.ts
+  result: 42 pass / 0 fail
+  command: npm run typecheck && npm run compile
+  result: 0 errors; esbuild Done
+TEST_PLAN_COVERAGE: all-followed — cases 1-5 implemented; case 4 landed in aiChatPanelSessionStateWebview.test.ts instead of the named aiChatPanel.test.ts (justified: named file is node-env host-side and cannot boot the webview; deviation documented in Executor Report). RED_OUTPUT contains real failing-test output.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: webview/aiChatPanelMain.ts:764-826 — applyUsage/applyEngineState duplicate the same host-resolution block (span ?? header fallback); a shared helper would dedupe, but two call sites is tolerable.
+    - file: webview/aiChat/styles.css:1352 — `-composer-hint` (queue/busy hint inside composerBottom) and the new `-footnote` (keyboard hint, sibling after composerBottom) can render simultaneously during a live turn, showing two muted 11px lines; spec does not forbid this, cosmetic only.
+    - file: webview/aiChatPanelMain.ts:770 — when neither the -usage span nor the V2 header exists, usage/engine_state frames are silently dropped; acceptable since the V2 shell is the only live surface.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Spec-plus `padding-left:24px` on -item-reasoning is justified (rail/stub at left:9px would strike through text otherwise). Task's "do NOT touch -activity-*/.UnicDB-chat-thread" constraint respected — those changes came from TASK-004's commit.

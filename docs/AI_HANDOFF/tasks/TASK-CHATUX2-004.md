@@ -179,3 +179,22 @@ timeline previously wrote the polite region synchronously; the announcer
 (100ms coalesce) is now the sole writer, so the test drives fake timers.
 HANDOFF_TO_REVIEWER: yes — STATUS DONE, reviewer phase per pipeline
 NEXT: ready for review
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: unic-smart (two independent reviewers concur — RevC3 + RevC4)
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run webview/aiChat/__tests__/controller.test.ts webview/aiChat/__tests__/controllerSurfaces.test.ts webview/aiChat/__tests__/activity.test.ts webview/aiChat/__tests__/shellGrid.test.ts
+  result: 69 pass / 0 fail (4 files, exit 0) — re-run independently by both reviewers
+  command: npm run typecheck && npm run compile
+  result: exit 0 / exit 0 (tsc --noEmit clean; esbuild done)
+TEST_PLAN_COVERAGE: all-followed — 8/8 cases implemented with real assertions (steer-queue describe ×6 + rewritten busy-submit test in controller.test.ts; #14 single-renderer in controllerSurfaces.test.ts; CHATUX2-004 describe in shellGrid.test.ts). RED_OUTPUT contains concrete failure counts + assertion details.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - file: webview/aiChat/__tests__/shellGrid.test.ts:83-91 — dead `selectors` array left behind after its assertion loop was deleted; the variable is declared but never read. Remove it.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: flushSteerQueue ordering verified — HOST_FRAME dispatch precedes the turn_finished branch, so the reducer's phase transition gates the drain correctly; requestRetry reuse keeps one submit path (fresh clientRequestId per item). flushSteerQueue dequeues before requestRetry per spec — safe today because SUBMIT_REQUESTED always sets pendingSubmit when the loop admits an item; keep dequeue+submit atomic if requestRetry ever gains a reject path. #jumpLatest no-op accepted per planner note. Kept pure exports (mapToolState/toolStateLabel/formatDuration/deriveEngineState/engineStateLabel/isActivePhase/UNKNOWN_STATUS_LABEL) are now test-only — mandated by the task's KEEP list, not a defect. No createActivityTimeline refs or -activity- selectors remain.

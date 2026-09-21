@@ -6,10 +6,10 @@
 
 | Task | Name | Status | Dependencies | Owner  | Reviewer |
 |------|------|--------|--------------|-------|-------|
-| TASK-CHATUX2-001 | Footer removal + header stats + tree-step CSS | pending_review | none | - | - |
-| TASK-CHATUX2-002 | Steer queue core (keyboard/store/composer) | pending_review | none | - | - |
-| TASK-CHATUX2-003 | Tree data-tree marking (transcript) | pending_review | none | - | - |
-| TASK-CHATUX2-004 | Steer wiring + overlap cutover (controller/activity/CSS) | pending_review | TASK-CHATUX2-001, TASK-CHATUX2-002 | - | - |
+| TASK-CHATUX2-001 | Footer removal + header stats + tree-step CSS | done | none | - | unic-smart |
+| TASK-CHATUX2-002 | Steer queue core (keyboard/store/composer) | done | none | - | unic-smart |
+| TASK-CHATUX2-003 | Tree data-tree marking (transcript) | done | none | - | unic-smart |
+| TASK-CHATUX2-004 | Steer wiring + overlap cutover (controller/activity/CSS) | done | TASK-CHATUX2-001, TASK-CHATUX2-002 | - | unic-smart |
 
 ## Queued — future cycles
 

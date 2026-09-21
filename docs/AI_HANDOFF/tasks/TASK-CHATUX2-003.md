@@ -148,3 +148,21 @@ HANDOFF_TO_REVIEWER: yes — STATUS DONE; per handoff flow the reviewer picks
   up pending_review tasks in a separate session.
 NEXT: ready for review
 ```
+
+## Reviewer Verdict
+
+VERDICT: APPROVED
+REVIEWER_MODEL: unic-smart
+EXECUTOR_MODEL: unic-code
+VERIFICATION_RERUN:
+  command: npx vitest run webview/aiChat/__tests__/transcript.test.ts
+  result: 41 pass / 0 fail
+  command: npm run typecheck && npm run compile
+  result: exit 0 / exit 0
+TEST_PLAN_COVERAGE: all-followed — 5 cases implemented as 8 tests (case 3 split head/middle/tail, case 5 split grown-run/viewport-shrink); RED_OUTPUT shows real failing-test output
+FINDINGS:
+  critical: none
+  important: none
+  minor: none
+NEXT_STATUS_FOR_INDEX: approved
+NOTES: syncTreeMarkers recomputes boundaries every render — stale attrs cleared on grown runs, shrunk viewports, and non-step transitions; node-less streaming reasoning correctly neither breaks nor marks a run. data-tree values restricted to the "first"/"last"/"first last" contract.
