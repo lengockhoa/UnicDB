@@ -177,3 +177,21 @@ seam (caught by existing RLX-001 tests asserting seam exactly-once). Worktree
 node_modules was empty; symlinked to main repo install so esbuild/vsce-driven
 suites run. bq04SurfaceGuard extended to drop the intentional additive
 abortActiveQuery hunk (same precedent as the BQF runQuery widening).
+
+## Reviewer Verdict
+VERDICT: approved
+REVIEWER_MODEL: devin/swe-2 (executor model unverified — same model family; tier separation by role only)
+EXECUTOR_MODEL: devin/swe-2
+VERIFICATION_RERUN: PASS
+  - npm run typecheck → tsc --noEmit, exit 0
+  - npx vitest run src/core/__tests__/queryRunnerWatchdog.test.ts → 9/9 passed
+  - npx vitest run src/core/__tests__/queryRunner.test.ts → 83/83 passed
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - src/core/queryRunner.ts:1037 — abortViaProvider resolves the adapter via adapterProvider() rather than the instance owning the hung cursor; acceptable per SPEC (cost-only-on-timeout design) but abort could land on a different pooled adapter.
+    - src/core/queryRunner.ts:104 — watchdog timer is not unref'd; harmless in the extension host (bounded clears on both branches, verified).
+    - cancel() escalation fires abortActiveQuery even after a successful graceful cancelActiveQuery when activeAdapter is still held — matches spec exactly-once intent (RLX-001 tests pin seam-once); abort is contractually idempotent.
+  Notes: bounded() clears timer on settle AND timeout (no leak); ms<=0 is a true pass-through (no timer armed); every statement await (runQuery, pickResult, fetchBatch, stale-cursor close, runSql) is bounded; cancel() is bounded per graceful channel and always resolves; abortAdapter prefers abortActiveQuery with cancelActiveQuery fallback, all errors swallowed.
+NEXT_STATUS_FOR_INDEX: done

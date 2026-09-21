@@ -170,3 +170,14 @@ cursor finalize CLOSE/COMMIT(+ROLLBACK), cursor cancel ROLLBACK, mysql
 rollback — timeout → destroy path, original error always propagates.
 releaseSwallow preserves the historical no-arg release() contract pinned by
 postgres.test.ts.
+
+## Reviewer Verdict
+VERDICT: approved_minor
+REVIEWER_MODEL: devin/swe-2
+EXECUTOR_MODEL: devin/swe-2
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important: none
+  minor: src/adapters/postgres.ts:547 / src/adapters/mysql.ts:367 — `client.query("ROLLBACK")` / `connection.rollback()` are invoked eagerly before `boundedCleanup`; a synchronous throw (not a rejection) would bypass the bound and mask the original error. Drivers return promises here, so risk is theoretical. Executor model unverified — same model family as reviewer (devin/swe-2); findings made on diff evidence, not independent-model distance. Duplicated `boundedCleanup`/`CLEANUP_GRACE_MS` in both adapters is per-spec (TASK-001 export not yet landed) but should be deduplicated to core/queryRunner when it lands.
+NEXT_STATUS_FOR_INDEX: approved

@@ -146,3 +146,29 @@ Tests 4726 passed | 5 skipped (4731)
 ```
 Status: PASS
 Note: Worktree had no node_modules — vitest resolved upward but 6 webview/vsix tests spawn `.bin/esbuild`/`vsce` by relative path; fixed with `node_modules/.bin -> ../../../node_modules/.bin` symlink (untracked). Test #7 asserts the spec's "rejects §8.3 OR reconnects" contract via the reconnect path (the second runQuery's enqueue stamps generation after the abort due to ensureConnection microtask ordering). tedious 18.6.2 verified: Connection.close() → cleanupConnection fires request.callback with RequestError ECLOSE, so teardown settles parked runRequest promises — no reject-hook needed.
+
+## Reviewer Verdict
+VERDICT: approved_minor
+REVIEWER_MODEL: devin/swe-2
+EXECUTOR_MODEL: devin/swe-2
+VERIFICATION_RERUN: PASS
+FINDINGS:
+  critical: none
+  important: none
+  minor: src/adapters/mssql.ts:278-297 — abort during an in-flight connect() does not clear `this.connecting`; a concurrent ensureConnection may await the doomed connect and see its rejection instead of retrying (narrow window, next call self-heals). Also executor model unverified — same model family as reviewer.
+NEXT_STATUS_FOR_INDEX: done
+
+Verification rerun (reviewer):
+  npm run typecheck → 0 errors
+  npx vitest run mssqlAbort.test.ts → 8/8 PASS
+  npx vitest run mssql.parameterized.test.ts → 17/17 PASS
+
+Diff review: queueGeneration stamped at enqueue (mssql.ts:631) and checked after
+`await previous` with the exact frozen §8.3 message; `finally` still runs
+resolveNext() so the queue advances. abortActiveQuery bumps generation
+unconditionally (correct — pre-abort ops stay rejected post-reconnect), cancels
+each active request best-effort, nulls connection + connected=false before
+close() (correct ordering — a sync close throwing can't leave half-state), and
+is a no-op-safe resolve when connection===null. ensureConnection dedups via
+this.connecting; runQuery/runRequest both route through it. Idempotent: second
+abort finds connection===null, only bumps generation. Matches spec §8.1/§8.3.
