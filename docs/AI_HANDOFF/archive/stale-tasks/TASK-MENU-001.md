@@ -121,4 +121,11 @@ Verified before writing (do not re-derive):
 - CHANGELOG bullet goes under the already-pending `[1.51.1] — pending` entry; no version bump,
   no commit/push in this cycle (maintainer-owned; package-lock.json is hook-write-protected).
 
+
+### 2026-09-22 · planner · unic-smart
+
+SUPERSEDED — recovered into cycle MENU-2026-09-22 as `docs/AI_HANDOFF/tasks/TASK-001.md`.
+The implementation described here already landed in commit `1e96f89`; the recovered task
+is verify-and-close. Anchors in this file are stale (drift corrections recorded in
+TASK-001 Discussion). Do not execute this file directly.
 (no comments yet)
