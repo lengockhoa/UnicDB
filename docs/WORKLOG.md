@@ -2,6 +2,16 @@
 
 Track session-level execution details.
 
+## 2026-09-22 — Cycle MENU (schema-tree table-node context menu order)
+
+- TASK-001 (verify-and-close): feature pre-landed in 1e96f89 — `package.json`
+  `view/item/context` entries `UnicDB.newTable` (`order: "1"`) and
+  `UnicDB.modifyTable` (`order: "2"`); guard whitelist `contributesKeyPattern`
+  extended with `order`; 3 MENU tests pin the ordering contract.
+- Verified: MENU 3/3, bq04SurfaceGuard 8/8, npm test 4822 pass/5 skip/0 fail,
+  typecheck 0 errors, compile clean. Reviewer: approved_minor (single-model
+  gateway caveat — Model-Tier Guard Override recorded). Pushed db9b29b.
+
 ## 2026-09-21 — Cycle CHATUX2 (AIChat composer/footer redesign + steering + transcript fixes)
 
 - TASK-CHATUX2-001 (footer/header): `shell.ts` — bottom `hint` element deleted;

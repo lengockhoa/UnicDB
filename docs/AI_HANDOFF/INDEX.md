@@ -1,12 +1,11 @@
 # Handoff INDEX
 
-<!-- No active cycle. Cycle CHATUX2-2026-09-21 archived to docs/AI_HANDOFF/archive/cycle-CHATUX2-2026-09-21/ (4/4 done, pushed 2ffe79f). -->
+<!-- No active cycle. Cycle MENU-2026-09-22 archived to docs/AI_HANDOFF/archive/cycle-MENU-2026-09-22/ (1/1 done — verify-and-close; feature pre-landed in 1e96f89, pushed db9b29b). -->
 
-## Cycle — MENU-2026-09-22
+## Cycle — (none)
 
 | Task | Name | Status | Dependencies | Owner  | Reviewer |
 |------|------|--------|--------------|-------|-------|
-| TASK-001 | Schema-tree table-node context menu: New Table #1, Modify Table #2 | approved_minor | none | - | devin/swe-2 |
 
 ## Queued — future cycles
 
