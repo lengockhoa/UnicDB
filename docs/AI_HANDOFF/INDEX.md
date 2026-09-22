@@ -6,7 +6,7 @@
 
 | Task | Name | Status | Dependencies | Owner  | Reviewer |
 |------|------|--------|--------------|-------|-------|
-| TASK-001 | Schema-tree table-node context menu: New Table #1, Modify Table #2 | ready | none | - | - |
+| TASK-001 | Schema-tree table-node context menu: New Table #1, Modify Table #2 | approved_minor | none | - | devin/swe-2 |
 
 ## Queued — future cycles
 

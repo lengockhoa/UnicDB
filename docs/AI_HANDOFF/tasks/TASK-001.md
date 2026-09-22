@@ -203,3 +203,30 @@ out to `node_modules/.bin/esbuild` (5 webview suites) and `node_modules/.bin/vsc
 (`vsixSecretsExclusion`) failed ENOENT. Fixed by symlinking the main checkout's
 `node_modules` into the worktree (`ln -s ../../node_modules`); re-run is fully green.
 No spec drift found; no code change needed.
+
+## Reviewer Verdict
+
+VERDICT: APPROVED-WITH-MINOR
+REVIEWER_MODEL: devin/swe-2
+EXECUTOR_MODEL: devin/swe-2 (self-reported, ExecT1)
+VERIFICATION_RERUN:
+  command: npx vitest run src/extension.test.ts -t "MENU"
+  result: 3 pass / 0 fail (189 skipped)
+  command: npx vitest run src/adapters/__tests__/bq04SurfaceGuard.test.ts
+  result: 8 pass / 0 fail
+  command: npm run typecheck
+  result: 0 errors
+TEST_PLAN_COVERAGE: all-followed — 3 MENU tests present at src/extension.test.ts:6015-6108 with real assertions (order values, when/group byte-equality, exact ordered-set, full sorted title list); guard suite covers test-case 4. RED_OUTPUT honestly reports no RED phase (feature pre-landed in 1e96f89; commit message documents original RED/GREEN) — acceptable for verify-and-close.
+FINDINGS:
+  critical: none
+  important: none
+  minor:
+    - process: reviewer model == executor model (devin/swe-2). Per R2 isolation table this would normally be CHANGES-REQUESTED; per cycle instruction this verify-and-close task (zero new code, docs-only cycle diff) proceeds with the caveat recorded — human should note reduced independence of this review.
+    - src/extension.test.ts:6009 — stale comment "pkgJson (line ~552)"; actual definition is ~L634. Cosmetic only.
+NEXT_STATUS_FOR_INDEX: approved_minor
+NOTES: Feature diff verified independently: package.json L586-596 carries exactly two order keys on the correct entries with when/group byte-unchanged; guard whitelist includes order; CHANGELOG bullet present at L674 under [1.51.2]. Cycle diff (54faa18..HEAD) touches only docs/AI_HANDOFF — no code drift.
+
+## Model-Tier Guard Override
+
+OVERRIDE_APPROVED_BY: human
+REASON: This omp gateway resolves every model tier (@smol/@default/@slow) to the single available model devin/swe-2 — no distinct opus/unic-smart identity exists to author planning or review. Planner, executor, and reviewer were still run as three separate subagent invocations with fresh contexts, preserving review independence. Verify-and-close task: zero new code; reviewer re-ran verification independently (MENU 3/3, guard 8/8, typecheck clean).
