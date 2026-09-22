@@ -162,3 +162,44 @@ verify-and-close, not fresh implementation.
 
 
 (no comments yet)
+
+## Executor Report
+
+- Date: 2026-09-22 · Executor: ExecT1 (omp)
+- EXECUTOR_TOOL: other (omp harness)
+- EXECUTOR_MODEL: devin/swe-2
+- EXECUTOR_SUBAGENT: ExecT1
+- Status: PASS
+
+### RED_OUTPUT
+
+Feature pre-landed in `1e96f89` (confirmed ancestor of HEAD); tests verified GREEN — no
+RED phase applicable. `npx vitest run src/extension.test.ts -t "MENU"`: 3 passed, 189
+skipped (192 collected).
+
+### Verification Output
+
+- `npx vitest run src/extension.test.ts -t "MENU"` → 3 passed / 0 failed.
+- `npx vitest run src/adapters/__tests__/bq04SurfaceGuard.test.ts` → 8 passed / 0 failed
+  (suite has grown from 4 to 8 tests since the task was written; all green).
+- `npm test` → 4822 passed, 5 skipped, 0 failed (322 files; 320 passed, 2 skipped).
+- `npm run typecheck` → `tsc --noEmit` clean, 0 errors.
+- `npm run compile` → esbuild clean: dist/extension.js 6.7mb, dist/webview.js 2.3mb.
+
+### Acceptance criteria check
+
+- `package.json` L586-596: `"order": "1"` on `UnicDB.newTable` (L589), `"order": "2"` on
+  `UnicDB.modifyTable` (L595); `when`/`group` strings byte-unchanged. ✓
+- `contributesKeyPattern` (guard test L86) whitelists `order`. ✓
+- CHANGELOG bullet present: "Schema-tree table-node context menu now leads with New
+  Table…, then Modify Table…" under `[1.51.2]`. ✓
+- No source file modified by this executor; only this task file updated.
+
+### Note
+
+First `npm test` run showed 7 failed files / 2 failed tests — all environmental: the
+worktree had no installed `node_modules` (only a `.vite` cache dir), so tests shelling
+out to `node_modules/.bin/esbuild` (5 webview suites) and `node_modules/.bin/vsce`
+(`vsixSecretsExclusion`) failed ENOENT. Fixed by symlinking the main checkout's
+`node_modules` into the worktree (`ln -s ../../node_modules`); re-run is fully green.
+No spec drift found; no code change needed.
