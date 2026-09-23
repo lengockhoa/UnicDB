@@ -81,7 +81,6 @@ describe("TASK-CHATFIX-001 explicit shell grid placement", () => {
       "\\.UnicDB-ai-chat-v2-banner",
       "\\.UnicDB-ai-chat-v2-main",
       "\\.UnicDB-ai-chat-v2-composer",
-      "\\.UnicDB-ai-chat-v2-footnote",
       "\\.UnicDB-ai-chat-v2-usage",
       "\\.UnicDB-ai-chat-v2-engine-state",
     ];
@@ -119,7 +118,7 @@ describe("TASK-CHATUX-001 layout stabilization contract", () => {
     expect(context).not.toMatch(/overflow-y:\s*auto/);
   });
 
-  it("TASK-CHATUX2-001: 4-row root grid, 5px bottom padding, footnote + header stat rules", () => {
+  it("TASK-CHATUX2-001: 4-row root grid, 5px bottom padding, header stat rules (footnote removed)", () => {
     const root = ruleBody("\\.UnicDB-ai-chat-v2");
     expect(root, "root .UnicDB-ai-chat-v2 rule must exist").toBeDefined();
     // Exactly four tracks: header · banner · main · composer.
@@ -129,13 +128,9 @@ describe("TASK-CHATUX-001 layout stabilization contract", () => {
     // ~5px gap between the composer card and the panel edge.
     expect(root).toMatch(/padding:\s*10px\s+12px\s+5px\s*;/);
 
-    // The keyboard hint lives inside the composer card, right-aligned.
-    const footnote = ruleBody("\\.UnicDB-ai-chat-v2-footnote");
-    expect(footnote, "-footnote rule must exist").toBeDefined();
-    expect(footnote).toMatch(/font-size:\s*11px/);
-    expect(footnote).toMatch(/line-height:\s*16px/);
-    expect(footnote).toMatch(/color:\s*var\(--UnicDB-ai-chat-v2-muted\)/);
-    expect(footnote).toMatch(/text-align:\s*right/);
+    // The keyboard-hint footnote was removed per product decision — the rule
+    // must NOT exist anymore.
+    expect(ruleBody("\\.UnicDB-ai-chat-v2-footnote")).toBeUndefined();
 
     // Header stats: muted 11/16, nowrap; usage pinned to the right zone.
     for (const sel of [

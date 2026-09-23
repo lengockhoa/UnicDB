@@ -100,14 +100,13 @@ describe("TASK-CHATV2-005 mountChatShell — semantic shell (#1)", () => {
     expect(refs.main.contains(refs.context)).toBe(true);
     expect(refs.composer.contains(refs.composerTop)).toBe(true);
     expect(refs.composer.contains(refs.composerBottom)).toBe(true);
-    expect(refs.composer.contains(refs.footnote)).toBe(true);
     expect(refs.header.contains(refs.usage)).toBe(true);
     expect(refs.header.contains(refs.engineState)).toBe(true);
   });
 });
 
 describe("TASK-CHATUX2-001 footer removal + header stats (#1, #2)", () => {
-  it("exposes footnote/usage/engineState and no hint element or ref", () => {
+  it("exposes usage/engineState and no hint or footnote element", () => {
     const root = makeRoot();
     const refs = mountChatShell(root);
 
@@ -121,16 +120,10 @@ describe("TASK-CHATUX2-001 footer removal + header stats (#1, #2)", () => {
     );
     expect(visibleChildren[visibleChildren.length - 1]).toBe(refs.composer);
 
-    // The keyboard hint copy moved inside the composer card as a sibling
-    // AFTER composerBottom (renderComposerV2's bottom.replaceChildren()
-    // cannot remove it).
-    expect(refs.footnote.parentElement).toBe(refs.composer);
-    expect(refs.footnote.classList.contains(`${CHAT_V2_ROOT_CLASS}-footnote`)).toBe(true);
-    expect(refs.footnote.textContent).toBe(
-      "Enter to send · Shift+Enter for a new line",
-    );
-    const order = refs.composerBottom.compareDocumentPosition(refs.footnote);
-    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The keyboard-hint footnote was removed per product decision — no
+    // -footnote node anywhere, no footnote ref.
+    expect(root.querySelector(`.${CHAT_V2_ROOT_CLASS}-footnote`)).toBeNull();
+    expect("footnote" in refs).toBe(false);
 
     // Header right zone: [engine-state] [usage] [overflow], both hidden
     // until their first frame.
@@ -163,8 +156,8 @@ describe("TASK-CHATUX2-001 footer removal + header stats (#1, #2)", () => {
     root.innerHTML = html;
 
     const refs = mountChatShellIfNeeded(root);
-    expect(refs.footnote.classList.contains(`${CHAT_V2_ROOT_CLASS}-footnote`)).toBe(true);
-    expect(refs.footnote.parentElement).toBe(refs.composer);
+    expect(root.querySelector(`.${CHAT_V2_ROOT_CLASS}-footnote`)).toBeNull();
+    expect("footnote" in refs).toBe(false);
     expect(refs.usage.id).toBe("UnicDB-ai-chat-v2-usage");
     expect(refs.engineState.id).toBe("UnicDB-ai-chat-v2-engine-state");
     expect("hint" in refs).toBe(false);
@@ -180,7 +173,6 @@ describe("TASK-CHATUX2-001 footer removal + header stats (#1, #2)", () => {
       "composer-top",
       "composer-bottom",
       "actions",
-      "footnote",
       "usage",
       "engine-state",
     ]) {

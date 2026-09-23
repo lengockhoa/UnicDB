@@ -2,9 +2,8 @@
 //
 // The semantic V2 skeleton: ONE vertical grid (header · banner · transcript ·
 // context strip · composer) plus the two visually-hidden aria-live regions
-// every later V2 component announces through. The keyboard hint lives inside
-// the composer card as a `-footnote`; usage + engine lifecycle stats live in
-// the header's right zone.
+// every later V2 component announces through. Usage + engine lifecycle stats
+// live in the header's right zone.
 //
 // CONTRACT
 // - `mountChatShell(root)` is idempotent: repeated calls reuse the existing
@@ -36,8 +35,6 @@ export const CHAT_V2_LISTENER_MARKER = "data-chat-v2-listeners";
 /** Product display name shown in the header. Constant copy, never host data. */
 const PRODUCT_TITLE = "UnicDB AI";
 
-/** Keyboard hint copy (fixed, PLAN §4 precedence summary). */
-const KEYBOARD_HINT = "Enter to send · Shift+Enter for a new line";
 
 /** Canonical screenshot fixtures for manual visual verification (PLAN §8:
  * jsdom cannot prove layout, so the reviewer captures these). Widths are the
@@ -61,10 +58,6 @@ export interface ChatShellRefs {
   readonly composerTop: HTMLElement;
   readonly composerBottom: HTMLElement;
   readonly actions: HTMLElement;
-  /** Keyboard-hint footnote inside the composer card (sibling AFTER
-   *  composerBottom so renderComposerV2's bottom.replaceChildren() cannot
-   *  remove it). */
-  readonly footnote: HTMLElement;
   /** Header right-zone mount for the legacy `#usageChip` (hidden until the
    *  first `usage` frame). */
   readonly usage: HTMLElement;
@@ -227,12 +220,6 @@ export function mountChatShell(root: HTMLElement): ChatShellRefs {
   composerBottom.appendChild(actions);
   composer.appendChild(composerTop);
   composer.appendChild(composerBottom);
-  // CHATUX2-001: the keyboard hint is a footnote INSIDE the composer card —
-  // a sibling of composerBottom (never a child: renderComposerV2 calls
-  // bottom.replaceChildren() and would delete it).
-  const footnote = div(prefix("footnote"));
-  footnote.textContent = KEYBOARD_HINT;
-  composer.appendChild(footnote);
 
   const statusLiveRegion = buildLiveRegion(CHAT_V2_STATUS_LIVE_ID, "polite");
   const alertLiveRegion = buildLiveRegion(CHAT_V2_ALERT_LIVE_ID, "assertive");
@@ -255,7 +242,6 @@ export function mountChatShell(root: HTMLElement): ChatShellRefs {
     composerTop,
     composerBottom,
     actions,
-    footnote,
     usage: header.querySelector<HTMLElement>(`.${prefix("usage")}`)!,
     engineState: header.querySelector<HTMLElement>(`.${prefix("engine-state")}`)!,
     statusLiveRegion,
@@ -287,7 +273,6 @@ export function mountChatShellIfNeeded(root: HTMLElement): ChatShellRefs {
   const composerTop = root.querySelector<HTMLElement>(`.${prefix("composer-top")}`);
   const composerBottom = root.querySelector<HTMLElement>(`.${prefix("composer-bottom")}`);
   const actions = root.querySelector<HTMLElement>(`.${prefix("actions")}`);
-  const footnote = root.querySelector<HTMLElement>(`.${prefix("footnote")}`);
   const usage = root.querySelector<HTMLElement>(`.${prefix("usage")}`);
   const engineState = root.querySelector<HTMLElement>(`.${prefix("engine-state")}`);
   const statusLiveRegion = document.getElementById(CHAT_V2_STATUS_LIVE_ID);
@@ -302,7 +287,6 @@ export function mountChatShellIfNeeded(root: HTMLElement): ChatShellRefs {
     !composerTop ||
     !composerBottom ||
     !actions ||
-    !footnote ||
     !usage ||
     !engineState ||
     !statusLiveRegion ||
@@ -321,7 +305,6 @@ export function mountChatShellIfNeeded(root: HTMLElement): ChatShellRefs {
     composerTop,
     composerBottom,
     actions,
-    footnote,
     usage,
     engineState,
     statusLiveRegion,
