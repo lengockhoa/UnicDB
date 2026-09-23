@@ -6008,10 +6008,12 @@ describe("UnicDB.openHelpGrid — Help Grid webview wiring", () => {
 // TASK-MENU-001 — schema-tree table-node context menu order contract.
 // Pinned against the module-level `pkgJson` (line ~552): the right-click menu
 // on a table node must render `New Table…` as item #1 and `Modify Table…` as
-// item #2; every other UnicDB-group entry keeps its current alphabetical
-// relative order. Mechanism: VS Code `group` ordering — `"UnicDB@1"` /
-// `"UnicDB@2"` sort inside the same `UnicDB` group by the `@N` suffix
-// (no separator is created; `order` is NOT a real menu key).
+// item #2. Mechanism: a dedicated `1_table` group — group names sort
+// lexicographically, so `1_table` renders BEFORE `UnicDB`/`inline` groups, and
+// `@N` suffixes order entries inside it. (The earlier `UnicDB@1`/`UnicDB@2`
+// attempt failed in production: `@N` on a shared base name does NOT merge into
+// the base group's alphabetical list — the suffixed entries formed their own
+// bucket rendered after the plain `UnicDB` group.)
 // =============================================================================
 describe("MENU — table-node context menu: New Table #1, Modify Table #2", () => {
   type ViewItemContextMenu = Array<{
@@ -6023,21 +6025,20 @@ describe("MENU — table-node context menu: New Table #1, Modify Table #2", () =
   const ctxMenus = pkgJson.contributes.menus["view/item/context"] as
     ViewItemContextMenu;
 
-  // VS Code treats `group` as `<name>@<order>`: same base name = same visual
-  // group (no separator); the `@N` suffix orders entries lexicographically
-  // within the group, entries without a suffix sort after suffixed ones.
-  function UnicDBGroup(): ViewItemContextMenu {
-    return ctxMenus.filter((m) => m.group.split("@")[0] === "UnicDB");
+  function tableGroup(): ViewItemContextMenu {
+    return ctxMenus.filter((m) => m.group.split("@")[0] === "1_table");
   }
 
-  function UnicDBTableNodeTitlesSorted(): string[] {
+  function tableNodeTitlesSorted(): string[] {
     const commands = pkgJson.contributes.commands as Array<{
       command: string;
       title: string;
     }>;
     const titleOf = (cmd: string): string =>
       commands.find((c) => c.command === cmd)!.title;
-    const subset = UnicDBGroup().filter((m) => m.when.includes("viewItem == table"));
+    const subset = tableGroup().filter((m) =>
+      m.when.includes("viewItem == table"),
+    );
     const sorted = subset.slice().sort((a, b) => {
       const ao = a.group.split("@")[1] ?? "zzzz";
       const bo = b.group.split("@")[1] ?? "zzzz";
@@ -6047,58 +6048,56 @@ describe("MENU — table-node context menu: New Table #1, Modify Table #2", () =
     return sorted.map((m) => titleOf(m.command));
   }
 
-  it("UnicDB.newTable có group \"UnicDB@1\" + when đúng; UnicDB.modifyTable có group \"UnicDB@2\" + when đúng", () => {
+  it("UnicDB.newTable có group \"1_table@01\" + when đúng; UnicDB.modifyTable có group \"1_table@02\" + when đúng", () => {
     const newTable = ctxMenus.find((m) => m.command === "UnicDB.newTable");
     const modifyTable = ctxMenus.find((m) => m.command === "UnicDB.modifyTable");
     expect(newTable).toBeDefined();
-    expect(newTable!.group).toBe("UnicDB@1");
+    expect(newTable!.group).toBe("1_table@01");
     expect(newTable!.when).toBe(
       "view == UnicDB.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",
     );
 
     expect(modifyTable).toBeDefined();
-    expect(modifyTable!.group).toBe("UnicDB@2");
+    expect(modifyTable!.group).toBe("1_table@02");
     expect(modifyTable!.when).toBe(
       "view == UnicDB.schemaTree && viewItem == table",
     );
   });
 
-  it("chỉ đúng 2 entry UnicDB-group có @N suffix — các entry còn lại group \"UnicDB\" trần (alphabet fallback giữ nguyên)", () => {
-    const suffixed = UnicDBGroup().filter((m) => m.group.includes("@"));
-    expect(new Set(suffixed.map((m) => m.command))).toEqual(
-      new Set(["UnicDB.newTable", "UnicDB.modifyTable"]),
+  it("mọi table-node command nằm trong group 1_table với @N duy nhất — không entry nào còn ở group UnicDB", () => {
+    const tableNodeEntries = ctxMenus.filter((m) =>
+      m.when.includes("viewItem == table"),
     );
-    // Spot-check a couple of unsuffixed entries (alphabetical fallback).
-    expect(
-      ctxMenus.find((m) => m.command === "UnicDB.analyzeTable")!.group,
-    ).toBe("UnicDB");
-    expect(
-      ctxMenus.find((m) => m.command === "UnicDB.copyCreateDdl")!.group,
-    ).toBe("UnicDB");
+    // inline-group entries (generateSelect, copyQualifiedName, openConsoleForObject)
+    // render as inline icons, not menu rows — exclude them from the check.
+    const nonTable = tableNodeEntries.filter(
+      (m) => m.group !== "inline" && m.group.split("@")[0] !== "1_table",
+    );
+    expect(nonTable).toEqual([]);
+
+    const orders = tableGroup().map((m) => m.group.split("@")[1]);
+    expect(new Set(orders).size).toBe(orders.length);
+    expect(orders.every((o) => o !== undefined)).toBe(true);
   });
 
-  it("sort mô phỏng VS Code trên table-node UnicDB group → New Table… #1, Modify Table… #2, phần còn lại giữ relative alphabet", () => {
-    const titles = UnicDBTableNodeTitlesSorted();
+  it("group 1_table sort trước UnicDB/inline → New Table… #1, Modify Table… #2 trên table node", () => {
+    // Group-name ordering: "1_table" < "UnicDB" < "inline" lexicographically,
+    // so the whole 1_table block renders above every other contributed group.
+    expect("1_table" < "UnicDB").toBe(true);
+    expect("1_table" < "inline").toBe(true);
+
+    const titles = tableNodeTitlesSorted();
     expect(titles[0]).toBe("New Table…");
     expect(titles[1]).toBe("Modify Table…");
-    // Items 2..(n-1) keep their current alphabetical relative order:
-    //   Analyze Table, Copy Create Query, Insert Sample Data…, Rename Column…,
-    //   Rename Table…, Vacuum Table, UnicDB: Export Structure, UnicDB: Postman Payload.
-    // (UnicDB: Refresh Schema + connection-only entries are correctly excluded
-    // because their `when` does not include `viewItem == table`.)
-    // NOTE on alphabetical ordering: titles beginning with "UnicDB: " sort
-    // AFTER letter-titles in localeCompare ("U" is the highest leading letter
-    // before "V", so "UnicDB: Export" precedes "Vacuum"). Keep this list in
-    // sorted order — re-check after any command title rename.
     expect(titles.slice(2)).toEqual([
-      "Analyze Table",
+      "Rename Table…",
+      "Rename Column…",
       "Copy Create Query",
       "Insert Sample Data…",
-      "Rename Column…",
-      "Rename Table…",
-      "UnicDB: Export Structure",
-      "UnicDB: Postman Payload",
+      "Analyze Table",
       "Vacuum Table",
+      "UnicDB: Postman Payload",
+      "UnicDB: Export Structure",
     ]);
   });
 });

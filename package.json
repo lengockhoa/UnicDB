@@ -2,7 +2,7 @@
   "name": "UnicDB",
   "displayName": "UnicDB — Run SQL from VS Code",
   "description": "Run SQL against PostgreSQL, MySQL/MariaDB and SQL Server directly from VS Code. Cmd+Enter (macOS) / Ctrl+Enter (Win/Linux) executes the selected statement.",
-  "version": "1.55.1",
+  "version": "1.55.2",
   "publisher": "lengockhoa",
   "engines": {
     "vscode": "^1.75.0"
@@ -585,42 +585,42 @@
         {
           "command": "UnicDB.newTable",
           "when": "view == UnicDB.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",
-          "group": "UnicDB@1"
+          "group": "1_table@01"
         },
         {
           "command": "UnicDB.modifyTable",
           "when": "view == UnicDB.schemaTree && viewItem == table",
-          "group": "UnicDB@2"
+          "group": "1_table@02"
         },
         {
           "command": "UnicDB.renameTable",
           "when": "view == UnicDB.schemaTree && viewItem == table",
-          "group": "UnicDB"
+          "group": "1_table@03"
         },
         {
           "command": "UnicDB.renameColumn",
           "when": "view == UnicDB.schemaTree && (viewItem == table || viewItem == column)",
-          "group": "UnicDB"
+          "group": "1_table@04"
         },
         {
           "command": "UnicDB.copyCreateDdl",
           "when": "view == UnicDB.schemaTree && viewItem == table",
-          "group": "UnicDB"
+          "group": "1_table@05"
         },
         {
           "command": "UnicDB.generateSampleData",
           "when": "view == UnicDB.schemaTree && viewItem == table",
-          "group": "UnicDB"
+          "group": "1_table@06"
         },
         {
           "command": "UnicDB.analyzeTable",
           "when": "view == UnicDB.schemaTree && viewItem == table",
-          "group": "UnicDB"
+          "group": "1_table@07"
         },
         {
           "command": "UnicDB.vacuumTable",
           "when": "view == UnicDB.schemaTree && viewItem == table",
-          "group": "UnicDB"
+          "group": "1_table@08"
         },
         {
           "command": "UnicDB.createSchema",
@@ -630,12 +630,12 @@
         {
           "command": "UnicDB.postmanPayload",
           "when": "view == UnicDB.schemaTree && (viewItem == table || viewItem == view || viewItem == routine)",
-          "group": "UnicDB"
+          "group": "1_table@09"
         },
         {
           "command": "UnicDB.exportStructure",
           "when": "view == UnicDB.schemaTree && (viewItem == table || viewItem == view)",
-          "group": "UnicDB"
+          "group": "1_table@10"
         },
         {
           "command": "UnicDB.exportAllStructures",
