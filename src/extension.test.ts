@@ -6009,29 +6009,27 @@ describe("UnicDB.openHelpGrid — Help Grid webview wiring", () => {
 // Pinned against the module-level `pkgJson` (line ~552): the right-click menu
 // on a table node must render `New Table…` as item #1 and `Modify Table…` as
 // item #2; every other UnicDB-group entry keeps its current alphabetical
-// relative order. Mechanism: declarative `"order": "1"` / `"order": "2"` on
-// the `UnicDB.newTable` / `UnicDB.modifyTable` `view/item/context` entries.
+// relative order. Mechanism: VS Code `group` ordering — `"UnicDB@1"` /
+// `"UnicDB@2"` sort inside the same `UnicDB` group by the `@N` suffix
+// (no separator is created; `order` is NOT a real menu key).
 // =============================================================================
 describe("MENU — table-node context menu: New Table #1, Modify Table #2", () => {
   type ViewItemContextMenu = Array<{
     command: string;
     when: string;
     group: string;
-    order?: string;
   }>;
 
   const ctxMenus = pkgJson.contributes.menus["view/item/context"] as
     ViewItemContextMenu;
 
+  // VS Code treats `group` as `<name>@<order>`: same base name = same visual
+  // group (no separator); the `@N` suffix orders entries lexicographically
+  // within the group, entries without a suffix sort after suffixed ones.
   function UnicDBGroup(): ViewItemContextMenu {
-    return ctxMenus.filter((m) => m.group === "UnicDB");
+    return ctxMenus.filter((m) => m.group.split("@")[0] === "UnicDB");
   }
 
-  // VS Code's documented same-group comparator: entries with `order` sort
-  // ascending lexicographically first, then entries without `order` fall back
-  // to alphabetical-by-title. The `zzzz` sentinel keeps unordered entries
-  // strictly behind every ordered entry without Number coercion (lexicographic
-  // "10" would precede "2" if we used Number).
   function UnicDBTableNodeTitlesSorted(): string[] {
     const commands = pkgJson.contributes.commands as Array<{
       command: string;
@@ -6041,44 +6039,42 @@ describe("MENU — table-node context menu: New Table #1, Modify Table #2", () =
       commands.find((c) => c.command === cmd)!.title;
     const subset = UnicDBGroup().filter((m) => m.when.includes("viewItem == table"));
     const sorted = subset.slice().sort((a, b) => {
-      const ao = a.order ?? "zzzz";
-      const bo = b.order ?? "zzzz";
+      const ao = a.group.split("@")[1] ?? "zzzz";
+      const bo = b.group.split("@")[1] ?? "zzzz";
       if (ao !== bo) return ao.localeCompare(bo);
       return titleOf(a.command).localeCompare(titleOf(b.command));
     });
     return sorted.map((m) => titleOf(m.command));
   }
 
-  it("UnicDB.newTable có order \"1\" + when đúng; UnicDB.modifyTable có order \"2\" + when đúng", () => {
-    const newTable = UnicDBGroup().find((m) => m.command === "UnicDB.newTable");
-    const modifyTable = UnicDBGroup().find((m) => m.command === "UnicDB.modifyTable");
+  it("UnicDB.newTable có group \"UnicDB@1\" + when đúng; UnicDB.modifyTable có group \"UnicDB@2\" + when đúng", () => {
+    const newTable = ctxMenus.find((m) => m.command === "UnicDB.newTable");
+    const modifyTable = ctxMenus.find((m) => m.command === "UnicDB.modifyTable");
     expect(newTable).toBeDefined();
-    expect(newTable!.order).toBe("1");
+    expect(newTable!.group).toBe("UnicDB@1");
     expect(newTable!.when).toBe(
       "view == UnicDB.schemaTree && (viewItem == schema || viewItem == category || viewItem == table)",
     );
-    expect(newTable!.group).toBe("UnicDB");
 
     expect(modifyTable).toBeDefined();
-    expect(modifyTable!.order).toBe("2");
+    expect(modifyTable!.group).toBe("UnicDB@2");
     expect(modifyTable!.when).toBe(
       "view == UnicDB.schemaTree && viewItem == table",
     );
-    expect(modifyTable!.group).toBe("UnicDB");
   });
 
-  it("chỉ đúng 2 entry UnicDB-group có order — 13 entry còn lại KHÔNG có order (alphabet fallback giữ nguyên)", () => {
-    const ordered = UnicDBGroup().filter((m) => m.order !== undefined);
-    expect(new Set(ordered.map((m) => m.command))).toEqual(
+  it("chỉ đúng 2 entry UnicDB-group có @N suffix — các entry còn lại group \"UnicDB\" trần (alphabet fallback giữ nguyên)", () => {
+    const suffixed = UnicDBGroup().filter((m) => m.group.includes("@"));
+    expect(new Set(suffixed.map((m) => m.command))).toEqual(
       new Set(["UnicDB.newTable", "UnicDB.modifyTable"]),
     );
-    // Spot-check a couple of unordered entries (alphabetical fallback).
+    // Spot-check a couple of unsuffixed entries (alphabetical fallback).
     expect(
-      UnicDBGroup().find((m) => m.command === "UnicDB.analyzeTable")!.order,
-    ).toBeUndefined();
+      ctxMenus.find((m) => m.command === "UnicDB.analyzeTable")!.group,
+    ).toBe("UnicDB");
     expect(
-      UnicDBGroup().find((m) => m.command === "UnicDB.copyCreateDdl")!.order,
-    ).toBeUndefined();
+      ctxMenus.find((m) => m.command === "UnicDB.copyCreateDdl")!.group,
+    ).toBe("UnicDB");
   });
 
   it("sort mô phỏng VS Code trên table-node UnicDB group → New Table… #1, Modify Table… #2, phần còn lại giữ relative alphabet", () => {

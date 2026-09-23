@@ -8,6 +8,12 @@
   setting (default 300s). Connection is released and the error reported instead of hanging.
   Cycle SQLHANG-2026-09-21, pushed `33b7263`.
 
+## [1.54.5] — 2026-09-23
+
+- Fix: schema-tree table-node context menu ordering — `New Table…` now renders as item #1 and `Modify Table…` as item #2. The previous `"order"` keys were inert (not a real VS Code menu key); replaced with `group` suffix ordering `"UnicDB@1"` / `"UnicDB@2"` (same visual group, no separator).
+- Files: package.json, src/extension.test.ts (MENU tests rewritten for the group@N mechanism)
+- Verification: MENU 3/3 ✅ · bq04SurfaceGuard 8/8 ✅ · typecheck clean ✅
+
 ## [1.54.4] — 2026-09-22
 
 - Summary: AI Chat V2 composer/footer redesign — bottom info bar removed (hints folded into composer footnote, token/session stats moved to header), composer pinned ~5px from panel edge, mid-turn steering via webview FIFO queue (cap 8, flushed on turn_finished), overlapping-text fix (duplicate activity timeline renderer deleted), tree-style step visualization with dimmed thinking.
