@@ -50,6 +50,11 @@ export interface AgentInput {
    * `AgentRunResult.steeredLeftover` — the caller decides whether they
    * become a new turn. */
   steerQueue?: ChatMessage[];
+  /** Optional: caller invokes this AFTER pushing onto `steerQueue`. When set,
+   * runAgent aborts the in-flight provider call and restarts the step with
+   * the steered message in history — the steer takes effect immediately
+   * instead of waiting for the current response to finish streaming. */
+  steerNotify?(): void;
 }
 
 export interface AgentDeps {
@@ -342,7 +347,6 @@ export async function runAgent(
   let lastAssistantNoToolText = "";
 
   // Mid-turn steering: drain caller-pushed user messages into history at the
-  // top of every step so the NEXT provider request sees them.
   const drainSteer = (): void => {
     if (input.steerQueue === undefined) return;
     while (input.steerQueue.length > 0) {
@@ -350,17 +354,48 @@ export async function runAgent(
     }
   };
 
+  // Immediate steering: when the caller provides steerNotify, a push aborts
+  // the in-flight provider call via a per-step AbortController; the aborted
+  // step is retried with the steered message already in history. Distinct
+  // from the caller's `signal` — a user stop still rethrows bare.
+  let steerCtl: AbortController | undefined;
+  if (input.steerNotify !== undefined) {
+    const callerNotify = input.steerNotify;
+    input.steerNotify = () => {
+      callerNotify();
+      steerCtl?.abort();
+    };
+  }
+
   for (let stepIdx = 0; stepIdx < maxSteps; stepIdx++) {
     drainSteer();
+    // Fresh controller per step attempt: a consumed abort must not leak into
+    // the retry (AbortSignal.any on an aborted signal stays aborted forever).
+    steerCtl = input.steerNotify !== undefined ? new AbortController() : undefined;
+    const stepSignal = steerCtl !== undefined && signal !== undefined
+      ? AbortSignal.any([signal, steerCtl.signal])
+      : (steerCtl?.signal ?? signal);
     const req: ProviderRequest = {
       modelId: cfg.models[role].modelId,
       messages: history.map((m) => ({ ...m })),
       tools: toolDefs,
     };
-    const result = await runStep(req, deps, callbacks, signal, cfg, role, (kind, payload) => {
-      if (!trace) return;
-      if (kind === "delta") trace.record(turnId, "delta", payload);
-    });
+    let result: ProviderResult;
+    try {
+      result = await runStep(req, deps, callbacks, stepSignal, cfg, role, (kind, payload) => {
+        if (!trace) return;
+        if (kind === "delta") trace.record(turnId, "delta", payload);
+      });
+    } catch (err) {
+      // Steer-abort: the caller pushed a message mid-call — drain it into
+      // history and retry this same step. A real user stop (signal.aborted)
+      // still rethrows.
+      if (steerCtl?.signal.aborted === true && signal?.aborted !== true) {
+        stepIdx--;
+        continue;
+      }
+      throw err;
+    }
     const hasToolCalls = result.toolCalls.length > 0;
     const assistantMsg: ChatMessage = hasToolCalls
       ? { role: "assistant", content: "", toolCalls: result.toolCalls }

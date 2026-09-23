@@ -1537,6 +1537,10 @@ export class AiChatPanel {
    * as `input.steerQueue`.
    */
   private builtinSteerQueue: ChatMessage[] = [];
+  /** Live runAgent input while a builtin turn is in flight — lets
+   *  handleSteerTurn fire steerNotify so the in-flight provider call aborts
+   *  and restarts with the steered message. Cleared when the run resolves. */
+  private builtinSteerInput: { steerNotify?(): void } | null = null;
   /**
    * Host-side steer queue for engines that cannot accept mid-turn injection
    * (omp/codex child processes) and for steers that arrive after the builtin
@@ -3050,6 +3054,9 @@ export class AiChatPanel {
       // Lane 1: true mid-turn injection. The steered text also lands in the
       // session store so a reload still shows it.
       this.builtinSteerQueue.push({ role: "user", content: text });
+      // Wake the in-flight provider call: runAgent wraps steerNotify to abort
+      // the current step and retry it with this message in history.
+      this.builtinSteerInput?.steerNotify?.();
       this.postV2({ kind: "steer_ack", clientRequestId, mode: "steered" });
       try {
         this.sessionStore().appendUserMessage(this.sessionId ?? this.v2SessionId, {
@@ -3278,8 +3285,10 @@ export class AiChatPanel {
     };
 
     try {
+      const agentInput = { messages, role: this.activeRole, tools: registry, steerQueue: this.builtinSteerQueue, steerNotify: () => { /* abort wired inside runAgent */ } };
+      this.builtinSteerInput = agentInput;
       const result = await runAgent(
-        { messages, role: this.activeRole, tools: registry, steerQueue: this.builtinSteerQueue },
+        agentInput,
         this.options.deps,
         callbacks,
         signal,
@@ -3347,6 +3356,7 @@ export class AiChatPanel {
     } finally {
       this.post({ type: "done" });
       this.currentAbort = null;
+      this.builtinSteerInput = null;
       // TASK-007 B6: reset on every turn exit path (success, error, abort)
       // so the resume guards (`token !== null`) don't permanently swallow
       // resume_list/resume_pick after the first message.
