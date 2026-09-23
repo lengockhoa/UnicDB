@@ -8,7 +8,7 @@
   setting (default 300s). Connection is released and the error reported instead of hanging.
   Cycle SQLHANG-2026-09-21, pushed `33b7263`.
 
-## [1.54.5] — 2026-09-23
+## [1.54.6] — 2026-09-23
 
 - Fix: schema-tree table-node context menu ordering — `New Table…` now renders as item #1 and `Modify Table…` as item #2. The previous `"order"` keys were inert (not a real VS Code menu key); replaced with `group` suffix ordering `"UnicDB@1"` / `"UnicDB@2"` (same visual group, no separator).
 - Files: package.json, src/extension.test.ts (MENU tests rewritten for the group@N mechanism)
