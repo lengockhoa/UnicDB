@@ -349,7 +349,7 @@ describe("CHATV2-004 #5 — busy draft editing (regression)", () => {
 
 // ---- CHATUX2-002 steer queue (unit + boundary + lifecycle) -----------------
 
-describe("CHATUX2-002 — steer queue", () => {
+describe("CHATUX2-002 — steering (host-side)", () => {
   /** A streaming state with an editable next draft. */
   function streamingWithDraft(text: string) {
     let s = hydrated();
@@ -361,27 +361,25 @@ describe("CHATUX2-002 — steer queue", () => {
     return s;
   }
 
-  it("STEER_ENQUEUED snapshots the draft and clears the composer text", () => {
+  it("STEER_ENQUEUED renders the draft as a user item immediately and clears the composer", () => {
     let s = streamingWithDraft("next");
-    s = reduceChatState(s, {
-      type: "ATTACHMENT_ADDED",
-      attachment: { id: "a1", mime: "image/png", base64: "AA==", bytes: 1 },
-    });
     s = reduceChatState(s, {
       type: "CONTEXT_ADDED",
       ref: { kind: "file", id: "f1", label: "a.ts" },
     });
     const revision = s.draft.revision;
 
-    s = reduceChatState(s, { type: "STEER_ENQUEUED" });
+    s = reduceChatState(s, {
+      type: "STEER_ENQUEUED",
+      clientRequestId: "req-2",
+      draft: s.draft,
+    });
 
-    expect(s.steerQueue).toHaveLength(1);
-    expect(s.steerQueue[0]!.text).toBe("next");
-    expect(s.steerQueue[0]!.attachments.map((a) => a.id)).toEqual(["a1"]);
-    expect(s.steerQueue[0]!.context.map((r) => r.id)).toEqual(["f1"]);
+    const item = s.transcript.entities["user-req-2"];
+    expect(item).toBeDefined();
+    if (item?.kind !== "user") throw new Error("expected user item");
+    expect(item.text).toBe("next");
     expect(s.draft.text).toBe("");
-    expect(s.draft.selectionStart).toBe(0);
-    expect(s.draft.selectionEnd).toBe(0);
     expect(s.draft.revision).toBe(revision + 1);
     expect(s.phase).toBe("streaming");
   });
@@ -389,55 +387,21 @@ describe("CHATUX2-002 — steer queue", () => {
   it("STEER_ENQUEUED while idle is a same-state no-op", () => {
     let s = hydrated();
     s = reduceChatState(s, { type: "DRAFT_CHANGED", text: "idle draft" });
-    const next = reduceChatState(s, { type: "STEER_ENQUEUED" });
+    const next = reduceChatState(s, {
+      type: "STEER_ENQUEUED",
+      clientRequestId: "req-2",
+      draft: s.draft,
+    });
     expect(next).toBe(s);
-    expect(next.steerQueue).toHaveLength(0);
   });
 
-  it("STEER_DEQUEUED shifts the head; an empty queue is a same-state no-op", () => {
+  it("multiple steers each append their own user item — no cap", () => {
     let s = streamingWithDraft("a");
-    s = reduceChatState(s, { type: "STEER_ENQUEUED" });
+    s = reduceChatState(s, { type: "STEER_ENQUEUED", clientRequestId: "r2", draft: s.draft });
     s = reduceChatState(s, { type: "DRAFT_CHANGED", text: "b" });
-    s = reduceChatState(s, { type: "STEER_ENQUEUED" });
-    expect(s.steerQueue.map((d) => d.text)).toEqual(["a", "b"]);
-
-    s = reduceChatState(s, { type: "STEER_DEQUEUED" });
-    expect(s.steerQueue.map((d) => d.text)).toEqual(["b"]);
-
-    const empty = reduceChatState(
-      reduceChatState(s, { type: "STEER_DEQUEUED" }),
-      { type: "STEER_DEQUEUED" },
-    );
-    expect(empty.steerQueue).toHaveLength(0);
-    expect(reduceChatState(empty, { type: "STEER_DEQUEUED" })).toBe(empty);
-  });
-
-  it("a queue at the cap of 8 refuses the 9th enqueue (same-state, draft kept)", () => {
-    let s = streamingWithDraft("q0");
-    for (let i = 0; i < 8; i += 1) {
-      s = reduceChatState(s, { type: "STEER_ENQUEUED" });
-      s = reduceChatState(s, { type: "DRAFT_CHANGED", text: `q${i + 1}` });
-    }
-    expect(s.steerQueue).toHaveLength(8);
-
-    const next = reduceChatState(s, { type: "STEER_ENQUEUED" });
-    expect(next).toBe(s);
-    expect(next.steerQueue).toHaveLength(8);
-    expect(next.draft.text).toBe("q8");
-  });
-
-  it("a session-reset frame clears the queue (no cross-session send)", () => {
-    let s = streamingWithDraft("queued one");
-    s = reduceChatState(s, { type: "STEER_ENQUEUED" });
-    s = reduceChatState(s, { type: "DRAFT_CHANGED", text: "queued two" });
-    s = reduceChatState(s, { type: "STEER_ENQUEUED" });
-    expect(s.steerQueue).toHaveLength(2);
-
-    s = host(
-      s,
-      f({ kind: "session_hydrated", hasHistory: false, visionCapable: false }),
-    );
-    expect(s.steerQueue).toHaveLength(0);
+    s = reduceChatState(s, { type: "STEER_ENQUEUED", clientRequestId: "r3", draft: s.draft });
+    expect(s.transcript.entities["user-r2"]).toBeDefined();
+    expect(s.transcript.entities["user-r3"]).toBeDefined();
   });
 });
 

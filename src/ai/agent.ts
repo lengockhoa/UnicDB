@@ -42,6 +42,14 @@ export interface AgentInput {
   tools?: ToolRegistry;
   /** Overrides cfg.maxSteps when provided (still clamped ≥1). */
   maxSteps?: number;
+  /** Mid-turn steering seam: a caller-owned mutable list of user messages.
+   * runAgent drains it into `history` at the top of every step AND once more
+   * before returning a no-tool-call final answer, so a steered message is
+   * seen by the model on the next provider request of the SAME turn.
+   * Messages left in the queue when the run resolves are reported back via
+   * `AgentRunResult.steeredLeftover` — the caller decides whether they
+   * become a new turn. */
+  steerQueue?: ChatMessage[];
 }
 
 export interface AgentDeps {
@@ -73,14 +81,17 @@ export interface AgentRunResult {
   history: ChatMessage[];
   /** Text of the LAST assistant message with no tool calls ("" if budget-capped with none). */
   finalText: string;
-  /** True iff hit maxSteps before a no-tool-call reply. */
-  stoppedOnBudget: boolean;
   /** TASK-ARP06-004: exact per-turn usage over completed steps only. Reported
    * or unknown — never invented (unknown:true when every completed step
    * reported 0/0). Present on every resolution path, budget exhaustion
    * included. Abort paths rethrow and never resolve a fabricated result.
    * Consumed by TASK-ARP06-005. */
   usage: TurnUsageSummary;
+  /** Steered user messages still in `input.steerQueue` when the run resolved
+   * (arrived after the last drain point). The caller owns them — typically
+   * they become the next turn. Empty when no steering seam was provided. */
+  steeredLeftover: ChatMessage[];
+  stoppedOnBudget: boolean;
 }
 
 /** TASK-ARP06-004 — per-turn usage roll-up over completed agent steps. */
@@ -330,7 +341,17 @@ export async function runAgent(
 
   let lastAssistantNoToolText = "";
 
+  // Mid-turn steering: drain caller-pushed user messages into history at the
+  // top of every step so the NEXT provider request sees them.
+  const drainSteer = (): void => {
+    if (input.steerQueue === undefined) return;
+    while (input.steerQueue.length > 0) {
+      history.push(input.steerQueue.shift()!);
+    }
+  };
+
   for (let stepIdx = 0; stepIdx < maxSteps; stepIdx++) {
+    drainSteer();
     const req: ProviderRequest = {
       modelId: cfg.models[role].modelId,
       messages: history.map((m) => ({ ...m })),
@@ -349,6 +370,12 @@ export async function runAgent(
     const stepMessages: ChatMessage[] = [assistantMsg];
 
     if (!hasToolCalls) {
+      // A steer that arrived DURING the final provider call becomes the next
+      // step instead of ending the turn — the model must see it.
+      drainSteer();
+      if (history[history.length - 1]?.role === "user") {
+        continue;
+      }
       steps.push({ messages: stepMessages, result });
       lastAssistantNoToolText = result.text;
       if (callbacks?.onStep) {
@@ -361,6 +388,7 @@ export async function runAgent(
         finalText: result.text,
         stoppedOnBudget: false,
         usage: summarizeTurnUsage(steps),
+        steeredLeftover: input.steerQueue?.slice() ?? [],
       };
     }
 
@@ -396,6 +424,7 @@ export async function runAgent(
     finalText: lastAssistantNoToolText,
     stoppedOnBudget: true,
     usage: summarizeTurnUsage(steps),
+    steeredLeftover: input.steerQueue?.slice() ?? [],
   };
   } catch (err) {
     if (trace) {

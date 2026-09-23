@@ -114,6 +114,7 @@ import {
   type AiChatContextRefV2,
   type AiChatFrameEnvelopeV2,
   type AiChatHostFrameV2Body,
+  type AiChatSubmitDraftV2,
   type AiChatToolStatusV2,
   type AiChatTurnPhaseV2,
   type AiChatWebviewIntentV2,
@@ -1529,6 +1530,20 @@ export class AiChatPanel {
    * send, true whenever `done` is posted.
    */
   private turnSettled = true;
+  /**
+   * Mid-turn steering (builtin engine): user messages pushed here are drained
+   * into the live runAgent history at the top of the next step — the model
+   * sees them inside the SAME turn. Owned by the panel; handed to runAgent
+   * as `input.steerQueue`.
+   */
+  private builtinSteerQueue: ChatMessage[] = [];
+  /**
+   * Host-side steer queue for engines that cannot accept mid-turn injection
+   * (omp/codex child processes) and for steers that arrive after the builtin
+   * loop's last drain point. Drained FIFO at the next turn boundary — each
+   * entry becomes its own `submit_turn`.
+   */
+  private hostSteerQueue: { text: string; attachments?: MinimalAttachment[] }[] = [];
   /** AIX-05: monotonically increasing per-panel turn counter backing
    * `session_state.turnId` (stable across the connecting/running/done
    * trio of posts for one turn). */
@@ -2036,11 +2051,17 @@ export class AiChatPanel {
           intent.draft.text,
           intent.draft.attachments as MinimalAttachment[],
         );
+        // Steers parked while this turn ran become their own turns now.
+        await this.drainHostSteerQueue();
         return;
       }
       case "stop_turn":
         this.handleStop();
         return;
+      case "steer_turn": {
+        await this.handleSteerTurn(intent.clientRequestId, intent.draft);
+        return;
+      }
       case "set_engine":
         // TASK-CHATV2-012 — the acknowledged switch. The host VALIDATES, and
         // only a validated switch posts a `capabilities` ack carrying the SAME
@@ -2993,6 +3014,78 @@ export class AiChatPanel {
     }
     return accepted.length > 0 ? accepted : "empty";
   }
+
+  /**
+   * Mid-turn steering entry point. Three lanes, decided by live state:
+   *   1. builtin engine + turn in flight → push onto `builtinSteerQueue`;
+   *      runAgent drains it into history at the next step (true steering).
+   *   2. other engine + turn in flight → park on `hostSteerQueue`; drained
+   *      FIFO at the turn boundary (each entry becomes its own turn).
+   *   3. no turn in flight (race: turn finished between keypress and
+   *      intent arrival) → treat as a normal `submit_turn`.
+   * Every path posts a `steer_ack` so the webview can label the item.
+   */
+  private async handleSteerTurn(
+    clientRequestId: string,
+    draft: AiChatSubmitDraftV2,
+  ): Promise<void> {
+    const text = draft.text.trim();
+    if (text.length === 0) return;
+    const turnInFlight = this.token !== null && !this.turnSettled;
+    if (!turnInFlight) {
+      // Lane 3: no live turn — this is just a submit.
+      this.postV2({ kind: "steer_ack", clientRequestId, mode: "queued" });
+      this.v2TurnSeq += 1;
+      this.v2TurnId = `turn-${this.v2TurnSeq}-${this.v2SessionId}`;
+      this.postV2({
+        kind: "turn_started",
+        turnId: this.v2TurnId,
+        clientRequestId,
+      });
+      await this.handleSend(text, draft.attachments as MinimalAttachment[]);
+      await this.drainHostSteerQueue();
+      return;
+    }
+    if (this.engine === "builtin") {
+      // Lane 1: true mid-turn injection. The steered text also lands in the
+      // session store so a reload still shows it.
+      this.builtinSteerQueue.push({ role: "user", content: text });
+      this.postV2({ kind: "steer_ack", clientRequestId, mode: "steered" });
+      try {
+        this.sessionStore().appendUserMessage(this.sessionId ?? this.v2SessionId, {
+          id: `um-steer-${clientRequestId}`,
+          text,
+          turnId: this.v2TurnId ?? `turn-${this.sessionTurnSeq}`,
+        });
+      } catch {
+        /* best-effort */
+      }
+      return;
+    }
+    // Lane 2: engine cannot accept mid-turn input — host queue.
+    this.hostSteerQueue.push({ text, attachments: draft.attachments as MinimalAttachment[] });
+    this.postV2({ kind: "steer_ack", clientRequestId, mode: "queued" });
+  }
+
+  /**
+   * Drain the host steer queue at a turn boundary. Each entry becomes its own
+   * `submit_turn` (fresh turnId + turn_started ack). The loop exits as soon
+   * as a turn goes in-flight — strict FIFO, one turn at a time.
+   */
+  private async drainHostSteerQueue(): Promise<void> {
+    while (this.hostSteerQueue.length > 0 && (this.token === null || this.turnSettled)) {
+      const next = this.hostSteerQueue.shift()!;
+      const clientRequestId = `steer-drain-${Date.now()}-${this.hostSteerQueue.length}`;
+      this.v2TurnSeq += 1;
+      this.v2TurnId = `turn-${this.v2TurnSeq}-${this.v2SessionId}`;
+      this.postV2({
+        kind: "turn_started",
+        turnId: this.v2TurnId,
+        clientRequestId,
+      });
+      await this.handleSend(next.text, next.attachments);
+    }
+  }
   /**
    * Built-in engine turn.
    * Wires the per-turn AbortController signal into runAgent (which routes
@@ -3186,12 +3279,19 @@ export class AiChatPanel {
 
     try {
       const result = await runAgent(
-        { messages, role: this.activeRole, tools: registry },
+        { messages, role: this.activeRole, tools: registry, steerQueue: this.builtinSteerQueue },
         this.options.deps,
         callbacks,
         signal,
         this.trace,
       );
+      // Steers that arrived after the last in-loop drain become the next
+      // turn(s) via the host queue — never silently dropped.
+      for (const leftover of result.steeredLeftover ?? []) {
+        const text = typeof leftover.content === "string" ? leftover.content : "";
+        if (text.length > 0) this.hostSteerQueue.push({ text });
+      }
+      this.builtinSteerQueue = [];
       if (!token?.aborted) {
         this.post({
           type: "assistant",
@@ -3207,7 +3307,13 @@ export class AiChatPanel {
           role: "assistant",
           content: result.finalText,
         };
-        this.history = [...this.history, userMsg, assistantMsg];
+        // Steered user messages drained mid-turn live inside result.history
+        // between the input prefix and the step messages — carry them into
+        // the panel history so the NEXT turn sees them too.
+        const steered = result.history
+          .slice(messages.length)
+          .filter((m) => m.role === "user");
+        this.history = [...this.history, userMsg, ...steered, assistantMsg];
         // TASK-ARP06-005: one usage frame per COMPLETED builtin turn, on
         // the done path — exact numbers from AgentRunResult.usage plus
         // the turn's effective policy notice. Aborted turns never reach

@@ -23,7 +23,7 @@
 import { createChatIcon } from "./icons";
 import { PERMISSION_CHIP_ICON_PX, permissionChipLabel } from "./permissions";
 import type { ChatViewState, TurnPhase } from "./store";
-import { STEER_QUEUE_CAP } from "./store";
+
 
 /** The V2 root class every scoped style selector hangs off. */
 const ROOT_CLASS = "UnicDB-ai-chat-v2";
@@ -48,11 +48,7 @@ export const COMPOSER_PLACEHOLDER = "Ask about this workspace or database…";
 /** Fixed hint copy while a turn is live and the user edits a next draft. */
 export const COMPOSER_BUSY_HINT = "AI is responding. Your next draft is saved here.";
 
-/** CHATUX2-002: queue-state hint copy. `Queued N of 8` while under the cap,
- * `Queue full (8)` at it — both carry the same drain-condition suffix. */
-export const COMPOSER_QUEUE_HINT_LABEL = "Queued";
-export const COMPOSER_QUEUE_FULL_LABEL = "Queue full";
-export const COMPOSER_QUEUE_SUFFIX = "sends when this turn ends";
+
 
 /** Primary-slot accessible name when a valid idle draft can be sent. */
 export const COMPOSER_SEND_LABEL = "Send message (Enter)";
@@ -460,19 +456,8 @@ export function renderComposerV2(
     renderPrimary(state);
 
     const busy = isBusyPhase(state.phase);
-    const queued = state.steerQueue.length;
-    if (queued > 0) {
-      // A non-empty queue outranks the busy hint — it is the more specific
-      // state, and it stays visible until the queue drains.
-      hint.hidden = false;
-      hint.textContent =
-        queued >= STEER_QUEUE_CAP
-          ? `${COMPOSER_QUEUE_FULL_LABEL} (${STEER_QUEUE_CAP}) — ${COMPOSER_QUEUE_SUFFIX}`
-          : `${COMPOSER_QUEUE_HINT_LABEL} ${queued} of ${STEER_QUEUE_CAP} — ${COMPOSER_QUEUE_SUFFIX}`;
-    } else {
-      hint.hidden = !busy;
-      hint.textContent = busy ? COMPOSER_BUSY_HINT : "";
-    }
+    hint.hidden = !busy;
+    hint.textContent = busy ? COMPOSER_BUSY_HINT : "";
 
     applyAutoGrow();
   }

@@ -832,6 +832,15 @@ export interface AiChatHostToastV2 extends AiChatFrameEnvelopeV2 {
   readonly clientRequestId?: string;
 }
 
+/** Host → webview: acknowledges a `steer_turn` intent. `mode` tells the
+ * webview whether the message was injected into the live turn ("steered")
+ * or parked on the host queue for the next turn ("queued"). */
+export interface AiChatHostSteerAckV2 extends AiChatFrameEnvelopeV2 {
+  readonly kind: "steer_ack";
+  readonly clientRequestId: string;
+  readonly mode: "steered" | "queued";
+}
+
 /**
  * Host → webview: a reviewed SQL change plan (plan_change tool result).
  * TASK-CHATV2-017 — promoted from the retired V1 `change_plan` frame. The
@@ -939,6 +948,7 @@ export type AiChatHostFrameV2 =
   | AiChatHostSessionsV2
   | AiChatHostTitleUpdatedV2
   | AiChatHostToastV2
+  | AiChatHostSteerAckV2
   | AiChatHostChangePlanV2
   | AiChatHostUsageV2
   | AiChatHostEngineStateV2
@@ -964,6 +974,12 @@ export type AiChatWebviewIntentV2 =
       readonly draft: AiChatSubmitDraftV2;
     }
   | { readonly kind: "stop_turn"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string }
+  | {
+      readonly kind: "steer_turn";
+      readonly protocolVersion: AiChatProtocolVersionV2;
+      readonly clientRequestId: string;
+      readonly draft: AiChatSubmitDraftV2;
+    }
   | { readonly kind: "set_engine"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string; readonly engine: AiEngineName }
   | { readonly kind: "set_model"; readonly protocolVersion: AiChatProtocolVersionV2; readonly clientRequestId: string; readonly role: AiModelRole }
   | {

@@ -8,6 +8,12 @@
   setting (default 300s). Connection is released and the error reported instead of hanging.
   Cycle SQLHANG-2026-09-21, pushed `33b7263`.
 
+## [1.55.1] — 2026-09-23
+
+- Feature: real mid-turn steering — Enter-while-busy now posts a `steer_turn` intent immediately instead of parking in a webview queue. Builtin engine: the message is injected into the live agent loop (model sees it on the next step of the SAME turn). Other engines (omp/codex): host-side FIFO queue drains at the turn boundary. `Queued N of 8` hint removed.
+- Files: src/ai/agent.ts (steerQueue seam + steeredLeftover), src/ui/aiChatPanel.ts (handleSteerTurn + drainHostSteerQueue), src/ui/aiChatPanelMessages.ts (steer_turn/steer_ack), webview/aiChat/{store,controller,composer}.ts + tests
+- Verification: npm test 4818 pass/0 fail ✅ · typecheck clean ✅ · compile clean ✅
+
 ## [1.55.0] — 2026-09-23
 
 - Fix: schema-tree table-node context menu ordering — `New Table…` now renders as item #1 and `Modify Table…` as item #2. The previous `"order"` keys were inert (not a real VS Code menu key); replaced with `group` suffix ordering `"UnicDB@1"` / `"UnicDB@2"` (same visual group, no separator).

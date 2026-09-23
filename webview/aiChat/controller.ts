@@ -1180,21 +1180,7 @@ function mountController(options: ChatControllerOptions): ChatController {
     dispatch({ type: "SUBMIT_CONSUMED", clientRequestId });
   }
 
-  /**
-   * CHATUX2-004: drain the steer queue at a turn boundary. Pops the head and
-   * re-submits it through the ONE retry path (fresh clientRequestId,
-   * `submit_turn` intent). The loop exits as soon as the flushed submit
-   * re-enters a busy phase, so each queued item waits for its own
-   * `turn_finished` — strict FIFO, one turn at a time.
-   */
-  function flushSteerQueue(): void {
-    if (disposed) return;
-    while (state.steerQueue.length > 0 && !busyPhase(state.phase)) {
-      const dequeued = state.steerQueue[0]!;
-      dispatch({ type: "STEER_DEQUEUED" });
-      requestRetry({ draft: dequeued });
-    }
-  }
+
 
   /** The single stop action: one `stop_turn` per active turn, 250ms lock. */
   function requestStop(): void {
@@ -1425,11 +1411,26 @@ function mountController(options: ChatControllerOptions): ChatController {
         return;
       }
       case "steer": {
-        // CHATUX2-004: Enter-while-busy queues the draft for the next turn
-        // boundary. The reducer snapshots + clears the draft (no-op at the
-        // cap — the draft stays put, never dropped).
+        // Steering: Enter-while-busy sends the draft to the host NOW — the
+        // host injects it into the live turn (builtin) or runs it next
+        // (other engines). The reducer renders the user item + clears the
+        // composer; no local queue.
         event.preventDefault();
-        dispatch({ type: "STEER_ENQUEUED" });
+        const draft = state.draft;
+        if (draft.text.trim().length === 0) return;
+        const clientRequestId = nextId();
+        dispatch({ type: "STEER_ENQUEUED", clientRequestId, draft });
+        postIntent({
+          kind: "steer_turn",
+          protocolVersion: AI_CHAT_PROTOCOL_VERSION_V2,
+          clientRequestId,
+          draft: {
+            text: draft.text,
+            revision: draft.revision,
+            context: draft.context,
+            attachments: draft.attachments,
+          },
+        });
         return;
       }
       case "submit": {
@@ -1488,10 +1489,6 @@ function mountController(options: ChatControllerOptions): ChatController {
     if (frame.kind === "turn_finished") {
       options.onV2TurnGate?.(false);
       releaseStopLock();
-      // CHATUX2-004: the turn boundary drains the steer queue — one queued
-      // draft per `turn_finished`, FIFO (each flushed submit re-enters busy,
-      // so the tail waits for ITS turn boundary).
-      flushSteerQueue();
       return;
     }
     if (frame.kind === "error") {

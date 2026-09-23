@@ -153,7 +153,7 @@ describe("controller — submit dedupe and ack lifecycle", () => {
     expect(sentOf(h, "submit_turn")).toHaveLength(0);
   });
 
-  it("busy phases steer a valid draft: queue it, clear the composer, send nothing", () => {
+  it("busy phases steer a valid draft: posts steer_turn, renders user item, clears composer", () => {
     const h = makeHarness();
     type(h.prompt, "one");
     press(h.prompt, "Enter"); // → validating
@@ -161,12 +161,12 @@ describe("controller — submit dedupe and ack lifecycle", () => {
 
     type(h.prompt, "two");
     const ev = press(h.prompt, "Enter");
-    // CHATUX2-004: Enter-while-busy is a steer — the draft is queued for the
-    // next turn boundary, never submitted now and never refused.
+    // Steering: Enter-while-busy posts a steer_turn intent immediately —
+    // the host decides inject-now vs run-next; the webview never queues.
     expect(ev.defaultPrevented).toBe(true);
     expect(sentOf(h, "submit_turn")).toHaveLength(1); // no second submit
+    expect(sentOf(h, "steer_turn")).toHaveLength(1);
     expect(sentOf(h, "stop_turn")).toHaveLength(0);
-    expect(h.controller.getState().steerQueue.map((d) => d.text)).toEqual(["two"]);
     expect(h.controller.getState().draft.text).toBe("");
     expect(h.composer.prompt.disabled).toBe(false);
   });
@@ -207,38 +207,32 @@ describe("controller — submit dedupe and ack lifecycle", () => {
   });
 });
 
-describe("controller — steer queue (CHATUX2-004)", () => {
-  /** Narrowed read of a posted intent's clientRequestId. */
-  function clientRequestIdOf(intent: Record<string, unknown>): string {
-    const id = intent["clientRequestId"];
-    if (typeof id !== "string") throw new Error("submit_turn intent missing clientRequestId");
-    return id;
-  }
-
+describe("controller — steering (host-side)", () => {
   /** Narrowed read of a posted intent's draft text. */
   function draftTextOf(intent: Record<string, unknown>): string {
     const draft = intent["draft"];
     if (draft === null || typeof draft !== "object" || !("text" in draft)) {
-      throw new Error("submit_turn intent missing draft.text");
+      throw new Error("steer_turn intent missing draft.text");
     }
     const text = draft.text;
-    if (typeof text !== "string") throw new Error("submit_turn draft.text is not a string");
+    if (typeof text !== "string") throw new Error("steer_turn draft.text is not a string");
     return text;
   }
 
-  /** Open turn `t1` by submitting a draft and acking it. Returns the seq cursor. */
-  function openTurn(h: Harness, firstDraft = "first"): number {
+  /** Open turn `t1` by submitting a draft and acking it. */
+  function openTurn(h: Harness, firstDraft = "first"): void {
     type(h.prompt, firstDraft);
     press(h.prompt, "Enter");
-    const clientRequestId = clientRequestIdOf(sentOf(h, "submit_turn")[0]!);
+    const intent = sentOf(h, "submit_turn")[0]!;
+    const id = intent["clientRequestId"];
+    if (typeof id !== "string") throw new Error("submit_turn missing clientRequestId");
     window.dispatchEvent(
-      v2Frame({ kind: "turn_started", turnId: "t1", clientRequestId }, 1),
+      v2Frame({ kind: "turn_started", turnId: "t1", clientRequestId: id }, 1),
     );
     window.dispatchEvent(v2Frame({ kind: "phase", turnId: "t1", phase: "streaming" }, 2));
-    return 3;
   }
 
-  it("steer decision dispatches STEER_ENQUEUED: preventDefault, queue +1, draft cleared, no intents", () => {
+  it("steer decision posts steer_turn immediately: preventDefault, user item rendered, draft cleared", () => {
     const h = makeHarness();
     openTurn(h);
     expect(h.controller.getState().phase).toBe("streaming");
@@ -247,43 +241,35 @@ describe("controller — steer queue (CHATUX2-004)", () => {
     const ev = press(h.prompt, "Enter");
 
     expect(ev.defaultPrevented).toBe(true);
-    expect(h.controller.getState().steerQueue.map((d) => d.text)).toEqual(["steer me"]);
+    const steers = sentOf(h, "steer_turn");
+    expect(steers).toHaveLength(1);
+    expect(draftTextOf(steers[0]!)).toBe("steer me");
     expect(h.controller.getState().draft.text).toBe("");
     expect(sentOf(h, "submit_turn")).toHaveLength(1); // only the opening submit
     expect(sentOf(h, "stop_turn")).toHaveLength(0);
   });
 
-  it("turn_finished flushes one submit_turn per queued item, FIFO, each after its own finish", () => {
+  it("multiple steers each post their own steer_turn — no queue, no cap", () => {
     const h = makeHarness();
-    let seq = openTurn(h);
+    openTurn(h);
 
     type(h.prompt, "second");
     press(h.prompt, "Enter");
     type(h.prompt, "third");
     press(h.prompt, "Enter");
-    expect(h.controller.getState().steerQueue.map((d) => d.text)).toEqual(["second", "third"]);
 
-    // First boundary: exactly the head drains; the tail waits for ITS finish.
-    window.dispatchEvent(v2Frame({ kind: "turn_finished", turnId: "t1", outcome: "completed" }, seq++));
-    let submits = sentOf(h, "submit_turn");
-    expect(submits).toHaveLength(2);
-    expect(draftTextOf(submits[1]!)).toBe("second");
-    const id2 = clientRequestIdOf(submits[1]!);
-    expect(id2).not.toBe(clientRequestIdOf(submits[0]!));
-    expect(h.controller.getState().steerQueue.map((d) => d.text)).toEqual(["third"]);
-
-    // The flushed submit opens the next turn; its finish drains the tail.
-    window.dispatchEvent(v2Frame({ kind: "turn_started", turnId: "t2", clientRequestId: id2 }, seq++));
-    window.dispatchEvent(v2Frame({ kind: "turn_finished", turnId: "t2", outcome: "completed" }, seq++));
-    submits = sentOf(h, "submit_turn");
-    expect(submits).toHaveLength(3);
-    expect(draftTextOf(submits[2]!)).toBe("third");
-    expect(h.controller.getState().steerQueue).toHaveLength(0);
+    const steers = sentOf(h, "steer_turn");
+    expect(steers).toHaveLength(2);
+    expect(draftTextOf(steers[0]!)).toBe("second");
+    expect(draftTextOf(steers[1]!)).toBe("third");
+    // turn_finished does NOT flush anything — the host owns the queue.
+    window.dispatchEvent(v2Frame({ kind: "turn_finished", turnId: "t1", outcome: "completed" }, 3));
+    expect(sentOf(h, "submit_turn")).toHaveLength(1);
   });
 
-  it("steer during stopping flushes after the turn closes", () => {
+  it("steer during stopping still posts steer_turn immediately", () => {
     const h = makeHarness();
-    let seq = openTurn(h);
+    openTurn(h);
 
     h.controller.requestSubmit(); // busy → stop_turn, phase → stopping
     expect(sentOf(h, "stop_turn")).toHaveLength(1);
@@ -291,55 +277,30 @@ describe("controller — steer queue (CHATUX2-004)", () => {
 
     type(h.prompt, "after stop");
     press(h.prompt, "Enter");
-    expect(h.controller.getState().steerQueue.map((d) => d.text)).toEqual(["after stop"]);
-
-    window.dispatchEvent(v2Frame({ kind: "turn_finished", turnId: "t1", outcome: "stopped" }, seq++));
-    const submits = sentOf(h, "submit_turn");
-    expect(submits).toHaveLength(2);
-    expect(draftTextOf(submits[1]!)).toBe("after stop");
-    expect(h.controller.getState().steerQueue).toHaveLength(0);
-  });
-
-  it("turn_finished with an empty queue is a no-op", () => {
-    const h = makeHarness();
-    let seq = openTurn(h);
-    window.dispatchEvent(v2Frame({ kind: "turn_finished", turnId: "t1", outcome: "completed" }, seq++));
-    expect(sentOf(h, "submit_turn")).toHaveLength(1);
-    expect(h.controller.getState().steerQueue).toHaveLength(0);
-    expect(h.controller.getState().phase).toBe("completed");
+    const steers = sentOf(h, "steer_turn");
+    expect(steers).toHaveLength(1);
+    expect(draftTextOf(steers[0]!)).toBe("after stop");
   });
 
   it("requestSubmit() while busy still stops — Enter steers, the button stops", () => {
     const h = makeHarness();
     openTurn(h);
 
-    type(h.prompt, "queued");
+    type(h.prompt, "steered");
     press(h.prompt, "Enter"); // steer, not submit
     h.controller.requestSubmit(); // primary while busy → stop
 
     expect(sentOf(h, "stop_turn")).toHaveLength(1);
+    expect(sentOf(h, "steer_turn")).toHaveLength(1);
     expect(sentOf(h, "submit_turn")).toHaveLength(1); // only the opening submit
-    expect(h.controller.getState().steerQueue.map((d) => d.text)).toEqual(["queued"]);
   });
 
-  it("steer at the queue cap: preventDefault, enqueue no-ops, draft kept", () => {
+  it("empty draft Enter while busy sends nothing", () => {
     const h = makeHarness();
     openTurn(h);
-
-    for (let i = 1; i <= 8; i += 1) {
-      type(h.prompt, `q${i}`);
-      press(h.prompt, "Enter");
-    }
-    expect(h.controller.getState().steerQueue).toHaveLength(8);
-
-    type(h.prompt, "overflow");
-    const ev = press(h.prompt, "Enter");
-    expect(ev.defaultPrevented).toBe(true);
-    expect(h.controller.getState().steerQueue).toHaveLength(8);
-    // The draft is never dropped and no newline was inserted.
-    expect(h.controller.getState().draft.text).toBe("overflow");
-    expect(sentOf(h, "submit_turn")).toHaveLength(1);
-    expect(sentOf(h, "stop_turn")).toHaveLength(0);
+    type(h.prompt, "   ");
+    press(h.prompt, "Enter");
+    expect(sentOf(h, "steer_turn")).toHaveLength(0);
   });
 });
 
